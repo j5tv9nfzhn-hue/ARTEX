@@ -2,7 +2,6 @@
 
 > 本指南帮助防御者了解 ARTEX 等自主 AI 渗透代理，建立检测与阻断能力，不是攻击教程。仅用于保护自有或书面明确授权系统；未授权探测/攻击他人信息通信网络可能违法，参见[根 README 的安全告知](../README.md)。
 >
-> English: **[Defense and Detection Guide](defense.md)**.
 
 自主 AI 工具将人工渗透流程变为可持续运行的自动过程：LLM 分解目标、执行真实工具、积累发现。防御者面对的不再只是单个操作人员，也可能是持续工作的代理群；本指南整理检测与响应所需变化。
 
@@ -80,7 +79,7 @@ IP 阻断有用的前提是可信机构/情报来源、有效期审查和误封�
 最稳定入口常是暴露且未修补的已知漏洞，而非复杂 0-day：VPN/防火墙、管理控制台、应用服务器/中间件/框架如 WebLogic、Struts，以及合作、招聘、员工辅助系统。资产枚举与公开 PoC 的自动化匹配可早于补丁覆盖，形成速度不对称。
 
 - **缩减暴露面：** 持续维护互联网资产/控制台/辅助系统清单，不必外露的置于内网、VPN 或允许列表之后。
-- **迅速修补：** 优先边界、Web、应用与中间件的已知漏洞，特别是公开 PoC 流行组件。以持续更新的 [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)为优先级输入，交叉查看第 7.1 节韩国 KISA 官方建议，而非把某个 CVE 写死。
+- **迅速修补：** 优先边界、Web、应用与中间件的已知漏洞，特别是公开 PoC 流行组件。以持续更新的 [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) 与 [CNCERT/CC 公告](https://www.cert.org.cn/) 为优先级输入，交叉查看第 7.1 节官方渠道建议，而非把某个 CVE 写死。
 - **限制必要入口：** 不可关闭的管理界面加来源限制、MFA、VPN，减少未认证枚举。
 - **同等管理辅助系统：** 合作/招聘/员工渠道保持与主服务相同补丁与监控水平；认证流见 3.2。
 
@@ -149,9 +148,8 @@ description: |
     signature; tune the count and window to your own baseline. On its own this leg is low signal
     and earns weight only inside the correlation below.
 references:
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
-author: artex-ko defense guide (generic template)
+    - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
+author: ARTEX defense guide (generic template)
 date: 2026-10-07
 tags:
     - attack.reconnaissance
@@ -179,9 +177,8 @@ description: |
     correlation below. Extend the marker list to your own probe corpus and WAF categories; it is
     a coarse proxy for the broader "adapts requests to responses" behaviour the guide describes.
 references:
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
-author: artex-ko defense guide (generic template)
+    - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
+author: ARTEX defense guide (generic template)
 date: 2026-10-07
 tags:
     - attack.initial-access
@@ -212,9 +209,8 @@ description: |
     often expose weaker identity-verification endpoints than the main service and belong here
     too. This leg is broad by design and is only meaningful inside the correlation below.
 references:
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
-author: artex-ko defense guide (generic template)
+    - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
+author: ARTEX defense guide (generic template)
 date: 2026-10-07
 tags:
     - attack.credential-access
@@ -250,9 +246,8 @@ description: |
     session identifier if you have one) and tune the window to your baseline. If three legs are
     too strict and miss cases, relax to any two of the three.
 references:
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
-author: artex-ko defense guide (generic template)
+    - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
+author: ARTEX defense guide (generic template)
 date: 2026-10-07
 tags:
     - attack.initial-access
@@ -348,27 +343,31 @@ level: high
 
 ---
 
-## 7. 韩国官方渠道与报告义务（原文法律背景）
+## 7. 官方通报渠道与报告义务
 
-本节保留上游韩国适用背景，不是中国法律指引。韩国组织应通过可信官方渠道取得建议并遵守当地报告义务；其他地区按所在地法律及专业意见处理。
+本节给出中国大陆地区的通报与求助渠道。其他国家和地区请按所在地法律及主管机构规定处理；本节不构成法律意见。
 
-### 7.1 官方指标与安全建议
+### 7.1 官方渠道
 
-- **KISA/韩国互联网振兴院 [KrCERT/CC](https://www.boho.or.kr)：** 安全建议、漏洞与响应信息。C-TAS 为成员共享体系，需单独申请，不等同公开门户。
-- **[金融安全院 FSI](https://www.fsec.or.kr)：** 金融 ISAC 跨机构威胁信息。
-- **[韩国个人信息保护委员会](https://www.pipc.go.kr)：** 数据泄露报告与保护措施指引。
+- **国家互联网应急中心 CNCERT/CC（[cert.org.cn](https://www.cert.org.cn/)）：** 网络安全事件应急处置、威胁情报与安全公告。
+- **[12321 网络安全举报中心](https://www.12321.cn/)：** 违法有害信息与网络安全违法举报。
+- **[国家互联网应急中心网络安全服务保障中心（12386）](https://www.12386.cn/)：** 互联网网络安全威胁情报共享。
+- **[公安部网络安全保卫局](https://www.mps.gov.cn/)：** 涉嫌犯罪的网络安全事件报案渠道。
+- **数据与个人信息保护：** 涉及数据泄露时，按《数据安全法》《个人信息保护法》向行业主管部门与网信部门报告。
 
 第 5 节可信 IoC 来源包括这些渠道；即使官方指标也须审查有效期与误封风险，不能跳过第 2 节所述评估。
 
-### 7.2 韩国法律报告义务
+### 7.2 金融机构与个人信息泄露的报告义务
 
-事先把报告流程纳入第 6 节响应计划。以下仅翻译原文摘要，准确适用对象、条件与期限须核对最新官方规定并征询法律意见。
+事先把报告流程纳入第 6 节响应计划。以下为要点提示，准确适用对象、条件与期限须核对最新官方规定并征询法律意见。
 
-- **个人信息泄露：** 原文依据韩国《个人信息保护法》第 34 条，在满足报告条件时，知悉后 72 小时内向委员会或 KISA 报告并通知主体；条件包括 1,000 人以上、敏感/唯一识别信息或非法外部访问等。
-- **网络入侵事件：** 原文依据韩国信息通信网络相关法律，服务提供者知悉后 24 小时内向科学技术信息通信部及 KISA/KrCERT/CC 报告。
-- **金融机构：** 还可能须向金融监督院/FSI 单独报告，核对行业规则。
+- **个人信息泄露：** 依《个人信息保护法》第五十七条，个人信息处理者发现其处理的个人信息发生或者可能发生泄露、篡改、丢失的，应立即采取补救措施，并通知履行个人信息保护职责的部门和个人；造成严重后果的，还应告知受影响个人。
+- **网络安全事件：** 依《网络安全法》第二十五条，网络运营者发生网络安全事件，应立即启动应急预案，采取补救措施，并按规定向有关主管部门报告。
+- **数据出境与重要数据：** 依《数据安全法》，重要数据处理者发生安全事件应按规定报告；涉及数据出境的还需符合数据出境安全评估要求。
+- **金融机构：** 还应按中国人民银行、国家金融监督管理总局、中国证券监督管理委员会及国家外汇管理局的行业监管要求，在规定时限内单独报告。
+- **刑事报案：** 涉嫌非法侵入计算机信息系统、非法获取公民个人信息等犯罪的，应向公安机关报案。
 
-韩国事件渠道为 [KrCERT/CC](https://www.boho.or.kr)或 118（KISA）；个人信息泄露见[个人信息门户](https://www.privacy.go.kr)。事先记录负责人、联系方式和适用期限。
+事先记录负责人、联系方式和适用期限。
 
 ---
 

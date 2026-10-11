@@ -1,8 +1,7 @@
+import { DEFAULT_LOCALE, isLocale, LOCALE_LABELS, LOCALES, normalizeLocale, resolveLocale } from "./config.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-
-import { DEFAULT_LOCALE, isLocale, LOCALE_LABELS, LOCALES, normalizeLocale, resolveLocale } from "./config.ts";
 
 test("仅提供简体中文一种界面语言", () => {
   assert.equal(DEFAULT_LOCALE, "zh");
@@ -36,8 +35,5 @@ test("中文词库不含任何韩文，且不残留其他语言词库文件", ()
   const messagesDir = new URL("../../messages/", import.meta.url);
   assert.deepEqual(fs.readdirSync(messagesDir), ["zh.json"]);
   const chinese = JSON.parse(fs.readFileSync(new URL("zh.json", messagesDir), "utf8"));
-  assert.doesNotMatch(
-    JSON.stringify(chinese),
-    /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff\uffa0-\uffdc]/u,
-  );
+  assert.doesNotMatch(JSON.stringify(chinese), /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff\uffa0-\uffdc]/u);
 });

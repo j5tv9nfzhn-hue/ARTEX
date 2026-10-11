@@ -11,7 +11,7 @@ import { isLocale, LOCALE_COOKIE, LOCALE_STORAGE_KEY, type Locale, normalizeLoca
 // 更换浏览器或清除站点数据后使用默认语言；模型输出语言另存服务器设置。
 
 function parseLocale(raw: string | null): Locale {
-  return normalizeLocale(raw) ?? resolveLocale();
+  return normalizeLocale(raw);
 }
 
 // 同标签页订阅者集合。storage 事件仅在其他标签页触发，

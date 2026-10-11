@@ -15,11 +15,9 @@ export function isLocale(raw: unknown): raw is Locale {
   return typeof raw === "string" && (LOCALES as readonly string[]).includes(raw);
 }
 
-// 旧浏览器存储和构建环境中的语言代码统一归一为简体中文。
-export function normalizeLocale(raw: unknown): Locale | undefined {
-  if (typeof raw !== "string") return undefined;
-  const code = raw.trim().toLowerCase();
-  return isLocale(code) ? code : DEFAULT_LOCALE;
+// 本仓库只有简体中文一种界面语言：历史遗留的其他语言代码与任何异常值都归一为简体中文。
+export function normalizeLocale(raw: unknown): Locale {
+  return isLocale(raw) ? raw : DEFAULT_LOCALE;
 }
 
 // 静态导出不能依赖请求 cookie 或 headers。此值决定预渲染语言，
