@@ -41,6 +41,24 @@ jobs:
       - name: go test（无数据库，集成测试跳过）
         run: go test ./... -count=1
 
+      # 构建可下载产物：验证用的 linux/amd64 单二进制与测试日志。
+      # release.yml 负责全平台交叉编译与正式发布包，这里只提供可直接
+      # 下载核对的 CI 产物，避免验证时只能翻日志。
+      - name: 构建验证用二进制
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w" -o dist/artex ./cmd/artex
+          dist/artex -h > dist/artex-help.txt 2>&1 || true
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: artex-linux-amd64-ci
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
   # 使用真实 PostgreSQL 验证通知、证据与用量计量的集成路径。
   # 覆盖无数据库 job 跳过的渠道验证、证据保存和 llm_usage 等路径。
   # 数据库专属语言回归也必须在合并前被发现。

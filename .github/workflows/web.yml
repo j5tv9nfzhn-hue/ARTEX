@@ -63,6 +63,13 @@ jobs:
         run: npm run build:static
       - name: 静态 UI 无韩文残留
         run: python3 -I ../scripts/check-language.py --web
+      - name: 上传静态导出产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-out-ci
+          path: out/
+          retention-days: 14
+          if-no-files-found: error
       - name: biome check（lint、format、a11y 错误为零）
         if: always()
         run: npm run check
