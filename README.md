@@ -91,41 +91,47 @@ Autumn-27/ARTEX（国内原作者，中文原创）
 
 更多截图见 [README.zh.md](README.zh.md#截图预览)，来源说明见 [screenshots/README.md](screenshots/README.md)。
 
-## 快速开始（Docker Compose）
+## 快速开始（Windows 二进制）
 
-前置依赖为 Docker 与 Docker Compose；数据库使用 PostgreSQL，Agent 需要 LLM 配置，可通过 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 或 UI 设置。
+本项目只构建并发布 **Windows** 可执行程序（amd64 与 arm64），不提供 Linux/macOS 二进制，也不发布 Docker 镜像。
 
-> **镜像可用性提示：** Compose 仍指向上游 `autumn27/artex`，原分支曾记录 `pull access denied` / `manifest unknown`。镜像是否可访问不由本分支保证，上游二进制也不保证包含本分支的中文与安全改动。需要本分支功能时，优先使用下方源码构建流程；本次没有发布新的 Docker 镜像。
+### 方式一：下载发布包
 
-```bash
-git clone https://github.com/j5tv9nfzhn-hue/ARTEX.git
-cd ARTEX
-cp .env.example .env          # 必须修改 POSTGRES_PASSWORD，LLM Key 可稍后填写
-docker compose up -d          # 仅在对应镜像可访问时可用
-# 首次访问 http://localhost:8787/setup 初始化管理员密码
-# 查看设置令牌：docker compose logs artex | grep '设置令牌'
+到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载 `artex-<版本>-windows-<架构>.zip`，解压后得到：
+
+- `artex.exe` —— 程序本体（前端已内嵌）
+- `start.bat` —— 启动监护脚本（页面一键更新依赖它重启进程）
+- `skills/`、`config.example.json`、`README.md`
+
+```bat
+copy config.example.json config.json   & rem 填写 database 连接
+start.bat                              & rem → http://localhost:8787
 ```
 
-`./skills`、`./data` 为宿主绑定挂载，重建容器不应删除其内容。仅操作自有或授权部署。
+首次访问 `http://localhost:8787/setup` 初始化管理员密码；设置令牌打印在启动日志中。
 
-### 其他安装方式
+### 方式二：源码构建
 
-`./install.sh` 支持“全部 Docker”或“本地编译运行”。前者同样依赖上游镜像；需要本分支中文输出时请选择本地编译，或按以下流程构建单二进制：
+前置依赖：Go 1.26（以 `go.mod` 为准）、Node.js 22 LTS、PostgreSQL 16。
 
-```bash
+```bat
 cd web && npm ci && npm run build:static && cd ..
-# 同步静态产物到内嵌目录，防止重复构建时产生 out/out
 rm -rf server/webui/dist && mkdir -p server/webui/dist
 cp -a web/out/. server/webui/dist/
-CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
-cp config.example.json config.json  # 填写 database 连接
-./start.sh                         # Windows 使用 start.bat
+CGO_ENABLED=0 go build -tags embedui -o artex.exe ./cmd/artex
+copy config.example.json config.json
+start.bat
 ```
 
-- Go 版本以 `go.mod` 为准，当前要求 Go 1.26；前端开发与测试建议 Node 22 LTS 或更新版本，类型擦除测试至少需要 Node 22.6。
+或直接使用打包脚本（自动完成前端构建、内嵌与 zip 打包）：
+
+```bash
+./build.sh --release          # 产出 dist/artex-<版本>-windows-{amd64,arm64}.zip
+```
+
 - `npm ci` 需要 devDependencies，例如 `@tailwindcss/postcss`。若环境为 `NODE_ENV=production`，使用 `npm ci --include=dev`，避免构建时缺包。
-- 正式启动使用 `start.sh` / `start.bat`，不要直接以 `./artex` 替代监护脚本，否则一键更新或回滚退出后不会自动重启。
-- 更多平台打包方式见 [README.zh.md 的安装说明](README.zh.md#安装)及 `./build.sh --help`。上游 Releases 同样不保证包含本分支改动。
+- 正式启动使用 `start.bat`，不要直接运行 `artex.exe` —— 监护脚本负责在一键更新或回滚退出后重新拉起进程。
+- 数据库连接通过 `config.json` 或环境变量 `ARTEX_PG_DSN` 配置，见下节。
 
 ## 配置
 

@@ -113,7 +113,7 @@ cp .env.example .env  # 必须修改 POSTGRES_PASSWORD
 docker compose up -d
 ```
 
-此路径依赖 Compose 中配置的镜像，原分支记录上游镜像曾无法拉取；需要本分支改动时应先源码构建或使用自己有权限发布的镜像，见 [README](README.md#快速开始docker-compose)。
+此路径依赖 Compose 中配置的镜像，原分支记录上游镜像曾无法拉取；需要本分支改动时应先源码构建，见 [README](README.md#快速开始windows-二进制)。本项目现已只发布 Windows 二进制，不再维护 Docker 镜像。
 
 ## 贡献流程
 

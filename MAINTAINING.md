@@ -199,25 +199,19 @@ python3 -I scripts/check-external-links.py --strict # 需要相应网络访问�
 
 ### 9.2 各 job 的职责
 
-- **frontend：** 一次静态导出 `web/out`，上传 web-dist，各平台复用。
-- **binaries：** Linux amd64/arm64、darwin amd64/arm64、Windows amd64 五平台交叉编译和 zip；Linux amd64 运行 `artex -h` smoke test。
+- **frontend：** 一次静态导出 `web/out`，上传 web-dist，各目标复用。
+- **binaries：** Windows amd64/arm64 交叉编译和 zip；Linux runner 无法执行 PE，改用 PE 结构校验（MZ 头、PE 签名、机器类型）。
 - **release：** 汇总 zip、生成 SHA256SUMS，创建 GitHub Release。
-- **docker-gate：** 检查 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 是否存在。
-- **docker：** 有凭据时复用 Linux 二进制构建多架构镜像；无凭据跳过，不影响二进制 Release。
+
+本项目只发布 Windows 可执行程序，不再构建 Linux/macOS 目标，也不再发布 Docker 镜像。
 
 ### 9.3 构建路径与前置条件
 
 - web-dist 放入 `server/webui/dist`，`server/webui_embed.go` 的 `//go:embed all:webui/dist` 内嵌它；binaries 用 `ARTEX_SKIP_FRONTEND=1` 防止重复编译前端。
-- `build.sh --target OS/ARCH` 输出 `dist/artex-OS-ARCH/artex` 和 zip；包含对应启动脚本、skills、config.example.json、README。
-- Linux 二进制作为 bin-linux-ARCH 上传，Docker job 下载到 `dist/ARCH/artex`，Dockerfile 用 `COPY dist/${TARGETARCH}/artex`；`.dockerignore` 不排除该构建上下文。
+- `build.sh --target windows/ARCH` 输出 `dist/artex-windows-ARCH/artex.exe` 和 zip；包含 `start.bat`、skills、config.example.json、README。
+- 一键更新由 `selfupdate.AssetName` 按当前平台拼 `artex-<版本>-windows-<架构>.zip`，与 `package_binary` 命名一致。
 
-原分支曾记录本地复现这些路径，但本次只做语言重构，是否完成 Go 交叉编译和镜像构建必须另外记录。
-
-### 9.4 Docker 发布命名空间
-
-当前占位为 `autumn27/artex`，属于上游，不应推送到不属于自己的 namespace。开启 secrets 前先配置自己拥有的仓库和正确注册表权限；guard 会在保留占位值时提前中止，避免最后 push 才 denied。未决定镜像发布时不设置 secrets，只发布二进制 zip 与校验和。
-
-### 9.5 不发布 tag 的本地验证
+### 9.4 不发布 tag 的本地验证
 
 ```bash
 # 1. 静态前端
@@ -225,12 +219,10 @@ cd web && npm ci && npm run build:static && cd ..
 # 2. 内嵌目录
 rm -rf server/webui/dist && mkdir -p server/webui/dist && cp -a web/out/. server/webui/dist/
 # 3. 仅构建一个目标，不创建 tag 或 Release
-docker run --rm -v "$PWD":/app -w /app \
-  -e ARTEX_SKIP_FRONTEND=1 -e ARTEX_SKIP_NPM_CI=1 \
-  -e ARTEX_COMPRESS=0 -e ARTEX_PACKAGE=1 -e ARTEX_PACKAGE_DIR=dist \
-  -e ARTEX_BUILD_VERSION=v0.0.0-local \
-  golang:1.26 bash -c 'apt-get update && apt-get install -y zip && ./build.sh --target linux/amd64'
-# 4. 检查 dist/artex-linux-amd64/artex、zip 与 SHA256SUMS
+ARTEX_SKIP_FRONTEND=1 ARTEX_SKIP_NPM_CI=1 ARTEX_COMPRESS=0 \
+ARTEX_PACKAGE=1 ARTEX_PACKAGE_DIR=dist ARTEX_BUILD_VERSION=v0.0.0-local \
+./build.sh --target windows/amd64
+# 4. 检查 dist/artex-windows-amd64/artex.exe、zip 与 SHA256SUMS
 ```
 
-静态链接 ELF 的 `-h` 应返回 0，与 CI smoke test 一致。`dist/`、`server/webui/dist/`、数据库、日志、私钥、测试/扫描产物均不提交 Git。
+Linux 上无法执行 PE，用 `file dist/artex-windows-amd64/artex.exe` 确认为 PE32+ 可执行文件。`dist/`、`server/webui/dist/`、数据库、日志、私钥、测试/扫描产物均不提交 Git。

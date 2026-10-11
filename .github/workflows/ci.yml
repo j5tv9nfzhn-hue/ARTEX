@@ -56,19 +56,39 @@ jobs:
       - name: go test（无数据库，集成测试跳过）
         run: go test ./... -count=1
 
-      # 可下载产物：验证用的 linux/amd64 单二进制与帮助输出。
-      # release.yml 负责全平台交叉编译与正式发布包。
-      - name: 构建验证用二进制
+      # 可下载产物：验证用的 Windows 单二进制（amd64 + arm64）。
+      # Linux runner 无法执行 PE，用结构校验代替运行冒烟测试。
+      # release.yml 负责打包 zip 与发布。
+      - name: 构建验证用 Windows 二进制
         env:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags "-s -w" -o dist/artex ./cmd/artex
-          dist/artex -h > dist/artex-help.txt 2>&1 || true
+          for arch in amd64 arm64; do
+            GOOS=windows GOARCH=$arch go build -trimpath -ldflags "-s -w" \
+              -o "dist/artex-windows-$arch.exe" ./cmd/artex
+          done
+      - name: 校验 PE 结构与目标架构
+        run: |
+          python3 - <<'PY'
+          import struct, sys, glob
+          for path in sorted(glob.glob("dist/artex-windows-*.exe")):
+              data = open(path, "rb").read()
+              if data[:2] != b"MZ":
+                  sys.exit(f"{path}: 不是 Windows PE（缺少 MZ 头）")
+              pe = struct.unpack_from("<I", data, 0x3C)[0]
+              if data[pe:pe + 4] != b"PE\0\0":
+                  sys.exit(f"{path}: 缺少 PE\\0\\0 签名")
+              machine = struct.unpack_from("<H", data, pe + 4)[0]
+              want = 0x8664 if "amd64" in path else 0xAA64
+              if machine != want:
+                  sys.exit(f"{path}: 机器类型 0x{machine:X} 与预期 0x{want:X} 不符")
+              print(f"PE 校验通过：{path} machine=0x{machine:X}")
+          PY
       - name: 上传构建产物
         uses: actions/upload-artifact@v7
         with:
-          name: artex-linux-amd64-ci
+          name: artex-windows-ci
           path: dist/
           retention-days: 14
           if-no-files-found: error
