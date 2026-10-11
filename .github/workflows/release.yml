@@ -17,9 +17,15 @@ jobs:
           node-version: "22"
           package-manager-cache: false
       - name: 恢复 npm 与 Next.js 构建缓存
-        uses: ./.github/actions/node-build-cache
+        uses: actions/cache@v6
         with:
-          working-directory: web
+          path: |
+            ~/.npm
+            web/.next/cache
+            web/node_modules/.cache
+          key: node-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            node-${{ runner.os }}-
       - run: npm ci
         working-directory: web
       - run: npm run build:static
@@ -54,11 +60,18 @@ jobs:
           go-version: "1.26"
           cache: false
       - name: 恢复 Go 模块与编译缓存
-        uses: ./.github/actions/go-build-cache
+        uses: actions/cache@v6
         with:
-          os: ${{ matrix.goos }}
-          arch: ${{ matrix.goarch }}
-          suffix: release
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          # 编译缓存按目标平台区分，避免交叉编译互相污染产物；
+          # 模块缓存与平台无关，但此处同 key 也能直接命中 ci.yml 写入的条目。
+          key: gobuild-${{ matrix.goos }}-${{ matrix.goarch }}-release-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            gobuild-${{ matrix.goos }}-${{ matrix.goarch }}-release-
+            gobuild-${{ matrix.goos }}-${{ matrix.goarch }}-
+            gomod-${{ runner.os }}-
       - uses: actions/download-artifact@v8
         with:
           name: web-dist

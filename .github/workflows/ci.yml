@@ -1,39 +1,54 @@
 name: ci
-# 每次 push、PR 执行构建、静态分析、测试，提前发现中文化回归。
-# release.yml 仅在 v* tag 执行发布构建，因此日常改动由本工作流验证。
-# 单元测试和数据库集成测试分别运行，语言检查独立覆盖全仓库自有文本。
+# 日常验证的唯一下口：Go 构建测试、前端构建、检测规则、文档链接、语言检查。
+# 此前拆成 ci/web/detections/docs/external-links 五个工作流并行，
+# 界面上要分别点开查看，且各自的缓存 key 互不共享导致反复失效。
+# 现在合并到单工作流：一屏看全、缓存天然共享、合并门禁一目了然。
+#
+# release.yml 仅在 v* tag 构建发布包，不承担日常验证。
 on:
   push:
     branches: ["**"]
   pull_request:
+  schedule:
+    - cron: "17 0 * * 1" # 每周一 00:17 UTC，跑外部链接存活检查
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# 同一分支的新提交取消仍在运行的旧提交，避免过期构建占用 runner 并争抢缓存写入。
+# 同一分支的新提交取消旧提交，避免重复构建争抢缓存。
+# 定时任务单独成组，不会被普通 push 取消。
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
-  # 无数据库执行构建、静态分析与单元测试，复现 clone 后的本地环境。
-  # 未安装 PostgreSQL 时，依赖数据库的集成测试由 t.Skipf 跳过。
-  # 跳过会记为通过，不能代替下面的真实数据库测试。
-  # go build、go vet 与不依赖数据库的单元测试均需通过。
-  # 此组合能发现跨包文案修改与对应断言不一致等回归。
-  # 数据库路径由独立 matrix job 检查，避免仅检查常量掩盖问题。
+  # ---------- Go：构建、静态分析、单元测试 ----------
+  # 无数据库环境下依赖数据库的集成测试由 t.Skipf 跳过，
+  # 跳过记为通过，不能代替下面的真实数据库测试。
   go:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
-          cache: false # 缓存由 go-build-cache 复合动作统一管理，避免两套 key 互相失效
+          cache: false # 缓存由下方 actions/cache 统一管理，避免两套 key 互相失效
+
+      # 模块缓存与平台无关，本工作流所有 Go job 共用一份；
+      # 编译缓存按 runner 平台区分。actions/cache 在 post 阶段保存，
+      # 此时构建已完成，写盘的是真实产物。
       - name: 恢复 Go 模块与编译缓存
-        uses: ./.github/actions/go-build-cache
+        uses: actions/cache@v6
         with:
-          suffix: build
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+
       - name: go build
         run: go build ./...
       - name: go vet
@@ -41,9 +56,8 @@ jobs:
       - name: go test（无数据库，集成测试跳过）
         run: go test ./... -count=1
 
-      # 构建可下载产物：验证用的 linux/amd64 单二进制与测试日志。
-      # release.yml 负责全平台交叉编译与正式发布包，这里只提供可直接
-      # 下载核对的 CI 产物，避免验证时只能翻日志。
+      # 可下载产物：验证用的 linux/amd64 单二进制与帮助输出。
+      # release.yml 负责全平台交叉编译与正式发布包。
       - name: 构建验证用二进制
         env:
           CGO_ENABLED: "0"
@@ -59,24 +73,14 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-  # 使用真实 PostgreSQL 验证通知、证据与用量计量的集成路径。
-  # 覆盖无数据库 job 跳过的渠道验证、证据保存和 llm_usage 等路径。
-  # 数据库专属语言回归也必须在合并前被发现。
-  #
-  # 原测试 harness 共享数据库、只建立一次表，并隐式依赖执行顺序。
-  # 全部包放入同一数据库可能积累测试数据并出现清理竞争。
-  # 因此每个包使用独立 PostgreSQL 服务，保持空数据库起点。
+  # ---------- Go：真实 PostgreSQL 集成测试 ----------
+  # 每个包独立 PostgreSQL 服务，保持空数据库起点；
   # 隔离可避免连接 teardown、重置时的跨包 schema 依赖。
-  # matrix 每次仅执行一个包，数据、连接与 schema 互不影响。
-  # 每个 job 自行完成迁移，不依赖其他包预先创建表。
-  # db.Open 自动迁移基础 schema，llm_usage 等额外表由测试创建。
-  # EnsureLLMUsageTable 保证计量表存在。
-  #
-  # 缓存策略：6 个 matrix job 并行执行，共享同一份模块缓存（GOMODCACHE 与平台无关）。
-  # 编译缓存关闭：并行 job 写同一份 GOCACHE 会互相覆盖，既无收益又白占配额；
-  # 需要编译产物缓存的路径由 go job 与 release 的交叉编译承担。
+  # 六个 matrix job 并行执行，共享同一份模块缓存；
+  # 编译缓存关闭——并行 job 写同一份 GOCACHE 会互相覆盖，纯浪费配额。
   go-db:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -102,19 +106,119 @@ jobs:
           go-version: "1.26"
           cache: false
       - name: 恢复 Go 模块缓存
-        uses: ./.github/actions/go-build-cache
+        uses: actions/cache@v6
         with:
-          cache-build: "false"
+          path: ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
       - name: go test（数据库集成 · ${{ matrix.pkg }} 独立包）
         env:
           ARTEX_PG_DSN: postgres://artex:artex@localhost:5432/artex?sslmode=disable
         run: go test ./${{ matrix.pkg }}/ -count=1
 
+  # ---------- 前端：类型检查、单元测试、静态导出、Biome ----------
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: 恢复 npm 与 Next.js 构建缓存
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.npm
+            web/.next/cache
+            web/node_modules/.cache
+          key: node-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            node-${{ runner.os }}-
+      - name: npm ci
+        run: npm ci
+      - name: 前端单元测试（含语言迁移和审批摘要）
+        run: npm test
+      - name: build:static（合并门禁，含类型检查）
+        run: npm run build:static
+      - name: 静态 UI 无韩文残留
+        run: python3 -I ../scripts/check-language.py --web
+      - name: 上传静态导出产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-out-ci
+          path: out/
+          retention-days: 14
+          if-no-files-found: error
+      - name: biome check（lint、format、a11y 错误为零）
+        if: always()
+        run: npm run check
+
+  # ---------- 检测规则：Sigma / Suricata / ATT&CK / 指标 ----------
+  # 验证检测规则可实际编译转换、指标与源码一致、防御指南内联模板有效。
+  # 不修改规则却未同步测试基线的改动会在此失败。
+  detections:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: 测试 harness 注册表同步（run-all.sh ↔ CI ↔ 目录）
+        run: detections/tests/check-harness-sync.sh
+      - name: 主机 triage 自测（artex_host_triage.py --self-test）
+        run: detections/tests/triage-selftest.sh
+      - name: 防御指南内联 Sigma 模板检查（check、转换矩阵、双语规则主体一致）
+        run: detections/tests/check-defense-template.sh
+      - name: Sigma 规则复现（check、后端转换、指标保留）
+        run: detections/tests/sigma/run.sh
+      - name: Sigma 真实事件匹配（恶意样本触发、正常样本静默）
+        run: detections/tests/sigma_match/run.sh
+      - name: SigmaHQ 约定验证器与已记录基线
+        run: detections/tests/sigma_lint/run.sh
+      - name: Sigma 后端可移植性
+        run: detections/tests/sigma_backends/run.sh
+      - name: Suricata 复现（pcap 合成与告警数量断言）
+        run: detections/tests/suricata/run.sh
+      - name: ATT&CK 层与规则一致性
+        run: detections/tests/attack/run.sh
+      - name: 指标与上游源码一致性
+        run: detections/tests/indicators/run.sh
+      - name: MISP 导出与 CSV 同步（pymisp 格式验证）
+        run: detections/tests/misp/run.sh
+
+  # ---------- 文档：内部链接、图片与锚点 ----------
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # -I 隔离用户 site-packages，避免本地环境干扰
+      - name: 文档内部链接、图片与锚点检查
+        run: python3 -I scripts/check-doc-links.py
+
+  # ---------- 语言：源码、注释、词库与文档无韩文残留 ----------
   language:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: 源码、注释、词库与文档无韩文残留
         run: python3 -I scripts/check-language.py --source
       - name: 语言检查器回归测试
         run: python3 -I -m unittest discover -s scripts/tests -v
+
+  # ---------- 外部链接：仅在定时与手动触发时运行 ----------
+  # 外部 URL 是否存活不取决于本次改动，不作为合并门禁；
+  # 远端临时失效导致误报时，由维护者人工核查。
+  external-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v7
+      - name: 外部链接状态（浏览器 UA、GET、重定向、允许列表，不阻止合并）
+        run: python3 -I scripts/check-external-links.py --strict
