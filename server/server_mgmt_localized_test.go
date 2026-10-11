@@ -8,11 +8,8 @@ import (
 	"testing"
 )
 
-// TestServerMgmtConstantsLocalized pins that every user-facing error/response
-// literal extracted from server_mgmt.go is Korean (Hangul present, no Chinese
-// Han). Reverting any one to Chinese makes assertKoreanError fail on the Han
-// ideograph. assertKoreanError / decodeErrorField are reused from the F3 suite
-// (same package server).
+// TestServerMgmtConstantsLocalized 验证管理接口消息使用中文。
+// assertChineseError 要求含 Han、不含 Hangul；与同包响应解码 helper 复用。
 func TestServerMgmtConstantsLocalized(t *testing.T) {
 	cases := map[string]string{
 		"errMgmtPGUnavailable":      errMgmtPGUnavailable,
@@ -56,11 +53,11 @@ func TestServerMgmtConstantsLocalized(t *testing.T) {
 		"errMgmtTmplSyntax":         errMgmtTmplSyntax,
 		"errMgmtTmplVarPre":         errMgmtTmplVarPre,
 		"errMgmtTmplVarPost":        errMgmtTmplVarPost,
-		// 형식 문자열은 실제 포매팅 결과로 검사한다(한국어 + verb 보존).
+		// 使用真实格式化结果检查中文包装，保留格式参数与顺序。
 		"errMgmtAPIReturned": fmt.Sprintf(errMgmtAPIReturned, 404, "detail"),
 	}
 	for label, msg := range cases {
-		assertKoreanError(t, label, msg)
+		assertChineseError(t, label, msg)
 	}
 }
 
@@ -69,40 +66,39 @@ func TestServerMgmtConstantsLocalized(t *testing.T) {
 // them).
 func TestServerMgmtAPIReturnedFormat(t *testing.T) {
 	msg := fmt.Sprintf(errMgmtAPIReturned, 404, "boom-body")
-	assertKoreanError(t, "errMgmtAPIReturned", msg)
+	assertChineseError(t, "errMgmtAPIReturned", msg)
 	if !strings.Contains(msg, "404") || !strings.Contains(msg, "boom-body") {
-		t.Fatalf("형식 문자열이 상태 코드와 본문을 보존해야 합니다: %q", msg)
+		t.Fatalf("格式字符串应保留状态码和正文：%q", msg)
 	}
 }
 
-// TestServerMgmtSkillExistsSentinel guards the cross-stack contract: the server's
-// duplicate-skill message must carry the "이미 존재" marker that
-// web/src/app/(main)/system/skills/page.tsx greps (msg.includes("이미 존재")) to
-// switch into the overwrite-confirm flow. Drift here silently disables overwrite.
+// TestServerMgmtSkillExistsSentinel 固定跨栈“已存在”标记，
+// 前端 system/skills/page.tsx 的 includes 判断据此进入覆盖确认，
+// 文案偏移会静默禁用覆盖流程。
 func TestServerMgmtSkillExistsSentinel(t *testing.T) {
 	msg := errMgmtSkillExistsPre + "my-skill" + errMgmtSkillExistsPost
-	assertKoreanError(t, "skillExists", msg)
-	if !strings.Contains(msg, "이미 존재") {
-		t.Fatalf("프론트 미러 마커 '이미 존재' 가 없습니다: %q", msg)
+	assertChineseError(t, "skillExists", msg)
+	if !strings.Contains(msg, "已存在") {
+		t.Fatalf("缺少前端同步标记“已存在”：%q", msg)
 	}
 	if !strings.Contains(msg, "my-skill") {
-		t.Fatalf("스킬 이름이 메시지에 포함돼야 합니다: %q", msg)
+		t.Fatalf("消息应包含 Skill 名称：%q", msg)
 	}
 }
 
 // TestServerMgmtPGGate503Localized exercises the real shared DB gate every
 // management handler passes through: with no PostgreSQL handle, pg() writes 503
-// and returns nil. The 503 body must be Korean.
+// and returns nil. The 503 body must be Simplified Chinese.
 func TestServerMgmtPGGate503Localized(t *testing.T) {
 	s := &Server{m: &Manager{}} // pg == nil
 	rec := httptest.NewRecorder()
 	if got := s.pg(rec); got != nil {
-		t.Fatal("pg() 는 DB 핸들이 없으면 nil 을 반환해야 합니다")
+		t.Fatal("未配置数据库句柄时 pg() 应返回 nil")
 	}
 	if rec.Code != 503 {
-		t.Fatalf("상태 코드 503 을 기대했으나 %d", rec.Code)
+		t.Fatalf("预期状态码 503，实际为 %d", rec.Code)
 	}
-	assertKoreanError(t, "pg.503", decodeErrorField(t, rec.Body.Bytes()))
+	assertChineseError(t, "pg.503", decodeErrorField(t, rec.Body.Bytes()))
 }
 
 // TestServerMgmtDeleteTaskBadIDLocalized drives pgDeleteTask through its first
@@ -114,12 +110,12 @@ func TestServerMgmtDeleteTaskBadIDLocalized(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.pgDeleteTask(rec, req)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("상태 코드 400 을 기대했으나 %d (본문 %s)", rec.Code, rec.Body.Bytes())
+		t.Fatalf("预期状态码 400，实际为 %d（正文 %s）", rec.Code, rec.Body.Bytes())
 	}
 	got := decodeErrorField(t, rec.Body.Bytes())
-	assertKoreanError(t, "deleteTask.badID", got)
+	assertChineseError(t, "deleteTask.badID", got)
 	if got != errMgmtTaskIDInvalid {
-		t.Fatalf("errMgmtTaskIDInvalid 와 일치해야 합니다: %q", got)
+		t.Fatalf("应与 errMgmtTaskIDInvalid 一致：%q", got)
 	}
 }
 
@@ -131,41 +127,41 @@ func TestServerMgmtListModelsNoKeyLocalized(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.pgListModels(rec, req)
 	if rec.Code != 200 {
-		t.Fatalf("상태 코드 200 을 기대했으나 %d", rec.Code)
+		t.Fatalf("预期状态码 200，实际为 %d", rec.Code)
 	}
 	got := decodeErrorField(t, rec.Body.Bytes())
-	assertKoreanError(t, "listModels.noKey", got)
+	assertChineseError(t, "listModels.noKey", got)
 	if got != errMgmtNoAPIKey {
-		t.Fatalf("errMgmtNoAPIKey 와 일치해야 합니다: %q", got)
+		t.Fatalf("应与 errMgmtNoAPIKey 一致：%q", got)
 	}
 }
 
 // TestServerMgmtValidateTemplateLocalized exercises the prompt-template editor
 // validator (pure function, no DB): both the parse-error and the
-// disallowed-variable branches must return Korean.
+// disallowed-variable branches must return Simplified Chinese.
 func TestServerMgmtValidateTemplateLocalized(t *testing.T) {
 	if msg := validateTemplate("{{", nil); msg == "" {
-		t.Fatal("깨진 템플릿은 오류 문구를 반환해야 합니다")
+		t.Fatal("损坏的模板应返回错误文案")
 	} else {
-		assertKoreanError(t, "validateTemplate.syntax", msg)
+		assertChineseError(t, "validateTemplate.syntax", msg)
 	}
 	msg := validateTemplate("{{.Bogus}}", nil)
 	if msg == "" {
-		t.Fatal("허용 목록에 없는 변수는 오류 문구를 반환해야 합니다")
+		t.Fatal("允许列表之外的变量应返回错误文案")
 	}
-	assertKoreanError(t, "validateTemplate.var", msg)
+	assertChineseError(t, "validateTemplate.var", msg)
 	if !strings.Contains(msg, "Bogus") {
-		t.Fatalf("변수 이름이 메시지에 포함돼야 합니다: %q", msg)
+		t.Fatalf("消息应包含变量名称：%q", msg)
 	}
 }
 
 // TestServerMgmtGlobalPromptVarsLocalized pins the template-variable catalog help
-// text (rendered in the prompt editor's variable palette) as Korean.
+// text (rendered in the prompt editor's variable palette) as Simplified Chinese.
 func TestServerMgmtGlobalPromptVarsLocalized(t *testing.T) {
 	if len(globalPromptVars) == 0 {
-		t.Fatal("globalPromptVars 가 비어 있습니다")
+		t.Fatal("globalPromptVars 为空")
 	}
 	for _, v := range globalPromptVars {
-		assertKoreanError(t, "globalPromptVar."+v.Name, v.Description)
+		assertChineseError(t, "globalPromptVar."+v.Name, v.Description)
 	}
 }

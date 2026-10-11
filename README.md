@@ -1,139 +1,117 @@
 <div align="center">
 
-# ARTEX 한국어판
+# ARTEX 简体中文版
 
-**LLM 멀티 에이전트가 자율적으로 침투 테스트를 수행하는 시스템** (Go 백엔드 + Next.js 프런트엔드)
+**由 LLM 多 Agent 自主执行渗透测试的系统**（Go 后端 + Next.js 前端）
 
-화면과 산출물은 한국어가 기본이며, **설정(시스템 → 설정 → 표시 언어)에서 영어·중국어·스페인어로도 바꿀 수 있습니다.** 언어를 바꾸면 에이전트가 생성하는 리포트·요약·대화 응답의 언어도 함께 바뀝니다.
+界面和默认产物统一使用**简体中文**，保留英语、西班牙语切换。界面语言属于浏览器本地偏好；报告、摘要、对话及后端消息的输出语言由服务端设置管理。旧 `ko` 配置兼容归一为 `zh`。
 
-한국어 · [中文](README.zh.md) · [English](README.en.md)
+简体中文 · [中文技术原稿](README.zh.md) · [English](README.en.md)
 
-[![ci](https://github.com/jiwoochris/artex-ko/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jiwoochris/artex-ko/actions/workflows/ci.yml) [![detections](https://github.com/jiwoochris/artex-ko/actions/workflows/detections.yml/badge.svg?branch=main)](https://github.com/jiwoochris/artex-ko/actions/workflows/detections.yml) [![web](https://github.com/jiwoochris/artex-ko/actions/workflows/web.yml/badge.svg?branch=main)](https://github.com/jiwoochris/artex-ko/actions/workflows/web.yml) [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![ci](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/ci.yml) [![detections](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/detections.yml/badge.svg?branch=main)](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/detections.yml) [![web](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/web.yml/badge.svg?branch=main)](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/web.yml) [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 </div>
 
 ---
 
-> ## 🚨 보안·오남용 경고: 반드시 먼저 읽어 주세요
+> ## 🚨 安全与滥用警告：请先阅读
 >
-> **이 저장소는 권한을 받은 환경에서, 방어와 탐지 역량을 기르기 위한 목적으로만 쓰도록 공개합니다.**
+> **仅允许在自有或明确授权的环境中，以学习、防御和检测为目的使用。**
 >
-> ARTEX 는 사람이 거의 개입하지 않아도 정찰부터 침투, 자료 반출까지 공격 과정을 스스로 수행할 만큼 강력한 자율 공격 도구입니다. 그만큼 오남용이 일으키는 피해도 큽니다. 2026년 10월 국내 여러 언론은 원본 ARTEX 가 국내 금융기관을 상대로 한 개인정보 유출 공격에 사용된 정황이 조사 당국에 포착됐다고 보도했으며, 관련 수사가 진행 중입니다. 이 한국어판을 공개하는 목적은 공격을 돕는 데 있지 않습니다. 방어하는 쪽이 이런 자율 AI 공격의 작동 원리를 이해하고, 탐지하고 차단하는 역량을 갖추도록 돕는 데 목적이 있습니다.
+> ARTEX 可自主组织侦察、工具执行和多阶段测试，滥用可能造成严重损害。原分支的安全告知记录了 2026 年 10 月韩国媒体关于 ARTEX 可能被用于金融机构个人信息泄露事件的报道，相关调查当时仍在进行；本次语言重构不构成对该事件的独立核实。保留该警告的目的，是让防御方理解自主 AI 行为并增强检测与阻断能力，而不是帮助攻击。
 >
-> - **허가 없는 사용은 그 자체로 범죄가 됩니다.** 자신이 소유하거나 서면으로 명시적 허가를 받은 대상이 아니라면, 어떤 시스템에도 스캐닝·탐지·익스플로잇을 실행하지 마십시오. 대한민국에서 권한 없이 정보통신망에 침입하는 행위는 정보통신망법 위반이고, 개인정보가 결부되면 개인정보보호법도 함께 적용됩니다.
-> - **실제 서비스나 타인의 자산을 대상으로 삼지 마십시오.** 학습과 연구, 그리고 본인이 소유한 로컬 격리 환경(OWASP Juice Shop·DVWA 처럼 의도적으로 취약하게 만든 환경)에서만 검증하십시오.
-> - **방어하는 관점으로 읽으십시오.** 이 저장소는 자율 AI 공격의 탐지 시그니처와 하드닝 체크리스트 같은 방어·탐지 자료를 함께 정리해 나갑니다. → **[자율 AI 공격 방어·탐지 가이드](docs/defense-ko.md)**
+> - **未经授权的使用可能构成犯罪。** 没有所有权或明确书面授权，不得对任何系统扫描、探测或利用漏洞。在韩国，未经授权侵入信息通信网络涉及信息通信网络法；个人信息处理还涉及个人信息保护法。
+> - **不要将他人的真实服务作为实验目标。** 请使用自有、本地隔离的 OWASP Juice Shop、DVWA 等有意设计的测试环境；真实目标必须事先约定范围和时间窗口。
+> - **从防御视角阅读。** 本仓库提供[自主 AI 防御与检测指南](docs/defense-ko.md)、指标、规则与加固清单。
 >
-> 이 경고와 아래 [사용 제한·면책](#라이선스와-면책)에 동의하지 않는다면, 이 저장소를 내려받거나 사용하지 마십시오.
+> 若不同意下方[使用限制与免责声明](#许可证与免责声明)，请勿下载或使用。
 
----
+ARTEX 基于 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)（AGPL-3.0）。原分支在 2026-10 记录上游无法公开访问，链接保留用于来源归属，不保证远端当前可用。
 
-> **이 저장소는 중국산 오픈소스 프로젝트 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)(AGPL-3.0 · 원본 저장소 현재 접속 불가, 2026-10 확인)를 한국 사용자와 팀이 그대로 쓸 수 있도록 현지화한 판본입니다.** 에이전트의 판단 성능을 보존하기 위해 내부 추론 프롬프트는 원문을 유지하고, 사용자에게 보이는 산출물(탐지 결과·요약·리포트·대화 응답)만 한국어로 강제합니다. 아래 "왜 한국어판인가"에서 방침을 설명합니다.
+系统将目标分解为意图，执行真实工具，将资产与发现写入图结构。Next.js 静态前端可内嵌到 Go 单二进制，数据存储于 PostgreSQL。
 
-ARTEX 는 LLM 이 조종하는 여러 에이전트가 **스스로 목표를 쪼개고, 실제 도구를 실행하고, 발견한 자산과 취약점을 그래프에 쌓아 가며** 침투 테스트 과정을 자율적으로 끌고 가는 시스템입니다. Go 단일 바이너리 하나에 Next.js 프런트엔드가 내장되어 있고, 데이터는 PostgreSQL 에 저장됩니다.
+## 使用范围与法律告知
 
----
+**仅对自有或获得明确书面授权的目标使用。** 超出授权范围的扫描、探测、利用可能违法。
 
-<!--
-  이 제목의 엠대시(—)는 의도적으로 보존합니다. 저장소 스타일은 한국어 산문에서 엠대시를
-  콜론으로 바꾸지만, 이 제목만은 예외입니다. GitHub 앵커 슬러그
-  (#️-먼저-읽어-주세요--사용-범위와-국내법-고지, 엠대시 양옆 공백이 이중 하이픈 "--" 이 됩니다)를
-  다음 다섯 곳이 참조하기 때문입니다: CODE_OF_CONDUCT.md · CONTRIBUTING.md · SECURITY.md ·
-  .github/PULL_REQUEST_TEMPLATE.md · .github/ISSUE_TEMPLATE/config.yml.
-  엠대시를 콜론으로 바꾸면 슬러그의 이중 하이픈이 단일 하이픈이 되어 다섯 링크가 모두 끊어집니다.
-  제목을 바꾸려면 다섯 참조의 앵커를 함께 고치고 `python3 -I scripts/check-doc-links.py` 가
-  EXIT 0 을 유지하는지 확인하십시오.
--->
-## ⚠️ 먼저 읽어 주세요 — 사용 범위와 국내법 고지
+- 韩国《信息通信网络利用促进及信息保护等法》禁止未经授权侵入或妨碍他人信息通信网络。
+- 测试中收集、暴露的个人信息受韩国《个人信息保护法》及其他适用地区法律约束。即使已获测试许可，也应谨慎处理访问、保存、删除。
+- 使用目的应为学习、研究与隔离实验。对真实系统操作前，取得书面许可，并约定目标、方法及时间窗口。
 
-ARTEX 는 **자신이 소유하거나 서면으로 명시적 허가를 받은 대상에 대해서만** 사용할 수 있습니다. 허가 범위를 벗어난 스캐닝·탐지·익스플로잇은 그 자체로 불법이 될 수 있습니다.
+详见[许可证与免责声明](#许可证与免责声明)。使用本工具即表示已阅读并接受相关条件。
 
-- 대한민국에서 권한 없이 타인의 정보통신망에 침입하거나 장애를 일으키는 행위는 **「정보통신망 이용촉진 및 정보보호 등에 관한 법률」** 위반입니다.
-- 침투 테스트 과정에서 수집·노출되는 개인정보는 **「개인정보 보호법」** 의 적용을 받습니다. 권한이 있더라도 개인정보 열람·보관·파기를 신중히 다뤄야 합니다.
-- **학습·연구·로컬 격리 환경 검증** 목적으로 쓰십시오. 운영 중인 외부 시스템을 대상으로 삼기 전에는 반드시 서면 허가와 범위·시간창 합의를 확보해야 합니다.
+## 简体中文重构说明
 
-자세한 라이선스·사용 제한·면책은 아래 [라이선스와 면책](#라이선스와-면책) 절에 있습니다. 이 도구를 사용하는 것만으로 사용자는 그 조건에 동의한 것으로 봅니다.
+本分支将项目自有的韩文文案、注释、提示和说明统一为简体中文，而非只替换少量页面或设置默认 locale。
 
----
+- **中文默认产物：** 发现报告、事实摘要、最终报告、对话及系统消息默认使用简体中文。
+- **技术语义保留：** 保留内部推理提示词的角色、判断与工具行为；原有中文行为正文不作无关改写。
+- **协议不变：** API/JSON 字段、工具名、枚举、SQL、命令、payload、URL、原始日志及用户证据不因翻译改变。
+- **多语言兼容：** 正式提供 `zh`、`en`、`es`，遗留 `ko` 作为中文兼容别名；中文词库是源词库。
+- **防回归：** 源码文本、词库、脚本、文档及静态 UI 通过韩文残留检查；中英文切换、格式占位符及审批解析有回归测试。
 
-## 왜 한국어판인가
+详细边界见[贡献指南](CONTRIBUTING.md#本地化原则)，上游同步见[维护手册](MAINTAINING.md)。
 
-원본 ARTEX 는 프롬프트·UI·문서가 모두 중국어로 되어 있어, 국내 사용자가 결과를 읽고 팀과 공유하기가 번거로웠습니다. 이 한국어판은 다음을 목표로 합니다.
+## 截图预览
 
-- **산출물의 한국어화**: 에이전트가 사람에게 내보내는 탐지 결과·사실 요약·최종 리포트·대화 응답을 한국어로 출력하도록 강제합니다. 명령·페이로드·코드·URL·로그 원문은 분석에 필요하므로 원본 그대로 둡니다.
-- **성능 보존**: 에이전트의 판단을 좌우하는 내부 추론 프롬프트(행동 지침 본문)는 번역하지 않습니다. 원문으로 벤치마크된 동작을 유지하고, 출력 언어만 바꿔 번역에서 오는 품질 저하를 피합니다.
-- **국내법 고지**: 정보통신망법·개인정보보호법 고지와 "권한 범위 안에서만 사용" 경고를 한국어로 분명히 제공합니다.
-- **국내 스택 대응**: LLM 공급자를 프런티어 모델뿐 아니라 OpenAI 호환 엔드포인트(국산·오픈 모델)로 교체할 수 있습니다. 아래 [설정](#설정)을 참고하십시오.
-
-> 현지화의 경계와 설계 방침은 저장소의 작업 문서에 더 자세히 적혀 있습니다. 상류(upstream) 저장소의 변경을 대조하기 쉽도록 원본 중국어 문서는 `README.zh.md` 로 보존합니다.
-
----
-
-## 화면 미리 보기
-
-아래 세 화면은 한국어화를 마친 실제 UI 입니다. 로컬 격리 샌드박스에서 뽑은 데모 데이터이고, 대상은 전부 가상의 `acme.com` 과 사설 대역입니다.
+以下为仓库已有的**中文历史演示截图**，使用虚构的 `acme.com` 等示例数据，不代表本次真实目标扫描或生产验证。当前界面可能比截图增加了计量、审批等功能。
 
 <p align="center">
-  <img src="screenshots/ko/dashboard.png" width="900" alt="대시보드: 전체 개요 화면"><br>
-  <sub><b>대시보드</b>: 활성 작업·확인된 취약점·자산 노드·LLM 토큰 소비와 활동 흐름을 한 화면에서 봅니다.</sub><br>
-  <sub>이 대시보드 화면은 라벨을 현지화하기 전에 뽑은 데모 캡처라, 'LLM Token 소비' 카드의 데이터 원본 이름이 아직 코드 식별자 <code>llm_usage</code> 로 보입니다. 현재 빌드는 같은 자리를 신버전 「계량 원장」·구버전 「활동 통계」 로 표시합니다.</sub>
+  <img src="screenshots/dashboard.png" width="900" alt="中文仪表盘：任务、发现、资产与 Token 消耗"><br>
+  <sub><b>仪表盘</b>：任务、发现、资产、Token 消耗和活动流。</sub>
 </p>
 
 <p align="center">
-  <img src="screenshots/ko/findings.png" width="900" alt="취약점 목록 화면"><br>
-  <sub><b>취약점</b>: 심각도·상태·자산·소속 작업으로 탐지 결과를 집계하고 CSV 로 내보냅니다.</sub><br>
-  <sub>취약점 <b>제목</b>은 모델이 생성한 값이라, 대상 앱과 기술 용어를 따라 영어가 섞일 수 있습니다([모델 선택과 출력 언어](#모델-선택과-출력-언어) 참조). 제목 아래 설명과 화면 전체는 한국어로 나옵니다.</sub>
+  <img src="screenshots/findings.png" width="900" alt="中文发现列表"><br>
+  <sub><b>发现</b>：按严重程度、状态、资产与任务汇总，支持 CSV 导出。模型生成的技术标题可能包含英文。</sub>
 </p>
 
 <p align="center">
-  <img src="screenshots/ko/chat.png" width="900" alt="사람 개입 대화 화면"><br>
-  <sub><b>대화</b>: 자율 실행 중에 사람이 끼어들어 힌트를 주고, 에이전트가 공격 체인을 한국어로 요약합니다.</sub>
+  <img src="screenshots/chat.png" width="900" alt="中文人工介入对话"><br>
+  <sub><b>对话</b>：向运行中的 Agent 提供提示，查看执行过程摘要。</sub>
 </p>
 
-원본(중국어 UI) 전체 화면은 [`README.zh.md`](README.zh.md#截图预览) 에서 볼 수 있습니다.
+更多截图见 [README.zh.md](README.zh.md#截图预览)，来源说明见 [screenshots/README.md](screenshots/README.md)。
 
----
+## 快速开始（Docker Compose）
 
-## 빠른 시작 (Docker Compose)
+前置依赖为 Docker 与 Docker Compose；数据库使用 PostgreSQL，Agent 需要 LLM 配置，可通过 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 或 UI 设置。
 
-> **사전 요구:** Docker 와 Docker Compose. 데이터베이스는 **PostgreSQL** 이며 compose 가 함께 띄웁니다. 탐색에는 **LLM** 이 필요합니다(`ANTHROPIC_API_KEY` 또는 `OPENAI_API_KEY`, UI 에서도 설정 가능).
-
-> **⚠️ 지금은 아래 `docker compose up -d` 빠른 시작이 바로 작동하지 않습니다.** `docker-compose.yml` 의 `artex` 서비스가 받도록 지정된 상류(원본) 이미지 `autumn27/artex` 는 현재 Docker Hub 에서 내려가 받을 수 없습니다(2026-10-09 확인). 그래서 이 명령은 이미지 pull 단계에서 `pull access denied`/`manifest unknown` 으로 실패합니다. 한국어판 화면과 출력은 아래 ["그 밖의 설치 방법"](#그-밖의-설치-방법)에 있는 **소스에서 단일 바이너리 컴파일** 경로로 빌드하면 바로 쓸 수 있습니다(현재 정상 작동을 확인했습니다). 한국어판 Docker 이미지의 배포는 준비 중입니다.
+> **镜像可用性提示：** Compose 仍指向上游 `autumn27/artex`，原分支曾记录 `pull access denied` / `manifest unknown`。镜像是否可访问不由本分支保证，上游二进制也不保证包含本分支的中文与安全改动。需要本分支功能时，优先使用下方源码构建流程；本次没有发布新的 Docker 镜像。
 
 ```bash
-git clone https://github.com/jiwoochris/artex-ko.git
-cd artex-ko
-cp .env.example .env          # POSTGRES_PASSWORD 설정, ANTHROPIC_API_KEY 는 선택
-docker compose up -d          # artex 이미지 + postgres 를 함께 기동
-# → http://localhost:8787 접속 (처음 들어가면 /setup 에서 관리자 비밀번호 설정)
-#   /setup 은 기동 로그에 찍힌 "설정 토큰"을 요구합니다: docker compose logs artex | grep '설정 토큰'
+git clone https://github.com/j5tv9nfzhn-hue/ARTEX.git
+cd ARTEX
+cp .env.example .env          # 必须修改 POSTGRES_PASSWORD，LLM Key 可稍后填写
+docker compose up -d          # 仅在对应镜像可访问时可用
+# 首次访问 http://localhost:8787/setup 初始化管理员密码
+# 查看设置令牌：docker compose logs artex | grep '设置令牌'
 ```
 
-상류 이미지에는 자주 쓰는 도구(ripgrep·curl·vim·npm·nmap 등)가 들어 있고, compose 로 기동하면 `./skills` 와 `./data` 는 바인드 마운트로 호스트에 남아 컨테이너를 다시 만들어도 보존됩니다. 다만 위 경고대로 지금은 이 이미지를 받을 수 없어 이 Docker 경로를 바로 쓸 수 없으니, 한국어판은 아래 소스 컴파일 경로로 빌드하십시오.
+`./skills`、`./data` 为宿主绑定挂载，重建容器不应删除其内容。仅操作自有或授权部署。
 
-### 그 밖의 설치 방법
+### 其他安装方式
 
-원본 저장소는 설치 스크립트(`./install.sh`), 사전 컴파일 바이너리(Releases), 소스 단일 바이너리 컴파일 등 여러 방법을 제공합니다. 명령과 절차는 [`README.zh.md`](README.zh.md#安装)의 "安装"(설치) 절에 정리되어 있으며, 아래 핵심만 옮깁니다.
+`./install.sh` 支持“全部 Docker”或“本地编译运行”。前者同样依赖上游镜像；需要本分支中文输出时请选择本地编译，或按以下流程构建单二进制：
 
-- **설치 스크립트:** `./install.sh` 를 실행하면 Docker 감지·설치 후 "① 전부 Docker" 또는 "② 로컬 컴파일 실행"을 고르게 합니다. 다만 기본값인 "① 전부 Docker" 는 위 빠른 시작과 같은 상류 이미지(`autumn27/artex`)를 받으려 하는데, 그 이미지가 현재 Docker Hub 에서 내려가 받을 수 없으므로(위 경고 참조) 이 경로는 지금 이미지 pull 에서 실패합니다. 스크립트도 그 상황을 감지하면 같은 안내를 내고 중단합니다. 한국어판 화면·출력은 "② 로컬 컴파일 실행"을 고르거나 아래 **소스에서 단일 바이너리 컴파일** 경로로 빌드하십시오.
-- **소스에서 단일 바이너리 컴파일:**
+```bash
+cd web && npm ci && npm run build:static && cd ..
+# 同步静态产物到内嵌目录，防止重复构建时产生 out/out
+rm -rf server/webui/dist && mkdir -p server/webui/dist
+cp -a web/out/. server/webui/dist/
+CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
+cp config.example.json config.json  # 填写 database 连接
+./start.sh                         # Windows 使用 start.bat
+```
 
-  ```bash
-  cd web && npm ci && npm run build:static && cd ..   # 1) 프런트엔드 정적 빌드
-  rm -rf server/webui/dist && mkdir -p server/webui/dist && cp -a web/out/. server/webui/dist/   # 2) 내장 디렉터리로 동기화(재빌드 시 중첩 방지)
-  CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex   # 3) 프런트 내장 컴파일
-  ./start.sh                                          # → http://localhost:8787
-  ```
+- Go 版本以 `go.mod` 为准，当前要求 Go 1.26；前端开发与测试建议 Node 22 LTS 或更新版本，类型擦除测试至少需要 Node 22.6。
+- `npm ci` 需要 devDependencies，例如 `@tailwindcss/postcss`。若环境为 `NODE_ENV=production`，使用 `npm ci --include=dev`，避免构建时缺包。
+- 正式启动使用 `start.sh` / `start.bat`，不要直接以 `./artex` 替代监护脚本，否则一键更新或回滚退出后不会自动重启。
+- 更多平台打包方式见 [README.zh.md 的安装说明](README.zh.md#安装)及 `./build.sh --help`。上游 Releases 同样不保证包含本分支改动。
 
-> 1) 단계의 `npm ci` 는 빌드에 필요한 devDependencies(예: `@tailwindcss/postcss`)를 함께 설치합니다. 셸에 `NODE_ENV=production` 이 설정돼 있으면 `npm ci` 가 devDependencies 를 건너뛰어 빌드가 `Error: Cannot find module '@tailwindcss/postcss'` 로 실패하므로, 이때는 `npm ci --include=dev` 로 받으십시오.
+## 配置
 
-> 실행은 `./artex` 를 직접 돌리지 말고 `start.sh`(Windows 는 `start.bat`)로 하십시오. 이 스크립트는 종료 코드에 따라 프로그램을 다시 띄우는 감시자이고, UI 의 "원클릭 업데이트"도 이 스크립트가 처리합니다.
-
----
-
-## 설정
-
-**데이터베이스**(`config.json`, 또는 환경 변수 `ARTEX_PG_DSN` 로 덮어쓰기):
+数据库可在 `config.json` 中填写，`ARTEX_PG_DSN` 优先：
 
 ```json
 {
@@ -141,76 +119,74 @@ docker compose up -d          # artex 이미지 + postgres 를 함께 기동
     "host": "127.0.0.1", "port": 5432,
     "user": "artex", "password": "yourpass",
     "dbname": "artex", "sslmode": "disable"
-  }
+  },
+  "language": "zh"
 }
 ```
 
-**LLM:** `export ANTHROPIC_API_KEY=sk-...`(또는 `OPENAI_API_KEY`), 혹은 UI 의 "LLM 설정" 페이지에서 입력합니다. 선택 환경 변수로 `ARTEX_LLM_PROVIDER` / `ARTEX_LLM_MODEL` / `ARTEX_LLM_BASE_URL` / `ARTEX_LLM_PROXY` 를 둘 수 있습니다. 국산·오픈 모델을 쓰려면 OpenAI 호환 `ARTEX_LLM_BASE_URL` 을 지정하십시오.
+LLM 可在环境变量或“LLM 设置”页面配置，相关环境变量包括 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`ARTEX_LLM_PROVIDER`、`ARTEX_LLM_MODEL`、`ARTEX_LLM_BASE_URL`、`ARTEX_LLM_PROXY`。OpenAI 兼容供应商可使用自己的 Base URL。
 
-**동시성:** 작업마다 돌리는 worker 에이전트 수는 "시스템 설정"에서 조정합니다(기본값 3).
+每个任务的 Worker 并发数在系统设置中配置，默认 3。`-addr` 控制 Web/API 地址，`-proxy` 控制流量记录代理，例如 `./start.sh -addr :8787 -proxy :8788`；默认 Web/API 仅绑定 `127.0.0.1:8787`。
 
-**자주 쓰는 인자:** `./start.sh -addr :8787 -proxy :8788` 에서 `-addr` 는 프런트엔드와 API 를 열고, `-proxy` 는 트래픽 기록 프록시 포트입니다. `-addr` 의 기본값은 `127.0.0.1:8787`(로컬 접속만)이며, 다른 기기에서 접속하려면 `:8787` 처럼 바인딩 주소를 명시해야 합니다(아래 "초기 설정 보호" 참고).
+默认输出语言优先级为 **`ARTEX_LANG` > `config.json.language` > `zh`**；数据库中的运行时输出语言设置在服务启动后优先。控制台日志使用环境/文件默认语言，浏览器界面语言通过本地 cookie/localStorage 保存，两者不是同一个配置。
 
-### 모델 선택과 출력 언어
+### 模型选择与输出语言
 
-산출물의 한국어화는 하드 코딩된 상한이 아니라 **프롬프트 지시(`agent/prompt.go` 의 `langDirective()`)로 유도**합니다. 그래서 출력이 한국어로 유지되는 정도는 모델의 역량과 역할, 맥락에 따라 달라집니다.
+输出语言依赖 `agent/prompt.go` 的 `langDirective()` 提示约束，而不是对模型回复作字符级硬过滤。当前默认简体中文，命令、代码、工具名与原始证据不应被翻译。
 
-- **역량 있는 프런티어 모델을 권장합니다.** 로컬 격리 샌드박스에서 프로덕션 지시문만 적용한 짧은 검증 실행 결과, 기본 모델 `claude-opus-4-8` 은 planner·worker·reporter 산출물과 권한 보유 샌드박스 계획 요청까지 네 역할 모두에서 사용자 노출 출력을 한국어로 유지했고 거부가 없었습니다. `gpt-4o` 도 같은 시나리오에서 한국어를 유지했습니다. 반면 저가·소형 모델(예: `gpt-4o-mini`)은 리포트가 원문(중국어)으로 되돌아갔습니다. 출력 언어 품질이 모델 역량에 직접 좌우되므로, 사람이 리포트를 읽는 환경이라면 역량 있는 모델을 쓰십시오.
-- **역할·맥락에 따른 드리프트가 남을 수 있습니다.** 언어 자체보다 역할·출력 형식에서 어긋남이 더 자주 나타납니다. 특히 worker 의 최종 한 문장 요약처럼 짧은 산출물에서는 모델이 영어 사고 과정을 그대로 노출하거나, `report_finding` 의 구조화 필드가 대상 앱·기술 용어를 따라 영어로 기울 수 있습니다. 과거 실행에서는 `gpt-4o` 의 planner 상황 요약이 일부 턴에서 중국어로 돌아간 적도 있습니다. 작업 지시에 "한국어로 작성하라"를 명시하면 충실도가 올라갑니다.
-- **추론형(reasoning) 모델에는 `max_tokens` 를 넉넉히 주십시오.** 사고 채널을 따로 쓰는 추론형 모델은 응답 토큰 상한이 작으면 그 예산을 내부 추론에 소진하고 사용자에게 보이는 최종 답변을 비워 둘 수 있습니다. 이때는 언어가 아니라 답변 자체가 사라지므로, 해당 LLM 프로파일의 `max_tokens` 를 충분히 크게 잡으십시오.
+- 选择能力合适的模型，结构化字段、短摘要仍可能受角色和上下文影响而混入英文。可在任务中明确要求用简体中文生成自然语言内容。
+- 原分支曾在隔离沙箱比较 `claude-opus-4-8`、`gpt-4o` 与 `gpt-4o-mini` 的韩语输出，记录了不同角色的语言漂移。该历史比较不是本次中文输出的模型端到端验证，不能当作当前质量保证。
+- 推理型模型可能把较小的响应预算用于内部推理，导致最终回复为空。应按模型实际要求设置足够的 `max_tokens`。
+- 原分支记录 `gpt-4o` 的响应上限为 16,384，而兼容请求可能默认填写 32,768，从而发生 `400 (max_tokens is too large)`。遇到该错误时核对供应商和模型限制，并在 LLM profile 中设置合适上限；不要假设所有兼容模型具有相同限制。
 
-> **OpenAI 호환 경로의 토큰 상한 함정.** `gpt-4o` 처럼 OpenAI 계열 모델은 응답 토큰 상한이 16,384 입니다. 그런데 OpenAI 호환 요청에는 기본적으로 더 큰 출력 상한(32,768)이 실려, 그대로 두면 모든 호출이 `400 (max_tokens is too large)` 으로 실패합니다. 이때는 **LLM 설정에서 해당 프로파일의 `max_tokens` 를 16,384 이하로 지정**하십시오. Anthropic 계열(기본 모델 `claude-opus-4-8` 등)은 32,768 을 허용하므로 이 함정에 걸리지 않습니다.
+### 首次运行保护（设置令牌与绑定地址）
 
-### 초기 설정 보호 (첫 실행 토큰과 바인딩 주소)
+管理员用户名固定为 `ARTEX`，首次通过 `/setup` 创建密码。
 
-관리자 계정은 하나(`ARTEX`)이고 비밀번호는 첫 접속 때 `/setup` 에서 만듭니다. 비밀번호가 아직 없는 인스턴스에 먼저 닿은 사람이 계정을 차지하지 못하도록 다음 보호가 걸려 있습니다.
+- 无密码时，启动日志打印设置令牌。`/setup` 和 `POST /api/auth/init` 的 `setup_token` 必须匹配，错误尝试限流。令牌不通过公开状态接口返回。
+- 无人值守部署可设置 `ARTEX_SETUP_TOKEN` 固定令牌，或用至少八字符的 `ARTEX_ADMIN_PASSWORD` 直接初始化。
+- 默认仅监听回环地址。开放到其他设备前先完成初始化，并优先部署 HTTPS；非回环且未初始化时会有启动警告。
+- 修改密码会使旧 JWT 会话在数秒内失效。若恢复泄露的管理员账户，还需检查自定义工具、MCP、LLM 与通知配置。
+- CORS 允许列表为 `ARTEX_CORS_ORIGINS`，以逗号分隔；内嵌 UI 同源通常无需填写，开发默认允许 `http://localhost:5173`。
 
-- **설정 토큰.** 비밀번호가 없는 상태로 기동하면 서버 콘솔 로그에 `[auth] … 설정 토큰: …` 한 줄이 찍힙니다(Docker 는 `docker compose logs artex`). `/setup` 화면과 `POST /api/auth/init`(`setup_token` 필드)은 이 값이 맞아야 비밀번호를 만들고, 틀린 시도는 횟수 제한에 걸립니다. 무인 배포라면 `ARTEX_SETUP_TOKEN` 으로 토큰을 고정하거나 `ARTEX_ADMIN_PASSWORD` 로 비밀번호를 바로 넣을 수 있습니다(8자 이상).
-- **기본 바인딩은 127.0.0.1 입니다.** `artex` 의 `-addr` 기본값과 `docker-compose.yml` 의 포트 게시 모두 호스트의 루프백에만 엽니다. 다른 기기에서 직접 접속하려면 `-addr :8787` 또는 `.env` 의 `ARTEX_BIND=0.0.0.0` 으로 바꾸되, 초기 설정을 먼저 마치고 가능하면 아래 리버스 프록시 구성을 쓰십시오. 비밀번호가 없는 채로 루프백이 아닌 주소에 바인딩하면 기동 로그에 경고가 찍힙니다.
-- **비밀번호를 바꾸면 기존 세션이 모두 끊깁니다.** 토큰 서명 키가 비밀번호 해시에 묶여 있어서, 화면의 비밀번호 변경·`reset-password.sh`·DB 직접 수정 어느 쪽이든 이전에 발급된 토큰은 몇 초 안에 무효가 됩니다. 계정이 유출된 뒤 복구할 때는 비밀번호를 바꾼 다음 커스텀 도구·MCP·LLM·알림 설정도 함께 점검하십시오.
-- **CORS.** `/api` 는 `ARTEX_CORS_ORIGINS`(쉼표 구분)에 적힌 출처에만 교차 출처 호출을 허용합니다. 내장 UI 는 동일 출처라 보통 비워 두고, 기본값은 `dev.sh` 의 `next dev`(`http://localhost:5173`)만 허용합니다.
+### 反向代理部署（HTTPS / 只开放 443）
 
-### 리버스 프록시 배포 (HTTPS / 443 만 개방)
+Web、API、SSE 共用后端端口。生产环境可只公开 443，将 8787 留在内部；同源 SSE 通常无需设置 `NEXT_PUBLIC_SSE_BASE`。
 
-프런트엔드와 API/SSE 모두 같은 백엔드 포트(기본 `:8787`)가 제공하고, 실시간 활동 스트림은 기본적으로 **동일 출처(same-origin)** 로 연결합니다. 따라서 `NEXT_PUBLIC_SSE_BASE` 를 따로 설정할 필요 없이, 공개망에는 443 만 열고 8787 은 내부망에 두면 됩니다.
+**必须关闭 SSE 代理缓冲**，否则浏览器连接成功但活动流持续等待。Nginx 示例见 [README.zh.md](README.zh.md#反向代理部署https--只开放-443)。
 
-SSE 는 장시간 연결로 이벤트를 계속 밀어 주므로, 리버스 프록시에서 **버퍼링을 반드시 꺼야** 합니다. 끄지 않으면 브라우저가 연결은 되지만 이벤트를 못 받습니다(활동 스트림이 계속 로딩 상태로 보임). Nginx 설정 예시는 [`README.zh.md`](README.zh.md#反向代理部署https--只开放-443)에 있습니다.
+## 系统架构
 
----
+Go 单后端、Next.js 静态前端、PostgreSQL 与 [norma SDK](https://github.com/Autumn-27/norma) 构成核心系统。原分支曾记录 SDK 上游无法公开访问，构建前应确认依赖可获取。关键设计是**双图结构、过程级信息共享、Planner 跨轮次 todolist**。
 
-## 시스템 아키텍처
-
-ARTEX 는 **LLM 멀티 에이전트가 구동하는 자율 침투 시스템**입니다. Go 단일 백엔드(Next.js 프런트엔드 내장)에 PostgreSQL 을 쓰고, 에이전트 기능은 [`norma`](https://github.com/Autumn-27/norma)(현재 접속 불가, 2026-10 확인) SDK 가 제공합니다. 핵심은 **이중 그래프 구조**와, 그것을 둘러싼 두 가지 자율성 장치(worker 사이의 과정 단위 정보 교환, planner 의 다중 라운드 공유 todolist)입니다.
-
-### 전체 계층
+### 总体分层
 
 ```mermaid
 flowchart TB
-  subgraph FE["프런트엔드 Next.js (go:embed 단일 바이너리 내장)"]
-    UI["대시보드 · 작업 · 자산 · 커버리지 그래프 · 트래픽 · 워크스페이스 · 시스템 설정"]
+  subgraph FE["前端 Next.js（go:embed 内嵌单二进制）"]
+    UI["仪表盘 · 任务 · 资产 · 覆盖率图 · 流量 · 工作区 · 系统设置"]
   end
-  subgraph SRV["server (Go net/http)"]
-    API["REST /api/*　JWT 인증　SSE"]
-    ENG["engine 스케줄링 루프"]
-    MGR["Manager　작업/엔진/store 생명주기"]
+  subgraph SRV["server（Go net/http）"]
+    API["REST /api/* · JWT 认证 · SSE"]
+    ENG["engine 调度循环"]
+    MGR["Manager · 任务/引擎/store 生命周期"]
   end
-  subgraph AG["agent (norma SDK)"]
-    GO["goals　목표 분해 + 범위 추출"]
-    PL["planner　계획자 (유일한 의도 생성자)"]
-    WK["worker　실행자 ×N"]
-    MA["mainagent　사람 개입"]
+  subgraph AG["agent（norma SDK）"]
+    GO["goals · 目标分解与范围提取"]
+    PL["planner · 唯一意图创建者"]
+    WK["worker · 执行者 ×N"]
+    MA["mainagent · 人工介入"]
   end
   subgraph DB["PostgreSQL"]
-    AGRAPH["자산 그래프　assets / companies / task_scope"]
-    EGRAPH["탐색 그래프　exploration_nodes / anchors / activity"]
+    AGRAPH["资产图 · assets / companies / task_scope"]
+    EGRAPH["探索图 · exploration_nodes / anchors / activity"]
   end
-  subgraph SUB["지원 서브시스템"]
-    PROXY["트래픽 기록 프록시　MITM + CA 기록"]
-    GUARD["guard / intercept　도구 승인 게이트"]
-    ENR["enrich　DNS / HTTP 비동기 보강"]
+  subgraph SUB["支持子系统"]
+    PROXY["记录型代理 · MITM + CA"]
+    GUARD["guard / intercept · 工具审批"]
+    ENR["enrich · DNS / HTTP 异步补全"]
     EXT["MCP · skills · memory · report"]
   end
-
   UI -->|HTTP| API
   API --> MGR --> ENG
   ENG --> PL
@@ -221,7 +197,7 @@ flowchart TB
   WK --> DB
   MA --> DB
   GO --> DB
-  WK -->|"Bash / HTTP 전 과정 기록"| PROXY
+  WK -->|"Bash / HTTP 全过程记录"| PROXY
   WK --> GUARD
   WK --> ENR
   PL -.-> EXT
@@ -229,36 +205,36 @@ flowchart TB
   MA -.-> EXT
 ```
 
-- **프런트엔드**: Next.js 정적 빌드를 `go:embed` 로 단일 바이너리에 내장합니다. 작업·자산·탐색 체인·커버리지 그래프를 시각화하고, 사람이 개입하는 대화를 제공합니다.
-- **server**: `net/http` 라우팅과 JWT 인증, SSE 를 담당하고, `Manager` 가 작업·엔진·DB store 의 생명주기를 관리합니다.
-- **engine**: 작업마다 `plannerLoop` 하나와 worker goroutine N 개를 돌리며, 의도 배정과 타임아웃·일시정지·드레인을 처리합니다.
-- **agent**: goals / planner / worker / mainagent 로 나뉘고, `ToolSet` 이 이중 그래프를 LLM 도구로 노출합니다.
-- **db**: 이중 그래프를 PostgreSQL(pgx)에 저장하고, `go:embed` 로 들어간 스키마가 매 기동마다 멱등하게 테이블을 만듭니다.
-- **지원**: 기록형 MITM 프록시, 승인 게이트, 비동기 보강, MCP·스킬·메모리·리포트.
+- **前端：** 静态产物通过 `go:embed` 内嵌，展示任务、资产、探索链、覆盖率和人工对话。
+- **server：** `net/http` 路由、JWT、SSE，Manager 管理任务、引擎与 DB store。
+- **engine：** 每任务一个 `plannerLoop` 与 N 个 Worker goroutine，管理意图分配、超时、暂停和 drain。
+- **agent：** goals、planner、worker、mainagent 各司其职，ToolSet 将双图暴露为 LLM 工具。
+- **db：** pgx 访问 PostgreSQL，内嵌 schema 每次启动幂等迁移。
+- **支持系统：** 流量代理、审批、补全、MCP、Skill、记忆和报告。
 
-### 이중 그래프 구조: 탐색 그래프 + 자산 그래프
+### 双图结构：探索图与资产图
 
-시스템은 "대상이 무엇인가"와 "어디까지 테스트했는가"를 서로 독립적이면서 앵커로 연결되는 두 그래프로 나눕니다.
+“目标是什么”和“已测试到哪里”分别存储，通过锚点关联。
 
-- **자산 그래프(Asset Graph, 전역 공유)**: 작업을 가로질러 공유하는 자산 진실 저장소입니다. 노드는 `root_domain / subdomain / ip / service / app / endpoint` 이고 회사에 귀속됩니다. 도메인→서브도메인→서비스→엔드포인트의 부모·자식 관계와 중복 제거 키는 전부 프로그램이 계산하며, 에이전트는 원본 정보만 제출합니다.
-- **탐색 그래프(Exploration Graph, 작업마다 독립)**: 한 작업의 "사고와 진행" 과정입니다. 노드는 `goal(목표) / intent(의도) / fact(사실) / finding(취약점) / hint(힌트)` 이고, `spawns / derived_from / yields / proves` 같은 간선으로 혈통 체인을 이룹니다.
-- **두 그래프는 앵커로 연결됩니다.** `exploration_anchors(node_id, asset_id)` 가 의도·사실·취약점을 구체적인 자산에 고정합니다. 덕분에 탐색 방향에서 그것이 어떤 자산을 공략했는지, 반대로 어떤 자산이 이번 작업에서 어떤 의도로 테스트되고 어떤 사실을 냈는지를 양방향으로 조회할 수 있습니다.
+- **资产图（全局共享）：** `root_domain / subdomain / ip / service / app / endpoint` 属于公司；父子关系和去重键由程序计算，Agent 只提交原始信息。
+- **探索图（每任务独立）：** `goal / intent / fact / finding / hint` 由 `spawns / derived_from / yields / proves` 连接，记录推理与进度。
+- **锚点：** `exploration_anchors(node_id, asset_id)` 将意图、事实和发现绑定到实际资产，支持双向追溯。
 
 ```mermaid
 flowchart LR
-  subgraph EG["탐색 그래프 (작업마다 독립 · 진행 체인)"]
+  subgraph EG["探索图（任务独立 · 进度链）"]
     direction TB
-    G["goal 목표"]
-    I1["intent 의도 A"]
-    F1["fact 사실"]
-    I2["intent 의도 B"]
-    FD["finding 취약점"]
+    G["goal 目标"]
+    I1["intent 意图 A"]
+    F1["fact 事实"]
+    I2["intent 意图 B"]
+    FD["finding 发现"]
     G -->|spawns| I1
     I1 -->|yields| F1
     F1 -->|derived_from| I2
     I2 -->|proves| FD
   end
-  subgraph AG["자산 그래프 (전역 공유 · 진실 저장소)"]
+  subgraph AG["资产图（全局共享 · 事实库）"]
     direction TB
     RD["root_domain"]
     SD["subdomain"]
@@ -272,148 +248,127 @@ flowchart LR
   FD -. anchor .-> EP
 ```
 
-> 역할 분담: **planner** 는 탐색 그래프의 상황을 읽고 목표를 판정하며, 아직 커버하지 못한 새 방향이 있을 때만 **의도**를 frontier 에 보냅니다. **worker** 는 **의도 하나**를 맡아 실제 도구로 실행하고, 새 자산·사실·취약점을 두 그래프에 써 넣은 뒤 멈춥니다. 자산 그래프는 공유 사실이고, 탐색 그래프는 작업마다의 진행 체인입니다.
+Planner 读取探索态势、判断目标，仅在有未覆盖方向时创建意图。Worker 每次只承接**一个意图**，调用工具，把新资产、事实和发现写回双图后结束。
 
-### 엔진과 의도 생명주기 (한 번의 탐색 폐곡선)
+### 引擎与意图生命周期（探索闭环）
 
-엔진은 **이벤트 구동** 폐곡선입니다. 그래프가 바뀌면 planner 를 깨우고, planner 가 의도를 보내면 worker 가 그 의도를 맡아 실행한 뒤 결과를 써 넣으며, 그 쓰기가 다시 다음 라운드를 촉발합니다. 이 순환은 목표가 증명될 때(`prove_goal`)까지 이어집니다.
+图改变唤醒 Planner，Planner 产生意图，Worker 执行并写回，写回再次触发下一轮，直到 `prove_goal` 证明目标。
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant EV as 그래프 변경 debounce
+  participant EV as 图变化 debounce
   participant P as planner
-  participant FR as frontier 의도 큐
+  participant FR as frontier 意图队列
   participant W as worker
-  participant PX as 기록 프록시
-  participant DB as 이중 그래프 + activity
-
-  EV-->>P: 깨우기
-  P->>DB: 상황 읽기(graph_overview 선취 + coverage/scope)
-  P->>FR: 의도 0..N 개 배정(asset_ids 포함)
-  Note over P,FR: 대부분의 깨우기는 0 개 배정(새 방향이 없으면 종료)
-  W->>FR: claimNext 로 의도 하나 수령
-  W->>DB: 의도의 asset_ids 원본 자산을 초기 정보로 가져옴
-  W->>PX: 실제 도구 실행(Kali / Bash / HTTP)
-  PX-->>W: 응답(전 과정 기록 + CA 검증)
-  W->>DB: fact / asset / finding + 단계별 activity 기록
-  DB-->>EV: 그래프 변경
-  EV-->>P: 다시 깨우기(폐곡선)
+  participant PX as 记录代理
+  participant DB as 双图与 activity
+  EV-->>P: 唤醒
+  P->>DB: 读取 graph_overview、coverage、scope
+  P->>FR: 分配 0..N 个意图，附 asset_ids
+  Note over P,FR: 没有新方向时分配 0 个并结束
+  W->>FR: claimNext 领取一个意图
+  W->>DB: 获取原始资产作为初始信息
+  W->>PX: 执行实际工具
+  PX-->>W: 返回响应，记录全过程并校验 CA
+  W->>DB: 写 fact / asset / finding 和阶段 activity
+  DB-->>EV: 图变化
+  EV-->>P: 再次唤醒
 ```
 
-### worker 사이의 과정 단위 정보 교환
+### Worker 之间的过程级信息共享
 
-깊은 탐색에서는 값진 관찰(어떤 오류, 어떤 응답 조각, 숨은 파라미터)이 한 worker 의 **실행 과정**에서 나오지만 정식 fact 로는 기록되지 않는 경우가 많습니다. 중복 노동을 피하고 뒤따르는 worker 가 앞선 관찰 위에 설 수 있도록, worker 는 **다른 work 의 과정을 검색하는** 능력을 갖습니다.
+有价值的观察可能只存在于某个 Worker 的执行步骤，而未形成正式 fact。其他 Worker 可检索并复用这些观察，避免重复工作：
 
-- `search_all_worker_traces(q)`: 같은 작업의 다른 work 실행 과정을 키워드로 검색합니다(자기 의도의 단계는 자동 제외). 명중 항목에는 `intent_id` 가 붙습니다.
-- `list_worker_traces` / `get_worker_trace(intent_id, step_ids=[…])`: 어떤 work 들이 돌았는지 먼저 보고, 특정 work 의 몇 단계만 전체 내용으로 가져와 세부를 교환합니다.
-
-이렇게 탐색 그래프에 아직 대응하는 fact 가 없어도 뒤따르는 worker 가 남의 과정 속 관찰을 재사용합니다. 정보는 worker 사이를 "실행 과정" 단위로 흐르되, 경계는 그대로입니다(각 worker 는 여전히 자기가 맡은 의도 하나만 수행).
+- `search_all_worker_traces(q)` 检索同任务其他意图的过程，自动排除自己，结果包含 `intent_id`。
+- `list_worker_traces` 查看已有过程，`get_worker_trace(intent_id, step_ids=[…])` 获取指定步骤完整内容。
 
 ```mermaid
 flowchart LR
-  WA["worker A (의도 #12)"] -->|"단계별 activity"| ACT[("탐색 그래프 · activity 과정 라이브러리")]
-  WB["worker B (의도 #34)"] -->|"단계별 activity"| ACT
-  WC["worker C (의도 #56)"] ==>|"① search_all_worker_traces(q)"| ACT
-  ACT ==>|"② A/B 의 단계 명중 (자기 제외)"| WC
+  WA["Worker A（意图 #12）"] -->|"阶段 activity"| ACT[("探索图 · 执行过程库")]
+  WB["Worker B（意图 #34）"] -->|"阶段 activity"| ACT
+  WC["Worker C（意图 #56）"] ==>|"① search_all_worker_traces(q)"| ACT
+  ACT ==>|"② 返回 A/B 命中，排除自己"| WC
   WC ==>|"③ get_worker_trace(intent_id, step_ids)"| ACT
-  ACT ==>|"④ 전체 과정 내용 반환"| WC
+  ACT ==>|"④ 返回完整步骤"| WC
 ```
 
-### planner 의 다중 라운드 공유 todolist → 안정적인 공격 체인
+共享的是过程信息，不改变 Worker 仅执行自己意图的边界。
 
-실제 공격 체인은 앞뒤로 의존하는 여러 단계의 순서(예: 주입점 발견 → 인증 정보 획득 → 측면 이동 → 권한 상승)인 경우가 많아, 이것을 한 번에 병렬로 내려보내면 뒤엉킵니다. 그래서 planner 는 **작업마다 보존되고 깨우기를 가로질러 공유되는 계획 할 일 목록(todolist)** 을 가집니다.
+### Planner 跨轮次共享 todolist，维护有序链路
 
-- planner 는 이벤트 구동이라 그래프가 바뀔 때마다 깨어나지만 **매 깨우기가 새 세션**입니다. 공유 todolist 는 직렬 공격 체인을 **한 번만 기록**해 두고, 이후 여러 라운드에 걸쳐 **의존 관계대로 한 단계씩** 의도를 배정하게 합니다(한 라운드에 전체 체인을 앞당겨 펼치지 않음).
-- 매 라운드마다 "선행 단계가 끝나고 그 단계가 의존하는 fact 가 이미 존재하는" 다음 단계에만 의도를 배정하고, 진행에 따라 목록을 갱신합니다(fact 로 충족된 단계를 완료 표시).
+多阶段链路存在前置依赖，不能一次全部并行分配。Planner 每次唤醒是新会话，但任务级 todolist 持久保留，只给“前置已完成且依赖 fact 已存在”的下一步分配意图，并更新完成状态。
 
 ```mermaid
 flowchart TB
-  subgraph TODO["공유 todolist (작업마다 보존 · 깨우기를 가로질러 상주)"]
+  subgraph TODO["共享 todolist（任务持久化 · 跨轮次）"]
     direction LR
-    T1["1 주입점 발견　[완료]"]
-    T2["2 인증 정보 획득　[진행 중]"]
-    T3["3 측면 이동　[선행 대기]"]
-    T4["4 권한 상승　[선행 대기]"]
-    T1 -. 선행 충족 .-> T2 -.-> T3 -.-> T4
+    T1["1 发现注入点 [完成]"]
+    T2["2 获取凭据 [进行中]"]
+    T3["3 横向移动 [等待前置]"]
+    T4["4 权限提升 [等待前置]"]
+    T1 -. 前置满足 .-> T2 -.-> T3 -.-> T4
   end
-  R1["1 라운드 깨우기　의도① 배정"] --> T1
-  R2["2 라운드 (①이 fact 산출)　의도② 배정"] --> T2
-  R3["3 라운드 (②가 fact 산출)　의도③ 배정"] --> T3
+  R1["第 1 轮 · 意图①"] --> T1
+  R2["第 2 轮 · ①产生 fact，分配②"] --> T2
+  R3["第 3 轮 · ②产生 fact，分配③"] --> T3
 ```
 
-이로써 공격 체인은 "이벤트 구동 + 무상태 세션" 환경에서도 안정적으로 진행되고, 중복되지 않고, 순서가 어긋나지 않습니다. 이것이 ARTEX 가 여러 단계의 공격 체인을 자율로 완주하는 핵심입니다.
+这一机制在事件驱动、无状态会话环境中保持顺序、减少重复，仅应在明确授权范围内使用。
 
----
+## 防御与检测资料
 
-## 방어·탐지 자료
+- [自主 AI 防御与检测指南](docs/defense-ko.md)：行为差异、可观察指纹、入口加固、WAF/SIEM/认证日志、响应清单及韩国官方通报渠道。旧 `-ko` 文件名保留，内容已为简体中文。
+- [English defense guide](docs/defense-en.md)：供国际团队协作的英文版。
+- [部署用检测规则](detections/README.ko.md)：Sigma 主机/日志规则、关联规则与 Suricata 网络规则。
+- [ATT&CK 覆盖率](detections/attack/README.ko.md)：仅来自实际规则标签，不添加推测技术。
+- [CSV/MISP 指标](detections/indicators/README.ko.md)：每项都注明来源、对应规则和局限。
+- [只读主机 triage](detections/triage/README.ko.md)：无需额外依赖，检查主机、端口、代理和 PostgreSQL schema；结果是分类线索，不是攻击归属证明。
+- [可复现检测测试](detections/tests/README.ko.md)：规则、层、指标和 triage 自测遵循同一贡献契约。
 
-이 저장소는 자율 AI 공격을 **방어하는 쪽**이 그 작동 원리를 이해하고 탐지·차단 역량을 기르도록 돕는 것을 목표로 합니다. 위 아키텍처에서 본 ARTEX 의 동작을 **방어자 관점**으로 뒤집어, 무엇을 관측하고 어디를 조여야 하는지를 한국어로 정리한 가이드를 둡니다.
+新增规则请遵循[检测规则与测试贡献契约](CONTRIBUTING.md#检测规则与测试贡献)，不得将泛化行为误称 ARTEX 专属指纹。
 
-- **[자율 AI 공격 방어·탐지 가이드 (docs/defense-ko.md)](docs/defense-ko.md)**
-  - 자율 AI 공격이 기존 스캐너와 무엇이 다른가, 왜 탐지가 어렵고 그래도 어떻게 탐지하는가
-  - 방어자가 관측할 수 있는 지문(IoC·행동 시그니처): 대상 관점과 포렌식 관점으로 구분
-  - 공격자가 노리는 진입점과 하드닝(보조 인증·본인확인, API 인가, 자격 증명 스터핑, 세션·비밀 관리)
-  - WAF·SIEM·인증 로그 탐지 규칙(의사 규칙), 하드닝 체크리스트, 사고 대응 요약
-  - 국내 공식 침해지표·보안 권고 채널(KISA·금융보안원·개인정보보호위원회)과 국내법상 신고 의무
-- **[Defense & Detection Guide (영어판 · docs/defense-en.md)](docs/defense-en.md)**: 해외 팀·협업자와 공유할 수 있는 같은 내용의 영어판입니다.
-- **[배포용 탐지 규칙 (detections/README.ko.md)](detections/README.ko.md)**: 위 가이드의 지문 탐지를 바로 쓸 수 있는 규칙으로 제공합니다. 호스트·로그·SIEM 계층은 [Sigma](https://sigmahq.io) 규칙(원자·상관, `sigma convert` 로 Splunk·Elasticsearch 등으로 변환)으로, 네트워크 계층은 enrich 프로브와 norma SDK WebFetch 의 User-Agent 를 겨냥한 [Suricata](https://suricata.io) 규칙으로 나눠 담았습니다.
-  - **[ATT&CK 커버리지 레이어 (detections/attack/README.ko.md)](detections/attack/README.ko.md)**: 위 규칙이 겨냥하는 MITRE ATT&CK 기법을 [Navigator](https://mitre-attack.github.io/attack-navigator/) 레이어(JSON)로 정리해, 어떤 공격 행위에 어떤 규칙이 걸리는지 한눈에 보도록 했습니다. 기법은 규칙의 `attack.*` 태그에서만 가져왔고 추정으로 넣은 항목은 없습니다.
-  - **[기계가 읽는 침해지표 목록 (detections/indicators/README.ko.md)](detections/indicators/README.ko.md)**: ARTEX 가 실제로 내보내는 고유 지문을 CSV 한 파일(`artex_indicators.csv`)로 모으고, 같은 지표를 MISP 이벤트(`artex_indicators.misp.json`)로도 함께 제공합니다. SIEM 조회 테이블이나 위협 인텔리전스 플랫폼(MISP·C-TAS·FSI 등 MISP 형식을 받는 곳)에 바로 가져올 수 있는 침해지표(IoC)입니다. 모든 값은 저장소 소스에서 확인한 문자열이고, 각 행에 출처 파일과 탐지 규칙을 함께 적었습니다.
-  - **[호스트 분류(triage) 스크립트 (detections/triage/README.ko.md)](detections/triage/README.ko.md)**: SIEM 이나 네트워크 센서 없이 의심 호스트 한 대의 셸 앞에 선 대응자를 위한 읽기 전용 스크립트 [`artex_host_triage.py`](detections/triage/artex_host_triage.py) 입니다. 위 규칙과 같은 지문을 점검하고, 여기에 더해 로그나 네트워크로는 관측되지 않아 침해지표 CSV 가 의도적으로 Sigma 규칙 없이 둔 세 가지 호스트·DB 지표(서버 리슨 포트, 기록 프록시 엔드포인트, PostgreSQL 탐색 스키마)까지 호스트에서 직접 확인합니다. 추가 설치 없이 표준 라이브러리만으로 동작하며, 각 발견은 대응하는 침해지표 행과 같은 한계를 지닌 분류 단서일 뿐 그 자체로 단정하는 근거는 아닙니다.
-  - 위 규칙과 레이어와 지표, 그리고 호스트 분류 스크립트의 자가 테스트는 모두 저장소 테스트([detections/tests/README.ko.md](detections/tests/README.ko.md))로 재실행해 검증합니다. 돌려 볼 수 없는 탐지 규칙은 주장일 뿐이라는 원칙을 따릅니다.
-
-> 이 자료는 계속 보강됩니다. 보완할 탐지 규칙·하드닝 항목은 이슈로 제안해 주시고, 규칙을 직접 보내실 때는 [기여 가이드의 「탐지 규칙·탐지 테스트 기여」 절](CONTRIBUTING.md#탐지-규칙탐지-테스트-기여)에 정리한 계약(관측 가능한 사실에 접지, 한계 명시, 정적 검증 통과, 재현 가능한 테스트 동봉)을 따라 주십시오.
-
----
-
-## 개발
-
-로컬 개발과 테스트:
+## 开发
 
 ```bash
-./dev.sh    # 백엔드(:8787) + 트래픽 프록시(:8788) + 프런트엔드 next dev(:5173) → http://localhost:5173
+./dev.sh  # 后端 :8787、记录代理 :8788、前端 :5173
 ```
 
-- 백엔드: `go run ./cmd/artex` (`-tags embedui` 없으면 프런트엔드를 내장하지 않음)
-- 프런트엔드: `cd web && npm run dev` (`/api` 를 백엔드로 프록시, 핫 리로드)
-- 테스트: `go test ./...`
-- Mock 미리 보기(백엔드 없이): `cd web && NEXT_PUBLIC_MOCK=1 npm run dev`
+- 后端：`go run ./cmd/artex`，无 `embedui` tag 时不内嵌前端。
+- 前端：`cd web && npm run dev`，`/api` 反向代理到后端。
+- Mock 预览：`cd web && NEXT_PUBLIC_MOCK=1 npm run dev`，不需要真实后端，不进行真实扫描。
+- 回归：`go test ./...`；涉及 DB 的测试必须另提供 PostgreSQL，SKIP 不等于通过。
+- 前端：在 `web` 执行 `npm test`、`npm run check`、`npm run build:static`。
+- 语言与文档：`python3 -I scripts/check-language.py --source`、构建后 `--web`、`python3 -I scripts/check-doc-links.py`。
 
-그 밖의 개발 항목(수동 취약점 재검증 등)은 [`README.zh.md`](README.zh.md#开发)의 "开发"(개발) 절을 참고하십시오.
+更多开发说明见 [README.zh.md](README.zh.md#开发)及[贡献指南](CONTRIBUTING.md)。分支变更见 [CHANGELOG.md](CHANGELOG.md)。
 
-이 한국어판이 상류 ARTEX 에 더한 변경은 [변경 이력(CHANGELOG.md)](CHANGELOG.md)에 정리되어 있습니다.
+## 许可证与免责声明
 
----
+### 开源许可证
 
-## 라이선스와 면책
+项目使用 **GNU Affero General Public License v3.0（AGPL-3.0）**，全文见 [LICENSE](LICENSE)。可使用、修改、分发，但衍生作品须遵循相同许可。若修改后通过网络服务提供给用户，应向这些用户提供对应完整源码。本分支保留原作者归属和 AGPL-3.0。
 
-### 오픈소스 라이선스
+> 开源许可证本身不限制使用目的。以下使用限制和免责声明是原作者的额外使用告知，不应混同为修改了 AGPL 条款。
 
-이 프로젝트는 **GNU Affero General Public License v3.0(AGPL-3.0)** 으로 배포됩니다. 전체 조항은 저장소 루트의 [LICENSE](LICENSE) 파일에 있습니다.
+### 使用限制
 
-누구나 자유롭게 사용·수정·배포할 수 있지만, **파생 저작물도 똑같이 AGPL-3.0 으로 공개해야 합니다.** 특히 이 프로젝트를 수정해 **네트워크를 통해(예: 온라인 서비스로 배포) 사용자에게 제공한다면, 그 사용자에게 대응하는 완전한 소스 코드를 공개해야 합니다.** 이 한국어판 역시 AGPL-3.0 을 그대로 유지합니다.
+- 用于阅读源码、学习研究及自有隔离环境验证。
+- 没有所有权或明确书面授权，不对网站、线上服务或联网系统扫描、探测、利用、攻击。
+- 严禁非法侵入、数据盗窃、DoS 及其他破坏或犯罪活动。
+- 遵守适用国家/地区的网络安全、数据保护与计算机犯罪法律；在韩国包括信息通信网络法和个人信息保护法。
 
-> ⚠️ **중요:** 오픈소스 라이선스 자체는 소프트웨어의 사용 용도를 제한하지 않습니다. 아래 "사용 제한"과 "면책"은 원저자가 사용자에게 추가로 요구하는 약정이자 엄중한 고지이므로 반드시 지켜 주십시오.
+### 免责声明
 
-### 사용 제한
+软件按“现状（AS IS）”提供，不作明示或默示保证。原作者与贡献者不承担因使用本工具产生的直接或间接损害、数据丢失、系统损坏或法律争议责任。下载、安装、使用表示已阅读并理解相关告知。
 
-- 이 도구는 **소스 코드를 읽고 학습·연구하는 용도**, 그리고 **로컬 격리 환경에서 기술 원리를 검증**하는 용도로 쓰십시오.
-- 자신이 소유하거나 **서면으로 명시적 허가를 받은 대상이 아니라면**, 어떤 웹사이트·온라인 서비스·연결된 시스템에도 스캐닝·탐지·익스플로잇·공격을 수행하지 마십시오.
-- 불법 침입, 데이터 탈취, 서비스 거부(DoS), 그 밖에 파괴적·범죄적 활동에 사용하는 것을 엄격히 금지합니다.
-- 사용자가 속한 국가·지역의 네트워크 보안·데이터 보호·컴퓨터 범죄 관련 법규(대한민국의 경우 정보통신망법·개인정보보호법 등)를 모두 준수해야 합니다.
+**使用行为的全部法律责任与后果由使用者本人承担。**
 
-### 면책
+## 原始项目
 
-이 프로젝트는 "있는 그대로(AS IS)" 제공되며 명시적·묵시적 어떤 보증도 하지 않습니다. 원저자와 기여자는 이 도구의 사용(사용 방식의 적절성과 무관하게)으로 발생한 어떤 직접·간접 손해, 데이터 손실, 시스템 손상, 법적 분쟁에도 책임지지 않습니다. **이 프로젝트를 내려받거나 설치하거나 사용하는 것은 위 모든 조건을 읽고 이해하고 동의한 것으로 봅니다.**
+- 上游：[Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)。
+- 中文技术原稿：[README.zh.md](README.zh.md)。
+- 上游演示：[artex-demo.vercel.app](https://artex-demo.vercel.app/)。
+- Agent SDK：[Autumn-27/norma](https://github.com/Autumn-27/norma)。
 
-**모든 법적 책임과 결과는 사용자 본인이 부담합니다.**
-
----
-
-## 원본 프로젝트
-
-- 원본 저장소: [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX) (현재 접속 불가, 2026-10 확인)
-- 원본 README(중국어): [README.zh.md](README.zh.md)
-- 원본 온라인 데모(중국어 UI): [https://artex-demo.vercel.app/](https://artex-demo.vercel.app/) (현재 접속 불가, 2026-10 확인)
-- 에이전트 SDK: [Autumn-27/norma](https://github.com/Autumn-27/norma) (현재 접속 불가, 2026-10 확인)
+原分支曾记录这些远端在 2026-10 无法公开访问；保留链接用于来源与历史对照，不保证当前可访问，也不以此断言永久删除。

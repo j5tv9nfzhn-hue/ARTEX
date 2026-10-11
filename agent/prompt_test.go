@@ -86,14 +86,13 @@ func TestRenderSystemOverrideAndFallback(t *testing.T) {
 // (Chinese) directive, so finding one means the output-language mandate names that
 // language. Used by the directive and role-append tests below.
 var langMarker = map[string]string{
-	"ko": "한국어",
 	"en": "English",
 	"zh": "简体中文",
 	"es": "Español",
 }
 
 // TestLangDirectiveLocalized pins the output-language tail across all
-// four display languages: each language's directive names that language, preserves
+// three display languages: each language's directive names that language, preserves
 // raw technical strings, forbids mirroring the target/material language, and names
 // the planner situation summary. For every non-Chinese display language the "never
 // emit Chinese to the user" clause is present; for Chinese it is absent (Chinese

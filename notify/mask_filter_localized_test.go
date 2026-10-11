@@ -6,47 +6,42 @@ import (
 	"testing"
 )
 
-// F4 ⑥: notify/mask.go·filter.go 의 사용자 노출 문구(알림 채널 설정을 저장·갱신할 때
-// server/notify_api.go 가 writeErr(400) 로 그대로 돌려주는 검증 오류)가 한국어이고
-// 한자가 없음을 핀 고정한다. channel.go 는 사용자 노출 문구가 없어(전부 주석) 대상이
-// 아니다. hasHan / hasHangul / assertKorean 은 notify_localized_test.go 에 정의돼 있다.
-
-// TestFilterValidateLocalized 는 min_severity 를 잘못 넣었을 때의 검증 오류를 검사한다.
-// 이 오류는 저장·갱신 경로(server/notify_api.go:264·369)에서 400 으로 노출된다.
+// 通知配置保存、更新时的 mask.go 与 filter.go 错误通过 writeErr(400) 展示，
+// 必须使用中文且不含韩文。channel.go 没有用户可见文案，不在本测试范围。
+// hasHan、hasHangul、assertChinese 由 notify_localized_test.go 提供。
+// TestFilterValidateLocalized 检查错误 min_severity 值的保存、更新错误。
 func TestFilterValidateLocalized(t *testing.T) {
 	err := Filter{MinSeverity: "hgih"}.Validate()
 	if err == nil {
-		t.Fatal("잘못된 최소 심각도인데 오류가 없습니다")
+		t.Fatal("最低严重等级无效，但未返回错误")
 	}
-	assertKorean(t, "Filter.Validate", err.Error())
-	// low/medium/high/critical 는 설정 enum 이라 원문 그대로 남아야 한다.
+	assertChinese(t, "Filter.Validate", err.Error())
+	// low、medium、high、critical 是配置枚举，必须原样保留。
 	for _, tok := range []string{"low", "medium", "high", "critical"} {
 		if !strings.Contains(err.Error(), tok) {
-			t.Errorf("심각도 토큰 %q 가 사라졌습니다: %q", tok, err.Error())
+			t.Errorf("严重等级标识 %q 丢失：%q", tok, err.Error())
 		}
 	}
-	// 올바른 값과 빈 값은 통과해야 한다.
+	// 有效值和空值均应通过验证。
 	if err := (Filter{MinSeverity: "high"}).Validate(); err != nil {
-		t.Errorf("high 는 유효한데 오류가 났습니다: %v", err)
+		t.Errorf("high 有效，但返回错误：%v", err)
 	}
 	if err := (Filter{}).Validate(); err != nil {
-		t.Errorf("빈 최소 심각도는 유효한데 오류가 났습니다: %v", err)
+		t.Errorf("空最低严重等级有效，但返回错误：%v", err)
 	}
 }
 
-// TestPrepareConfigUpdateUnknownKindLocalized 는 등록되지 않은 채널 유형으로 설정을
-// 갱신할 때의 오류(server/notify_api.go:326 에서 400)를 검사한다.
+// TestPrepareConfigUpdateUnknownKindLocalized 检查使用未注册渠道类型更新配置时的 400 错误。
 func TestPrepareConfigUpdateUnknownKindLocalized(t *testing.T) {
 	_, err := PrepareConfigUpdate("definitely-not-a-channel", map[string]any{}, map[string]any{})
 	if err == nil {
-		t.Fatal("미등록 채널 유형인데 오류가 없습니다")
+		t.Fatal("渠道类型未注册，但未返回错误")
 	}
-	assertKorean(t, "PrepareConfigUpdate unknown kind", err.Error())
+	assertChinese(t, "PrepareConfigUpdate unknown kind", err.Error())
 }
 
-// TestDestinationChangedErrorLocalized 는 실제 경로로 ErrDestinationChangedWithoutCredentials
-// 를 유발한다: webhook 의 대상 주소(url)만 새 값으로 바꾸고 자격 증명(headers)에는
-// 아무 표태도 하지 않는 PATCH 다. 서버는 이를 400 으로 돌려준다.
+// TestDestinationChangedErrorLocalized 真实触发 ErrDestinationChangedWithoutCredentials：
+// PATCH 只修改 Webhook 目标 url，未重新提交 headers 凭据，服务器应返回 400。
 func TestDestinationChangedErrorLocalized(t *testing.T) {
 	_, err := PrepareConfigUpdate("webhook",
 		map[string]any{
@@ -56,32 +51,32 @@ func TestDestinationChangedErrorLocalized(t *testing.T) {
 		map[string]any{"url": "https://attacker.example.com/hook"},
 	)
 	if err == nil {
-		t.Fatal("대상 주소를 바꾸고 자격 증명을 표태하지 않았는데 오류가 없습니다")
+		t.Fatal("目标地址已更改且未重新提交凭据，但未返回错误")
 	}
 	var de *ErrDestinationChangedWithoutCredentials
 	if !errors.As(err, &de) {
-		t.Fatalf("예상한 오류 유형이 아닙니다: %T", err)
+		t.Fatalf("错误类型与预期不同：%T", err)
 	}
-	assertKorean(t, "ErrDestinationChangedWithoutCredentials", err.Error())
-	// 바뀐 대상 키·누락된 자격 증명 키 이름은 설정 필드명이라 메시지에 그대로 들어가야 한다.
+	assertChinese(t, "ErrDestinationChangedWithoutCredentials", err.Error())
+	// 目标键和缺少的凭据键都是配置字段名，必须原样出现在消息中。
 	if !strings.Contains(err.Error(), "url") || !strings.Contains(err.Error(), "headers") {
-		t.Errorf("필드 키 이름이 누락됐습니다: %q", err.Error())
+		t.Errorf("缺少字段键名：%q", err.Error())
 	}
 }
 
-// TestRejectMaskedInContainersLocalized 는 실제 경로로 구조체 내부 마스킹 센티넬 거부를
-// 유발한다: headers(객체이자 자격 증명 필드) 안에 마스킹 센티넬 값을 끼워 넣은 PATCH 다.
+// TestRejectMaskedInContainersLocalized 在 PATCH 的 headers 对象内部放入掩码标记，
+// 真实验证结构化凭据拒绝路径。
 func TestRejectMaskedInContainersLocalized(t *testing.T) {
 	_, err := PrepareConfigUpdate("webhook",
 		map[string]any{},
 		map[string]any{"headers": map[string]any{"Authorization": MaskedPrefix + ":…abc123"}},
 	)
 	if err == nil {
-		t.Fatal("구조체 내부에 마스킹 센티넬을 끼워 넣었는데 오류가 없습니다")
+		t.Fatal("结构体内部插入了掩码标记，但未返回错误")
 	}
-	assertKorean(t, "rejectMaskedInContainers", err.Error())
-	// 센티넬 리터럴(__masked__)은 운영자가 어느 값이 문제인지 알 수 있게 메시지에 표시된다.
+	assertChinese(t, "rejectMaskedInContainers", err.Error())
+	// 消息保留 __masked__ 字面量，便于操作员识别问题值。
 	if !strings.Contains(err.Error(), MaskedPrefix) {
-		t.Errorf("마스킹 센티넬이 메시지에 없습니다: %q", err.Error())
+		t.Errorf("消息缺少掩码标记：%q", err.Error())
 	}
 }

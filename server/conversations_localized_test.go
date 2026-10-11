@@ -9,12 +9,9 @@ import (
 	"testing"
 )
 
-// conversations.go 의 대화(채팅) API 에러 응답을 한국어로 유지하는 회귀 방어 테스트다.
-// 한국어 판정은 F3a 가 만든 assertKoreanError(한글 포함·중국어 한자 0)를 재사용한다.
-
-// TestConversationErrorConstantsLocalized 는 응답 상수 12종이 전부 한국어임을 단언한다.
-// 핸들러는 s.pg(w)(DB)를 먼저 거쳐 DB 없는 이 호스트에서 끝까지 못 도므로, 상수 자체를
-// 단언한다(auth.go 선례). %d 가 든 형식 문자열은 실제 인자로 채워 최종 문구를 검사한다.
+// 对话 API 中文错误回归测试，复用 assertChineseError。
+// TestConversationErrorConstantsLocalized 固定十二类错误常量；处理器先经过数据库门禁，
+// 因此无数据库时不直接调用，包含 %d 的模板通过真实参数格式化后检查。
 func TestConversationErrorConstantsLocalized(t *testing.T) {
 	cases := []struct {
 		name string
@@ -34,16 +31,14 @@ func TestConversationErrorConstantsLocalized(t *testing.T) {
 		{"busy", convErrBusy},
 	}
 	for _, c := range cases {
-		assertKoreanError(t, c.name, c.msg)
+		assertChineseError(t, c.name, c.msg)
 	}
 }
 
-// TestDecodeConversationRequestTooLargeLocalized 는 요청 본문 초과 경로를 실제 HTTP 응답
-// 본문까지 검사한다. decodeConversationRequest 는 Server(DB)를 거치지 않는 패키지 함수라
-// DB 없이 돌 수 있고, 상수가 응답에 실제로 실리는 연결까지 확인한다(요청 본문 초과 →
-// 413 + 한국어 문구).
+// TestDecodeConversationRequestTooLargeLocalized 检查超长请求的 HTTP 413 中文正文。
+// decodeConversationRequest 不经过 Server 数据库，可直接验证常量到响应的连线。
 func TestDecodeConversationRequestTooLargeLocalized(t *testing.T) {
-	// 64KB 한도를 넘기는 유효 JSON 본문. MaxBytesReader 가 읽기 도중 한도 초과를 돌려준다.
+	// 超过 64KB 限制的有效 JSON；MaxBytesReader 在读取时返回超限。
 	body := `{"title":"` + strings.Repeat("a", maxConversationRequestBytes+1024) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/conversations", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -51,61 +46,57 @@ func TestDecodeConversationRequestTooLargeLocalized(t *testing.T) {
 		Title string `json:"title"`
 	}
 	if decodeConversationRequest(rec, req, &dst) {
-		t.Fatal("본문이 한도를 넘었는데 decodeConversationRequest 가 true 를 돌려줬다")
+		t.Fatal("正文超出上限，decodeConversationRequest 却返回 true")
 	}
 	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("상태 코드 = %d, 기대 = %d", rec.Code, http.StatusRequestEntityTooLarge)
+		t.Fatalf("状态码 = %d，预期 = %d", rec.Code, http.StatusRequestEntityTooLarge)
 	}
 	var resp struct {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("응답 JSON 파싱 실패: %v (본문=%q)", err, rec.Body.String())
+		t.Fatalf("解析响应 JSON 失败：%v（正文=%q）", err, rec.Body.String())
 	}
 	if resp.Error != convErrRequestTooLarge {
-		t.Fatalf("응답 error = %q, 기대 = %q", resp.Error, convErrRequestTooLarge)
+		t.Fatalf("响应 error = %q，预期 = %q", resp.Error, convErrRequestTooLarge)
 	}
-	assertKoreanError(t, "decode.too_large.response", resp.Error)
+	assertChineseError(t, "decode.too_large.response", resp.Error)
 }
 
-// TestConversationDefaultTitlesLocalized 는 대화 기본 제목 두 상수(F8)가 한국어이고 서로
-// 구별됨을 단언한다. convDefaultTitle 은 생성 기본값이자 자동 제목 분기의 센티넬이므로,
-// 중국어 "新对话" 로 되돌아가면 사용자가 대화 목록·삭제 다이얼로그에서 중국어를 보게 된다.
+// TestConversationDefaultTitlesLocalized 检查两个中文默认标题不同。
+// convDefaultTitle 同时用于创建与自动标题标记，必须保持一致。
 func TestConversationDefaultTitlesLocalized(t *testing.T) {
-	assertKoreanError(t, "default_title", convDefaultTitle)
-	assertKoreanError(t, "attachment_title", convAttachmentTitle)
+	assertChineseError(t, "default_title", convDefaultTitle)
+	assertChineseError(t, "attachment_title", convAttachmentTitle)
 	if convDefaultTitle == convAttachmentTitle {
-		t.Fatal("기본 제목과 첨부 기본 제목이 같으면 안 된다")
+		t.Fatal("默认标题与附件默认标题不应相同")
 	}
 }
 
-// TestIsDefaultConversationTitle 는 자동 제목 분기의 판정을 핀 고정한다. 생성 기본값
-// (convDefaultTitle)과 빈 제목은 자동 제목 대상이고, 사용자가 지은 제목은 아니다. 생성
-// 기본값과 센티넬이 같은 상수라 둘이 어긋나 자동 제목이 안 붙는 회귀를 막는다.
+// TestIsDefaultConversationTitle 固定自动标题判断：空标题、创建默认值可以自动生成，
+// 用户自定义标题不能覆盖；共享同一常量避免默认值与比较条件偏移。
 func TestIsDefaultConversationTitle(t *testing.T) {
 	if !isDefaultConversationTitle("") {
-		t.Fatal("빈 제목은 자동 제목 대상이어야 한다")
+		t.Fatal("空标题应自动生成标题")
 	}
 	if !isDefaultConversationTitle(convDefaultTitle) {
-		t.Fatalf("생성 기본값 %q 는 자동 제목 대상이어야 한다", convDefaultTitle)
+		t.Fatalf("默认值 %q 应自动生成标题", convDefaultTitle)
 	}
-	if isDefaultConversationTitle("사용자가 지은 제목") {
-		t.Fatal("사용자가 지은 제목은 자동 제목 대상이 아니어야 한다")
+	if isDefaultConversationTitle("用户自定义标题") {
+		t.Fatal("用户自定义标题不应重新自动生成")
 	}
 }
 
-// TestConversationRetestReasonsLocalized 는 재검증 종결 사유 세 상수(F9)가 한국어임을
-// 단언한다. 이 값들은 finding_retests.error 컬럼에 저장돼 재검증 패널 item.error 로
-// 노출되므로, 중국어로 되돌아가면 사용자가 패널에서 중국어 사유를 보게 된다.
+// TestConversationRetestReasonsLocalized 检查三类复测终止原因使用中文，
+// 它们写入 finding_retests.error 并直接显示于 item.error。
 func TestConversationRetestReasonsLocalized(t *testing.T) {
-	assertKoreanError(t, "retest_failed_to_start", convRetestFailedToStart)
-	assertKoreanError(t, "retest_status_read_failed", convRetestStatusReadFailed)
-	assertKoreanError(t, "retest_stopped_or_closed", convRetestStoppedOrClosed)
+	assertChineseError(t, "retest_failed_to_start", convRetestFailedToStart)
+	assertChineseError(t, "retest_status_read_failed", convRetestStatusReadFailed)
+	assertChineseError(t, "retest_stopped_or_closed", convRetestStoppedOrClosed)
 }
 
-// TestTranscriptErrorSummaryLocalized 는 활동 전사 오류 래퍼(F9)를 핀 고정한다. 채팅 턴
-// (라벨 없음)과 작업 메인 에이전트("메인 에이전트") 두 호출이 같은 "(…오류: …)" 형태로
-// 나오고, 안쪽 err 원문은 그대로 보존되며 래퍼에 중국어 한자·전각 부호가 없어야 한다.
+// TestTranscriptErrorSummaryLocalized 固定活动错误包装：聊天轮次无 label，
+// 任务主 Agent 使用“主 Agent”，外层使用中文格式，内部错误原文保留。
 func TestTranscriptErrorSummaryLocalized(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -113,24 +104,23 @@ func TestTranscriptErrorSummaryLocalized(t *testing.T) {
 		errm  string
 		want  string
 	}{
-		{"chat_turn", "", "connection reset", "(오류: connection reset)"},
-		{"main_agent", "메인 에이전트", "connection reset", "(메인 에이전트 오류: connection reset)"},
+		{"chat_turn", "", "connection reset", "（错误：connection reset）"},
+		{"main_agent", "主 Agent", "connection reset", "（主 Agent 错误：connection reset）"},
 	}
 	for _, c := range cases {
 		got := transcriptErrorSummary(c.label, c.errm)
 		if got != c.want {
-			t.Fatalf("%s: transcriptErrorSummary = %q, 기대 = %q", c.name, got, c.want)
+			t.Fatalf("%s：transcriptErrorSummary = %q，预期 = %q", c.name, got, c.want)
 		}
 		if !strings.Contains(got, c.errm) {
-			t.Fatalf("%s: err 원문이 보존되지 않았습니다: %q", c.name, got)
+			t.Fatalf("%s：未保留错误原文：%q", c.name, got)
 		}
-		// 전각 괄호·콜론이 ASCII 로 치환됐는지 확인한다(F1·fluent-korean 방침).
-		if strings.ContainsAny(got, "（）：") {
-			t.Fatalf("%s: 전각 부호가 남아 있습니다: %q", c.name, got)
+		// 验证中文括号包装；中文全角标点允许使用，不再套用旧的 ASCII 标点限制。
+		if !strings.HasPrefix(got, "（") || !strings.HasSuffix(got, "）") {
+			t.Fatalf("%s：标点格式不符：%q", c.name, got)
 		}
-		// 래퍼 라벨에 한글이 있고 중국어 한자가 없어야 한다(err 원문은 검사 대상이 아니라
-		// ASCII 로 고정). 라벨이 없는 채팅 턴도 "오류" 한글을 포함한다.
+		// 错误包装必须包含汉字、不含韩文；原始错误固定为 ASCII，不纳入包装语言断言。
 		wrapper := strings.ReplaceAll(got, c.errm, "")
-		assertKoreanError(t, c.name+".wrapper", wrapper)
+		assertChineseError(t, c.name+".wrapper", wrapper)
 	}
 }

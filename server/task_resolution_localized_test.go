@@ -8,11 +8,11 @@ import (
 
 // TestTaskLLMResolutionLocalized guards F18: every user-facing reason/label that
 // GET /api/tasks/{id}/llm/resolution returns (rendered in the task LLM settings
-// chain / system/llm UI via resolutionLabel / the chain editor) must be Korean —
-// Hangul present, no Chinese Han. Source enum values and English fmt.Errorf wraps
+// chain / system/llm UI via resolutionLabel / the chain editor) must be Simplified Chinese —
+// Han present, no Hangul. Source enum values and English fmt.Errorf wraps
 // are out of scope and are not asserted here.
 func TestTaskLLMResolutionLocalized(t *testing.T) {
-	// 1) Every localized constant is Korean. Reverting any to Chinese fails this.
+	// 1) Every localized constant is Simplified Chinese. Reintroducing Hangul fails this.
 	for _, c := range []struct{ label, msg string }{
 		{"reasonLLMProfileMissing", reasonLLMProfileMissing},
 		{"reasonLLMProfileNoAPIKey", reasonLLMProfileNoAPIKey},
@@ -21,7 +21,7 @@ func TestTaskLLMResolutionLocalized(t *testing.T) {
 		{"reasonNoLLMAvailable", reasonNoLLMAvailable},
 		{"sourceNameGlobalConfig", sourceNameGlobalConfig},
 	} {
-		assertKoreanError(t, c.label, c.msg)
+		assertChineseError(t, c.label, c.msg)
 	}
 
 	// 2) Pin the two reasons reachable with no DB. resolutionFromProfile returns
@@ -36,7 +36,7 @@ func TestTaskLLMResolutionLocalized(t *testing.T) {
 	if missing.Reason != reasonLLMProfileMissing {
 		t.Fatalf("nil profile reason = %q, want %q", missing.Reason, reasonLLMProfileMissing)
 	}
-	assertKoreanError(t, "resolutionFromProfile(nil).Reason", missing.Reason)
+	assertChineseError(t, "resolutionFromProfile(nil).Reason", missing.Reason)
 
 	noKey := s.resolutionFromProfile(&db.LLMProfile{Name: "p", Format: "openai", Model: "m"}, "task_chain")
 	if noKey.Available {
@@ -45,5 +45,5 @@ func TestTaskLLMResolutionLocalized(t *testing.T) {
 	if noKey.Reason != reasonLLMProfileNoAPIKey {
 		t.Fatalf("blank-key reason = %q, want %q", noKey.Reason, reasonLLMProfileNoAPIKey)
 	}
-	assertKoreanError(t, "resolutionFromProfile(noKey).Reason", noKey.Reason)
+	assertChineseError(t, "resolutionFromProfile(noKey).Reason", noKey.Reason)
 }

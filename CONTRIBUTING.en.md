@@ -1,13 +1,13 @@
 # Contributing
 
-[한국어](CONTRIBUTING.md) · English
+[简体中文](CONTRIBUTING.md) · English
 
-Thank you for your interest in the Korean edition of ARTEX (`artex-ko`). This document
+Thank you for your interest in the Simplified Chinese edition of ARTEX. This document
 gathers the scope, policies, and procedures you should know before you start contributing.
 Before you send a contribution, please read [Authorized use and legal responsibility](#authorized-use-and-legal-responsibility)
 and [Localization policy](#localization-policy) first.
 
-- To report a bug or suggest a feature → use the [issue templates](https://github.com/jiwoochris/artex-ko/issues/new/choose).
+- To report a bug or suggest a feature → use the [issue templates](https://github.com/j5tv9nfzhn-hue/ARTEX/issues/new/choose).
 - If you find a translation or localization error → use the "translation/localization error" issue template.
 - If you find a security vulnerability → **do not open a public issue**; follow the procedure in [SECURITY.en.md](SECURITY.en.md).
 - Everyone who takes part must follow the [Code of Conduct (CODE_OF_CONDUCT.en.md)](CODE_OF_CONDUCT.en.md).
@@ -37,37 +37,15 @@ user who runs it. This repository is provided "AS IS."
 
 ## Localization policy
 
-The reason this repository exists is to **preserve the original
-[Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX) (currently unreachable, checked 2026-10) judgment performance exactly while
-changing only the user-facing output to Korean**. Translation contributions that depart from
-this policy can degrade performance, so we do not accept them.
+Keep technical behavior while converting all project-owned Korean wording to **Simplified Chinese**.
 
-- **Do not translate the agent's internal reasoning prompts (the behavior-instruction body).**
-  The behavior benchmarked in the original language (Chinese) must be preserved. This body
-  lives in `agent/promptcatalog.go` and the DB seed (`agent_prompts`). Translating it causes
-  drift in the agent's judgment.
-- **Only user-facing output is forced into Korean.** This covers detection findings
-  (`report_finding`), fact summaries (`record_fact`), the final report, and chat responses.
-  The enforcement is a code-fixed tail called `langDirective()` in `agent/prompt.go`, appended
-  to the end of each role's system prompt. To change the output language, modify this function.
-- **Commands, payloads, code, URLs, and log text are not translated.** They are the originals
-  needed for analysis, so they are left as is.
-- **The original Chinese is preserved.** Documents keep the original in `README.zh.md` and UI
-  strings keep it in `web/messages/zh.json`, so that changes in the upstream repository are
-  easy to compare against. Korean translations are filled into `web/messages/ko.json`.
-- When you translate a new UI string, do not hard-code it; add it as a key in the message files.
-- **The output-language enforcement is a prompt nudge, not a hard cap.** `langDirective()`
-  **instructs** the model to output Korean; it does not force-lock the language. Korean fidelity
-  therefore varies with the model's capability, the role, and the context. Use a capable
-  (frontier-class) model when you verify localization changes. Cheap or small models can revert
-  reports and summaries to the original language (Chinese), so do not judge whether a translation
-  is applied correctly from a cheap model's output alone. The `max_tokens` pitfall when using
-  OpenAI-family models is covered in the
-  [README's "Model selection and output language" section](README.en.md#model-selection-and-output-language).
-- **The procedure for keeping up with upstream changes is in the maintainer document.** When
-  the original ARTEX is updated, the runbook for distinguishing preserved assets from
-  translation targets, reflecting them, and checking translation symmetry and drift is in
-  [MAINTAINING.en.md](MAINTAINING.en.md).
+- Preserve the original Chinese reasoning body in `agent/promptcatalog.go` / `agent_prompts`, including roles, scope and tool boundaries. Translate Korean comments and project-owned instructions without changing their technical meaning.
+- Default reports, summaries, chat and backend messages to zh. `langDirective()` and wrap-up prompts must use the selected output language.
+- Do not translate protocol fields, enums, tool names, SQL, commands, payloads, URLs, user data or provider diagnostics.
+- `web/messages/zh.json` is the source catalog; en/es keys must match. ko.json is a deep-equal Chinese compatibility copy, not an active Korean UI choice.
+- Preserve formatting verbs and ICU placeholders. Normalize legacy ko configuration to zh and test fallback precedence.
+- Run `scripts/check-language.py --source`, Node language regressions and the static HTML check after a build. Chinese Han is expected; Korean Hangul is forbidden in project-owned text.
+- Model-language adherence is a prompt constraint, not a hard filter. Historical Korean benchmarks are not a new Chinese end-to-end test. See [README](README.md#模型选择与输出语言) and [MAINTAINING](MAINTAINING.md).
 
 ---
 
@@ -187,9 +165,7 @@ docker compose up -d     # start artex + postgres → http://localhost:8787
    the change, as in `feat/...`, `fix/...`, `docs/...`, `i18n/...`.
 3. Write the change and **run the relevant verification yourself.** For a Go change, make the
    `build`/`vet`/`test` above pass. For a web change, make `npm run build:static` pass (it also
-   performs the merge gate and the TypeScript type checking). `npm run check` (Biome) still has
-   pre-existing lint debt inherited from upstream and is not a merge gate yet — `web.yml` runs it
-   only as an informational step — so you do not need to make all of it pass. Instead, just
+   performs the merge gate and the TypeScript type checking). `npm run check` (Biome) is also a merge gate: errors must be zero; existing warning/info diagnostics do not change the exit status. just
    confirm that **your change does not add new errors** (when you commit, `lint-staged`
    automatically applies `biome check --write` to the files you staged). If you changed
    documentation (`.md`), run `python3 -I scripts/check-doc-links.py` to confirm that in-repo
@@ -210,7 +186,7 @@ docker compose up -d     # start artex + postgres → http://localhost:8787
 ### Commit messages
 
 Follow the convention of the existing commit history. The format is `type(scope): description`,
-and the description is written in Korean.
+and the description is written in Simplified Chinese.
 
 - `type`: `feat` · `fix` · `docs` · `chore` · `refactor` · `test` · `i18n`, and so on
 - `scope`: the changed area (`agent` · `web` · `server`, and so on); optional
@@ -218,9 +194,9 @@ and the description is written in Korean.
 Examples.
 
 ```
-feat(agent): 사용자 노출 출력을 한국어로 강제 (langDirective)
-docs: 한국어 README 작성, 원본은 README.zh.md 로 보존
-i18n(web): 대시보드 네비게이션 라벨 한국어 번역
+i18n(agent): 默认产物改为简体中文，兼容旧 ko 配置
+docs: 翻译 README，保留上游技术稿与署名
+i18n(web): 统一仪表盘导航的中文标签
 ```
 
 ---

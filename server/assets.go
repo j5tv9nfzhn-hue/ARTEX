@@ -18,20 +18,19 @@ type companyScopeInputs []db.ScopeInput
 
 const maxCompanyMutationBodyBytes = 2 << 20
 
-// 회사·자산 API 가 사용자에게 돌려주는 오류 응답 문구. 용어집 기준으로 company 는
-// "회사"로 둔다. 사람이 읽는 메시지만 한국어로 두고 식별자·필드명은 원문 보존.
+// 公司与资产 API 的中文错误响应。
+// 仅翻译人类可读消息，保留标识符和协议字段名。
 const (
-	errCompanyRequestTooLarge = "요청 본문이 너무 큽니다"
-	errCompanyNameConflict    = "이미 존재하는 회사 이름입니다"
+	errCompanyRequestTooLarge = "请求正文过大"
+	errCompanyNameConflict    = "公司名称已存在"
 )
 
-// 자산 출처(provenance) summary 라벨. task_asset_links.source_summary 에 저장돼 작업
-// 상세 화면(sessions·assets 탭)에 그대로 표시되는 사용자 노출 문구다. 한곳에 모아
-// 두어 같은 패널에서 출처 라벨이 언어별로 어긋나지 않게 한다(db.manualTaskScopeSummary
-// 도 같은 성격의 수동 추가 라벨). 비교·분기에 쓰이지 않는 표시 전용 값이다.
+// 资产来源 provenance 的摘要标签，存入 task_asset_links.source_summary，
+// 直接显示于任务详情 sessions、assets 标签页。与 db.manualTaskScopeSummary
+// 统一语言；这些值只用于展示，不参与比较或分支。
 const (
-	taskAssetSourceAPISummary  = "자산 API 로 등록"
-	taskAssetSourceTaskSummary = "작업 설명 또는 목표로 초기화"
+	taskAssetSourceAPISummary  = "通过资产 API 登记"
+	taskAssetSourceTaskSummary = "从任务描述或目标初始化"
 )
 
 func decodeCompanyMutationRequest(w http.ResponseWriter, r *http.Request, value any) bool {

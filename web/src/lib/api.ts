@@ -105,8 +105,8 @@ import type {
   WorkspaceListing,
 } from "@/lib/types";
 
-// ApiError 는 HTTP 상태 코드를 함께 싣는 API 오류다. 서버 오류 문구는 표시 언어에 따라
-// 번역되므로, 화면 로직은 문구가 아니라 status 로 분기해야 한다.
+// ApiError 携带 HTTP 状态码；服务端消息随语言变化，
+// 界面必须按 status 分支，不能依赖翻译后的文本。
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -139,7 +139,7 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
       document.cookie = "artex_token=; path=/; max-age=0";
       window.location.href = "/login";
     }
-    throw new Error("인증되지 않았습니다");
+    throw new Error("尚未通过身份验证");
   }
   if (!r.ok) {
     const fallback = `${init?.method ?? "GET"} ${path}: ${r.status}`;
@@ -176,25 +176,25 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
 // Token is appended as ?token= because SSE can't carry cookies cross-origin.
 // mockReport returns a canned Markdown report for the demo.
 function mockReport(_task?: string): string {
-  return `# ARTEX 침투 테스트 보고서: Acme Corp
+  return `# ARTEX 渗透测试报告：Acme Corp
 
-## 개요
-- 범위: acme.com (www / admin / api / shop / vpn 서브도메인 포함)
-- 확인된 발견: 6건 (고위험 3 · 중위험 3 · 저위험 2)
-- 엔진 모드: exploring
+## 概述
+- 范围：acme.com（包含 www / admin / api / shop / vpn 子域名）
+- 已确认发现：6 个（高危 3 · 中危 3 · 低危 2）
+- 引擎模式：exploring
 
-## 주요 발견
-1. **[높음] 백오피스 기본 비밀번호** admin.acme.com admin/admin123 → 백오피스를 완전히 장악할 수 있습니다.
-2. **[높음] SQL 인젝션** www.acme.com/search?q= → acme_prod 데이터베이스를 읽을 수 있습니다.
-3. **[높음] IDOR** api.acme.com/v1/orders?id= → 권한을 우회해 타인의 주문(휴대폰 번호/주소 포함)을 읽을 수 있습니다.
-4. **[중간] 반사형 XSS**, **.git 소스 코드 노출**, **로그인 속도 제한 없음**.
+## 主要发现
+1. **[高危] 管理后台默认密码** admin.acme.com admin/admin123 → 可完全控制后台。
+2. **[高危] SQL 注入** www.acme.com/search?q= → 可读取 acme_prod 数据库。
+3. **[高危] IDOR** api.acme.com/v1/orders?id= → 可越权读取他人订单（包含手机号和地址）。
+4. **[中危] 反射型 XSS**、**.git 源码泄露**、**登录缺少速率限制**。
 
-## 권고
-- 백오피스 비밀번호를 강제로 변경하고 MFA 를 활성화하며 기본 비밀번호를 차단합니다.
-- search 엔드포인트에 파라미터화 쿼리를 적용하고 출력을 인코딩합니다.
-- API 에 객체 수준 권한 검증(IDOR)을 추가하고 강력한 JWT 키로 교체합니다.
+## 建议
+- 强制修改后台密码，启用 MFA，禁止使用默认密码。
+- search 接口使用参数化查询并对输出编码。
+- API 增加对象级权限验证（IDOR），更换强 JWT 密钥。
 
-> (demo) 본 보고서는 mock 데이터로 생성되었으며 화면 데모용입니다.`;
+> (demo) 本报告由 mock 数据生成，仅用于界面演示。`;
 }
 
 export function sseUrl(path: string): string {
@@ -250,10 +250,10 @@ export const api = {
   // ---- auth ----
   authStatus: () => get<{ initialized: boolean; setup_token_required?: boolean }>("/auth/status"),
   login: (username: string, password: string) => post<{ token: string }>("/auth/login", { username, password }),
-  // 첫 실행 초기화는 서버 콘솔에만 출력되는 설정 토큰을 함께 보내야 통과한다(원격 선점 방지).
+  // 首启初始化必须发送只在服务器控制台显示的设置令牌，防止远程抢占。
   initPassword: (password: string, setupToken: string) =>
     post<{ token: string }>("/auth/init", { password, setup_token: setupToken }),
-  // 비밀번호를 바꾸면 이전 토큰이 모두 무효화되므로, 응답의 새 토큰으로 세션을 이어 간다.
+  // 修改密码会使旧 token 失效，使用响应中的新 token 延续当前会话。
   changePassword: (oldPassword: string, newPassword: string) =>
     post<{ ok: boolean; token?: string }>("/auth/change-password", {
       old_password: oldPassword,
@@ -465,19 +465,19 @@ export const api = {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: fd,
     });
-    if (!r.ok) throw new Error(`업로드 실패: ${r.status}`);
+    if (!r.ok) throw new Error(`上传失败： ${r.status}`);
     return r.json() as Promise<{ uploaded: number }>;
   },
   workspaceDownload: async (path: string) => {
     let blob: Blob;
     if (MOCK) {
-      blob = new Blob([`(demo) ${path} 의 다운로드 내용 예시입니다.`], { type: "text/plain" });
+      blob = new Blob([`(demo) ${path} 的下载内容示例。`], { type: "text/plain" });
     } else {
       const token = getToken();
       const r = await fetch(`/api/workspace/download?path=${encodeURIComponent(path)}`, {
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });
-      if (!r.ok) throw new Error(`다운로드 실패: ${r.status}`);
+      if (!r.ok) throw new Error(`下载失败： ${r.status}`);
       blob = await r.blob();
     }
     const objUrl = URL.createObjectURL(blob);
@@ -666,8 +666,8 @@ export const api = {
       { headers: token ? { Authorization: `Bearer ${token}` } : {} },
     );
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: "다운로드 실패" }));
-      throw new Error(error.error ?? "다운로드 실패");
+      const error = await response.json().catch(() => ({ error: "下载失败" }));
+      throw new Error(error.error ?? "下载失败");
     }
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
@@ -915,7 +915,7 @@ export const api = {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: fd,
     });
-    if (!r.ok) throw new Error(`업로드 실패: ${r.status} ${await r.text()}`);
+    if (!r.ok) throw new Error(`上传失败： ${r.status} ${await r.text()}`);
     return r.json() as Promise<{ attachments: ChatAttachment[] }>;
   },
   stopChat: (taskId: string) => post<{ status: string }>(`/tasks/${taskId}/chat/stop`, {}),
@@ -1163,8 +1163,8 @@ export const api = {
     mcps?: string[];
     instructions?: string;
   }) => post<{ name: string }>("/skills", s),
-  // uploadSkill installs a skill from a .zip (multipart). Surfaces the backend
-  // error text (e.g. "이미 존재하는 스킬입니다" / "SKILL.md 를 찾지 못했습니다") so the UI can show a precise message.
+  // uploadSkill 从 multipart zip 安装 Skill，保留后端具体错误
+  // （例如 Skill 已存在、缺少 SKILL.md），让界面准确展示。
   uploadSkill: async (file: File, overwrite = false): Promise<{ name: string; files: number }> => {
     if (MOCK) return { name: file.name.replace(/\.zip$/i, ""), files: 1 };
     const fd = new FormData();
@@ -1176,7 +1176,7 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new ApiError(body?.error || `업로드 실패(${r.status})`, r.status);
+    if (!r.ok) throw new ApiError(body?.error || `上传失败 (${r.status})`, r.status);
     return body;
   },
   deleteSkill: (name: string) => del<{ deleted: string }>(`/skills/${name}`),

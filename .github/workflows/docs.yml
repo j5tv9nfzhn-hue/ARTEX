@@ -1,13 +1,13 @@
 name: docs
-# 추적되는 마크다운 문서의 저장소 내부 링크·이미지 참조가 실존 파일을 가리키는지,
-# 그리고 문서 앵커 링크(#헤딩)가 대상 문서에 실제로 있는 헤딩을 가리키는지 푸시·PR
-# 마다 검사해, 깨진 링크·이미지·앵커가 머지되는 것을 막는다. 링크가 가리키는
-# 파일은 저장소 어디에나 있을 수 있어(예: ../LICENSE·screenshots/ko/*.png) paths
-# 필터 없이 모든 변경에 돌린다. 외부 URL(http/https/mailto)은 네트워크에 의존해
-# flaky 하므로 검사하지 않는다 — scripts/check-doc-links.py 가 내부 참조만 본다.
-# 파이썬 표준 라이브러리만 쓰고 네트워크에 접속하지 않아 결정론적으로 끝나므로,
-# Docker Hub 속도 제한 같은 외부 요인으로 깜빡이지 않는다. Go 빌드·정적 분석·테스트는
-# ci.yml, 탐지 규칙 재현은 detections.yml, 한국어 UI 빌드는 web.yml 이 맡는다.
+# 每次 push、PR 检查 Markdown 内部链接和图片目标存在。
+# 同时检查 #标题 锚点对应目标文档的真实标题。
+# 防止损坏的文件、图片或锚点引用进入主分支。
+# 被引用文件可能位于仓库任何目录，因此不设置 paths 过滤。
+# 外部 http、https、mailto 依赖网络状态，不属于确定性合并门禁。
+# check-doc-links.py 仅检查内部引用。
+# 脚本只使用 Python 标准库，不连接网络。
+# 因此不会受 Docker Hub 或远端限流影响。
+# Go 检查由 ci.yml、检测规则由 detections.yml、中文 UI 由 web.yml 负责。
 on:
   push:
     branches: ["**"]
@@ -16,7 +16,7 @@ on:
 permissions:
   contents: read
 
-# 같은 브랜치에 새 푸시가 오면 앞선 실행을 취소해 불필요한 실행이 쌓이지 않게 한다.
+# 同一分支的新 push 取消前次运行，避免重复任务。
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
@@ -26,8 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # python3 는 ubuntu-latest 러너에 기본 설치되어 있고, 스크립트는 표준
-      # 라이브러리만 쓰므로 별도 설치 단계가 필요 없다. -I 로 사용자 사이트·환경을
-      # 격리해 실행한다.
-      - name: 문서 내부 링크·이미지·앵커 무결성 검사
+      # ubuntu-latest 已安装 python3，脚本只依赖标准库。
+      # 无需安装依赖，以 -I 隔离用户 site-packages 和环境。
+      # 内部引用检查保持确定性。
+      - name: 文档内部链接、图片与锚点检查
         run: python3 -I scripts/check-doc-links.py

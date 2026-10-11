@@ -12,21 +12,21 @@ import (
 )
 
 // decodeErrorField pulls the "error" string out of a writeErr JSON body so the
-// Korean-ness of the user-facing message can be asserted.
+// Simplified Chinese-ness of the user-facing message can be asserted.
 func decodeErrorField(t *testing.T, body []byte) string {
 	t.Helper()
 	var resp struct {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		t.Fatalf("응답 JSON 파싱 실패: %v (본문 %s)", err, body)
+		t.Fatalf("解析响应 JSON 失败：%v（正文 %s）", err, body)
 	}
 	return resp.Error
 }
 
 // TestTaskCategoryErrorConstantsLocalized pins that every user-facing error
-// literal in task_categories.go is Korean (Hangul present, no Chinese Han). If
-// anyone reverts one to Chinese, this fails.
+// literal in task_categories.go is Simplified Chinese (Han present, no Hangul). If
+// anyone reverts one to Korean, this fails.
 func TestTaskCategoryErrorConstantsLocalized(t *testing.T) {
 	cases := map[string]string{
 		"errTaskCatRequestTooLarge": errTaskCatRequestTooLarge,
@@ -37,12 +37,12 @@ func TestTaskCategoryErrorConstantsLocalized(t *testing.T) {
 		"errTaskCatBatchSizeFmt":    fmt.Sprintf(errTaskCatBatchSizeFmt, db.MaxTaskCategoryBatchSize),
 	}
 	for label, msg := range cases {
-		assertKoreanError(t, label, msg)
+		assertChineseError(t, label, msg)
 	}
 }
 
 // TestTaskCategoryResponsesLocalized drives the validators that never touch the
-// database and confirms the Korean message actually lands in the HTTP body. The
+// database and confirms the Simplified Chinese message actually lands in the HTTP body. The
 // request decoder and id parser work on the body alone, writeTaskCategoryError
 // maps a db sentinel, and the batch-size guard returns before s.m is read.
 func TestTaskCategoryResponsesLocalized(t *testing.T) {
@@ -51,31 +51,31 @@ func TestTaskCategoryResponsesLocalized(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/task-categories", strings.NewReader(body))
 		rec := httptest.NewRecorder()
 		if _, ok := decodeTaskCategoryRequest(rec, req); ok {
-			t.Fatalf("%s: 검증이 통과해서는 안 됩니다 (status=%d)", name, rec.Code)
+			t.Fatalf("%s：验证不应通过 (status=%d)", name, rec.Code)
 		}
 		return decodeErrorField(t, rec.Body.Bytes())
 	}
-	assertKoreanError(t, "name-empty", decodeCase("name-empty", `{"name":"   "}`))
-	assertKoreanError(t, "name-too-long",
-		decodeCase("name-too-long", `{"name":"`+strings.Repeat("가", db.MaxTaskCategoryNameRunes+1)+`"}`))
+	assertChineseError(t, "name-empty", decodeCase("name-empty", `{"name":"   "}`))
+	assertChineseError(t, "name-too-long",
+		decodeCase("name-too-long", `{"name":"`+strings.Repeat("中", db.MaxTaskCategoryNameRunes+1)+`"}`))
 	// The body exceeds maxTaskCategoryRequestBytes, so MaxBytesReader errors mid-decode.
-	assertKoreanError(t, "too-large",
+	assertChineseError(t, "too-large",
 		decodeCase("too-large", `{"name":"`+strings.Repeat("a", maxTaskCategoryRequestBytes+1)+`"}`))
 
 	// parseCategoryIDField — a zero/negative category_id is rejected.
 	rec := httptest.NewRecorder()
 	if _, ok := parseCategoryIDField(rec, json.RawMessage("0")); ok {
-		t.Fatal("invalid id 가 통과해서는 안 됩니다")
+		t.Fatal("invalid id 不应通过验证")
 	}
-	assertKoreanError(t, "invalid-id", decodeErrorField(t, rec.Body.Bytes()))
+	assertChineseError(t, "invalid-id", decodeErrorField(t, rec.Body.Bytes()))
 
-	// writeTaskCategoryError — the name-conflict sentinel maps to the Korean 409.
+	// writeTaskCategoryError — the name-conflict sentinel maps to the Simplified Chinese 409.
 	rec = httptest.NewRecorder()
 	writeTaskCategoryError(rec, db.ErrTaskCategoryNameConflict)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("conflict status=%d, want 409", rec.Code)
 	}
-	assertKoreanError(t, "name-conflict", decodeErrorField(t, rec.Body.Bytes()))
+	assertChineseError(t, "name-conflict", decodeErrorField(t, rec.Body.Bytes()))
 
 	// Batch move — an empty selection is rejected before any DB access, so a
 	// zero-value Server reaches the guard without dereferencing s.m.
@@ -86,5 +86,5 @@ func TestTaskCategoryResponsesLocalized(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty batch status=%d, want 400 (body %s)", rec.Code, rec.Body.String())
 	}
-	assertKoreanError(t, "batch-size", decodeErrorField(t, rec.Body.Bytes()))
+	assertChineseError(t, "batch-size", decodeErrorField(t, rec.Body.Bytes()))
 }

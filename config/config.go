@@ -28,25 +28,22 @@ type Database struct {
 type Config struct {
 	Database Database `json:"database"`
 	SkillDir string   `json:"skill_dir"`
-	// Language is the bootstrap/default user-facing output language for the
-	// artex-ko ("en"/"ko"/"zh"/"es"). Empty → DefaultLanguage. At
-	// runtime a value stored in the settings table (edited in the UI) overrides it.
+	// Language 是默认输出语言，运行时数据库设置可覆盖它。
 	Language string `json:"language"`
 }
 
-// SupportedLanguages lists the user-facing output languages artex-ko can
-// switch between. Agent output, UI strings and backend messages all key off these.
-var SupportedLanguages = []string{"en", "ko", "zh", "es"}
+// 默认简体中文，保留英语和西班牙语切换能力。
+var SupportedLanguages = []string{"zh", "en", "es"}
 
-// DefaultLanguage is the out-of-box user-facing language when nothing is
-// configured. artex-ko defaults to Korean; English, Chinese and Spanish are
-// selectable at runtime via the language setting (and ARTEX_LANG).
-const DefaultLanguage = "ko"
+const DefaultLanguage = "zh"
 
-// NormalizeLanguage lower-cases and validates a language code, returning "" when
-// the code is empty or unsupported (so callers can fall through to the next source).
+// NormalizeLanguage 将旧 ko 配置迁移为 zh；空值和未知值返回空字符串，
+// 让调用方继续尝试优先级较低的配置来源。
 func NormalizeLanguage(code string) string {
 	code = strings.ToLower(strings.TrimSpace(code))
+	if code == "ko" {
+		return "zh"
+	}
 	for _, c := range SupportedLanguages {
 		if c == code {
 			return c
@@ -55,26 +52,16 @@ func NormalizeLanguage(code string) string {
 	return ""
 }
 
-// CurrentLanguage, when wired by the server, returns the active user-facing
-// output language picked at runtime (settings table) layered over the bootstrap
-// default. It is the single source backend display strings (enum labels, etc.)
-// read through ActiveLanguage. nil (unit tests / standalone) → ActiveLanguage
-// falls back to "ko", which keeps the Korean localization golden tests green.
+// CurrentLanguage 由服务器接入数据库中的运行时输出语言设置。
 var CurrentLanguage func() string
 
-// ActiveLanguage resolves the language for backend display strings. Precedence:
-// the runtime hook (settings table, via the server) over an unwired fallback of
-// "ko". Production always wires CurrentLanguage, so a fresh deploy resolves to the
-// configured default (DefaultLanguage = "ko") through that hook; the "ko" fallback
-// only applies when the hook is absent (unit tests / standalone), so the Korean
-// localization golden tests hold without each having to pin the language.
 func ActiveLanguage() string {
 	if CurrentLanguage != nil {
 		if v := NormalizeLanguage(CurrentLanguage()); v != "" {
 			return v
 		}
 	}
-	return "ko"
+	return DefaultLanguage
 }
 
 // Language resolves the default user-facing output language with precedence:
@@ -200,16 +187,16 @@ func SkillDir() string {
 // DSN came from (for startup logging).
 func PostgresDSN() (dsn, source string, err error) {
 	if v := strings.TrimSpace(os.Getenv("ARTEX_PG_DSN")); v != "" {
-		return v, trCfg("환경 변수 ARTEX_PG_DSN"), nil
+		return v, trCfg("环境变量 ARTEX_PG_DSN"), nil
 	}
 	db := Load().Database
 	if d := strings.TrimSpace(db.DSN); d != "" {
-		return d, fmt.Sprintf(trCfg("설정 파일 %s (database.dsn)"), Path()), nil
+		return d, fmt.Sprintf(trCfg("配置文件 %s (database.dsn)"), Path()), nil
 	}
 	if db.Host != "" || db.DBName != "" || db.User != "" {
-		return db.buildDSN(), fmt.Sprintf(trCfg("설정 파일 %s (database 필드)"), Path()), nil
+		return db.buildDSN(), fmt.Sprintf(trCfg("配置文件 %s (database 字段)"), Path()), nil
 	}
-	return "", "", fmt.Errorf(trCfg("데이터베이스 설정을 찾을 수 없습니다: 환경 변수 ARTEX_PG_DSN 이 설정되어 있지 않고, 설정 파일 %s 에도 database (dsn 또는 host/user/dbname) 설정이 없습니다. 설정 파일을 만들거나 환경 변수를 설정한 뒤 다시 시도하세요"), Path())
+	return "", "", fmt.Errorf(trCfg("找不到数据库配置：环境变量 ARTEX_PG_DSN 未设置，配置文件 %s 中也没有 database（dsn 或 host/user/dbname）配置。请创建配置文件或设置环境变量后重试"), Path())
 }
 
 func (d Database) buildDSN() string {

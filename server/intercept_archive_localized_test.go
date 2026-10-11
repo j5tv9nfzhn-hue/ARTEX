@@ -6,43 +6,42 @@ import (
 	"unicode"
 )
 
-// assertKoreanError fails when msg is empty, still carries a CJK Han ideograph
-// (= untranslated Chinese), or carries no Hangul at all. Hangul and ASCII field
-// names/enums are allowed; only Han (unicode.Han) marks a leftover Chinese string.
-func assertKoreanError(t *testing.T, label, msg string) {
+// assertChineseError 要求消息非空、包含汉字且不含韩文。
+// 协议字段名和枚举值等 ASCII 标识保留原样。
+func assertChineseError(t *testing.T, label, msg string) {
 	t.Helper()
 	if msg == "" {
-		t.Fatalf("%s: 빈 메시지", label)
+		t.Fatalf("%s：消息为空", label)
 	}
-	hasHangul := false
+	hasHan := false
 	for _, r := range msg {
-		if unicode.Is(unicode.Han, r) {
-			t.Fatalf("%s: 중국어 한자가 남아 있습니다: %q", label, msg)
-		}
 		if unicode.Is(unicode.Hangul, r) {
-			hasHangul = true
+			t.Fatalf("%s：仍有韩文残留：%q", label, msg)
+		}
+		if unicode.Is(unicode.Han, r) {
+			hasHan = true
 		}
 	}
-	if !hasHangul {
-		t.Fatalf("%s: 한글이 없습니다: %q", label, msg)
+	if !hasHan {
+		t.Fatalf("%s：未包含中文：%q", label, msg)
 	}
 }
 
 // TestInterceptArchiveErrorsLocalized guards the F3 first bundle: every
 // user-facing error response produced by the pure validators in intercept.go and
-// task_archives.go must be Korean (Hangul present, no Chinese Han). If anyone
-// reverts one of these literals to Chinese, this test fails.
+// task_archives.go must be Simplified Chinese (Han present, no Hangul). If anyone
+// reverts one of these literals to Korean, this test fails.
 func TestInterceptArchiveErrorsLocalized(t *testing.T) {
 	// intercept.go: interceptFilterParams — query-string validation.
 	if _, err := interceptFilterParams(url.Values{"status": {"bogus"}}); err == nil {
-		t.Fatal("status 검증이 통과해서는 안 됩니다")
+		t.Fatal("status 验证不应通过")
 	} else {
-		assertKoreanError(t, "filter.status", err.Error())
+		assertChineseError(t, "filter.status", err.Error())
 	}
 	if _, err := interceptFilterParams(url.Values{"decision_source": {"bogus"}}); err == nil {
-		t.Fatal("decision_source 검증이 통과해서는 안 됩니다")
+		t.Fatal("decision_source 验证不应通过")
 	} else {
-		assertKoreanError(t, "filter.decision_source", err.Error())
+		assertChineseError(t, "filter.decision_source", err.Error())
 	}
 
 	// intercept.go: validateInterceptRuleReq — each branch isolated by making the
@@ -61,41 +60,41 @@ func TestInterceptArchiveErrorsLocalized(t *testing.T) {
 	for _, tc := range ruleCases {
 		err := validateInterceptRuleReq(tc.req)
 		if err == nil {
-			t.Fatalf("%s: 검증이 통과해서는 안 됩니다", tc.label)
+			t.Fatalf("%s：验证不应通过", tc.label)
 		}
-		assertKoreanError(t, tc.label, err.Error())
+		assertChineseError(t, tc.label, err.Error())
 	}
 
 	// task_archives.go: normalizeArchiveIDs — batch id validation.
 	if _, err := normalizeArchiveIDs(nil); err == nil {
-		t.Fatal("빈 archive_ids 검증이 통과해서는 안 됩니다")
+		t.Fatal("空 archive_ids 验证不应通过")
 	} else {
-		assertKoreanError(t, "archive_ids.empty", err.Error())
+		assertChineseError(t, "archive_ids.empty", err.Error())
 	}
 	tooMany := make([]int64, 101)
 	for i := range tooMany {
 		tooMany[i] = int64(i + 1)
 	}
 	if _, err := normalizeArchiveIDs(tooMany); err == nil {
-		t.Fatal("101개 archive_ids 검증이 통과해서는 안 됩니다")
+		t.Fatal("101 个 archive_ids 验证不应通过")
 	} else {
-		assertKoreanError(t, "archive_ids.too_many", err.Error())
+		assertChineseError(t, "archive_ids.too_many", err.Error())
 	}
 	if _, err := normalizeArchiveIDs([]int64{0}); err == nil {
-		t.Fatal("0 archive id 검증이 통과해서는 안 됩니다")
+		t.Fatal("archive id 为 0 不应通过验证")
 	} else {
-		assertKoreanError(t, "archive_ids.nonpositive", err.Error())
+		assertChineseError(t, "archive_ids.nonpositive", err.Error())
 	}
 
 	// task_archives.go: validateArchivePath — package path validation.
 	if err := validateArchivePath("/tmp/artex-data", ""); err == nil {
-		t.Fatal("빈 보관 경로 검증이 통과해서는 안 됩니다")
+		t.Fatal("空归档路径验证不应通过")
 	} else {
-		assertKoreanError(t, "archive_path.empty", err.Error())
+		assertChineseError(t, "archive_path.empty", err.Error())
 	}
 	if err := validateArchivePath("/tmp/artex-data", "/etc/passwd"); err == nil {
-		t.Fatal("관리 디렉터리 밖 경로 검증이 통과해서는 안 됩니다")
+		t.Fatal("管理目录之外的路径验证不应通过")
 	} else {
-		assertKoreanError(t, "archive_path.outside", err.Error())
+		assertChineseError(t, "archive_path.outside", err.Error())
 	}
 }

@@ -1,12 +1,8 @@
 # ARTEX detection rule tests
 
-English · [한국어](README.ko.md)
+English · [简体中文](README.ko.md)
 
-> 한국어: 이 디렉터리는 [`../`](../)의 탐지 규칙이 실제로 발화하는지를 재현 가능하게 증명하는
-> 회귀 테스트입니다. 바이너리 캡처를 저장소에 넣지 않고, 패킷 캡처를 매번 결정론적으로 생성한 뒤
-> [Suricata](https://suricata.io)로 직접 돌려 경보 수를 확인합니다. 모든 테스트는 자신이 소유하거나
-> 서면 허가를 받은 시스템을 지키는 **방어·탐지 목적에만** 쓰십시오. 한국어 전체 문서는
-> **[README.ko.md](README.ko.md)** 를 보십시오.
+> 简体中文：这些回归可复现地验证[检测规则](../)实际触发。pcap 每次确定性生成，直接交 Suricata 检查告警数，不提交二进制样本。仅用于防御自有或书面授权系统。完整说明见 [README.ko.md](README.ko.md)。
 
 Reproducible regression tests that prove the rules under [`../`](../) actually fire — and, just as
 important, stay silent on benign traffic. A detection rule you cannot run is a claim; these tests turn the

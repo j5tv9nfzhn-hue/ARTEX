@@ -68,7 +68,7 @@ const goalsScopeTail = `
 
 // goalsSystem assembles the goals-decomposer system prompt: the rendered body
 // [A] (DB-overridable), the code-owned scope-extraction tail when add_task_scope
-// is wired (withScope), and the code-owned Korean output-language tail [C] last —
+// is wired (withScope), and the code-owned Simplified Chinese output-language tail [C] last —
 // mirroring chatSystem/plannerSystem so a DB-edited body can never drop the tail.
 // DecomposeGoalsWithProvider and the localization test share this one assembly, so
 // the langDirective tail can't drift between runtime and test. EngagementDescription

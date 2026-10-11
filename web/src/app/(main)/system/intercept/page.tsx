@@ -94,7 +94,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 // ---- LLM fallback judge card ----
 
-const FOLLOW_ACTIVE = "0"; // profile_id 0 = 활성/기본 설정 따르기
+const FOLLOW_ACTIVE = "0"; // profile_id=0 表示遵循当前或默认配置。
 
 const defaultJudge = (): JudgeConfig => ({
   enabled: false,
@@ -139,7 +139,7 @@ function JudgeCard() {
     try {
       await api.interceptSetJudgeConfig(cfg);
       toast.success(t("judge.configSaved"));
-      await load(); // 되읽기: 프롬프트를 비우면 내장 템플릿을 다시 채운다
+      await load(); // 回读时，空提示重新填入内置模板。
     } catch (e) {
       toast.error(t("toast.saveFailed", { error: (e as Error).message }));
     } finally {
@@ -148,7 +148,7 @@ function JudgeCard() {
   }
 
   async function restorePrompt() {
-    // 프롬프트를 비우고 저장하면 서버가 다음 응답에 내장 템플릿 전문을 돌려주고, 입력창에 다시 채워진다.
+    // 清空并保存后，服务器在下一次响应返回内置完整模板，重新填充输入框。
     setSaving(true);
     try {
       await api.interceptSetJudgeConfig({ ...cfg, prompt: "" });
@@ -164,7 +164,7 @@ function JudgeCard() {
 
   return (
     <div className="space-y-4">
-      {/* 사용 스위치 — 독립 강조 바 */}
+      {/* 启用开关：独立强调栏。 */}
       <div
         className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 ${
           cfg.enabled ? "border-violet-400/50 bg-violet-50/40 dark:bg-violet-950/20" : "bg-muted/40"
@@ -192,7 +192,7 @@ function JudgeCard() {
 
       {cfg.enabled && (
         <div className="grid gap-4 lg:grid-cols-5">
-          {/* 왼쪽: 프롬프트 편집기(바로 펼침, 주 영역) */}
+          {/* 左侧：默认展开的主要提示编辑区。 */}
           <Card className="lg:col-span-3">
             <CardContent className="flex h-full flex-col gap-2 p-4">
               <div className="flex items-center justify-between">
@@ -217,7 +217,7 @@ function JudgeCard() {
             </CardContent>
           </Card>
 
-          {/* 오른쪽: 판정 매개변수(설정 칸) */}
+          {/* 右侧：判定参数设置。 */}
           <Card className="lg:col-span-2">
             <CardContent className="space-y-5 p-4">
               <div className="space-y-4">
@@ -324,24 +324,22 @@ export default function InterceptPage() {
   const [form, setForm] = React.useState<RuleForm>(defaultForm());
   const [saving, setSaving] = React.useState(false);
   const [regexErr, setRegexErr] = React.useState("");
-  const [regexWarn, setRegexWarn] = React.useState(false); // true = JS 는 못 파싱하지만 Go 에서는 유효한 문법일 수 있음
-
-  // ---- tool scope dialog ----
+  const [regexWarn, setRegexWarn] = React.useState(false); // true 表示 JS 无法解析，但可能是 Go 中有效的语法。
+  // 工具范围对话框。
   const [scopeOpen, setScopeOpen] = React.useState(false);
   const [allTools, setAllTools] = React.useState<Tool[]>([]);
   const [enabledTools, setEnabledTools] = React.useState<Set<string>>(new Set());
   const [scopeLoading, setScopeLoading] = React.useState(false);
   const [scopeSaving, setScopeSaving] = React.useState(false);
-  const [scopeTools, setScopeTools] = React.useState<string[]>([]); // 페이지 머리 정보 바: 현재 가로채기에 들어간 도구
-
-  // ---- data ----
+  const [scopeTools, setScopeTools] = React.useState<string[]>([]); // 页头信息栏：当前启用拦截的工具。
+  // 数据状态。
 
   const loadScope = React.useCallback(async () => {
     try {
       const cfg = await api.interceptGetToolConfig();
       setScopeTools(cfg.enabled_tools);
     } catch {
-      // 정보 바는 핵심이 아니라 실패하면 조용히 넘긴다
+      // 信息栏不是核心功能，失败时静默忽略。
     }
   }, []);
 
@@ -372,8 +370,8 @@ export default function InterceptPage() {
       setRegexErr("");
       setRegexWarn(false);
     } catch {
-      // JS RegExp 는 Go RE2 확장 문법(예: (?i) 인라인 플래그)을 지원하지 않는다.
-      // 여기서의 미리 보기 검증 실패가 Go 에서 무효하다는 뜻은 아니며, 최종 검증은 서버에 맡긴다.
+      // JS RegExp 不支持 Go RE2 的部分语法，如 (?i) 内联标志。
+      // 前端预览验证失败不代表 Go 无效，最终由服务器验证。
       setRegexErr("");
       setRegexWarn(true);
     }
@@ -515,7 +513,7 @@ export default function InterceptPage() {
     const sys: Tool[] = [],
       custom: Tool[] = [];
     for (const tool of allTools) {
-      if (SDK_KEYS.has(tool.key)) continue; // 하드코딩 그룹에서 이미 다룸
+      if (SDK_KEYS.has(tool.key)) continue; // 已在硬编码组中处理。
       if (tool.system) sys.push(tool);
       else custom.push(tool);
     }
@@ -540,7 +538,7 @@ export default function InterceptPage() {
         </div>
       </div>
 
-      {/* ---- 가로채기 범위 정보 바(규칙 대조와 모델 폴백 공용: 범위 밖 도구는 둘 다 개입 안 함) ---- */}
+      {/* 拦截范围信息栏由规则匹配与模型回退共用，范围外工具均不介入。 */}
       <div
         className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-2.5 ${
           scopeTools.length === 0 ? "border-amber-400/60 bg-amber-50/50 dark:bg-amber-950/20" : "bg-muted/40"

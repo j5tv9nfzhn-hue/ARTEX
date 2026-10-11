@@ -20,7 +20,7 @@ import {
   XIcon,
   ZapIcon,
 } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/components/approval-execution-focus";
@@ -132,8 +132,7 @@ function groupByAgent(conversations: Conversation[], agentByKey: Map<string, Age
   return [...groups.values()];
 }
 
-// LiveBadge is the small pulsing "실시간" chip reused from the task's main-agent
-// console — shown while a turn is streaming.
+// LiveBadge 复用任务主 Agent 控制台的“实时”动态标签，在轮次流式生成时显示。
 function LiveBadge() {
   const t = useTranslations("chat");
   return (
@@ -171,7 +170,7 @@ function Composer({
   running?: boolean;
   onStop?: () => void;
   stopDisabled?: boolean;
-  // 방식1 파일 업로드: onPickFiles 를 넘겨야 클립 버튼 + 첨부 chip 미리 보기를 표시한다.
+  // 文件上传方式一：提供 onPickFiles 才显示附件按钮和附件 chip 预览。
   attachments?: ChatAttachment[];
   onPickFiles?: (files: File[]) => void;
   onRemoveAttachment?: (path: string) => void;
@@ -181,7 +180,7 @@ function Composer({
   const t = useTranslations("chat");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const atts = attachments ?? [];
-  // 전송 키는 시스템 설정(localStorage)으로 결정하며, 기본값은 Enter 전송이다.
+  // 发送按键由系统设置 localStorage 决定，默认 Enter 发送。
   const sendMode = useChatSendMode();
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (!shouldSubmitOnKey(e, sendMode)) return;
@@ -225,8 +224,8 @@ function Composer({
               multiple
               className="hidden"
               onChange={(e) => {
-                // FileList 는 input 요소에 live 바인딩되어 있어, 먼저 배열로 스냅샷한 뒤 value 를 비워야 한다.
-                // 그러지 않으면 비동기 onPickFiles(예: 초안 상태에서 먼저 대화를 생성)가 재개될 때 빈 목록을 받는다.
+                // FileList 与 input 实时绑定，必须先复制为数组再清空 value。
+                // 否则异步 onPickFiles（如先创建草稿对话）恢复执行时会收到空列表。
                 const picked = Array.from(e.target.files ?? []);
                 e.target.value = ""; // allow re-picking the same file
                 if (picked.length > 0) onPickFiles(picked);
@@ -469,7 +468,7 @@ function DraftChat({
         <div className="bg-primary/10 flex size-12 items-center justify-center rounded-full">
           <Bot className="text-primary size-6" />
         </div>
-        <div className="text-sm font-medium">{t("emptyStart", { agent: agent?.name ?? "에이전트" })}</div>
+        <div className="text-sm font-medium">{t("emptyStart", { agent: agent?.name ?? "Agent" })}</div>
         {agent?.description && <p className="text-muted-foreground max-w-md text-xs">{agent.description}</p>}
       </div>
 
@@ -520,7 +519,7 @@ function ChatView({
   const [input, setInput] = React.useState(initial?.input ?? "");
   const [sending, setSending] = React.useState(false);
   const [stopping, setStopping] = React.useState(false);
-  // 방식1 파일 업로드: 이미 업로드한 첨부(sessions/conv-<id>/uploads/ 에 저장)를 다음 메시지와 함께 보낸다.
+  // 文件上传方式一：已上传文件位于 sessions/conv-<id>/uploads，随下一条消息发送。
   const [attachments, setAttachments] = React.useState<ChatAttachment[]>(initial?.attachments ?? []);
   const [uploading, setUploading] = React.useState(false);
   const cursorRef = React.useRef(0); // newest loaded id — incremental-tail anchor
@@ -716,7 +715,7 @@ function ChatView({
     let li = 0,
       lo = 0,
       lcr = 0;
-    let turns = 0; // 에이전트 반복 횟수 = 모델 호출 횟수(usage 종류 1건당 1회)
+    let turns = 0; // Agent 迭代次数等于模型调用次数，每条 usage 活动计一次。
     for (const a of messages) {
       if (a.kind === "result") {
         i += a.input_tokens ?? 0;
@@ -1082,6 +1081,7 @@ function AgentGroupHeader({
 }
 
 export default function ChatPage() {
+  const locale = useLocale();
   const t = useTranslations("chat");
   const [agents, setAgents] = React.useState<Agent[]>([]);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
@@ -1106,9 +1106,8 @@ export default function ChatPage() {
   const [renamingId, setRenamingId] = React.useState<number | null>(null);
   const [renameText, setRenameText] = React.useState("");
   const [selectedConversationIds, setSelectedConversationIds] = React.useState<Set<number>>(() => new Set());
-  // selectionMode gates the multi-select UI: off by default (clean list, no
-  // checkboxes); the header "다중 선택" button turns it on, "완료" turns it off and
-  // clears the selection.
+  // selectionMode 控制多选 UI，默认关闭以保持列表简洁。
+  // “多选”按钮开启，“完成”关闭并清除选择。
   const [selectionMode, setSelectionMode] = React.useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
@@ -1243,9 +1242,8 @@ export default function ChatPage() {
       ),
     [visibleConversations, agentByKey],
   );
-  // conversation agents: custom agents + conversational built-ins (role=assistant,
-  // e.g. Auto / 침투 테스트). The orchestration built-ins (goals/planner/mainagent/worker)
-  // are task-specific and stay hidden from the chat page.
+  // 聊天 Agent 包含自定义 Agent 与 role=assistant 的对话型内置 Agent，如 Auto、渗透测试。
+  // goals、planner、mainagent、worker 是任务专用编排角色，不显示于聊天页。
   const chatAgents = React.useMemo(() => agents.filter((a) => !a.builtin || a.role === "assistant"), [agents]);
   const agentFilterOptions = React.useMemo(() => {
     const counts = new Map<string, number>();
@@ -1257,8 +1255,8 @@ export default function ChatPage() {
     if (agentFilter !== null) keys.add(agentFilter);
     return [...keys]
       .map((key) => ({ key, name: agentByKey.get(key)?.name || key, count: counts.get(key) ?? 0 }))
-      .sort((a, b) => a.name.localeCompare(b.name, "ko"));
-  }, [convs, chatAgents, agentByKey, agentFilter]);
+      .sort((a, b) => a.name.localeCompare(b.name, locale));
+  }, [convs, chatAgents, agentByKey, agentFilter, locale]);
   const conversationCountLabel =
     agentFilter === null
       ? t("totalCount", { count: convs.length })

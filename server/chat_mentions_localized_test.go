@@ -8,11 +8,8 @@ import (
 	"testing"
 )
 
-// TestChatMentionErrorsLocalized guards F3b chat_mentions.go: every user-facing
-// @멘션(인용) error response must be Korean (Hangul present, no Chinese Han). The
-// wire token labels (chatMentionPattern·chatMentionKinds), the agent-input
-// snapshot header, and the truncation markers fed into that snapshot stay in the
-// original language by design and are intentionally not checked here.
+// TestChatMentionErrorsLocalized 检查 HTTP @提及错误使用中文且不含韩文。
+// 协议标签、模型输入快照标题和截断标记不在此测试中改动。
 func TestChatMentionErrorsLocalized(t *testing.T) {
 	// Fixed user-facing literals.
 	for label, msg := range map[string]string{
@@ -22,14 +19,14 @@ func TestChatMentionErrorsLocalized(t *testing.T) {
 		"dataUnavail": errChatMentionDataUnavail,
 		"tooLarge":    errChatMentionTooLarge,
 	} {
-		assertKoreanError(t, label, msg)
+		assertChineseError(t, label, msg)
 	}
 
 	// parseChatMentions — a non-positive id inside a valid wire token.
 	if _, err := parseChatMentions("@[漏洞#0]"); err == nil {
-		t.Fatal("잘못된 인용 ID 가 통과해서는 안 됩니다")
+		t.Fatal("无效引用 ID 不应通过验证")
 	} else {
-		assertKoreanError(t, "parse.badID", err.Error())
+		assertChineseError(t, "parse.badID", err.Error())
 	}
 
 	// parseChatMentions — exceeding the per-message mention cap (11 distinct ids).
@@ -38,16 +35,16 @@ func TestChatMentionErrorsLocalized(t *testing.T) {
 		fmt.Fprintf(&b, "@[漏洞#%d] ", i)
 	}
 	if _, err := parseChatMentions(b.String()); err == nil {
-		t.Fatal("인용 상한 초과가 통과해서는 안 됩니다")
+		t.Fatal("超出引用数量上限不应通过验证")
 	} else {
-		assertKoreanError(t, "parse.tooMany", err.Error())
+		assertChineseError(t, "parse.tooMany", err.Error())
 	}
 
 	// composeChatMentionMessage — a mention is present but the database is nil.
 	if _, err := composeChatMentionMessage(nil, "@[漏洞#1]"); err == nil {
-		t.Fatal("DB 없이 인용 해석이 통과해서는 안 됩니다")
+		t.Fatal("无数据库时引用解析不应成功")
 	} else {
-		assertKoreanError(t, "compose.dataUnavail", err.Error())
+		assertChineseError(t, "compose.dataUnavail", err.Error())
 	}
 
 	// searchChatMentions — invalid kind and over-long query are rejected before
@@ -56,17 +53,17 @@ func TestChatMentionErrorsLocalized(t *testing.T) {
 		w := httptest.NewRecorder()
 		(&Server{}).searchChatMentions(w, httptest.NewRequest("GET", "/api/chat/mentions?"+q, nil))
 		if w.Code != 400 {
-			t.Fatalf("검증 실패(400)를 기대했으나 %d 가 반환되었습니다 (%s)", w.Code, q)
+			t.Fatalf("预期验证失败 (400)，实际返回 %d (%s)", w.Code, q)
 		}
-		assertKoreanError(t, "search."+q, decodeErrorField(t, w.Body.Bytes()))
+		assertChineseError(t, "search."+q, decodeErrorField(t, w.Body.Bytes()))
 	}
 
 	// The display label map mirrors the UI mention kinds, and the not-found
-	// template resolves to a fully Korean message for a known kind.
+	// template resolves to a fully Simplified Chinese message for a known kind.
 	for _, kind := range []string{"finding", "asset", "company", "endpoint", "ip", "app", "root_domain", "subdomain", "service"} {
 		if chatMentionKindLabel[kind] == "" {
-			t.Fatalf("종류 라벨이 누락되었습니다: %s", kind)
+			t.Fatalf("缺少类型标签：%s", kind)
 		}
 	}
-	assertKoreanError(t, "notFound", fmt.Sprintf(errChatMentionNotFoundFmt, chatMentionKindLabel["finding"], 7))
+	assertChineseError(t, "notFound", fmt.Sprintf(errChatMentionNotFoundFmt, chatMentionKindLabel["finding"], 7))
 }

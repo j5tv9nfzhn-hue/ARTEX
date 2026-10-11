@@ -1,8 +1,8 @@
 # Security Policy
 
-[한국어](SECURITY.md) · English
+[简体中文](SECURITY.md) · English
 
-This document explains how to report security vulnerabilities in the **ARTEX Korean edition (`artex-ko`) code itself**. ARTEX is an offensive-security tool that performs penetration testing, but what this document covers is not the results of attacking something with the tool; it is **vulnerabilities that arise when you operate or deploy this software**.
+This document explains how to report security vulnerabilities in the **ARTEX Simplified Chinese edition code itself**. ARTEX is an offensive-security tool that performs penetration testing, but what this document covers is not the results of attacking something with the tool; it is **vulnerabilities that arise when you operate or deploy this software**.
 
 For example:
 
@@ -32,7 +32,7 @@ Including the following in your report speeds up triage:
 
 ## Supported scope
 
-This repository is a **Korean localization of the original ARTEX**, maintained by volunteers. Security fixes are provided against the **latest default branch**. We do not guarantee backports to earlier releases. If a vulnerability belongs to the upstream code regardless of localization, we recommend also reporting it to [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX) (currently unreachable, checked 2026-10).
+This repository is a **Simplified Chinese branch of the original ARTEX**, maintained by volunteers. Security fixes are provided against the **latest default branch**. We do not guarantee backports to earlier releases. If a vulnerability belongs to the upstream code regardless of localization, we recommend also reporting it to [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX) (currently unreachable, checked 2026-10).
 
 ## Out of scope
 

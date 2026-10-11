@@ -361,13 +361,13 @@ export default function ToolsPage() {
       .agents()
       .then(setAgents)
       .catch(() => {
-        /* 조회 실패는 무시하고 기본 상태를 유지한다 */
+        /* 查询失败时保留默认状态。 */
       });
     api
       .settings()
       .then((s) => setCaptureOn(!!s.traffic_capture))
       .catch(() => {
-        /* 조회 실패는 무시하고 기본 상태를 유지한다 */
+        /* 查询失败时保留默认状态。 */
       });
   }, [reload]);
 

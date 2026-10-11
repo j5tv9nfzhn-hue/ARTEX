@@ -203,8 +203,8 @@ function taskDuration(task: Task, nowSec: number): number {
 // aggregate accumulated over a bulk delete.
 type DeleteCounts = Omit<DeleteTaskResult, "deleted" | "cleanup_warning">;
 
-// 모듈 레벨 함수는 hook 을 호출할 수 없으므로, 번역 함수를 인자로 받아 사용자 노출
-// 문자열을 한국어로 만든다(approval-records 선례).
+// 模块级函数不能调用 Hook，因此通过参数接收翻译函数生成用户消息，
+// 与 approval-records 的模式一致。
 type Translator = ReturnType<typeof useTranslations>;
 
 function deleteDetails(t: Translator, result: DeleteCounts): string[] {
@@ -232,8 +232,7 @@ function fmtDateTime(unix?: number): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-// 상태 필터 옵션. 라벨은 렌더 시점에 status.task 네임스페이스로 번역하므로 여기서는
-// 값(순서 포함)만 둔다.
+// 状态过滤选项只保存值与顺序，标签在渲染时从 status.task 翻译。
 const STATUS_OPTIONS: readonly TaskStatus[] = ["created", "queued", "running", "paused", "done", "failed", "timeout"];
 
 // Select 不接受空字符串 value,所以「无分类」在筛选器、新建表单和批量移动里
@@ -1689,7 +1688,7 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
         const states = await Promise.allSettled(pending.map((id) => api.taskArchive(id)));
         let restored = false;
         states.forEach((state, index) => {
-          // 복원이 끝나면 보관 항목이 사라져 404 가 된다(문구는 표시 언어에 따라 달라짐).
+          // 恢复完成后归档记录消失，返回 404；消息文本会随展示语言变化。
           if (state.status !== "rejected" || !(state.reason instanceof ApiError)) return;
           if (state.reason.status !== 404) return;
           pendingRestoreIDs.current.delete(pending[index]);

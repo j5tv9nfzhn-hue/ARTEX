@@ -59,9 +59,8 @@ export interface SelectedMention {
   start: number;
 }
 
-// 토큰의 분류 라벨(漏洞·资产…)은 백엔드 와이어 포맷이라 중국어로 고정한다
-// (server/chat_mentions.go 의 chatMentionPattern 과 동일). 화면에 보이는 분류명은
-// 여기서 영어 kind 로 되돌려 주고, 소비 컴포넌트가 mentionTextarea.kind 로 한국어화한다.
+// 提及 token 的分类标签（漏洞、资产等）是与 chatMentionPattern 耦合的中文协议。
+// 返回稳定英文 kind，消费者再通过 mentionTextarea.kind 展示本地化分类名称。
 export function selectedMentions(value: string): SelectedMention[] {
   return [...value.matchAll(/@\[(漏洞|资产|企业|接口|IP|应用|域名|子域名|服务)#([0-9]+)(?: ([^\]\r\n]*))?\]/g)].map(
     (match) => ({

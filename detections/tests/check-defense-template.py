@@ -24,8 +24,8 @@
 # counts it.
 #
 # The ko/en parity assertion compares the Sigma rule BODY, not the whole block.
-# The block's leading comment header is prose and is translated (Korean in
-# defense-ko.md, English in defense-en.md) by the same rule as the rest of the
+# The block's leading comment header is prose and is translated (Simplified Chinese
+# in the legacy defense-ko.md path, English in defense-en.md), like the rest of the
 # guide; only the canonical rule content below it — every id, detection, and
 # correlation line a SIEM actually compiles — must stay byte-identical between the
 # two files. Asserting byte-identity of the whole block would wrongly fail on the

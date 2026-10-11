@@ -13,41 +13,37 @@ import (
 	"github.com/Autumn-27/artex/mcphttp"
 )
 
-// 자산 동기화(ScopeSentry 데이터 소스).
-//
-// ScopeSentry 는 ASM 자산 측량 플랫폼으로, MCP 인터페이스를 통해 [프로젝트]/[작업] 두 차원으로
-// 서브도메인·웹 애플리케이션·서비스 등의 자산을 가져와 ARTEX 의 회사 + 자산 모델로 매핑한다.
-// 데이터 소스 자체는 "ScopeSentry" 라는 이름의 http 전송 MCP 행이다(url + X-API-Key 헤더를 mcp_servers 에 저장).
-//
-// 에이전트 도구 계층과 달리, 여기서는 mcphttp.Client.Call 로 MCP 도구를 직접 호출해 원본 JSON 을 받고,
-// AskUser 권한 팝업을 띄우지 않는다(백그라운드 일괄 동기화).
+// ScopeSentry 资产同步。ASM 平台经 MCP 从项目、任务两个维度导入
+// 子域名、Web 应用、服务等，映射为 ARTEX 公司与资产。
+// 数据源为名为 ScopeSentry 的 http MCP 记录，在 mcp_servers 保存 URL 和 X-API-Key。
+// 后台批量同步直接调用 mcphttp.Client.Call 获取原始 JSON，不弹 AskUser 审批。
 
 const (
 	scopeSentryMCPName = "ScopeSentry"
-	syncMaxPerType     = 5000 // 단일 대상·단일 유형당 저장 보호 상한
+	syncMaxPerType     = 5000 // 每个目标、每种资产类型的保存安全上限。
 	syncDefaultPage    = 100
 )
 
-// 사용자 노출 메시지(writeErr 응답 + 동기화 결과 warnings/errors JSON). 식별자·enum·MCP 도구명·
-// JSON 필드명(dimension·targets 등)은 원문 그대로 두고, 중국어 문구만 한국어로 옮긴다(BRIEF F3 방침).
-// UI(web/messages/ko.json 의 sync 네임스페이스)와 "데이터 소스" 표기를 맞춘다.
+// writeErr 与同步结果 warnings、errors 使用中文。
+// dimension、targets、枚举、MCP 工具名和 JSON 字段保持原文；
+// “数据源”与 zh.json 的 sync 命名空间一致。
 const (
-	errSSDataSourceMissingFmt = "데이터 소스 %s 가 없습니다. 먼저 생성해 주세요"
-	errSSDataSourceNoURLFmt   = "데이터 소스 %s 에 URL 이 설정되지 않았습니다. 먼저 설정해 주세요"
-	errSSListProjectsPrefix   = "list_projects_data 호출에 실패했습니다: "
-	errSSParseProjectsPrefix  = "프로젝트 목록을 해석하지 못했습니다: "
-	errSSListTasksPrefix      = "list_tasks 호출에 실패했습니다: "
-	errSSParseTasksPrefix     = "작업 목록을 해석하지 못했습니다: "
-	errSSDimension            = "dimension 값은 project 또는 task 중 하나여야 합니다"
-	errSSTargetsEmpty         = "targets 항목은 비워 둘 수 없습니다"
-	warnSSProjectMetaFmt      = "프로젝트 %s 의 상세 정보를 가져오지 못했습니다: %v"
-	warnSSCompanyCreateFmt    = "회사 %s 생성에 실패했습니다: %v"
-	warnSSUnknownAssetPrefix  = "알 수 없는 자산 유형이라 건너뛰었습니다: "
-	errSSFetchFmt             = "%s(%s) 자산을 가져오지 못했습니다: %v"
-	warnSSTruncatedFmt        = "%s(%s) 가 %d 건 상한에 도달해 잘렸습니다"
-	errSSParseSubdomainPrefix = "subdomain 응답을 해석하지 못했습니다: "
-	errSSParseAppPrefix       = "app 응답을 해석하지 못했습니다: "
-	errSSParseServicePrefix   = "service 응답을 해석하지 못했습니다: "
+	errSSDataSourceMissingFmt = "数据源 %s 不存在，请先创建"
+	errSSDataSourceNoURLFmt   = "数据源 %s 未设置 URL。请先进行设置"
+	errSSListProjectsPrefix   = "调用 list_projects_data 失败: "
+	errSSParseProjectsPrefix  = "无法解析项目列表: "
+	errSSListTasksPrefix      = "调用 list_tasks 失败："
+	errSSParseTasksPrefix     = "无法解析任务列表: "
+	errSSDimension            = "dimension 的值必须为 project 或 task"
+	errSSTargetsEmpty         = "targets 不能为空"
+	warnSSProjectMetaFmt      = "无法获取项目 %s 的详情：%v"
+	warnSSCompanyCreateFmt    = "创建公司 %s 失败：%v"
+	warnSSUnknownAssetPrefix  = "未知资产类型，已跳过： "
+	errSSFetchFmt             = "无法获取资产 %s(%s)：%v"
+	warnSSTruncatedFmt        = "%s(%s) 达到 %d 条上限，已截断"
+	errSSParseSubdomainPrefix = "无法解析 subdomain 响应："
+	errSSParseAppPrefix       = "无法解析 app 响应: "
+	errSSParseServicePrefix   = "无法解析 service 响应: "
 )
 
 // findMCPByName returns the MCP server row with the given name, or nil.

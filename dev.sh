@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# 개발 모드: 백엔드(127.0.0.1:8787) + 트래픽 프록시(:8788) 를 프런트엔드 next dev(:5173) 와 함께 실행합니다.
-# 프런트엔드 /api 는 백엔드로 리버스 프록시됩니다. Ctrl-C 로 함께 종료합니다.
+# 开发模式：后端 127.0.0.1:8787、流量代理 :8788 与前端 next dev :5173。
+# 前端 /api 反向代理到后端，Ctrl-C 同时退出两者。
 #
-# 단일 바이너리(프런트엔드 내장) 방식은 README 의 "단일 바이너리" 절을 참고하세요. 이 스크립트를 쓰지 않습니다.
+# 内嵌前端的单二进制模式请参见 README，不使用此开发脚本。
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# 종료 시 이 프로세스 그룹의 모든 자식 프로세스(백엔드 + 프런트엔드)를 끝냅니다.
+# 退出时结束本进程组全部子进程，包括前、后端。
 cleanup() { kill 0 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-# 백엔드(일반 go run, 프런트엔드 미내장). 동시 work agent 수는 "시스템 설정"에서 설정합니다.
+# 后端采用无 embedui 的 go run；并发 Worker 数量在系统设置中配置。
 go run ./cmd/artex -addr 127.0.0.1:8787 -proxy 127.0.0.1:8788 &
 
-# 프런트엔드 핫 리로드(Vite/Next dev server, /api 는 :8787 로 리버스 프록시).
+# 前端热更新，/api 代理到 :8787。
 ( cd web && npm run dev ) &
 
-echo "[dev] 백엔드 :8787 / 프록시 :8788 / 프런트엔드 http://localhost:5173  (Ctrl-C 로 종료)"
+echo "[dev] 后端 :8787 / 代理 :8788 / 前端 http://localhost:5173（Ctrl-C 退出）"
 wait

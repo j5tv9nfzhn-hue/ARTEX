@@ -20,16 +20,14 @@ const (
 	settingConstraintsInjectWorker  = "constraints_inject_worker"
 )
 
-// 约束 CRUD 핸들러의 사용자 노출 에러 응답(한국어). writeErr 로 그대로 UI 토스트에 노출된다.
-// 用語: 约束→제약(ko.json 의 약속/제약 표기와 정합), 任务→작업. 추가/수정/삭제 문구는
-// goals_api.go 의 errGoalTaskDeleting* 와 같은 문형이고, kind 검증은 intercept.go 의
-// "값은 … 중 하나여야 합니다" 패턴을 따른다.
+// 约束 CRUD 的中文错误通过 writeErr 展示。
+// 约束、任务、添加、修改、删除与 goals_api.go 统一术语，kind 枚举验证保留协议值。
 const (
-	errConstraintTaskDeletingAdd    = "작업을 삭제하는 중이라 제약을 추가할 수 없습니다"
-	errConstraintTaskDeletingEdit   = "작업을 삭제하는 중이라 제약을 수정할 수 없습니다"
-	errConstraintTaskDeletingDelete = "작업을 삭제하는 중이라 제약을 삭제할 수 없습니다"
-	errConstraintTextEmpty          = "제약 내용은 비워 둘 수 없습니다"
-	errConstraintKindInvalid        = "kind 값은 allow 또는 deny 중 하나여야 합니다"
+	errConstraintTaskDeletingAdd    = "任务正在删除中，无法添加约束"
+	errConstraintTaskDeletingEdit   = "任务正在删除中，因此无法修改约束"
+	errConstraintTaskDeletingDelete = "任务正在删除，无法删除约束"
+	errConstraintTextEmpty          = "约束内容不能为空"
+	errConstraintKindInvalid        = "kind 的值必须是 allow 或 deny 之一"
 )
 
 // constraintInjectPlanner / constraintInjectWorker 报告是否把操作约束注入对应 agent 的

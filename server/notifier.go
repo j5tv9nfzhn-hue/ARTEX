@@ -29,11 +29,9 @@ const (
 	// notifyTick 是投递引擎的轮询间隔。3 秒是该引擎实时性的上限，
 	// 也是「漏洞落库」到「消息到达 IM」之间的主要延迟来源。
 	notifyTick = 3 * time.Second
-	// notifyBackgroundDisabledEnv 가 설정되면 서버가 백그라운드 투递 루프
-	// (newNotifier(s).Run)를 띄우지 않는다. 통합 테스트는 stepRealtime·stepDigest 를
-	// 직접 호출해 분배 결과를 결정론적으로 검증하는데, 3 초 주기의 백그라운드 루프가
-	// 같은 채널을 동시에 처리하면 집계가 타이밍에 따라 흔들린다. 이를 막기 위한
-	// 테스트 전용 스위치이며, 변수가 없으면 평소대로 기동한다(프로덕션 동작 불변).
+	// 设置 notifyBackgroundDisabledEnv 后不启动 newNotifier(s).Run 后台投递。
+	// 集成测试直接调用 stepRealtime、stepDigest，若三秒后台循环同时处理同一渠道，
+	// 计数会随时序波动；此开关仅用于测试，未设置时生产行为不变。
 	notifyBackgroundDisabledEnv = "ARTEX_NOTIFY_BACKGROUND_DISABLED"
 	// notifyLease 是领取投递时的租约时长。必须显著大于单次投递的最坏耗时
 	// （notify 包的 HTTP 客户端超时 15 秒），否则会出现同一行被两个
@@ -74,18 +72,17 @@ var notifyBackoff = []time.Duration{
 	30 * time.Second,
 }
 
-// 전달 실패·지연 사유. notification_deliveries.last_error 에 저장되어
-// notify_api.go 의 전달 이력 응답을 거쳐 알림 페이지 「전달 기록」 표(delivery-list.tsx)에
-// 그대로 표시된다. 따라서 사용자 노출 문구라 한국어로 둔다(진단 로그 log.Printf 는 원문 보존, Z2).
+// 投递失败、延迟原因存入 notification_deliveries.last_error，
+// 经 notify_api.go 显示于 delivery-list.tsx 的投递记录表，统一使用中文。
 const (
-	errDeliveryChannelKindUnregistered = "등록되지 않은 채널 유형입니다: %q"
-	errDeliverySnapshotUnrenderable    = "이벤트 스냅샷을 해석하지 못해 이 취약점을 메시지로 만들지 못했습니다"
-	errDeliveryChannelLengthCapped     = "이 메시지가 채널 길이 상한에 도달해 앞의 %d건만 전송했고, 나머지는 다음 배치로 미룹니다"
-	errDeliveryNoDeliveredCount        = "채널이 전송 건수를 보고하지 않았습니다(delivered=%d)"
-	errDeliveryRetryExhausted          = "%d회 재시도 후에도 실패했습니다: %s"
-	errDeliverySnapshotEmpty           = "전달 항목 #%d 의 이벤트 스냅샷이 비어 있습니다"
-	errDeliverySnapshotParse           = "전달 항목 #%d 의 이벤트 스냅샷을 해석하지 못했습니다: %w"
-	errDeliveryBatchAllUnparseable     = "요약 배치의 전달 %d건을 모두 해석하지 못했습니다"
+	errDeliveryChannelKindUnregistered = "未注册的通道类型: %q"
+	errDeliverySnapshotUnrenderable    = "无法解析事件快照，因此无法将此漏洞生成为消息"
+	errDeliveryChannelLengthCapped     = "此消息已达到频道长度上限，因此仅发送了前 %d 条，其余将推迟到下一批次"
+	errDeliveryNoDeliveredCount        = "通道未报告发送数量（delivered=%d）"
+	errDeliveryRetryExhausted          = "重试 %d 次后仍然失败：%s"
+	errDeliverySnapshotEmpty           = "投递项 #%d 的事件快照为空"
+	errDeliverySnapshotParse           = "无法解析投递项 #%d 的事件快照: %w"
+	errDeliveryBatchAllUnparseable     = "无法解析摘要批次中的全部 %d 条投递"
 )
 
 // Notifier 是漏洞推送的投递引擎。

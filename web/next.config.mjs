@@ -41,8 +41,8 @@ const nextConfig = {
         }),
 };
 
-// next-intl 플러그인. 요청 설정은 src/i18n/request.ts 에 둔다. i18n 경로 라우팅을
-// 쓰지 않으므로 미들웨어는 추가하지 않는다(정적 내보내기 output: "export" 와 호환).
+// next-intl 插件，请求设置位于 src/i18n/request.ts。
+// 不使用语言路由，因此无需中间件，并兼容 output: export 静态导出。
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 export default withNextIntl(nextConfig);
