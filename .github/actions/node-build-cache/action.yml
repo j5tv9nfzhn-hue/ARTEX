@@ -1,0 +1,56 @@
+name: "Node 构建缓存"
+description: >
+  统一前端依赖缓存的 key 生成，供 web.yml 与 release.yml 共用。
+  缓存 npm 下载缓存而非 node_modules：npm ci 的安装成本远高于解包成本，
+  而 node_modules 跨平台不可移植，命中收益反而低。
+
+inputs:
+  working-directory:
+    description: "包含 package-lock.json 的目录"
+    required: false
+    default: "web"
+
+runs:
+  using: "composite"
+  steps:
+    - name: 定位 npm 缓存目录
+      id: npm-cache
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+
+    - name: 恢复 npm 缓存
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.npm-cache.outputs.dir }}
+        key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.working-directory)) }}
+        restore-keys: |
+          npm-${{ runner.os }}-
+          npm-
+
+    - name: 恢复 Next.js 构建缓存
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          ${{ inputs.working-directory }}/.next/cache
+          ${{ inputs.working-directory }}/node_modules/.cache
+        key: nextcache-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.working-directory)) }}
+        restore-keys: |
+          nextcache-${{ runner.os }}-
+          nextcache-
+
+    - name: 保存 npm 缓存
+      if: always()
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.npm-cache.outputs.dir }}
+        key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.working-directory)) }}
+
+    - name: 保存 Next.js 构建缓存
+      if: always()
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ${{ inputs.working-directory }}/.next/cache
+          ${{ inputs.working-directory }}/node_modules/.cache
+        key: nextcache-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.working-directory)) }}
