@@ -3,6 +3,8 @@ description: >
   统一 Go 模块缓存与编译缓存的 key 生成，供 ci.yml 与 release.yml 共用。
   同一套 key 表达式是跨工作流共享缓存的前提：任何工作流保存的条目，
   其他工作流都能用同样的 restore-keys 前缀命中，避免每个工作流各存一份。
+  恢复发生在调用点之前，保存发生在 post 阶段（job 结束后），
+  确保缓存内容已经过实际构建填充。
 
 inputs:
   os:
@@ -68,16 +70,19 @@ runs:
       shell: bash
       run: go mod download
 
-    - name: 保存 Go 模块缓存
-      if: always()
-      uses: actions/cache/save@v6
-      with:
-        path: ${{ runner.tool_cache }}/go-mod
-        key: gomod-${{ runner.os }}-${{ hashFiles('go.sum') }}
-
+  # 保存放在 post：此时 job 的构建步骤已执行完毕，缓存目录里是真实产物。
+  # 若放在普通步骤中，save 会紧跟 restore 立即执行，目录尚为空，
+  # 只能写出 0 字节条目，既不命中也不省时间。
+  post:
     - name: 保存 Go 编译缓存
-      if: always() && inputs.cache-build == 'true'
+      if: inputs.cache-build == 'true'
       uses: actions/cache/save@v6
       with:
         path: ${{ runner.tool_cache }}/go-build
         key: gobuild-${{ steps.target.outputs.os }}-${{ steps.target.outputs.arch }}-${{ inputs.suffix }}-${{ hashFiles('go.sum') }}
+
+    - name: 保存 Go 模块缓存
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.tool_cache }}/go-mod
+        key: gomod-${{ runner.os }}-${{ hashFiles('go.sum') }}
