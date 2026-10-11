@@ -19,17 +19,14 @@ import (
 	actool "github.com/Autumn-27/norma/tool"
 )
 
-// 사용자 노출 HTTP 에러 응답 문구. 아래 네 문구는 HTTP 핸들러(findingTrafficAccess·
-// bindFindingTraffic·editFindingTraffic)에서만 반환되고 에이전트 도구 경로
-// (toolGetFindingTraffic)에는 닿지 않으므로 한국어로 번역한다. 반대로
-// readEvidencePreview 의 errors.New(offset/length 검증)·이진 본문 플레이스홀더와
-// roTool("get_finding_traffic") 도구 설명은 에이전트가 읽는 두뇌 입력이라 원문을
-// 보존한다(각 지점 주석 참조, F16 두뇌 경계 계열).
+// findingTrafficAccess、bindFindingTraffic、editFindingTraffic 的四类中文 HTTP 错误。
+// 共享 readEvidencePreview 的校验、二进制占位符和 get_finding_traffic 工具说明
+// 兼作模型输入，保留既有中文语义。
 const (
-	errFindingTrafficInheritedReadonly  = "상속된 취약점은 읽기 전용이라 출처 작업에서 수정해야 합니다"
-	errFindingTrafficSelectRequired     = "트래픽을 선택하세요"
-	errFindingTrafficVersionRequired    = "version 과 유효한 요청 본문은 필수입니다"
-	errFindingTrafficBindingIDsRequired = "binding_ids 는 필수입니다"
+	errFindingTrafficInheritedReadonly  = "继承的漏洞为只读，必须在来源任务中修改"
+	errFindingTrafficSelectRequired     = "请选择流量"
+	errFindingTrafficVersionRequired    = "version 和有效的请求正文为必填项"
+	errFindingTrafficBindingIDsRequired = "binding_ids 为必填项"
 )
 
 func (s *Server) evidenceStore() *evidence.Store {
@@ -251,10 +248,9 @@ type evidencePreview struct {
 	Binary     bool   `json:"binary"`
 }
 
-// readEvidencePreview 는 HTTP 핸들러와 에이전트 도구(toolGetFindingTraffic)가 함께
-// 쓰는 공유 헬퍼다. 아래 두 errors.New 와 이진 본문 플레이스홀더(Content)는 에이전트
-// 도구 결과(actool.Errorf·body 콘텐츠)로 되먹여져 두뇌 입력이 되므로, 성능 드리프트를
-// 피하려고 중국어 원문을 보존한다(F16 두뇌 경계 계열 — 표시/입력 분리는 별도 결정 대기).
+// readEvidencePreview 由 HTTP 与 toolGetFindingTraffic 共享。
+// offset、length 错误及二进制正文占位符也作为 actool.Errorf 或正文返回模型，
+// 保留中文原文，不在此处拆分显示、输入通路。
 func readEvidencePreview(store *evidence.Store, snapshot db.TrafficEvidenceSnapshot, side string, offset, length int64) (out evidencePreview, err error) {
 	if offset < 0 || length < 0 {
 		return out, errors.New("offset / length 不能为负数")

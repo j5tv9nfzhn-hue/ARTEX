@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// hasHan reports whether s contains a CJK Han ideograph (the Chinese source text
-// we are replacing). Hangul and ASCII identifiers must survive; Han must not.
+// hasHan 检查中文 Han 字符，用于确认源消息已译为中文。
+// 中文应保留，韩文不得残留，ASCII 技术标识不受影响。
 func hasHan(s string) bool {
 	for _, r := range s {
 		if r >= 0x4e00 && r <= 0x9fff {
@@ -27,33 +27,33 @@ func hasHangul(s string) bool {
 	return false
 }
 
-func assertKorean(t *testing.T, label, s string) {
+func assertChinese(t *testing.T, label, s string) {
 	t.Helper()
-	if hasHan(s) {
-		t.Errorf("%s: Chinese Han ideograph remains: %q", label, s)
+	if hasHangul(s) {
+		t.Errorf("%s: 韩文残留: %q", label, s)
 	}
-	if !hasHangul(s) {
-		t.Errorf("%s: no Hangul found (expected Korean): %q", label, s)
+	if !hasHan(s) {
+		t.Errorf("%s: 未包含中文: %q", label, s)
 	}
 }
 
-// TestPostgresDSNErrorLocalized pins the install-path startup message to Korean.
+// TestPostgresDSNErrorLocalized pins the install-path startup message to Simplified Chinese.
 // When neither ARTEX_PG_DSN nor a config file supplies a database, PostgresDSN
 // returns an error that propagates verbatim (db.DSN → server.NewManager → the
 // `log.Fatalf("open stores: %v", err)` in cmd/artex/main.go). An operator who
-// boots with missing config sees it first, so it must read as Korean.
+// boots with missing config sees it first, so it must read as Simplified Chinese.
 func TestPostgresDSNErrorLocalized(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("ARTEX_PG_DSN", "")
 	t.Setenv("ARTEX_CONFIG", filepath.Join(dir, "nope.json"))
-	// Pin Korean explicitly so ARTEX_LANG in the environment cannot leak in.
-	t.Setenv("ARTEX_LANG", "ko")
+	// Pin Simplified Chinese explicitly so ARTEX_LANG in the environment cannot leak in.
+	t.Setenv("ARTEX_LANG", "zh")
 
 	_, _, err := PostgresDSN()
 	if err == nil {
 		t.Fatal("missing config should error")
 	}
-	assertKorean(t, "startup error", err.Error())
+	assertChinese(t, "startup error", err.Error())
 
 	// The identifiers an operator must act on stay verbatim (not translated).
 	for _, want := range []string{"ARTEX_PG_DSN", "database", "dsn", "host/user/dbname"} {
@@ -68,13 +68,13 @@ func TestPostgresDSNErrorLocalized(t *testing.T) {
 }
 
 // TestPostgresDSNSourceLocalized pins the three source labels (logged at
-// server/manager.go:361) to Korean. They live in the same function as the
+// server/manager.go:361) to Simplified Chinese. They live in the same function as the
 // startup error, so they are localized together to avoid a mixed-language file.
 func TestPostgresDSNSourceLocalized(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	// Pin Korean explicitly so ARTEX_LANG in the environment cannot leak in.
-	t.Setenv("ARTEX_LANG", "ko")
+	// Pin Simplified Chinese explicitly so ARTEX_LANG in the environment cannot leak in.
+	t.Setenv("ARTEX_LANG", "zh")
 
 	// env source
 	t.Setenv("ARTEX_CONFIG", filepath.Join(dir, "nope.json"))
@@ -82,7 +82,7 @@ func TestPostgresDSNSourceLocalized(t *testing.T) {
 	if _, source, err := PostgresDSN(); err != nil {
 		t.Fatalf("env source: %v", err)
 	} else {
-		assertKorean(t, "env source", source)
+		assertChinese(t, "env source", source)
 	}
 
 	// config file dsn source
@@ -94,7 +94,7 @@ func TestPostgresDSNSourceLocalized(t *testing.T) {
 	if _, source, err := PostgresDSN(); err != nil {
 		t.Fatalf("dsn source: %v", err)
 	} else {
-		assertKorean(t, "dsn source", source)
+		assertChinese(t, "dsn source", source)
 	}
 
 	// config file fields source
@@ -104,6 +104,6 @@ func TestPostgresDSNSourceLocalized(t *testing.T) {
 	if _, source, err := PostgresDSN(); err != nil {
 		t.Fatalf("fields source: %v", err)
 	} else {
-		assertKorean(t, "fields source", source)
+		assertChinese(t, "fields source", source)
 	}
 }

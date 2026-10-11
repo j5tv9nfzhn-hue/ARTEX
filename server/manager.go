@@ -275,9 +275,9 @@ const (
 	// agent(planner/worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction。
 	// 每 run 读一次,切换只影响之后启动的 run。
 	settingNoaCompaction = "noa_compaction"
-	// settingOutputLanguage 는 사용자 대면 출력 언어("en"/"ko"/"zh"/"es")의 런타임 값이다.
-	// 비어 있으면 config.Language()(ARTEX_LANG·설정 파일·기본값 한국어)로 떨어진다. 에이전트
-	// 출력 언어(langDirective)와 백엔드 메시지 카탈로그가 모두 이 값을 따른다.
+	// settingOutputLanguage 是运行时输出语言（zh/en/es）。
+	// 空值回退到 config.Language()：ARTEX_LANG、配置文件、默认简体中文。
+	// 模型输出指令与后端消息词库共用此设置；旧 ko 配置归一为 zh。
 	settingOutputLanguage = "output_language"
 	// defaultWebSearchBackend is used when web search is on but no backend was picked.
 	defaultWebSearchBackend = "ddgs"
@@ -332,12 +332,10 @@ func (m *Manager) Workers() int {
 	return n
 }
 
-// errWorkersPositive 는 워크 에이전트 수 설정(settingWorkers)이 1 미만일 때 SetWorkers 가
-// 돌려주는 사용자 노출 오류다. 유일 호출처인 설정 PUT 핸들러(server.go:3512)가
-// writeErr(400, err.Error()) 로 그대로 응답하며, 에이전트 도구(actool) 로 되먹이는 경로는
-// 없으므로 사용자 전용으로 보고 한국어로 유지한다. 용어는 UI 설정 화면(ko.json
-// settings.workers "워크 에이전트 수")과 맞춘다.
-const errWorkersPositive = "워크 에이전트 수는 1 이상이어야 합니다"
+// SetWorkers 在 settingWorkers 小于 1 时返回 errWorkersPositive，
+// 设置 PUT 处理器通过 writeErr(400) 展示，无 Agent 工具回读路径。
+// 术语与 zh.json 的 settings.workers 对齐。
+const errWorkersPositive = "Worker 数量必须至少为 1"
 
 // SetWorkers persists the concurrent work-agent count. Values <=0 are rejected.
 func (m *Manager) SetWorkers(n int) error {
@@ -369,7 +367,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf(logT("[pg] 데이터베이스 설정 출처: %s"), source)
+	log.Printf(logT("[pg] 数据库配置来源：%s"), source)
 	pg, err := pgdb.Open(dsn)
 	if err != nil {
 		return nil, err
@@ -392,10 +390,9 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		} else {
 			err = tr.RecoverHostDeleteStages(func(_ int64, taskID int64) (bool, error) {
 				if taskID <= 0 {
-					// 기동 중 트래픽 복구 콜백의 내부 정합 오류다. NewManager 가
-					// fmt.Errorf("recover traffic delete staging: %w", err) 로 감싸 기동 실패로
-					// 전파할 뿐 writeErr·actool 어느 경로에도 닿지 않는 운영자 기동 로그라,
-					// F3b(사용자 노출 writeErr) 범위가 아니어서 원문을 보존한다(Z2 계열).
+					// 启动流量恢复回调的内部一致性错误，NewManager 以
+					// recover traffic delete staging: %w 包装为启动失败，
+					// 不进入 writeErr 或 actool，仅作为操作员诊断保留。
 					return false, errors.New("归档流量暂存日志缺少任务 ID")
 				}
 				task, taskErr := pg.GetTask(taskID)
@@ -688,9 +685,9 @@ func (m *Manager) syncBrowserMCPProxy() {
 		return
 	}
 	if proxy != "" {
-		log.Printf(logT("[mcp] browser MCP 캡처 프록시 연결: %s (CA %s)"), proxy, cert)
+		log.Printf(logT("[mcp] browser MCP 抓包代理已连接：%s (CA %s)"), proxy, cert)
 	} else {
-		log.Print(logT("[mcp] browser MCP 캡처 프록시 설정 제거"))
+		log.Print(logT("[mcp] 已移除 browser MCP 抓包代理配置"))
 	}
 }
 

@@ -14,23 +14,18 @@ import (
 	"github.com/Autumn-27/artex/selfupdate"
 )
 
-// 页面一键更新的 HTTP 面。真正的下载/校验/换装逻辑全在 selfupdate 包里，
-// 这里只负责鉴权边界、并发互斥、进度广播，以及把"该退出了"告诉 main。
-//
-// 重启不由本进程完成：暂存好新版本后进程以 selfupdate.ExitRestart 退出，
-// 由守护脚本（start.sh / start.bat，Docker 下是 ENTRYPOINT）重新拉起。
-
-// 사용자에게 노출되는 업데이트 메시지(SSE 진행 메시지·검사 사유·에러 응답).
-// 프런트엔드(system/settings 의 update-card)가 progress.message·reason·writeErr
-// 본문을 그대로 렌더하므로 한국어로 둔다. 로그·중국어 주석은 Z2(로그 최하위)라 범위 밖.
+// 一键更新 HTTP 层仅负责认证、互斥、进度广播和通知 main 退出。
+// 下载、校验、换装由 selfupdate 完成；暂存后以 ExitRestart 退出，
+// 由 start.sh、start.bat 或 Docker ENTRYPOINT 重启，进程不自行重启。
+// update-card 直接渲染 SSE progress.message、reason 与 writeErr 正文，故使用中文。
 const (
-	updateMsgPreparing          = "준비 중…"
-	updateMsgFailed             = "업데이트 실패"
-	updateMsgStaged             = "새 버전이 준비되었습니다. 재시작 중…"
-	updateErrNotReleaseFmt      = "현재 버전 %q 은(는) 정식 릴리스 버전이 아니므로 원클릭 업데이트를 사용할 수 없습니다"
-	updateErrAlreadyLatestFmt   = "이미 최신 버전입니다 (%s)"
-	updateErrInProgress         = "이미 업데이트가 진행 중입니다"
-	updateErrRollbackInProgress = "업데이트가 진행 중이어서 롤백할 수 없습니다"
+	updateMsgPreparing          = "准备中…"
+	updateMsgFailed             = "更新失败"
+	updateMsgStaged             = "新版本已准备就绪，正在重启…"
+	updateErrNotReleaseFmt      = "当前版本 %q 不是正式发布版本，无法使用一键更新"
+	updateErrAlreadyLatestFmt   = "已是最新版本 (%s)"
+	updateErrInProgress         = "已有更新正在进行"
+	updateErrRollbackInProgress = "正在更新，无法回滚"
 )
 
 // restartCh 在升级就绪或回滚完成后关闭，main 收到后以 ExitRestart 退出。

@@ -252,8 +252,8 @@ export default function TrafficPage() {
     [hosts, hostCountSortDirection],
   );
 
-  // 필터 없는 전체 삭제는 "비우기", 대상 한정 삭제는 "삭제"로 쓴다. 다이얼로그 제목과
-  // 확인 버튼 문구가 모두 어느 쪽인지에 따라 갈린다.
+  // 无过滤的全部删除使用“清空”，限制到目标的操作使用“删除”。
+  // 对话框标题与确认按钮根据操作范围选择相应文案。
   const deleteTitle = deleteMode
     ? {
         all: t("dialog.titlePurge"),
@@ -475,8 +475,10 @@ export default function TrafficPage() {
           <Trash2Icon className="size-3.5" />
           {t("toolbar.deleteHost")}
         </Button>
-        {/* 두 번째 파괴적 버튼이 아니라 아웃라인으로 둔다. 이 버튼은 모든 필터를 무시하므로
-            "이 대상 삭제" 버튼 바로 옆에서 한 번의 오클릭처럼 보이면 안 된다. */}
+        {/**
+         * 此按钮采用 outline，而非第二个危险强调按钮。
+         * 它忽略所有过滤条件，不能紧靠“删除此目标”让用户误以为是同一操作。
+         */}
         <Button
           variant="outline"
           size="sm"

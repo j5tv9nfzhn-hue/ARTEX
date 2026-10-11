@@ -76,20 +76,15 @@ const (
 
 var errWorkControlConflict = errors.New("work control conflict")
 
-// 아래 네 상수는 controlIntent(HTTP 핸들러)와 sendWorkerMessage(의도 개입)가 writeErr 로
-// 사용자에게 그대로 노출하는 작업 제어 오류 문구다. ControlWork 의 반환 오류는
-// applyIntentControl(task_control.go) → controlIntent(server.go:1236) → writeErr 409 로,
-// runDetachedIntent 의 반환 오류는 intent_intervention.go:147 → writeErr 로 사용자 화면에
-// 뜬다. 두 경로 모두 에이전트 도구(actool) 입력에 닿지 않으므로 한국어로 바꾼다. 반대로
-// 같은 파일의 SteerWork·KillWork(steer_work·kill_work 도구 결과)와 transitionIntentState
-// (내부 상태 전이 로그) 문구는 두뇌 입력·로그라 성능 드리프트를 막기 위해 원문을 보존한다
-// (각 지점 주석 참조). 의도가 더 이상 paused 상태가 아니라는 재개 충돌 문구는 task_control.go
-// 의 errIntentCtrlStateConflictFmt 를 재사용해 단일 출처를 유지한다.
+// 四类 ControlWork 与 Worker 干预错误经 applyIntentControl、controlIntent、
+// sendWorkerMessage 以 writeErr 展示，应统一为中文。
+// SteerWork、KillWork 返回 actool 工具结果，transitionIntentState 仅记录内部状态日志，
+// 保留其中文模型输入和诊断语义。恢复冲突复用 errIntentCtrlStateConflictFmt。
 const (
-	errWorkControlNoRunningWorkFmt = "%w: 의도 %d 에 실행 중인 Worker 가 없습니다 (이미 종료되었거나 아직 할당되지 않았을 수 있습니다)"
-	errWorkControlBusyFmt          = "%w: 의도 %d 에 대해 이미 %s 제어가 진행 중입니다"
-	errWorkControlWaitFmt          = "의도 %d 의 %s 마무리를 기다리는 중 오류가 발생했습니다: %w"
-	errDetachedWorkerNotReady      = "Worker 가 아직 준비되지 않았습니다"
+	errWorkControlNoRunningWorkFmt = "%w：意图 %d 没有正在运行的 Worker（可能已终止或尚未分配）"
+	errWorkControlBusyFmt          = "%w：针对意图 %d 已有 %s 控制正在进行中"
+	errWorkControlWaitFmt          = "等待意图 %d 完成 %s 收尾时发生错误：%w"
+	errDetachedWorkerNotReady      = "Worker 尚未就绪"
 )
 
 // retryableWorkerModelError excludes errors already handled by the task router.
@@ -498,9 +493,8 @@ func transitionIntentState(store *db.ExplorationStore, intentID int64, expected,
 		return err
 	}
 	if !changed {
-		// 이 CAS 충돌 오류는 runIntent(아래 989~1156) 안에서만 쓰이고 그 함수는 bool 을
-		// 반환한다. 오류는 log.Printf 로 남기거나 흐름 제어에만 쓰여 HTTP 응답·에이전트
-		// 도구(actool)로 나가지 않으므로, 로그 성격(Z2)이라 원문을 보존한다.
+		// 此 CAS 冲突只在返回 bool 的 runIntent 内使用，记录 log.Printf 或控制流程，
+		// 不作为 HTTP 响应和 Agent 工具结果返回，保留诊断语义。
 		return fmt.Errorf("%w: 意图 %d 不再是 %s 状态", db.ErrIntentStateConflict, intentID, expected)
 	}
 	return nil
@@ -510,9 +504,8 @@ func transitionIntentState(store *db.ExplorationStore, intentID int64, expected,
 // planner's steer_work tool). The worker delivers it before its next tool call and
 // re-plans — no kill. Errors if no work is currently running that intent.
 func (e *Engine) SteerWork(intentID int64, msg string) error {
-	// SteerWork 는 planner·mainagent 의 steer_work 도구(agent/tools.go)로 배선되어, 아래 두
-	// 오류가 actool.Errorf(err.Error()) 로 에이전트에게 되돌아가는 두뇌 입력이다. 번역하면
-	// 벤치마크된 에이전트의 입력이 바뀌어 성능 드리프트 위험이 있어 원문을 보존한다.
+	// SteerWork 连接 Planner、MainAgent 的 steer_work 工具，
+	// 错误由 actool.Errorf 返回模型，保持既有中文语义，不改变工具反馈。
 	if strings.TrimSpace(msg) == "" {
 		return fmt.Errorf("纠偏消息不能为空")
 	}
@@ -648,9 +641,7 @@ func (e *Engine) KillWork(intentID int64) error {
 	run := e.work[intentID]
 	e.workMu.Unlock()
 	if run == nil {
-		// KillWork 는 planner 의 kill_work 도구(agent/tools.go)로 배선되어, 이 오류가
-		// actool.Errorf(err.Error()) 로 에이전트에게 되돌아가는 두뇌 입력이다. SteerWork 와
-		// 같은 이유로 원문을 보존한다.
+		// KillWork 连接 Planner 的 kill_work 工具，错误是模型输入，处理原则与 SteerWork 一致。
 		return fmt.Errorf("意图 %d 当前没有运行中的 work（可能已结束或未被领取）", intentID)
 	}
 	run.cancel(agent.AbortKilledByPlanner)
@@ -660,16 +651,13 @@ func (e *Engine) KillWork(intentID int64) error {
 // Broadcaster exposes the engine's live activity pub/sub (used by the SSE handler).
 func (e *Engine) Broadcaster() *Broadcaster { return e.bc }
 
-// emitActivity persists one captured step AND fans it out to live subscribers,
-// from a single point so storage and the SSE stream never diverge.
-// 표시 전용 활동 요약(작업 단위·node_id 없음). 대시보드 전사에만 노출되며 어떤
-// 에이전트의 컨텍스트로도 되읽히지 않는다 — 되먹임 경로(planner.workerOutput·
-// get_worker_output 도구)는 intent 범위(node_id)로 'result'/'text' 활동만 고르는데,
-// 이 요약들은 node_id 를 달지 않는다. 그래서 한국어화해도 두뇌 입력(BRIEF 경계 #1)을
-// 건드리지 않는다. 포맷 인자(%d)는 원형 보존. [[G132]]
+// emitActivity 从一个入口持久化捕获步骤并分发给 SSE 订阅者，避免数据库与流不同步。
+// 以下任务级摘要没有 node_id，只显示于活动转录。planner.workerOutput 与
+// get_worker_output 仅按 intent node_id 读取 result、text，因此不会回读这些摘要。
+// 中文化不改变模型上下文，%d 格式参数保持原样。[[G132]]
 const (
-	goallessTaskDoneSummary = "모든 목표를 달성했고 직접 투입한 의도의 실행도 끝나, 작업을 종료합니다"
-	plannerRoundSummaryFmt  = "%d차 계획 수립"
+	goallessTaskDoneSummary = "所有目标均已达成，直接投入的意图也已执行完毕，任务结束"
+	plannerRoundSummaryFmt  = "第 %d 轮规划"
 )
 
 func (e *Engine) emitActivity(t *Task, r db.Activity) db.Activity {
@@ -1229,8 +1217,8 @@ func (e *Engine) runDetachedIntent(ctx context.Context, t *Task, intentID int64,
 		return err
 	}
 	if !changed {
-		// 재개 CAS 충돌: controlIntent·sendWorkerMessage 의 재개 경로와 의미가 같으므로
-		// task_control.go 의 errIntentCtrlStateConflictFmt 를 재사용해 단일 출처를 유지한다.
+		// 恢复 CAS 冲突与 controlIntent、sendWorkerMessage 的恢复含义相同，
+		// 复用 task_control.go 的 errIntentCtrlStateConflictFmt，保持单一来源。
 		return fmt.Errorf(errIntentCtrlStateConflictFmt, db.ErrIntentStateConflict)
 	}
 	node.State, node.Owner = "running", "chat"

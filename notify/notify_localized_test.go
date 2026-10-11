@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// hasHan 은 문자열에 CJK 통합 한자가 하나라도 있으면 true 를 반환한다.
-// 번역한 라벨이 중국어로 되돌아가면(회귀) 이 판정이 잡아낸다.
+// hasHan 检测 CJK 统一汉字，用于确认中文标签确实包含中文。
 func hasHan(s string) bool {
 	for _, r := range s {
 		if r >= 0x4E00 && r <= 0x9FFF {
@@ -16,7 +15,7 @@ func hasHan(s string) bool {
 	return false
 }
 
-// hasHangul 은 문자열에 한글 음절이 하나라도 있으면 true 를 반환한다.
+// hasHangul 检测韩文音节，用于阻止韩文残留回归。
 func hasHangul(s string) bool {
 	for _, r := range s {
 		if r >= 0xAC00 && r <= 0xD7A3 {
@@ -26,95 +25,94 @@ func hasHangul(s string) bool {
 	return false
 }
 
-// assertKorean 은 라벨이 한글을 포함하고 중국어 한자는 없음을 단언한다.
-func assertKorean(t *testing.T, where, got string) {
+// assertChinese 断言标签包含汉字且不含韩文。
+func assertChinese(t *testing.T, where, got string) {
 	t.Helper()
-	if hasHan(got) {
-		t.Errorf("%s: 중국어 한자가 남아 있습니다: %q", where, got)
+	if hasHangul(got) {
+		t.Errorf("%s：仍有韩文残留：%q", where, got)
 	}
-	if !hasHangul(got) {
-		t.Errorf("%s: 한글이 없습니다: %q", where, got)
+	if !hasHan(got) {
+		t.Errorf("%s：未包含中文：%q", where, got)
 	}
 }
 
-// TestSeverityLabelLocalized 는 모든 심각도 enum 이 한국어 라벨로 나오는지 검사한다.
-// 라벨은 모든 알림 채널(telegram·email·html·markdown·webhook·feishu·dingtalk·wecom)이
-// 공유하므로, 하나라도 중국어로 되돌아가면 전 채널 메시지가 혼재된다.
+// TestSeverityLabelLocalized 检查所有严重等级枚举的中文展示标签。
+// Telegram、邮件、HTML、Markdown、Webhook、飞书、钉钉和企业微信共用这些标签。
 func TestSeverityLabelLocalized(t *testing.T) {
-	// 중국어 라벨(严重/高危/中危/低危) → 한국어(심각/높음/중간/낮음), UI status.severity 정합.
+	// 严重、高危、中危、低危，与 UI status.severity 一致。
 	want := map[string]string{
-		"critical": "심각",
-		"high":     "높음",
-		"medium":   "중간",
-		"low":      "낮음",
+		"critical": "严重",
+		"high":     "高危",
+		"medium":   "中危",
+		"low":      "低危",
 	}
 	for sev, label := range want {
 		got := SeverityLabel(sev)
-		assertKorean(t, "SeverityLabel("+sev+")", got)
+		assertChinese(t, "SeverityLabel("+sev+")", got)
 		if !strings.Contains(got, label) {
-			t.Errorf("SeverityLabel(%q)=%q, %q 를 포함해야 합니다", sev, got, label)
+			t.Errorf("SeverityLabel(%q)=%q，应包含 %q", sev, got, label)
 		}
 	}
-	// 알 수 없는 심각도는 원문을 그대로 돌려준다(없는 값을 지어내지 않는다).
+	// 未知严重等级原样返回，不编造不存在的标签。
 	if got := SeverityLabel("made_up"); got != "made_up" {
-		t.Errorf("알 수 없는 심각도는 원문 유지여야 합니다, 받은 값 %q", got)
+		t.Errorf("未知严重等级应保留原值，收到 %q", got)
 	}
 }
 
-// TestStatusLabelLocalized 는 처치 상태 9종이 전부 한국어로 나오는지 검사한다.
-// UI status.finding 네임스페이스(B4a)와 동일 표기여야 상태 변경 알림과 화면이 어긋나지 않는다.
+// TestStatusLabelLocalized 检查九种处置状态的中文标签，
+// 与 UI status.finding 命名空间一致，避免状态通知与界面不一致。
 func TestStatusLabelLocalized(t *testing.T) {
 	want := map[string]string{
-		"pending":        "처리 대기",
-		"in_progress":    "처리 중",
-		"confirmed":      "확인됨",
-		"resolved":       "처리됨",
-		"fixed":          "수정됨",
-		"false_positive": "오탐",
-		"ignored":        "무시",
-		"duplicate":      "중복",
-		"risk_accepted":  "위험 수용",
+		"pending":        "待处理",
+		"in_progress":    "处理中",
+		"confirmed":      "已确认",
+		"resolved":       "已处理",
+		"fixed":          "已修复",
+		"false_positive": "误报",
+		"ignored":        "忽略",
+		"duplicate":      "重复",
+		"risk_accepted":  "接受风险",
 	}
 	for status, label := range want {
 		got := StatusLabel(status)
-		assertKorean(t, "StatusLabel("+status+")", got)
+		assertChinese(t, "StatusLabel("+status+")", got)
 		if got != label {
-			t.Errorf("StatusLabel(%q)=%q, %q 를 기대했습니다", status, got, label)
+			t.Errorf("StatusLabel(%q)=%q，预期 %q", status, got, label)
 		}
 	}
-	// 알 수 없는 상태는 원문 그대로 회신(없는 라벨을 지어내지 않는다).
+	// 未知状态原样返回，不编造标签。
 	if got := StatusLabel("weird_status"); got != "weird_status" {
-		t.Errorf("알 수 없는 상태는 원문 유지여야 합니다, 받은 값 %q", got)
+		t.Errorf("未知状态应保留原值，收到 %q", got)
 	}
 }
 
-// TestItemTitlePlaceholderLocalized 는 이름·유형이 모두 빈 항목의 대체 제목이
-// 한국어 자리표시자(이름 없는 취약점)인지 검사한다. 절대 빈 제목을 내보내지 않는다.
+// TestItemTitlePlaceholderLocalized 检查名称和类型都为空时使用中文占位标题“未命名漏洞”，
+// 不得发送空标题。
 func TestItemTitlePlaceholderLocalized(t *testing.T) {
 	got := Item{}.Title()
-	assertKorean(t, "Item{}.Title()", got)
-	// 이름이 있으면 그 이름을, 유형만 있으면 유형을 우선한다(대체 로직 미회귀 확인).
-	if n := (Item{Name: "로그인 SQLi"}).Title(); n != "로그인 SQLi" {
-		t.Errorf("이름 우선 로직이 깨졌습니다, 받은 값 %q", n)
+	assertChinese(t, "Item{}.Title()", got)
+	// 名称优先，其次类型，最后占位标题，验证回退逻辑。
+	if n := (Item{Name: "登录 SQLi"}).Title(); n != "登录 SQLi" {
+		t.Errorf("名称优先逻辑失效，收到 %q", n)
 	}
 	if v := (Item{VulnClass: "XSS"}).Title(); v != "XSS" {
-		t.Errorf("유형 대체 로직이 깨졌습니다, 받은 값 %q", v)
+		t.Errorf("类型回退逻辑失效，收到 %q", v)
 	}
 }
 
-// TestAssetLineLocalized 는 자산 나열 문구의 구분자·총수 표기가 한국어/ASCII 인지 검사한다.
-// 중국어 구두점(、)·等·个 가 되돌아오면 알림 본문에 혼재가 생긴다.
+// TestAssetLineLocalized 检查资产列表的 ASCII 分隔符与中文总数表述。
+// 保留逗号分隔格式，语言改动不应改变列表结构。
 func TestAssetLineLocalized(t *testing.T) {
-	// 상한 이하: 전부 나열, ASCII 쉼표 구분자.
+	// 未超出上限：列出所有资产，使用 ASCII 逗号分隔。
 	if got := assetLine([]string{"a.example.com", "b.example.com"}, 3); got != "a.example.com, b.example.com" {
-		t.Errorf("구분자가 ASCII 쉼표여야 합니다, 받은 값 %q", got)
+		t.Errorf("分隔符应为 ASCII 逗号，收到 %q", got)
 	}
-	// 상한 초과: 앞 limit 개 + 한국어 "등 N개"(N 은 전체 개수).
+	// 超出上限：列出前 limit 个，随后显示“等 N个”，N 为全部资产数量。
 	got := assetLine([]string{"a", "b", "c", "d", "e"}, 2)
-	if hasHan(got) {
-		t.Errorf("자산 나열에 중국어 한자가 남았습니다: %q", got)
+	if hasHangul(got) {
+		t.Errorf("资产列表仍有韩文残留：%q", got)
 	}
-	if !strings.Contains(got, "등 5개") {
-		t.Errorf("전체 개수 5 를 '등 5개'로 표기해야 합니다, 받은 값 %q", got)
+	if !strings.Contains(got, "等 5个") {
+		t.Errorf("总数 5 应表示为“等 5个”，收到 %q", got)
 	}
 }

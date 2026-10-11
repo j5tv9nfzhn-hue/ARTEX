@@ -1,7 +1,7 @@
 name: ci
-# 푸시와 PR 마다 빌드·정적 분석·테스트를 돌려, 한국어화 과정에서 생긴 회귀를
-# 머지 전에 잡는다. 릴리스 워크플로(release.yml)는 태그(v*)에서만 돌고 빌드·배포만
-# 하므로, 일상적인 변경을 검증하는 역할은 이 워크플로가 맡는다.
+# 每次 push、PR 执行构建、静态分析、测试，提前发现中文化回归。
+# release.yml 仅在 v* tag 执行发布构建，因此日常改动由本工作流验证。
+# 单元测试和数据库集成测试分别运行，语言检查独立覆盖全仓库自有文本。
 on:
   push:
     branches: ["**"]
@@ -11,12 +11,12 @@ permissions:
   contents: read
 
 jobs:
-  # 빌드·정적 분석·테스트를 데이터베이스 없이 돌린다. 기여자가 저장소를 clone 한 뒤
-  # PostgreSQL 없이 `go test ./...` 를 돌리는 환경을 그대로 재현한다. 데이터베이스가
-  # 있어야 하는 통합 테스트는 이 환경에서 t.Skipf 로 건너뛰므로(스킵은 통과로 집계된다),
-  # 빌드·go vet·DB 를 쓰지 않는 단위 테스트가 전부 green 이어야 한다. 이 조합만으로도
-  # 패키지 경계를 넘나드는 회귀(예: 한 패키지의 문구를 바꾸면서 다른 패키지의 테스트
-  # 단언을 깨뜨리는 경우)를 머지 전에 잡을 수 있다.
+  # 无数据库执行构建、静态分析与单元测试，复现 clone 后的本地环境。
+  # 未安装 PostgreSQL 时，依赖数据库的集成测试由 t.Skipf 跳过。
+  # 跳过会记为通过，不能代替下面的真实数据库测试。
+  # go build、go vet 与不依赖数据库的单元测试均需通过。
+  # 此组合能发现跨包文案修改与对应断言不一致等回归。
+  # 数据库路径由独立 matrix job 检查，避免仅检查常量掩盖问题。
   go:
     runs-on: ubuntu-latest
     steps:
@@ -29,21 +29,21 @@ jobs:
         run: go build ./...
       - name: go vet
         run: go vet ./...
-      - name: go test (DB 없음 — 통합 테스트는 스킵)
+      - name: go test（无数据库，集成测试跳过）
         run: go test ./... -count=1
 
-  # 실제 PostgreSQL 이 있어야 도는 DB 통합 테스트(알림·증거·사용량 계량 등)를 맡는다.
-  # 위 go job 이 스킵하는 경로(알림 채널 검증, 증거 저장, llm_usage 계량 등)를 실제
-  # 데이터베이스로 강제해, DB 통합 경로에서만 드러나는 한국어화 회귀까지 머지 전에 잡는다.
+  # 使用真实 PostgreSQL 验证通知、证据与用量计量的集成路径。
+  # 覆盖无数据库 job 跳过的渠道验证、证据保存和 llm_usage 等路径。
+  # 数据库专属语言回归也必须在合并前被发现。
   #
-  # 상류의 테스트 하네스는 모든 패키지가 하나의 데이터베이스를 공유하고, 테이블을 한 번만
-  # 만들어 재사용하며, 패키지 실행 순서와 누적 데이터에 암묵적으로 의존하도록 설계되어
-  # 있어, 하나의 데이터베이스에 전체를 몰아 돌리면 서로 다른 방식으로 깨진다(누적 데이터
-  # 오염, 커넥션 teardown 경쟁, 리셋 시 교차 패키지 스키마 의존). 그래서 여기서는 패키지마다
-  # 자체 PostgreSQL 서비스를 띄워 "빈 데이터베이스 + 단일 패키지" 로 격리 실행한다. 각
-  # 패키지가 독립 job(matrix) 으로 돌아 서로의 데이터·커넥션·스키마에 닿지 않으므로 그 세
-  # 상충이 구조적으로 사라진다. db.Open 이 스키마를 자동 마이그레이션하며, llm_usage 처럼
-  # db.Open 이 만들지 않는 테이블은 각 테스트가 EnsureLLMUsageTable 로 스스로 보장한다.
+  # 原测试 harness 共享数据库、只建立一次表，并隐式依赖执行顺序。
+  # 全部包放入同一数据库可能积累测试数据并出现清理竞争。
+  # 因此每个包使用独立 PostgreSQL 服务，保持空数据库起点。
+  # 隔离可避免连接 teardown、重置时的跨包 schema 依赖。
+  # matrix 每次仅执行一个包，数据、连接与 schema 互不影响。
+  # 每个 job 自行完成迁移，不依赖其他包预先创建表。
+  # db.Open 自动迁移基础 schema，llm_usage 等额外表由测试创建。
+  # EnsureLLMUsageTable 保证计量表存在。
   go-db:
     runs-on: ubuntu-latest
     strategy:
@@ -70,7 +70,16 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-      - name: go test (DB 통합 · ${{ matrix.pkg }} 패키지 격리)
+      - name: go test（数据库集成 · ${{ matrix.pkg }} 独立包）
         env:
           ARTEX_PG_DSN: postgres://artex:artex@localhost:5432/artex?sslmode=disable
         run: go test ./${{ matrix.pkg }}/ -count=1
+
+  language:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 源码、注释、词库与文档无韩文残留
+        run: python3 -I scripts/check-language.py --source
+      - name: 语言检查器回归测试
+        run: python3 -I -m unittest discover -s scripts/tests -v

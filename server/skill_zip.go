@@ -14,19 +14,17 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
-// Go 의 archive/zip 은 Store(0) 와 Deflate(8) 두 가지 해제기만 내장하고 있어서, 다른
-// 방식을 만나면 "zip: unsupported compression algorithm" 을 반환한다. 압축 프로그램은
-// 기본이 아닌 설정에서 다른 방식을 자주 쓰므로(7-Zip 의 bzip2, WinZip 의 zstd), 여기서
-// 순수 Go 로 풀 수 있는 두 가지를 보충한다. 정말로 풀 수 없는 경우(Deflate64 / LZMA /
-// XZ / PPMd / 암호화 파일)는 압축을 풀기 전에 한국어 안내를 내보내고, 하부 오류를 그대로
-// 사용자에게 넘기지 않는다.
+// Go archive/zip 仅内置 Store(0)、Deflate(8)，遇到其他算法返回 unsupported compression algorithm。
+// 7-Zip、WinZip 可能使用 bzip2 或 zstd，在此补充两个纯 Go 解码器。
+// Deflate64、LZMA、XZ、PPMd 和加密文件仍不支持，解压前给出中文提示，
+// 而非直接向用户暴露底层解码错误。
 const (
 	zipMethodStore     = 0
 	zipMethodDeflate   = 8
 	zipMethodDeflate64 = 9
 	zipMethodBzip2     = 12
 	zipMethodLZMA      = 14
-	zipMethodZstdPKW   = 20 // PKWARE 가 초기에 zstd 에 할당한 번호
+	zipMethodZstdPKW   = 20 // PKWARE 早期分配给 zstd 的方法编号。
 	zipMethodZstd      = 93
 	zipMethodXZ        = 95
 	zipMethodJPEG      = 96
@@ -47,24 +45,23 @@ var zipMethodNames = map[uint16]string{
 	zipMethodJPEG:      "JPEG",
 	zipMethodWavPack:   "WavPack",
 	zipMethodPPMd:      "PPMd",
-	zipMethodAES:       "AES 암호화",
+	zipMethodAES:       "AES 加密",
 }
 
-// 사용자에게 노출되는 스킬 업로드 오류 응답 문구. fsUploadSkill 이
-// writeErr(400, err.Error()) 로 그대로 내보낸다(server_mgmt.go).
+// Skill 上传错误由 fsUploadSkill 以 writeErr(400, err.Error()) 直接返回。
 const (
-	errSkillZipParse       = "압축 파일을 해석하지 못했습니다(zip 형식이어야 합니다): %w"
-	errSkillZipEncrypted   = "압축 파일이 암호화되어 있습니다(%s). 암호화하지 않은 zip 파일을 업로드하세요."
-	errSkillZipUnsupported = "지원하지 않는 압축 방식입니다: %s(method %d), 파일 %s. " +
-		"「저장(Store)」 또는 「Deflate」 방식으로 다시 압축해 주세요" +
-		"(7-Zip·WinRAR 에서는 압축 방식을 Deflate 로 선택하거나, 운영 체제 기본 압축 기능 또는 명령행 zip -r 를 사용하세요)."
+	errSkillZipParse       = "无法解析压缩文件（必须为 zip 格式）：%w"
+	errSkillZipEncrypted   = "压缩文件已加密（%s）。请上传未加密的 zip 文件。"
+	errSkillZipUnsupported = "不支持的压缩方式：%s (method %d)，文件 %s。 " +
+		"请使用“存储 (Store)”或“Deflate”方式重新压缩" +
+		"（7-Zip、WinRAR 中请选择 Deflate，也可使用操作系统自带压缩功能或命令行 zip -r）。"
 )
 
 func zipMethodName(m uint16) string {
 	if n, ok := zipMethodNames[m]; ok {
 		return n
 	}
-	return "알 수 없음"
+	return "未知"
 }
 
 // newSkillZipReader parses an uploaded archive and registers the extra decompressors
@@ -101,17 +98,16 @@ func skillZipEntries(zr *zip.Reader) []skillZipEntry {
 		name := zipEntryName(f)
 		if strings.HasPrefix(name, "__MACOSX/") || strings.Contains(name, "/__MACOSX/") ||
 			path.Base(name) == ".DS_Store" {
-			continue // macOS 가 압축할 때 남긴 잔여 항목
+			continue // macOS 打包时产生的辅助条目。
 		}
 		out = append(out, skillZipEntry{f: f, name: name})
 	}
 	return out
 }
 
-// zipEntryName returns the entry path as UTF-8. Windows 의 7-Zip / WinRAR / 파일 탐색기는
-// UTF-8 플래그 비트를 세우지 않으면 한글·중국어 파일명을 GBK 로 zip 에 기록하고, Go 는 그
-// 바이트를 그대로 보존한다. 그러면 이름이 올바른 UTF-8 도 아니고 경로 검증도 통과하지
-// 못하므로, 여기서 GBK 로 대체 디코딩한다.
+// zipEntryName 返回 UTF-8 路径。Windows 的部分压缩工具未设置 UTF-8 flag 时，
+// 可能以 GBK 存储非 ASCII 文件名，Go 会保留原始字节；
+// 为避免 UTF-8 和路径校验失败，在此尝试 GBK 解码。
 func zipEntryName(f *zip.File) string {
 	if utf8.ValidString(f.Name) {
 		return f.Name

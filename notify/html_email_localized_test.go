@@ -5,89 +5,82 @@ import (
 	"testing"
 )
 
-// 이 파일은 F4 ③(이메일 본문·HTML 템플릿) 한국어화를 회귀로부터 지킨다.
-// html.go 의 라벨과 email.go 의 검증 오류가 중국어로 되돌아가면 잡아낸다.
-// 헬퍼 hasHan·hasHangul·assertKorean 은 notify_localized_test.go 에 있다(같은 패키지).
-//
-// 데이터(제목·유형·자산·개요)는 전부 ASCII 로 둔다. 그래야 "출력 전체에 한자 0"
-// 이라는 단언이 콘텐츠가 아니라 골격 라벨의 회귀만 정확히 포착한다. 심각도·상태
-// 라벨은 F4 ①에서 이미 한국어라 출력에 한글로 나오며(한자 아님) 단언을 통과한다.
-
-// TestHTMLItemLabelsLocalized 는 단건 이메일 본문의 모든 라벨 분기를 켠 뒤
-// 골격이 한국어이고 중국어 한자가 없음을 확인한다.
+// 邮件正文、HTML 标签和 email.go 验证错误的中文化回归测试。
+// hasHan、hasHangul、assertChinese 由同包 notify_localized_test.go 提供。
+// 标题、类型、资产和概述使用 ASCII，确保脚本字符检查只反映标签而非用户数据。
+// 严重等级与状态标签均使用中文。
+// TestHTMLItemLabelsLocalized 打开单条邮件所有标签分支，验证中文结构且无韩文。
 func TestHTMLItemLabelsLocalized(t *testing.T) {
 	m := Message{
 		HomeURL: "https://example.com/panel",
 		Items: []Item{{
 			Name:       "sqli-login", // Title() = Name
-			VulnClass:  "injection",  // Title() 과 달라야 유형 줄이 렌더됨
-			Severity:   "high",       // SeverityLabel → 높음(한글)
+			VulnClass:  "injection",  // 与 Title() 不同，才能显示类型行。
+			Severity:   "high",       // SeverityLabel → 高危（中文）。
 			Summary:    "login form is injectable",
 			Assets:     []string{"host-a.example.com"},
 			DetailURL:  "https://example.com/f/1",
-			FromStatus: "pending", // IsStatusChange()=true → 상태 변경 줄
+			FromStatus: "pending", // IsStatusChange()=true → 显示状态变更行。
 			ToStatus:   "fixed",
 		}},
 	}
 	out := htmlBody(m, 0)
-	if hasHan(out) {
-		t.Errorf("이메일 본문에 중국어 한자가 남아 있습니다:\n%s", out)
+	if hasHangul(out) {
+		t.Errorf("邮件正文仍有韩文残留：\n%s", out)
 	}
 	for _, want := range []string{
-		"상태 변경", "유형", "자산", "개요", "상세 보기", "플랫폼에서 전체 보기",
+		"状态变更", "类型", "资产", "总览", "查看详情", "在平台查看全部",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("이메일 본문에 %q 라벨이 없습니다:\n%s", want, out)
+			t.Errorf("邮件正文缺少 %q 标签：\n%s", want, out)
 		}
 	}
 }
 
-// TestHTMLBatchIntroLocalized 는 다건(digest) 머리말의 두 분기(시간창 유무)가
-// 한국어로 렌더되는지 확인한다.
+// TestHTMLBatchIntroLocalized 检查批量摘要有、无时间窗口的中文标题。
 func TestHTMLBatchIntroLocalized(t *testing.T) {
 	items := []Item{{Name: "a", Severity: "high"}, {Name: "b", Severity: "low"}}
 
 	withWindow := htmlBatchIntro(Message{Batch: true, WindowMinutes: 30, Items: items})
-	assertKorean(t, "htmlBatchIntro(시간창)", withWindow)
-	for _, want := range []string{"최근 30분간", "신규 취약점", "2건"} {
+	assertChinese(t, "htmlBatchIntro（有时间窗口）", withWindow)
+	for _, want := range []string{"最近 30 分钟", "新增", "2 个漏洞"} {
 		if !strings.Contains(withWindow, want) {
-			t.Errorf("시간창 머리말에 %q 가 없습니다: %q", want, withWindow)
+			t.Errorf("时间窗口标题缺少 %q：%q", want, withWindow)
 		}
 	}
 
 	noWindow := htmlBatchIntro(Message{Batch: true, WindowMinutes: 0, Items: items})
-	assertKorean(t, "htmlBatchIntro(시간창 없음)", noWindow)
-	if !strings.Contains(noWindow, "신규 취약점 2건") {
-		t.Errorf("시간창 없는 머리말이 %q 를 포함해야 합니다: %q", "신규 취약점 2건", noWindow)
+	assertChinese(t, "htmlBatchIntro（无时间窗口）", noWindow)
+	if !strings.Contains(noWindow, "新增 2 个漏洞") {
+		t.Errorf("无时间窗口的标题应包含 %q：%q", "新增 2 个漏洞", noWindow)
 	}
-	if strings.Contains(noWindow, "분간") {
-		t.Errorf("시간창이 없는데 '분간' 이 들어갔습니다: %q", noWindow)
+	if strings.Contains(noWindow, "分钟") {
+		t.Errorf("未配置时间窗口，标题却包含“分钟”：%q", noWindow)
 	}
 }
 
-// TestEmailValidateLocalized 는 SMTP 설정 검증 오류 네 가지가 한국어이고,
-// 각 오류가 어떤 필드가 문제인지 알려 주는지 확인한다. 이 메시지는 알림 채널을
-// 설정하는 사용자에게 그대로 표시된다.
+// TestEmailValidateLocalized 检查四类 SMTP 配置错误使用中文，
+// 并准确指出问题字段；这些消息直接展示给配置通知渠道的用户。
 func TestEmailValidateLocalized(t *testing.T) {
 	cases := []struct {
 		name   string
 		cfg    map[string]any
 		substr string
 	}{
-		{"서버 주소 누락", map[string]any{"port": float64(25), "from": "a@b.c", "to": []any{"d@e.f"}}, "SMTP"},
-		{"포트 범위 벗어남", map[string]any{"host": "h"}, "포트"},
-		{"발신자 누락", map[string]any{"host": "h", "port": float64(25), "to": []any{"d@e.f"}}, "발신자"},
-		{"수신자 누락", map[string]any{"host": "h", "port": float64(25), "from": "a@b.c"}, "수신자"},
+		{"缺少服务器地址", map[string]any{"port": float64(25), "from": "a@b.c", "to": []any{"d@e.f"}}, "SMTP"},
+		{"端口超出范围", map[string]any{"host": "h"}, "端口"},
+		{"缺少发件人", map[string]any{"host": "h", "port": float64(25), "to": []any{"d@e.f"}}, "发件人"},
+		{"缺少收件人", map[string]any{"host": "h", "port": float64(25), "from": "a@b.c"}, "收件人"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := (emailChannel{}).Validate(tc.cfg)
 			if err == nil {
-				t.Fatalf("검증이 실패해야 합니다: %v", tc.cfg)
+				t.Fatalf("应验证失败：%v", tc.cfg)
 			}
-			assertKorean(t, "Validate("+tc.name+")", err.Error())
+			assertChinese(t, "Validate("+tc.name+")", err.Error())
 			if !strings.Contains(err.Error(), tc.substr) {
-				t.Errorf("오류 메시지에 %q 가 있어야 합니다, 받은 값 %q", tc.substr, err.Error())
+				t.Errorf("错误消息应包含 %q，收到 %q", tc.substr, err.Error())
 			}
 		})
 	}

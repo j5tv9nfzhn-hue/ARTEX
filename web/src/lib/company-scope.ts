@@ -2,9 +2,8 @@ import type { CompanyScopeKind, CompanyScopeRule } from "@/lib/types";
 
 export const MAX_COMPANY_SCOPE_VALUE_LENGTH = 1024;
 
-// 검증 결과는 지역화 가능한 "오류 코드"로 돌려준다. 이 모듈은 React 밖 순수 함수라
-// 직접 번역할 수 없으므로, 노출 지점(scope-text-editor 는 next-intl 의 t(), mock
-// handler 는 companyScopeErrorText())이 코드를 각 언어 문구로 바꾼다.
+// 验证结果返回可本地化错误代码。此模块为 React 外的纯函数，
+// scope-text-editor 使用 t()、mock handler 使用 companyScopeErrorText() 转换展示文案。
 export type CompanyScopeErrorCode =
   | "empty"
   | "tooLong"
@@ -144,26 +143,26 @@ export function companyScopeRuleError(rule: CompanyScopeRule): CompanyScopeError
   return "";
 }
 
-// mock handler(React 밖) 전용: 오류 코드를 한국어 문구로 바꾼다. 실제 UI 는
-// scope-text-editor 가 next-intl 의 t("scopeEditor.error.*") 로 지역화한다.
+// React 外的 mock handler 将错误代码转换为中文；
+// 真实界面由 scopeEditor.error.* 在运行时本地化。
 export function companyScopeErrorText(code: CompanyScopeErrorCode | "" | undefined): string {
   switch (code) {
     case "empty":
-      return "범위 값을 입력해 주세요";
+      return "请填写范围值";
     case "tooLong":
-      return `최대 ${MAX_COMPANY_SCOPE_VALUE_LENGTH}자까지 입력할 수 있습니다`;
+      return `最多 ${MAX_COMPANY_SCOPE_VALUE_LENGTH} 个字符`;
     case "domainSpace":
-      return "공백 없이 유효한 도메인 또는 URL을 입력해 주세요";
+      return "请输入不含空格的有效域名或 URL";
     case "domainInvalid":
-      return "유효한 도메인 또는 URL을 입력해 주세요";
+      return "请输入有效域名或 URL";
     case "ipInvalid":
-      return "유효한 IP를 입력해 주세요";
+      return "请输入有效 IP";
     case "cidrInvalid":
-      return "유효한 CIDR 대역을 입력해 주세요";
+      return "请输入 CIDR 网段";
     case "cidrPrefixV4":
-      return "IPv4 대역 프리픽스는 /16 ~ /32 범위여야 합니다";
+      return "IPv4 网段前缀需为 /16 至 /32";
     case "cidrPrefixV6":
-      return "IPv6 대역 프리픽스는 /32 ~ /128 범위여야 합니다";
+      return "IPv6 网段前缀需为 /32 至 /128";
     default:
       return "";
   }

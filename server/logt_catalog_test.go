@@ -16,8 +16,8 @@ import (
 
 // TestLogTTemplatesHaveTranslations pins that every logT("…") template in this
 // package has an en/zh/es entry in config's log catalog. config.T falls back to
-// the Korean source on a miss, so a key that drifts by one character (spacing,
-// an escaped quote) would otherwise ship Korean console logs to non-Korean
+// the Simplified Chinese source on a miss, so a key that drifts by one character (spacing,
+// an escaped quote) would otherwise ship Simplified Chinese console logs to other-language
 // operators without any test noticing.
 func TestLogTTemplatesHaveTranslations(t *testing.T) {
 	files, err := filepath.Glob("*.go")
@@ -54,14 +54,14 @@ func TestLogTTemplatesHaveTranslations(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s: %v", fset.Position(lit.Pos()), err)
 				}
-				if strings.IndexFunc(s, func(r rune) bool { return unicode.Is(unicode.Hangul, r) }) >= 0 {
+				if strings.IndexFunc(s, func(r rune) bool { return unicode.Is(unicode.Han, r) }) >= 0 {
 					keys = append(keys, s)
 					found++
 				}
 				return true
 			})
 			if found == 0 {
-				t.Errorf("%s: no Korean template literal found in logT argument", fset.Position(call.Pos()))
+				t.Errorf("%s: 未找到中文模板字面量 in logT argument", fset.Position(call.Pos()))
 			}
 			return true
 		})
@@ -69,7 +69,7 @@ func TestLogTTemplatesHaveTranslations(t *testing.T) {
 	if len(keys) == 0 {
 		t.Fatal("found no logT call sites; the scan is broken")
 	}
-	for _, lang := range []string{"en", "zh", "es"} {
+	for _, lang := range []string{"en", "es"} {
 		t.Setenv("ARTEX_LANG", lang)
 		for _, k := range keys {
 			if config.T(k) == k {
@@ -80,7 +80,7 @@ func TestLogTTemplatesHaveTranslations(t *testing.T) {
 }
 
 // TestErrCatalogFormatVerbsMatch pins that translated API error templates keep the
-// Korean template's format verbs in order; trMsg wraps the template before
+// Simplified Chinese template's format verbs in order; trMsg wraps the template before
 // fmt.Sprintf/Errorf fill it, so a mismatch would garble the response.
 func TestErrCatalogFormatVerbsMatch(t *testing.T) {
 	verbs := regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z%]`)
@@ -95,7 +95,7 @@ func TestErrCatalogFormatVerbsMatch(t *testing.T) {
 }
 
 // TestAuthErrorsTranslated pins that every authErr* message the auth endpoints
-// return has an en/zh/es translation, so a non-Korean user who fails a login or
+// return has an en/zh/es translation, so a other-language user who fails a login or
 // the first-run setup sees the error in the chosen language.
 func TestAuthErrorsTranslated(t *testing.T) {
 	t.Cleanup(func() { config.CurrentLanguage = nil })
@@ -126,7 +126,7 @@ func TestAuthErrorsTranslated(t *testing.T) {
 	if len(msgs) == 0 {
 		t.Fatal("found no authErr constants; the scan is broken")
 	}
-	for _, lang := range []string{"en", "zh", "es"} {
+	for _, lang := range []string{"en", "es"} {
 		config.CurrentLanguage = func() string { return lang }
 		for _, m := range msgs {
 			if trMsg(m) == m {

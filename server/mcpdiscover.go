@@ -21,19 +21,14 @@ type mcpClient interface {
 	Close() error
 }
 
-// connectMCP 이 돌려주는 전송 설정 검증 오류 네 가지는 사용자 노출이다 —
-// pgRefreshMCP(server_mgmt.go) 가 discoverAndCacheMCP 실패를
-// writeErr(502, errMgmtToolDiscoverFail+err.Error()) 로 응답 본문에 그대로 싣는다.
-// 다른 호출처(assembly.go 의 에이전트 조립·discoverEmptyMCPsOnStartup 시작 자동 발견·
-// sync_scopesentry.go 동기화·pgSaveMCP 추가 직후 발견)는 전부 log.Printf 로만 남기거나
-// 버려서 에이전트 두뇌 입력이 아니다. 그래서 한국어화한다. 전송 방식 enum
-// (stdio/http/sse)과 URL 은 와이어 식별자라 원문을 유지하고, UI mcpPage(전송 방식·명령·
-// 원격 URL)와 표기를 맞춘다.
+// connectMCP 的四类传输配置错误通过 pgRefreshMCP 的 502 正文显示。
+// Agent 组装、启动发现、ScopeSentry 同步和保存后发现只记录或丢弃错误。
+// 因此这些验证消息中文化；stdio、http、sse 与 URL 为协议标识，保持原文。
 const (
-	errMCPStdioNoCommand      = "stdio 전송 방식에 명령이 없습니다"
-	errMCPHTTPNoURL           = "http 전송 방식에 URL 이 없습니다"
-	errMCPSSENoURL            = "sse 전송 방식에 URL 이 없습니다"
-	errMCPUnknownTransportFmt = "알 수 없는 전송 방식입니다: %q"
+	errMCPStdioNoCommand      = "stdio 传输方式缺少命令"
+	errMCPHTTPNoURL           = "http 传输方式缺少 URL"
+	errMCPSSENoURL            = "sse 传输方式缺少 URL"
+	errMCPUnknownTransportFmt = "未知的传输方式：%q"
 )
 
 // connectMCP dials one MCP server per its transport. Callers must Close the client.
@@ -79,7 +74,7 @@ func (s *Server) discoverAndCacheMCP(ctx context.Context, m *db.MCPServer) error
 	if err := s.m.pg.SaveMCPTools(m.ID, tools); err != nil {
 		return err
 	}
-	log.Printf(logT("[mcp] %s 에서 도구 %d개를 발견해 캐시했습니다"), m.Name, len(tools))
+	log.Printf(logT("[mcp] 从 %s 发现并缓存了 %d 个工具"), m.Name, len(tools))
 	return nil
 }
 
@@ -90,7 +85,7 @@ func (s *Server) discoverAndCacheMCP(ctx context.Context, m *db.MCPServer) error
 func (s *Server) discoverEmptyMCPsOnStartup() {
 	servers, err := s.m.pg.ListMCP()
 	if err != nil {
-		log.Printf(logT("[mcp] 시작 시 자동 발견: 목록을 읽지 못했습니다: %v"), err)
+		log.Printf(logT("[mcp] 启动时自动发现：读取列表失败：%v"), err)
 		return
 	}
 	for _, m := range servers {
@@ -99,7 +94,7 @@ func (s *Server) discoverEmptyMCPsOnStartup() {
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 90*time.Second)
 		if err := s.discoverAndCacheMCP(ctx, m); err != nil {
-			log.Printf(logT("[mcp] 시작 시 %s 자동 발견에 실패했습니다: %v"), m.Name, err)
+			log.Printf(logT("[mcp] 启动时自动发现 %s 失败：%v"), m.Name, err)
 		}
 		cancel()
 	}

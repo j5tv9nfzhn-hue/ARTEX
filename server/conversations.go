@@ -25,52 +25,44 @@ const (
 	maxConversationTitleRunes    = 200
 )
 
-// 대화(채팅) 엔드포인트가 HTTP 응답으로 돌려주는 사용자 노출 문구다. 한국어 UI 에서
-// 요청이 실패하면 이 문구가 그대로 토스트로 뜨므로 한국어로 둔다. 요청 필드명
-// (agent_key·title·pinned·ids·id)·식별자(LLM·API Key·token)는 사용자가 요청을 고치는 데
-// 쓰는 값이라 원문 그대로 둔다. 用語: 配置→설정(B4c-5), agent→에이전트. %d 가 든 상수는
-// fmt.Sprintf 형식 문자열이다. 기본 대화 제목·센티넬은 아래 convDefaultTitle·
-// convAttachmentTitle 로 분리했고(F8), 재검증 사유·트랜스크립트 오류 문구는 아래
-// convRetest* 상수·transcriptErrorSummary 로 분리했다(F9). 트리거 메시지 골격은 아직
-// 이 묶음 밖이다(F10·저널 참조). 로그·주석은 BRIEF 방침상 최하위.
+// 对话端点的中文 HTTP 错误响应，失败时直接展示为 toast。
+// agent_key、title、pinned、ids、id、LLM、API Key、token 等字段和技术标识保持原文。
+// 包含 %d 的常量由 fmt.Sprintf 填充。默认标题由 convDefaultTitle、convAttachmentTitle
+// 集中维护，复测原因与活动错误由 convRetest*、transcriptErrorSummary 统一维护。
 const (
-	convErrRequestTooLarge = "요청 본문이 너무 큽니다"
-	convErrAgentKeyEmpty   = "agent_key 는 비어 있을 수 없습니다"
-	convErrAgentKeyTooLong = "agent_key 는 최대 %d자까지 입력할 수 있습니다"
-	convErrAgentNotFound   = "에이전트를 찾을 수 없습니다"
-	convErrLLMProfile      = "지정한 LLM 설정이 존재하지 않거나 API Key 가 설정되지 않았습니다"
-	convErrTitleTooLong    = "제목은 최대 %d자까지 입력할 수 있습니다"
-	convErrTitleOrPinned   = "title 또는 pinned 중 하나 이상을 제공해야 합니다"
-	convErrTitleEmpty      = "제목은 비어 있을 수 없습니다"
-	convErrBadConvID       = "대화 id 가 올바르지 않습니다"
-	convErrIDsCount        = "ids 개수는 1에서 %d 사이여야 합니다"
-	convErrMessageEmpty    = "메시지는 비어 있을 수 없습니다"
-	convErrBusy            = "이 대화가 이전 메시지를 처리하고 있습니다. 잠시 기다려 주세요"
+	convErrRequestTooLarge = "请求正文过大"
+	convErrAgentKeyEmpty   = "agent_key 不能为空"
+	convErrAgentKeyTooLong = "agent_key 最多 %d 个字符"
+	convErrAgentNotFound   = "找不到 Agent"
+	convErrLLMProfile      = "指定的 LLM 配置不存在或未设置 API Key"
+	convErrTitleTooLong    = "标题最多 %d 个字符"
+	convErrTitleOrPinned   = "至少提供 title 或 pinned 之一"
+	convErrTitleEmpty      = "标题不能为空"
+	convErrBadConvID       = "对话 id 无效"
+	convErrIDsCount        = "ids 数量必须在 1 到 %d 之间"
+	convErrMessageEmpty    = "消息不能为空"
+	convErrBusy            = "此对话正在处理上一条消息，请稍候"
 )
 
-// 대화 기본 제목. convDefaultTitle 은 표시 문구이자 센티넬이다. 대화를 만들 때 제목으로
-// 쓰고, 첫 사용자 메시지가 오면 제목이 비었거나 이 값일 때만 자동 제목으로 덮어쓴다
-// (sendConversationMessage). 대입하는 쪽과 비교하는 쪽이 어긋나면 자동 제목 분기가
-// 깨지므로 한 상수로 묶는다. convAttachmentTitle 은 첨부만 보낸 첫 메시지의 기본 제목이다.
+// 对话默认标题。convDefaultTitle 同时作为创建默认值和自动标题标记。
+// 首条用户消息到达时，仅标题为空或等于该值才自动替换标题，赋值与比较必须一致。
+// convAttachmentTitle 是只发送附件时的首条默认标题。
 const (
-	convDefaultTitle    = "새 대화"
-	convAttachmentTitle = "첨부 메시지"
+	convDefaultTitle    = "新对话"
+	convAttachmentTitle = "附件消息"
 )
 
-// 재검증(finding_retest) 종결 사유. runConversationTurn 이 재검증 대화를 봉인할 때 쓰고,
-// finding_retests.error 컬럼에 저장돼 재검증 패널(finding-retest-panel) 의 item.error 로
-// 그대로 노출된다(사용자 노출). db/finding_retests.go 의 형제 사유(결론 미저장·서비스 재시작)도
-// 같은 컬럼·패널이라 그 파일에서 함께 한국어로 둔다. 종결 상태 값("failed"/"stopped"/
-// "completed")은 StatusLabel 로 한국어 라벨에 매핑되는 센티넬이라 ASCII 로 유지한다(F9).
+// runConversationTurn 封存复测对话时使用的终止原因，存入 finding_retests.error
+// 并直接显示于复测面板 item.error。与 db/finding_retests.go 的无结论、重启原因一致。
+// failed、stopped、completed 为状态协议标识，由 StatusLabel 映射显示，保持 ASCII。
 const (
-	convRetestFailedToStart    = "재검증을 시작하지 못했습니다"
-	convRetestStatusReadFailed = "재검증 상태를 읽지 못했습니다. 다시 시작해 주세요"
-	convRetestStoppedOrClosed  = "재검증이 중지되었거나 서비스가 종료되었습니다"
+	convRetestFailedToStart    = "无法启动复测"
+	convRetestStatusReadFailed = "无法读取复测状态，请重新启动"
+	convRetestStoppedOrClosed  = "复测已停止或服务已关闭"
 )
 
-// isDefaultConversationTitle 은 대화가 아직 자동 생성된 기본 제목(빈 값 또는
-// convDefaultTitle)을 달고 있는지 알려준다. 이 경우 첫 사용자 메시지가 제목을 자동으로
-// 덮어쓴다. 생성 기본값과 이 판정이 같은 상수를 쓰므로 둘이 어긋날 수 없다.
+// isDefaultConversationTitle 判断标题是否为空或为 convDefaultTitle。
+// 此时首条用户消息可自动生成标题；创建与比较共用同一常量，避免不一致。
 func isDefaultConversationTitle(title string) bool {
 	return title == "" || title == convDefaultTitle
 }
@@ -543,15 +535,14 @@ func (s *Server) conversationRunContext(id int64, busyKey string) (context.Conte
 	return ctx, cancel
 }
 
-// transcriptErrorSummary 는 실행이 실패했을 때 활동 전사(transcript)에 남기는 오류 요약을
-// 만든다. label 은 실패한 주체를 가리키며, 채팅 턴은 빈 문자열, 작업 메인 에이전트는
-// "메인 에이전트"를 넣는다. 두 전사 모두 "(…오류: …)" 형태로 같게 렌더되도록 한 곳에 모은다.
-// err 원문은 그대로 보존하고 바깥 라벨만 한국어로 둔다(F9).
+// transcriptErrorSummary 生成执行失败时的活动摘要。
+// 聊天轮次 label 为空，任务主 Agent 使用“主 Agent”；均以中文括号和错误标签包装。
+// 仅翻译外层标签，内部 err 原文完整保留。
 func transcriptErrorSummary(label, errMsg string) string {
 	if label != "" {
 		label += " "
 	}
-	return "(" + label + "오류: " + errMsg + ")"
+	return "(" + label + "错误： " + errMsg + ")"
 }
 
 func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelCauseFunc, c *db.Conversation, msg, busyKey string) {
@@ -756,25 +747,13 @@ func (s *Server) nextTriggerRun(agentKey string, cfg triggerBehavior) triggeredR
 	return mergeTriggeredRuns(group)
 }
 
-// [F10/F19 경계 판정 · 두뇌 입력 보존] 아래 P3 트리거 메시지 합성부(taskContextHeader·
-// finalTriggerMessage·mergeTriggeredRuns·mergeAllRuns)가 만드는 중국어 문구는 번역하지 않고
-// 원문을 보존한다. 조립된 message 는 runTriggeredRun 에서 finalTriggerMessage(item) →
-// ca.Chat 의 user 메시지로 들어가는 에이전트 입력(두뇌)이자, 동시에 AppendConvActivity
-// (kind="user")로 전사에 노출되는 이중 용도 문자열이다. 대상: `【任务 …】`(작업 컨텍스트
-// 헤더)·`【本会话合并了…请一并处理】`(합병 안내)·`── 触发 N ──`(구분선). BRIEF 경계 #1
-// (에이전트 두뇌는 번역하지 않는다 — TSecBench 벤치마크 동작 보존)에 해당하고, 표시만
-// 한국어로 가르려면 두뇌용·전사용 두 문자열을 따로 나르도록 구조를 바꿔야 해(F16 동형)
-// 고위험·저가치라 보류한다. 합병 run 의 conversation 제목(`合并触发 · …`)은 ca.Chat 에
-// 안 들어가는 표시 전용이지만, 그 본문(위 보존 대상)이 중국어로 고정되므로 제목만 바꾸면
-// 한 대화에서 제목=한국어·본문=중국어로 섞인다(F7·F8·F12 혼재 금지) — 가치도 낮아 함께 보존.
-// 회귀 가드: trigger_merge_test.go 가 `【任务 #`·`── 触发 `·`共 N 个任务`·`【本会话合并了`·
-// `（目标：` 프레이밍을 핀한다(우발 한국어화 시 FAIL).
-//
-// taskContextHeader renders a task's description/goal once. Same-task fires share
-// this block, so the scheduler no longer repeats it per event (a long task goal
-// times N fires was the dominant bloat). Returns "" for interval/none triggers
-// (taskID==0, no task context). desc/goal are truncated to keep even a single copy
-// bounded.
+// P3 触发消息合成（taskContextHeader、finalTriggerMessage、mergeTriggeredRuns、
+// mergeAllRuns）保留中文 framing。消息既进入 runTriggeredRun → ca.Chat 的 user 输入，
+// 也作为 kind=user 的 AppendConvActivity 显示，不能改动模型与转录的共享格式。
+// 保留【任务 …】、【本会话合并了…请一并处理】、── 触发 N ── 与合并标题。
+// trigger_merge_test.go 固定【任务 #、── 触发、共 N 个任务、【本会话合并了、（目标：。
+// taskContextHeader 每个任务只生成一次描述与目标，避免同任务重复事件使长目标乘倍膨胀。
+// interval、none 触发的 taskID==0 时返回空字符串，描述、目标会截断以限制单个块大小。
 func taskContextHeader(taskID int64, desc, goal string) string {
 	if desc == "" && goal == "" {
 		// No task context to show (interval/none fire, or a merged run that already

@@ -12,21 +12,20 @@ import (
 
 const maxWorkerMessageBytes = 64 << 10
 
-// Worker 개입(사람이 작성한 메시지를 일시정지된 Worker 의도에 주입) API 의 사용자 노출
-// 에러 응답 문구다. 한국어 UI 에서 토스트로 그대로 노출되므로 한국어로 둔다. Worker 는
-// 엔진 역할 이름이라 로마자를 유지하고(용어집), request_id 는 요청 필드명이라 원문 보존.
+// 向暂停的 Worker 意图注入人工消息的中文 API 错误，直接展示为 toast。
+// Worker 是引擎角色名、request_id 是协议字段，均保持原文。
 const (
-	errIntentRequestTooLarge   = "요청 본문이 너무 큽니다"
-	errIntentMessageEmpty      = "메시지는 비워 둘 수 없습니다"
-	errIntentMessageTooLong    = "메시지는 4000자를 초과할 수 없습니다"
-	errIntentBadRequestID      = "request_id 는 1~128자의 영문자, 숫자, -, _, ., : 만 사용할 수 있습니다"
-	errIntentTaskDeleting      = "작업을 삭제하는 중이라 Worker 에게 메시지를 보낼 수 없습니다"
-	errIntentTaskPaused        = "작업이 일시정지되어 있습니다. 먼저 작업을 재개한 뒤 Worker 에게 메시지를 보내세요"
-	errIntentTaskQueued        = "대기 중인 작업에는 Worker 에게 메시지를 보낼 수 없습니다"
-	errIntentTaskTerminal      = "종료된 작업에는 Worker 에게 메시지를 보낼 수 없습니다"
-	errIntentTaskSettling      = "작업을 마무리하는 중이라 Worker 에게 메시지를 보낼 수 없습니다"
-	errIntentInheritedReadonly = "상속된 의도는 읽기 전용이라 Worker 에게 메시지를 보낼 수 없습니다"
-	errIntentNotPaused         = "일시정지된 Worker 에게만 메시지를 보낼 수 있습니다. 먼저 일시정지하세요"
+	errIntentRequestTooLarge   = "请求正文过大"
+	errIntentMessageEmpty      = "消息不能为空"
+	errIntentMessageTooLong    = "消息不能超过 4000 个字符"
+	errIntentBadRequestID      = "request_id 只能包含 1~128 个字符，且仅限英文字母、数字、-、_、.、:"
+	errIntentTaskDeleting      = "任务正在删除中，因此无法向 Worker 发送消息"
+	errIntentTaskPaused        = "任务已暂停。请先恢复任务，然后再向 Worker 发送消息"
+	errIntentTaskQueued        = "无法向处于等待状态的任务的 Worker 发送消息"
+	errIntentTaskTerminal      = "无法向已结束任务的 Worker 发送消息"
+	errIntentTaskSettling      = "任务正在收尾，无法向 Worker 发送消息"
+	errIntentInheritedReadonly = "继承的意图为只读，因此无法向 Worker 发送消息"
+	errIntentNotPaused         = "只能向已暂停的 Worker 发送消息。请先暂停"
 )
 
 func validWorkerMessageRequestID(id string) bool {

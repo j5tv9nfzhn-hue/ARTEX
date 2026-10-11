@@ -10,17 +10,14 @@ import (
 	"github.com/Autumn-27/artex/db"
 )
 
-// 자산 가로채기 규칙 검증기(validateAssetInterceptRuleReq)가 돌려주는 사용자 노출
-// 오류 네 가지다. 호출처는 전역 규칙 CRUD 핸들러(assetInterceptCreateRule·
-// assetInterceptUpdateRule)와 작업 수준 검증기(validateTaskInterceptRuleReq)뿐이고,
-// 모두 writeErr 로 HTTP 400 을 돌려주는 사용자 전용 경로다(에이전트 도구를 거치지
-// 않는다). 필드명과 kind 열거값(pattern·exact_ip·cidr·kind)은 클라이언트가 그대로
-// 주고받는 와이어 식별자라 번역하지 않고 원문을 유지한다.
+// validateAssetInterceptRuleReq 的四类用户可见错误，用于资产规则 CRUD 和
+// validateTaskInterceptRuleReq，经 writeErr 返回 HTTP 400，不经过 Agent 工具。
+// pattern、exact_ip、cidr、kind 是客户端协议字段或枚举，不翻译。
 const (
-	errAssetInterceptPatternEmpty      = "패턴을 입력하세요"
-	errAssetInterceptInvalidExactIPFmt = "exact_ip 는 올바른 IP 주소여야 합니다: %s"
-	errAssetInterceptInvalidCIDRFmt    = "cidr 는 올바른 네트워크 대역이어야 합니다(예: 192.168.0.0/16): %s"
-	errAssetInterceptInvalidKindFmt    = "kind 값이 올바르지 않습니다: %s"
+	errAssetInterceptPatternEmpty      = "请输入模式"
+	errAssetInterceptInvalidExactIPFmt = "exact_ip 必须是有效的 IP 地址：%s"
+	errAssetInterceptInvalidCIDRFmt    = "cidr 必须是有效的网络段（例如：192.168.0.0/16）：%s"
+	errAssetInterceptInvalidKindFmt    = "kind 的值无效: %s"
 )
 
 // --- asset intercept rule CRUD ---

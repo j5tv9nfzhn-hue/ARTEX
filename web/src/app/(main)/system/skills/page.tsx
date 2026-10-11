@@ -354,19 +354,19 @@ export default function SkillsPage() {
       .agents()
       .then(setAgents)
       .catch(() => {
-        /* 조회 실패는 무시하고 기본 상태를 유지한다 */
+        /* 查询失败时保留默认状态。 */
       });
     api
       .mcpServers()
       .then(setMcpOptions)
       .catch(() => {
-        /* 조회 실패는 무시하고 기본 상태를 유지한다 */
+        /* 查询失败时保留默认状态。 */
       });
     api
       .missingSkills()
       .then(setMissing)
       .catch(() => {
-        /* 조회 실패는 무시하고 기본 상태를 유지한다 */
+        /* 查询失败时保留默认状态。 */
       });
     api
       .skills()
@@ -377,12 +377,12 @@ export default function SkillsPage() {
             .skillVisibility(s.name)
             .then((ids) => setVisibility((v) => ({ ...v, [s.name]: ids })))
             .catch(() => {
-              /* 가시성 조회 실패는 무시한다 */
+              /* 忽略可见性查询失败。 */
             });
         });
       })
       .catch(() => {
-        /* 조회 실패는 무시하고 기본 상태를 유지한다 */
+        /* 查询失败时保留默认状态。 */
       });
   }, []);
 
@@ -399,8 +399,8 @@ export default function SkillsPage() {
       load();
     } catch (e) {
       const msg = (e as Error).message;
-      // offer overwrite when the skill already exists (server_mgmt.go 가 409 로 응답).
-      // 문구는 표시 언어에 따라 달라지므로 status 로 판정한다.
+      // Skill 已存在时 server_mgmt.go 返回 409，提示覆盖。
+      // 消息随显示语言变化，因此按 status 判断，不依赖本地化文本。
       if (!overwrite && e instanceof ApiError && e.status === 409) {
         if (window.confirm(t("overwriteConfirm", { msg }))) {
           await uploadZip(file, true);

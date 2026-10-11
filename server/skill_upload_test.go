@@ -178,7 +178,7 @@ func TestUploadSkillGBKNames(t *testing.T) {
 	}
 }
 
-// An archive we genuinely cannot decode should name the method in Korean instead of
+// An archive we genuinely cannot decode should name the method in Simplified Chinese instead of
 // surfacing "zip: unsupported compression algorithm".
 func TestUploadSkillUnsupportedMethod(t *testing.T) {
 	data := buildZip(t,
@@ -189,8 +189,8 @@ func TestUploadSkillUnsupportedMethod(t *testing.T) {
 		t.Fatalf("status = %d, want 400 (body %s)", rr.Code, rr.Body)
 	}
 	msg, _ := out["error"].(string)
-	if !strings.Contains(msg, "Deflate64") || !strings.Contains(msg, "지원하지 않는 압축 방식") {
-		t.Fatalf("error = %q, want a Korean message naming Deflate64", msg)
+	if !strings.Contains(msg, "Deflate64") || !strings.Contains(msg, "不支持的压缩方法") {
+		t.Fatalf("error = %q, want a Simplified Chinese message naming Deflate64", msg)
 	}
 }
 
@@ -210,8 +210,8 @@ func TestUploadSkillEncrypted(t *testing.T) {
 	if rr.Code != 400 {
 		t.Fatalf("status = %d, want 400 (body %s)", rr.Code, rr.Body)
 	}
-	if msg, _ := out["error"].(string); !strings.Contains(msg, "암호화") {
-		t.Fatalf("error = %q, want 암호화 hint", msg)
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "加密") {
+		t.Fatalf("error = %q，预期包含加密提示", msg)
 	}
 }
 
@@ -226,8 +226,8 @@ func TestUploadSkillRejectsTraversal(t *testing.T) {
 	if rr.Code != 400 {
 		t.Fatalf("status = %d, want 400 (body %s)", rr.Code, rr.Body)
 	}
-	if msg, _ := out["error"].(string); !strings.Contains(msg, "잘못된 경로") {
-		t.Fatalf("error = %q, want 잘못된 경로", msg)
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "无效路径") {
+		t.Fatalf("error = %q，预期包含无效路径", msg)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("upload left files behind: %v", entries)

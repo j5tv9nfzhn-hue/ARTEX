@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { api } from "@/lib/api";
+import { parseApprovalSummary } from "@/lib/approval-summary";
 import type { Activity, InterceptPending } from "@/lib/types";
 
 // ---- per-agent lane color (planner + work#1/#2/#3 …) ---------------------------
@@ -177,21 +178,12 @@ function toolInputText(tool: string, raw: string): string {
   return raw;
 }
 
-// InterceptCard renders an inline intercept_request approval card. The pending_id
-// is extracted from the summary (format: "도구 X 승인 요청 (#N)") so buttons are
-// available immediately without waiting for the detail load.
+// InterceptCard 渲染 intercept_request 审批卡片。
+// 从“工具 X 审批请求 (#N)”摘要解析 pending_id，无需等待详情加载即可显示按钮。
 function InterceptCard({ step, getDetail }: { step: Activity; getDetail: (seq: number) => Promise<string> }) {
   const t = useTranslations("transcript");
-  // extract pending_id from summary: "도구 Bash 승인 요청 (#42)"
-  const pendingId = React.useMemo(() => {
-    const m = /\(#(\d+)\)/.exec(step.summary);
-    return m ? parseInt(m[1], 10) : null;
-  }, [step.summary]);
-
-  const toolName = React.useMemo(() => {
-    const m = /도구\s+(\S+)\s+승인/.exec(step.summary);
-    return m ? m[1] : step.summary;
-  }, [step.summary]);
+  // 解析审批摘要中的 (#42) 与工具名，保持前后端格式一致。
+  const { pendingId, toolName } = React.useMemo(() => parseApprovalSummary(step.summary), [step.summary]);
 
   const [detail, setDetail] = React.useState<Record<string, unknown> | null>(null);
   const [decided, setDecided] = React.useState<"allowed" | "denied" | "timeout" | null>(null);

@@ -9,17 +9,16 @@ import (
 	"github.com/Autumn-27/artex/db"
 )
 
-// goals_api.go 가 사용자에게 돌려주는 오류 응답 문구. 명령·요청 필드명(text·vulnclass·
-// gid)·enum 은 원문 그대로 두고, 사람이 읽는 메시지만 한국어로 둔다. 영어 writeErr
-// (task not found·invalid JSON·bad goal id)는 F3b 중국어 전용 범위라 보존한다.
+// 目标 API 的中文错误响应。text、vulnclass、gid 等请求字段与枚举保留。
+// 既有英文技术错误（task not found、invalid JSON、bad goal id）保持原文。
 const (
-	errGoalTaskDeletingAdd    = "작업을 삭제하는 중이라 목표를 추가할 수 없습니다"
-	errGoalTaskDeletingEdit   = "작업을 삭제하는 중이라 목표를 수정할 수 없습니다"
-	errGoalTaskDeletingDelete = "작업을 삭제하는 중이라 목표를 삭제할 수 없습니다"
-	errGoalTextEmpty          = "목표 내용은 비워 둘 수 없습니다"
-	errGoalNotFound           = "목표를 찾을 수 없습니다"
-	errGoalReadAfterAdd       = "목표를 저장한 뒤 읽지 못했습니다"
-	errGoalReadAfterEdit      = "목표를 수정한 뒤 읽지 못했습니다"
+	errGoalTaskDeletingAdd    = "任务正在删除中，因此无法添加目标"
+	errGoalTaskDeletingEdit   = "任务正在删除，无法修改目标"
+	errGoalTaskDeletingDelete = "任务正在删除中，无法删除目标"
+	errGoalTextEmpty          = "目标内容不能为空"
+	errGoalNotFound           = "找不到目标"
+	errGoalReadAfterAdd       = "保存目标后无法读取"
+	errGoalReadAfterEdit      = "更新目标后无法读取"
 )
 
 // 总览「目标管理」的人工 CRUD 接口。与 agent 侧的 set_goals 工具写同一批 goal 节点,

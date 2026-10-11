@@ -13,18 +13,18 @@ import (
 // via the symbol, so pinning the constant here protects the user-facing text too.
 func TestManualTaskScopeSummaryLocalized(t *testing.T) {
 	if manualTaskScopeSummary == "" {
-		t.Fatal("manualTaskScopeSummary: 빈 문자열")
+		t.Fatal("manualTaskScopeSummary：字符串为空")
 	}
 	hasHangul := false
 	for _, r := range manualTaskScopeSummary {
 		if unicode.Is(unicode.Han, r) {
-			t.Fatalf("manualTaskScopeSummary: 중국어 한자가 남아 있습니다: %q", manualTaskScopeSummary)
+			t.Fatalf("manualTaskScopeSummary：仍有韩文残留：%q", manualTaskScopeSummary)
 		}
 		if unicode.Is(unicode.Hangul, r) {
 			hasHangul = true
 		}
 	}
 	if !hasHangul {
-		t.Fatalf("manualTaskScopeSummary: 한글이 없습니다: %q", manualTaskScopeSummary)
+		t.Fatalf("manualTaskScopeSummary：未包含中文：%q", manualTaskScopeSummary)
 	}
 }

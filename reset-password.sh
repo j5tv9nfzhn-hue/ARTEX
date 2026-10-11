@@ -1,48 +1,48 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ARTEX 관리자 비밀번호 재설정 스크립트
+# ARTEX 管理员密码重置脚本。
 #
-# 로그인 사용자 이름은 ARTEX 로 고정입니다. 비밀번호는 bcrypt 해시로 데이터베이스 settings 테이블의
-# auth.password_hash 키에 저장됩니다. 이 스크립트는 데이터베이스에 접속한 뒤 pgcrypto 로 DB 안에서 bcrypt 해시를 생성해
-# 그 키에 다시 씁니다. 백엔드 로그인 검증(golang.org/x/crypto/bcrypt)과 완전히 호환됩니다.
+# 登录用户名固定为 ARTEX；数据库 settings 表中的 auth.password_hash 保存 bcrypt 哈希。
+# 通过 pgcrypto 在数据库内计算 bcrypt，并重新写入该设置。
+# 与后端 golang.org/x/crypto/bcrypt 的登录校验兼容。
 #
-# 배포 방식 두 가지:
-#   local (기본값) -- 호스트에서 psql 로 데이터베이스에 직접 접속합니다. 접속 정보는 다음 우선순위로 가져옵니다:
-#                    명령행 인자 > --dsn/$ARTEX_PG_DSN > config.json 의 database.*
-#   docker        -- `docker compose exec`(또는 `docker exec`)로 postgres
-#                    컨테이너 안에서 psql 을 실행합니다(compose 는 기본적으로 5432 를 호스트에 노출하지 않아 컨테이너 안에서 실행합니다).
+# 两种部署方式：
+# local：默认在宿主通过 psql 直连数据库，连接信息优先级如下。
+# 命令行参数 > --dsn / ARTEX_PG_DSN > config.json 的 database 字段。
+# docker：用 docker compose exec 或 docker exec 在 PostgreSQL 容器执行 psql。
+# Compose 默认不向宿主开放 5432，因此需在容器内操作。
 #
-# 사용 예:
-#   ./reset-password.sh                          # 로컬, config.json/환경을 자동으로 읽고 새 비밀번호를 대화형으로 입력
-#   ./reset-password.sh -p 'NewPass!'            # 로컬, 새 비밀번호를 직접 지정
+# 示例：
+# ./reset-password.sh                          # 本地读取配置并交互输入新密码
+# ./reset-password.sh -p 'NewPass!'            # 本地，直接指定新密码
 #   ./reset-password.sh --dsn postgres://u:p@h:5432/artex
 #   ./reset-password.sh -H 127.0.0.1 -P 5433 -U autopentest -W pass -d artex
-#   ./reset-password.sh -m docker                # docker 배포(.env 의 POSTGRES_* 를 읽음)
-#   ./reset-password.sh -m docker -c pg컨테이너명 --exec docker
+# ./reset-password.sh -m docker                # 读取 .env 的 POSTGRES_*，在 Docker 操作
+# ./reset-password.sh -m docker -c pg-container --exec docker
 #
-# 보안: 새 비밀번호는 환경 변수 + psql \getenv 로 전달되며(프로세스 argv 에 들어가지 않습니다), :'var' 로
-# 자동 이스케이프됩니다(SQL 인젝션 방지). 데이터베이스 비밀번호는 PGPASSWORD 로 전달되어 마찬가지로 argv 에 들어가지 않습니다.
+# 新密码以环境变量与 psql \getenv 传入，不出现在进程 argv。
+# 使用 :'var' 自动转义，避免 SQL 注入；数据库密码由 PGPASSWORD 传入。
 # =============================================================================
 set -euo pipefail
 
 PASS_KEY="auth.password_hash"
 BCRYPT_COST=10
 
-MODE=""            # local | docker(비우면 자동 판정)
+MODE=""            # local | docker，留空自动判断
 DSN=""
 HOST="" PORT="" USER="" DBPASS="" DBNAME="" SSLMODE=""
 CONFIG=""
-CONTAINER=""       # docker 모드의 postgres 서비스/컨테이너명(기본값 postgres)
-EXEC_KIND=""       # compose | docker(docker 모드에서 어떤 exec 를 쓸지. 비우면 자동)
+CONTAINER=""       # Docker 的 PostgreSQL 服务或容器名，默认 postgres
+EXEC_KIND=""       # compose | docker，留空自动选择
 NEWPASS=""
 ASSUME_YES=0
 
-die() { echo "오류: $*" >&2; exit 1; }
+die() { echo "错误：$*" >&2; exit 1; }
 info() { echo "· $*" >&2; }
 
 usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
-# ---- 인자 파싱 -------------------------------------------------------------
+# 参数解析。
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -m|--mode)        MODE="${2:-}"; shift 2 ;;
@@ -59,12 +59,12 @@ while [[ $# -gt 0 ]]; do
     -p|--new-password) NEWPASS="${2:-}"; shift 2 ;;
     -y|--yes)         ASSUME_YES=1; shift ;;
     -h|--help)        usage ;;
-    *) die "알 수 없는 인자입니다: $1(-h 로 사용법 확인)" ;;
+    *) die "未知参数：$1，使用 -h 查看用法" ;;
   esac
 done
 
-# ---- config.json 에서 database.* 읽기(local 모드이고 접속 정보를 명시하지 않았을 때만) -----
-# python3 로 파싱하는 것을 우선합니다(견고함). python3 가 없으면 grep 으로 대체합니다(config.json 이 정돈된 분리 필드라서).
+# 未显式指定连接信息时，在 local 模式读取 config.json 的 database。
+# 优先用 python3 可靠解析；没有 Python 时对分离字段使用 grep 后备处理。
 read_config_json() {
   local path="$1"
   [[ -f "$path" ]] || return 1
@@ -75,7 +75,7 @@ try:
     d = json.load(open(sys.argv[1])).get("database", {})
 except Exception:
     sys.exit(1)
-# dsn 을 직접 주거나 필드를 나눠 줄 수 있습니다
+# 支持完整 DSN 或分离连接字段。
 if d.get("dsn"):
     print("DSN\t" + d["dsn"]); sys.exit(0)
 for k in ("host","port","user","password","dbname","sslmode"):
@@ -83,7 +83,7 @@ for k in ("host","port","user","password","dbname","sslmode"):
         print(k.upper() + "\t" + str(d[k]))
 PY
   else
-    # 아주 단순한 후순위: 키마다 grep(값은 문자열 또는 숫자)
+    # 简单后备逻辑：逐键 grep，值可为字符串或数字。
     local k
     for k in host port user password dbname sslmode; do
       local v
@@ -110,7 +110,7 @@ apply_config_fields() {
   done
 }
 
-# ---- 모드 자동 판정 ---------------------------------------------------------
+# 自动判断运行模式。
 if [[ -z "$MODE" ]]; then
   if [[ -n "$DSN$HOST$USER$DBNAME" || -n "${ARTEX_PG_DSN:-}" || -f "${CONFIG:-config.json}" ]]; then
     MODE="local"
@@ -120,22 +120,22 @@ if [[ -z "$MODE" ]]; then
     MODE="local"
   fi
 fi
-info "배포 모드: $MODE"
+info "部署模式：$MODE"
 
-# ---- 새 비밀번호 수집 -----------------------------------------------------------
+# 获取新密码。
 if [[ -z "$NEWPASS" ]]; then
-  read -r -s -p "새 비밀번호 입력(사용자 이름은 ARTEX 로 고정):" NEWPASS; echo >&2
-  [[ -n "$NEWPASS" ]] || die "비밀번호는 비워 둘 수 없습니다"
-  read -r -s -p "확인을 위해 다시 입력:" NEWPASS2; echo >&2
-  [[ "$NEWPASS" == "$NEWPASS2" ]] || die "두 번 입력한 값이 일치하지 않습니다"
+  read -r -s -p "输入新密码，用户名固定为 ARTEX：" NEWPASS; echo >&2
+  [[ -n "$NEWPASS" ]] || die "密码不能为空"
+  read -r -s -p "再次输入以确认：" NEWPASS2; echo >&2
+  [[ "$NEWPASS" == "$NEWPASS2" ]] || die "两次输入不一致"
 fi
-[[ -n "$NEWPASS" ]] || die "비밀번호는 비워 둘 수 없습니다"
+[[ -n "$NEWPASS" ]] || die "密码不能为空"
 
-# 환경 변수로 비밀번호를 psql 에 전달합니다(\getenv 로 읽으며 argv/ps 에 들어가지 않습니다)
+# 以环境变量传给 psql，再由 \getenv 读取，不进入 argv 或 ps 输出。
 export ARTEX_RESET_NEWPASS="$NEWPASS"
 
-# DB 안에서 bcrypt 를 생성해 upsert 합니다. 비밀번호는 :'newpw' 로 자동 이스케이프됩니다. CREATE EXTENSION 은 멱등이며,
-# 데이터베이스 역할에 확장 생성 권한이 없으면 여기서 오류가 납니다(안내는 아래 run 의 실패 분기 참조).
+# 数据库内计算 bcrypt 后 upsert，:'newpw' 自动转义，CREATE EXTENSION 幂等。
+# 角色无扩展创建权限时可能失败，见执行失败分支的处理提示。
 SQL=$(cat <<SQL
 \\set ON_ERROR_STOP on
 \\getenv newpw ARTEX_RESET_NEWPASS
@@ -146,29 +146,29 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
 SQL
 )
 
-# ---- 실행 -----------------------------------------------------------------
+# 执行。
 if [[ "$MODE" == "local" ]]; then
-  # 접속 정보 우선순위: 명령행 > --dsn/$ARTEX_PG_DSN > config.json
+  # 连接优先级：命令行 > --dsn / ARTEX_PG_DSN > config.json。
   if [[ -z "$DSN" && -z "$HOST$USER$DBNAME" ]]; then
     [[ -n "${ARTEX_PG_DSN:-}" ]] && DSN="$ARTEX_PG_DSN"
   fi
   if [[ -z "$DSN" && -z "$HOST$USER$DBNAME" ]]; then
     cfg="${CONFIG:-config.json}"
     if [[ -f "$cfg" ]]; then
-      info "$cfg 에서 데이터베이스 설정을 읽습니다"
+      info "正在从 $cfg 读取数据库配置"
       apply_config_fields < <(read_config_json "$cfg")
     fi
   fi
 
-  command -v psql >/dev/null 2>&1 || die "이 컴퓨터에서 psql 을 찾을 수 없습니다(postgresql-client 를 설치하거나 -m docker 를 사용하세요)"
+  command -v psql >/dev/null 2>&1 || die "未找到 psql，请安装 postgresql-client 或使用 -m docker"
 
   declare -a PSQL_ARGS=()
   if [[ -n "$DSN" ]]; then
     PSQL_ARGS=("$DSN")
     target="$DSN"
   else
-    [[ -n "$USER"   ]] || die "데이터베이스 사용자(-U)가 없거나 유효한 config.json/DSN 이 없습니다"
-    [[ -n "$DBNAME" ]] || die "데이터베이스 이름(-d)이 없거나 유효한 config.json/DSN 이 없습니다"
+    [[ -n "$USER"   ]] || die "缺少数据库用户 -U，且 config.json / DSN 不可用"
+    [[ -n "$DBNAME" ]] || die "缺少数据库名 -d，且 config.json / DSN 不可用"
     HOST="${HOST:-127.0.0.1}"; PORT="${PORT:-5432}"; SSLMODE="${SSLMODE:-disable}"
     PSQL_ARGS=(-h "$HOST" -p "$PORT" -U "$USER" -d "$DBNAME")
     [[ -n "$SSLMODE" ]] && export PGSSLMODE="$SSLMODE"
@@ -176,22 +176,22 @@ if [[ "$MODE" == "local" ]]; then
     target="$USER@$HOST:$PORT/$DBNAME"
   fi
 
-  info "대상 데이터베이스: $target"
+  info "目标数据库：$target"
   if [[ "$ASSUME_YES" -ne 1 ]]; then
-    read -r -p "이 데이터베이스에서 ARTEX 비밀번호를 재설정할까요? [y/N]" ans
-    [[ "$ans" == "y" || "$ans" == "Y" ]] || die "취소했습니다"
+    read -r -p "是否在此数据库重置 ARTEX 密码？[y/N]" ans
+    [[ "$ans" == "y" || "$ans" == "Y" ]] || die "已取消"
   fi
 
   if ! printf '%s\n' "$SQL" | psql "${PSQL_ARGS[@]}" -v ON_ERROR_STOP=1 -q >/dev/null; then
-    die "쓰기에 실패했습니다. pgcrypto 권한 부족·누락 오류가 나면 확장 생성 권한이 있는 역할을 쓰거나 먼저 CREATE EXTENSION pgcrypto 를 직접 실행하세요."
+    die "写入失败。如提示 pgcrypto 缺失或权限不足，请使用有扩展创建权限的角色，或先手动执行 CREATE EXTENSION pgcrypto。"
   fi
 
 else
   # ---- docker ----
-  command -v docker >/dev/null 2>&1 || die "docker 를 찾을 수 없습니다"
+  command -v docker >/dev/null 2>&1 || die "未找到 docker"
   CONTAINER="${CONTAINER:-postgres}"
 
-  # exec 방식 선택: docker compose exec(서비스명)를 우선하고, 아니면 docker exec(컨테이너명)
+  # 优先 docker compose exec 按服务名操作，其次 docker exec 按容器名操作。
   if [[ -z "$EXEC_KIND" ]]; then
     if docker compose version >/dev/null 2>&1 && [[ -f docker-compose.yml ]]; then
       EXEC_KIND="compose"
@@ -200,7 +200,7 @@ else
     fi
   fi
 
-  # 컨테이너 안 psql 자격 증명: 명령행을 우선, 다음 .env 의 POSTGRES_*, 마지막으로 compose 기본값(artex)
+  # 容器内 psql 凭据优先使用命令行，然后是 .env 的 POSTGRES_*，最后为 Compose 默认值 artex。
   if [[ -f .env ]]; then
     # shellcheck disable=SC1091
     set -a; . ./.env; set +a
@@ -210,13 +210,13 @@ else
   [[ -n "$DBPASS" ]] && export PGPASSWORD="$DBPASS"
   [[ -z "${PGPASSWORD:-}" && -n "${POSTGRES_PASSWORD:-}" ]] && export PGPASSWORD="$POSTGRES_PASSWORD"
 
-  info "대상: 컨테이너 $CONTAINER 안 psql -U $DUSER -d $DNAME(exec=$EXEC_KIND)"
+  info "目标：容器 $CONTAINER 内 psql -U $DUSER -d $DNAME，exec=$EXEC_KIND"
   if [[ "$ASSUME_YES" -ne 1 ]]; then
-    read -r -p "이 컨테이너 데이터베이스에서 ARTEX 비밀번호를 재설정할까요? [y/N]" ans
-    [[ "$ans" == "y" || "$ans" == "Y" ]] || die "취소했습니다"
+    read -r -p "是否在此容器数据库重置 ARTEX 密码？[y/N]" ans
+    [[ "$ans" == "y" || "$ans" == "Y" ]] || die "已取消"
   fi
 
-  # -e 는 이름만 주고 값은 주지 않습니다 → 현재 환경에서 상속하므로 비밀번호가 docker 명령 argv 에 나타나지 않습니다.
+  # docker -e 仅传变量名，值继承环境，密码不出现在命令行 argv。
   declare -a EXEC_CMD
   if [[ "$EXEC_KIND" == "compose" ]]; then
     EXEC_CMD=(docker compose exec -T -e ARTEX_RESET_NEWPASS -e PGPASSWORD "$CONTAINER"
@@ -227,10 +227,10 @@ else
   fi
 
   if ! printf '%s\n' "$SQL" | "${EXEC_CMD[@]}" >/dev/null; then
-    die "쓰기에 실패했습니다. 컨테이너명(-c), 데이터베이스 계정(.env 의 POSTGRES_*), 역할의 pgcrypto 권한을 확인하세요."
+    die "写入失败，请检查容器名 -c、.env 的 POSTGRES_* 与角色的 pgcrypto 权限。"
   fi
 fi
 
 unset ARTEX_RESET_NEWPASS
-echo "✓ ARTEX 관리자 비밀번호를 재설정했습니다. 사용자 이름 ARTEX + 새 비밀번호로 로그인하세요(서비스를 재시작할 필요가 없습니다)."
-echo "  기존에 발급된 로그인 세션(토큰)은 몇 초 안에 모두 무효화됩니다. 계정이 선점·유출된 뒤의 복구라면 커스텀 도구·MCP·LLM·알림 설정도 함께 점검하세요."
+echo "✓ ARTEX 管理员密码已重置，请以 ARTEX 和新密码登录，无需重启服务。"
+echo "  旧会话 token 将在数秒内全部失效。若用于账户被抢占或泄露后的恢复，请同时检查自定义工具、MCP、LLM 和通知配置。"

@@ -58,11 +58,11 @@ func TestOutputLanguageCacheFollowsSettings(t *testing.T) {
 		return v.Error
 	}
 
-	if got := s.outputLanguage(); got != "ko" {
-		t.Fatalf("default output language = %q, want ko", got)
+	if got := s.outputLanguage(); got != "zh" {
+		t.Fatalf("default output language = %q, want zh", got)
 	}
 	if got := errOf(do(http.MethodPut, "/api/settings", map[string]any{"output_language": "fr"})); got != errOutputLanguageInvalid {
-		t.Fatalf("ko error = %q, want %q", got, errOutputLanguageInvalid)
+		t.Fatalf("zh error = %q, want %q", got, errOutputLanguageInvalid)
 	}
 
 	if rec := do(http.MethodPut, "/api/settings", map[string]any{"output_language": "en"}); rec.Code != http.StatusOK {

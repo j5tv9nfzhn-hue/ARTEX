@@ -21,8 +21,8 @@ const FOLD_STEP = 20;
 
 type Kind = CoverageGraphNode["kind"];
 
-// label 은 더 이상 여기 두지 않는다. 노드 유형 이름은 화면에 노출되므로
-// `taskDetail.coverageGraph.kind.*` 에서 번역해 가져온다(캔버스 라벨 포함).
+// 节点类型标签不在此处硬编码，包含画布标签在内，
+// 统一从 taskDetail.coverageGraph.kind.* 读取翻译。
 type KindMeta = { icon: LucideIcon; iconBg: string; hex: string; size: number };
 
 const kindMeta: Record<Kind, KindMeta> = {
@@ -188,7 +188,7 @@ function graphLabel(n: CoverageGraphNode): string {
     if (n.port) parts.push(`:${n.port}`);
     if (n.page_title) parts.push(n.page_title);
     if (n.status_code) parts.push(String(n.status_code));
-    // biome-ignore lint/nursery/useNullishCoalescing: 표시용 폴백 — 빈 문자열도 다음 후보(ip·label)로 넘겨야 하므로 || 가 의도된 동작이다(?? 는 빈 문자열을 그대로 노출한다)
+    // biome-ignore lint/nursery/useNullishCoalescing: 展示回退需将空字符串继续回退到 ip 或 label，故有意使用 ||；?? 会显示空字符串。
     return parts.length ? parts.join(" · ") : n.domain || n.ip || n.label;
   }
   if (n.kind === "endpoint" && n.url) {

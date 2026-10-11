@@ -11,7 +11,7 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 ---
 
-> ⚠️ **安全与合规提示（韩语本地化版本）**：本仓库是 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX) 的韩语本地化 fork，仅供在获得授权的环境中、以防御与检测为目的使用。2026 年 10 月有韩国媒体报道称，调查机构在针对韩国金融机构的个人信息泄露事件中发现了 ARTEX 被使用的迹象（调查进行中）。请勿对未经书面授权的系统进行扫描、探测或利用。完整警告请见 [README.md（한국어）](README.md) 与 [README.en.md（English）](README.en.md)。
+> ⚠️ **安全与合规提示**：本分支基于 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)，当前默认简体中文。仅可在自有或明确授权的环境中进行学习、研究和防御验证。原分支保留了 2026 年 10 月韩国金融机构事件的媒体报道警告，本次语言重构不代表独立核实。完整授权限制、法律告知和免责声明见 [README.md](README.md#使用范围与法律告知) 与 [README.en.md](README.en.md)。
 
 ---
 
@@ -228,7 +228,7 @@ CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
 
 ### 首次运行保护（设置令牌与绑定地址，本分支新增）
 
-- **设置令牌**：尚未设置密码时，启动日志会打印一行 `[auth] … 설정 토큰: …`（设置令牌；Docker 用 `docker compose logs artex` 查看）。`/setup` 与 `POST /api/auth/init`（`setup_token` 字段）必须带上该值才能创建密码，错误尝试会被限速。无人值守部署可用 `ARTEX_SETUP_TOKEN` 固定令牌，或用 `ARTEX_ADMIN_PASSWORD` 直接设置密码（至少 8 位）。
+- **设置令牌**：尚未设置密码时，启动日志会打印一行 `[auth] … 设置令牌: …`（设置令牌；Docker 用 `docker compose logs artex` 查看）。`/setup` 与 `POST /api/auth/init`（`setup_token` 字段）必须带上该值才能创建密码，错误尝试会被限速。无人值守部署可用 `ARTEX_SETUP_TOKEN` 固定令牌，或用 `ARTEX_ADMIN_PASSWORD` 直接设置密码（至少 8 位）。
 - **默认只绑定 127.0.0.1**：`-addr` 默认值与 `docker-compose.yml` 的端口发布都只开在本机回环地址。需要从其他机器访问时改为 `-addr :8787` 或在 `.env` 中设置 `ARTEX_BIND=0.0.0.0`，但请先完成初始设置，并优先使用下方的反向代理方案。
 - **修改密码会使所有旧会话失效**：令牌签名密钥与密码哈希绑定，无论通过界面、`reset-password.sh` 还是直接改库，旧令牌都会在几秒内失效。
 - **CORS**：`/api` 仅允许 `ARTEX_CORS_ORIGINS`（逗号分隔）中列出的来源跨域调用；内置 UI 同源，通常留空。

@@ -42,10 +42,8 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-// Compact relative time. Returns the "{n}{unit}" fragment, or null when there is
-// no timestamp; the caller wraps it with the localized "{value} 전 / 前" suffix.
+// 辅助函数。
+// 紧凑相对时间返回数量与单位，无时间戳时返回 null，调用方添加本地化“前”后缀。
 function fmtRel(ts?: string | number): string | null {
   if (!ts) return null;
   const ms = Date.now() - (typeof ts === "number" ? ts * 1000 : Date.parse(ts as string));

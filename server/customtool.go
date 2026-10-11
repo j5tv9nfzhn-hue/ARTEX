@@ -40,20 +40,18 @@ type customToolReq struct {
 	Deferred    bool            `json:"deferred"`
 }
 
-var reToolKey = reAgentKey // 同 agent key 规则:小写字母开头 + 小写字母/数字/下划线
-
-// 사용자 지정 도구 CRUD·시험 실행 엔드포인트가 writeErr 로 사용자에게 돌려주는 검증
-// 오류 응답을 한국어로 고정한다. 에이전트가 읽는 도구 실행 결과(actool.Errorf)와 도구
-// 스키마 description 은 두뇌 경계라 중국어 원문을 보존한다(BRIEF 성능 보존 방침).
+var reToolKey = reAgentKey // 与 Agent key 一致：小写字母开头，后接小写字母、数字或下划线。
+// 自定义工具 CRUD 与试运行端点的 writeErr 验证消息使用中文。
+// actool.Errorf 工具结果和 schema description 保留模型输入语义。
 const (
-	errCustomToolKeyFormat          = "key는 소문자로 시작하고 소문자·숫자·밑줄만 사용할 수 있습니다"
-	errCustomToolKindInvalid        = "kind 값은 command, script, http, shell 중 하나여야 합니다"
-	errCustomToolHTTPSchemaRequired = "http 도구에는 매개변수 JSON Schema를 반드시 지정해야 합니다(비워 둘 수 없습니다)"
-	errCustomToolKeyExists          = "이미 존재하는 key입니다(내장 또는 사용자 지정 도구)"
-	errCustomToolEditCustomOnly     = "사용자 지정 도구만 편집할 수 있습니다"
-	errCustomToolBadBody            = "요청 본문이 올바르지 않습니다"
-	errCustomToolShellNoExec        = "shell 유형 도구는 bash 환경 선언이므로 실행할 내용이 없습니다"
-	errCustomToolUnknownKindPrefix  = "알 수 없는 도구 유형입니다: "
+	errCustomToolKeyFormat          = "key 必须以小写字母开头，且只能使用小写字母、数字和下划线"
+	errCustomToolKindInvalid        = "kind 值必须为 command、script、http、shell 之一"
+	errCustomToolHTTPSchemaRequired = "http 工具必须指定参数 JSON Schema（不能为空）"
+	errCustomToolKeyExists          = "该 key 已存在（内置或自定义工具）"
+	errCustomToolEditCustomOnly     = "只能编辑自定义工具"
+	errCustomToolBadBody            = "请求正文不正确"
+	errCustomToolShellNoExec        = "shell 类型工具是 bash 环境声明，因此没有可执行的内容"
+	errCustomToolUnknownKindPrefix  = "未知的工具类型: "
 )
 
 func (s *Server) pgCreateCustomTool(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +221,7 @@ func (s *Server) seedPythonInterpreter() {
 	}
 	if p := detectPython(); p != "" {
 		_ = s.m.pg.SetSetting(settingPythonInterp, p)
-		log.Printf(logT("[custom-tool] python 인터프리터 자동 감지: %s"), p)
+		log.Printf(logT("[custom-tool] 自动检测到 python 解释器：%s"), p)
 	}
 }
 

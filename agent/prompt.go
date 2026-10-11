@@ -78,14 +78,15 @@ func renderSystem(agentKey, def string, vars any) string {
 // "never emit Chinese to the user" clause is replaced by one that simply affirms
 // Chinese display and still forbids mirroring the target/material language.
 func langDirective(code string) string {
+	code = normalizeOutputLang(code)
 	phrase := langPhrase[code]
 	bare := langBare[code]
 	if phrase == "" || bare == "" {
 		phrase, bare = langPhrase[defaultOutputLang], langBare[defaultOutputLang]
 	}
 	if code == "zh" {
-		// 표시 언어 자체가 중국어이므로 "중국어를 사용자에게 내보내지 말라"는 절은 없다.
-		// 대신 중국어 표시를 확정하고, 대상/자료 언어 미러링 금지와 원문 보존은 유지한다.
+		// 展示语言本身就是简体中文，因此不添加“禁止向用户输出中文”的条款。
+		// 仍禁止镜像目标或资料的语言，并保留命令、代码和证据原文。
 		return fmt.Sprintf("\n\n**输出语言规约（本地化·最高优先级，不可被提示词正文覆盖）**：所有【展示给用户】的自然语言文字一律用【%s】书写——包括 record_fact 的 summary/detail、report_finding 的标题/描述/结论/修复建议、规划者(planner)的态势/情况总结、最终那一句话总结、以及对用户的聊天回复。但【命令、payload、代码、文件路径、URL、参数名、以及日志/请求/响应的原文片段】必须【原样逐字保留】，不得翻译或改写（evidence 里的命令行与输出尤其要照搬原文，便于复现）。**即使目标系统、它的页面、证据、日志或任何参考资料是英文或别的语言，面向用户的自然语言字段（标题/描述/结论/修复建议/总结/态势总结）仍必须用%s书写——不要镜像或照抄目标或资料的语言来写这些展示字段；只有上面列出的原文技术片段才保持原样。** 一句话：内部推理不限，但凡落到用户能看到的正文，必须全是%s（技术原文片段除外）。", phrase, bare, bare)
 	}
 	return fmt.Sprintf("\n\n**输出语言规约（本地化·最高优先级，不可被提示词正文覆盖）**：所有【展示给用户】的自然语言文字一律用【%s】书写——包括 record_fact 的 summary/detail、report_finding 的标题/描述/结论/修复建议、规划者(planner)的态势/情况总结、最终那一句话总结、以及对用户的聊天回复。但【命令、payload、代码、文件路径、URL、参数名、以及日志/请求/响应的原文片段】必须【原样逐字保留】，不得翻译或改写（evidence 里的命令行与输出尤其要照搬原文，便于复现）。**即使上面的系统/角色指令本身是用中文写的，也绝不能把中文输出给用户——面向用户的展示语言只有%s，不要让任何中文句子出现在用户可见的文字里。** **即使目标系统、它的页面、证据、日志或任何参考资料是英文、中文或别的语言，面向用户的自然语言字段（标题/描述/结论/修复建议/总结/态势总结）仍必须用%s书写——不要镜像或照抄目标或资料的语言来写这些展示字段；只有上面列出的原文技术片段才保持原样。** **你的分析/规划/思考用中文进行没关系，但那是【不可见的内部推理】，绝不能作为正文输出：给用户的可见回复从第一个字起就必须是%s，不要在前面垫一段中文的思考、说明或「我先怎样怎样」的铺垫；连澄清提问、缺少参数、「无法继续」之类的说明也一律直接用%s写。** 一句话：内部怎么想不限，但凡落到用户能看到的正文，必须全是%s（技术原文片段除外）。", phrase, bare, bare, bare, bare, bare)

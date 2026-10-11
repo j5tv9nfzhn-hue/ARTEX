@@ -13,10 +13,9 @@ import (
 	"github.com/Autumn-27/artex/db"
 )
 
-// 첫 실행 관리자 계정 선점 제보(/api/auth/init 무인증 호출)의 수정을 실제 DB 로 끝까지
-// 확인하는 통합 테스트다. 설정 토큰 없는 초기화 거부, 토큰 초기화 성공, 비밀번호 변경과
-// 외부(reset-password.sh) 재설정 뒤 기존 토큰 무효화, 로그인 실패 제한, 환경 변수
-// 초기화를 다룬다. DB 설정이 없으면 다른 통합 테스트처럼 건너뛴다.
+// 首启管理员账户抢占问题的真实数据库集成测试：
+// 拒绝没有设置令牌的初始化、正确令牌初始化、修改密码及 reset-password.sh
+// 外部重置后的旧 token 失效、登录失败限流、环境变量初始化。无数据库时跳过。
 
 type authTestRig struct {
 	t *testing.T
@@ -72,11 +71,11 @@ func (r *authTestRig) do(method, path, token string, body map[string]any) (int, 
 func (r *authTestRig) expect(code int, got int, body map[string]any, wantErr string) {
 	r.t.Helper()
 	if got != code {
-		r.t.Fatalf("상태 코드 = %d, 기대 %d (body=%v)", got, code, body)
+		r.t.Fatalf("状态码 = %d，预期 %d (body=%v)", got, code, body)
 	}
 	if wantErr != "" {
 		if msg, _ := body["error"].(string); msg != wantErr {
-			r.t.Fatalf("오류 문구 = %q, 기대 %q", msg, wantErr)
+			r.t.Fatalf("错误文案 = %q，预期 %q", msg, wantErr)
 		}
 	}
 }
@@ -86,43 +85,43 @@ func TestAuthInitRequiresSetupTokenDB(t *testing.T) {
 	s := rig.s
 	s.bootstrapAuth()
 	if s.cachedPassHash() != "" {
-		t.Fatal("빈 DB 에서는 비밀번호가 없어야 합니다")
+		t.Fatal("空数据库中不应设置密码")
 	}
 	setup := s.currentSetupToken()
 	if setup == "" {
-		t.Fatal("기동 시 설정 토큰이 만들어져야 합니다")
+		t.Fatal("启动时应创建设置令牌")
 	}
 
 	code, body := rig.do(http.MethodGet, "/api/auth/status", "", nil)
 	rig.expect(200, code, body, "")
 	if body["initialized"] != false || body["setup_token_required"] != true {
-		t.Fatalf("초기화 전 status 가 다릅니다: %v", body)
+		t.Fatalf("初始化前 status 与预期不同：%v", body)
 	}
 
-	// 제보의 PoC: 토큰 없이 비밀번호만 보내는 호출은 거부되어야 한다.
+	// 报告中的 PoC：只发送密码而没有设置令牌，必须被拒绝。
 	code, body = rig.do(http.MethodPost, "/api/auth/init", "", map[string]any{"password": "attacker-set-password-123!"})
 	rig.expect(403, code, body, authErrSetupTokenInvalid)
 	if _, has := body["token"]; has {
-		t.Fatal("거부 응답에 토큰이 실리면 안 됩니다")
+		t.Fatal("拒绝响应不应包含 token")
 	}
 	code, body = rig.do(http.MethodPost, "/api/auth/init", "", map[string]any{"password": "attacker-set-password-123!", "setup_token": "guess"})
 	rig.expect(403, code, body, authErrSetupTokenInvalid)
 	if h := s.reloadPassHash(); h != "" {
-		t.Fatal("거부된 호출이 비밀번호를 저장하면 안 됩니다")
+		t.Fatal("被拒绝的调用不应保存密码")
 	}
 
-	// 올바른 토큰이라도 서버가 최소 길이를 검사한다.
+	// 即使设置令牌正确，服务器仍应检查密码最小长度。
 	code, body = rig.do(http.MethodPost, "/api/auth/init", "", map[string]any{"password": "short", "setup_token": setup})
 	rig.expect(400, code, body, authErrPasswordTooShort)
 	code, body = rig.do(http.MethodPost, "/api/auth/init", "", map[string]any{"password": "", "setup_token": setup})
 	rig.expect(400, code, body, authErrPasswordEmpty)
 
-	// 올바른 토큰 + 비밀번호 → 토큰 발급, 보호 경로 통과.
+	// 正确设置令牌与密码 → 发放 token，允许访问保护路由。
 	code, body = rig.do(http.MethodPost, "/api/auth/init", "", map[string]any{"password": "operator-pass-123", "setup_token": " " + setup + "\n"})
 	rig.expect(200, code, body, "")
 	tok1, _ := body["token"].(string)
 	if tok1 == "" {
-		t.Fatal("초기화 성공 시 토큰이 있어야 합니다")
+		t.Fatal("初始化成功后应包含 token")
 	}
 	code, body = rig.do(http.MethodGet, "/api/ping", tok1, nil)
 	rig.expect(200, code, body, "")
@@ -131,14 +130,14 @@ func TestAuthInitRequiresSetupTokenDB(t *testing.T) {
 	code, body = rig.do(http.MethodGet, "/api/auth/status", "", nil)
 	rig.expect(200, code, body, "")
 	if body["initialized"] != true || body["setup_token_required"] != false {
-		t.Fatalf("초기화 뒤 status 가 다릅니다: %v", body)
+		t.Fatalf("初始化后 status 与预期不同：%v", body)
 	}
 
-	// 이미 설정된 뒤에는 설정 토큰을 알아도 다시 초기화할 수 없다.
+	// 初始化后，即使知道设置令牌也不能再次初始化。
 	code, body = rig.do(http.MethodPost, "/api/auth/init", "", map[string]any{"password": "second-pass-123", "setup_token": setup})
 	rig.expect(403, code, body, authErrPasswordAlreadySet)
 
-	// 로그인: 사용자 이름·비밀번호 모두 맞아야 한다.
+	// 登录时用户名、密码必须同时正确。
 	code, body = rig.do(http.MethodPost, "/api/auth/login", "", map[string]any{"username": "ARTEX", "password": "wrong-pass-123"})
 	rig.expect(401, code, body, authErrBadCredential)
 	code, body = rig.do(http.MethodPost, "/api/auth/login", "", map[string]any{"username": "admin", "password": "operator-pass-123"})
@@ -149,7 +148,7 @@ func TestAuthInitRequiresSetupTokenDB(t *testing.T) {
 	code, body = rig.do(http.MethodGet, "/api/ping", tok2, nil)
 	rig.expect(200, code, body, "")
 
-	// 비밀번호 변경: 이전 토큰은 모두 죽고, 응답의 새 토큰만 살아 있다.
+	// 修改密码后旧 token 全部失效，只有响应中的新 token 有效。
 	code, body = rig.do(http.MethodPost, "/api/auth/change-password", tok1, map[string]any{"old_password": "nope-nope-123", "new_password": "changed-pass-123"})
 	rig.expect(401, code, body, authErrCurrentPasswordWrong)
 	code, body = rig.do(http.MethodPost, "/api/auth/change-password", tok1, map[string]any{"old_password": "operator-pass-123", "new_password": "short"})
@@ -158,7 +157,7 @@ func TestAuthInitRequiresSetupTokenDB(t *testing.T) {
 	rig.expect(200, code, body, "")
 	tok3, _ := body["token"].(string)
 	if tok3 == "" {
-		t.Fatal("비밀번호 변경 응답에 새 토큰이 있어야 합니다")
+		t.Fatal("修改密码响应应包含新 token")
 	}
 	for _, old := range []string{tok1, tok2} {
 		code, body = rig.do(http.MethodGet, "/api/ping", old, nil)
@@ -169,9 +168,9 @@ func TestAuthInitRequiresSetupTokenDB(t *testing.T) {
 	code, body = rig.do(http.MethodPost, "/api/auth/change-password", tok1, map[string]any{"old_password": "changed-pass-123", "new_password": "another-pass-123"})
 	rig.expect(401, code, body, authErrUnauthorized)
 
-	// reset-password.sh 처럼 프로세스 밖에서 해시를 바꿔도 재시작 없이 기존 토큰이 죽고
-	// 새 비밀번호로 로그인된다. 캐시 만료 창(passHashCacheTTL) 안에서는 직전 토큰이
-	// 아직 통과하고, 창이 지나면(여기서는 0 으로 줄여 즉시) 거부되어야 한다.
+	// 模拟 reset-password.sh 在进程外修改哈希，无需重启即可使旧 token 失效。
+	// passHashCacheTTL 内旧 token 仍可能通过；缓存窗口结束后必须拒绝。
+	// 测试将窗口设为 0，立即检查失效与新密码登录。
 	resetHash, err := bcrypt.GenerateFromPassword([]byte("reset-pass-123"), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +211,7 @@ func TestAuthLoginThrottledDB(t *testing.T) {
 	code, body := rig.do(http.MethodPost, "/api/auth/login", "", map[string]any{"username": "ARTEX", "password": "operator-pass-123"})
 	rig.expect(429, code, body, authErrTooManyAttempts)
 	if _, has := body["token"]; has {
-		t.Fatal("냉각 중에는 올바른 비밀번호라도 토큰을 주면 안 됩니다")
+		t.Fatal("冷却期间即使密码正确也不应发放 token")
 	}
 	rig.s.limiter().reset(clientKey(httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)))
 	code, body = rig.do(http.MethodPost, "/api/auth/login", "", map[string]any{"username": "ARTEX", "password": "operator-pass-123"})
@@ -226,7 +225,7 @@ func TestAuthBootstrapAdminPasswordEnvDB(t *testing.T) {
 	code, body := rig.do(http.MethodGet, "/api/auth/status", "", nil)
 	rig.expect(200, code, body, "")
 	if body["initialized"] != true {
-		t.Fatalf("환경 변수로 초기화되어야 합니다: %v", body)
+		t.Fatalf("应通过环境变量初始化：%v", body)
 	}
 	code, body = rig.do(http.MethodPost, "/api/auth/init", "", map[string]any{"password": "attacker-set-password-123!", "setup_token": rig.s.currentSetupToken()})
 	rig.expect(403, code, body, authErrPasswordAlreadySet)
@@ -236,15 +235,15 @@ func TestAuthBootstrapAdminPasswordEnvDB(t *testing.T) {
 	code, body = rig.do(http.MethodGet, "/api/ping", tok, nil)
 	rig.expect(200, code, body, "")
 
-	// 너무 짧은 환경 변수 값은 무시되고 설정 토큰 방식으로 남는다.
+	// 忽略过短的环境变量密码，仍使用设置令牌初始化流程。
 	_, _ = rig.s.m.pg.Exec(`DELETE FROM settings WHERE key = $1`, authPassKey)
 	t.Setenv(adminPasswordEnv, "short")
 	s2 := &Server{m: rig.s.m, jwtKey: rig.s.jwtKey}
 	s2.bootstrapAuth()
 	if s2.cachedPassHash() != "" {
-		t.Fatal("8자 미만 환경 변수 비밀번호는 무시되어야 합니다")
+		t.Fatal("应忽略不足 8 个字符的环境变量密码")
 	}
 	if s2.currentSetupToken() == "" {
-		t.Fatal("무시된 뒤에는 설정 토큰이 발급되어야 합니다")
+		t.Fatal("忽略无效密码后应发放设置令牌")
 	}
 }

@@ -21,7 +21,7 @@ func hasHangul(s string) bool {
 }
 
 // hasHanzi reports whether s contains any CJK (Han) character.
-func hasHanzi(s string) bool {
+func hasHan(s string) bool {
 	for _, r := range s {
 		if unicode.Is(unicode.Han, r) {
 			return true
@@ -32,9 +32,9 @@ func hasHanzi(s string) bool {
 
 // assertSurfacedExhaustion checks the error an exhausted chain hands back: it must
 // still wrap the ErrExhausted sentinel (callers rely on errors.Is), read as a
-// Korean message (no Han characters, no full-width colon), and lead with the
+// Simplified Chinese message (Han present, no Hangul; provider diagnostics preserved), and lead with the
 // localized sentinel text. failProv's body is ASCII ("anthropic: status 402:
-// nope"), so the whole surfaced string must be Han-free.
+// nope"), so the whole surfaced string must be Hangul-free.
 func assertSurfacedExhaustion(t *testing.T, label string, err error) {
 	t.Helper()
 	if err == nil {
@@ -44,11 +44,11 @@ func assertSurfacedExhaustion(t *testing.T, label string, err error) {
 		t.Fatalf("%s: surfaced error no longer wraps ErrExhausted: %v", label, err)
 	}
 	msg := err.Error()
-	if hasHanzi(msg) {
-		t.Errorf("%s: surfaced error still carries Chinese characters: %q", label, msg)
+	if hasHangul(msg) {
+		t.Errorf("%s: surfaced error still carries Hangul: %q", label, msg)
 	}
-	if strings.ContainsRune(msg, '：') {
-		t.Errorf("%s: surfaced error still uses a full-width colon: %q", label, msg)
+	if !strings.Contains(msg, "anthropic: status 402: nope") {
+		t.Errorf("%s: provider error text was not preserved verbatim: %q", label, msg)
 	}
 	if !strings.HasPrefix(msg, ErrExhausted.Error()) {
 		t.Errorf("%s: surfaced error does not lead with the localized sentinel: %q", label, msg)
@@ -57,10 +57,10 @@ func assertSurfacedExhaustion(t *testing.T, label string, err error) {
 
 // The chain-exhaustion error is user-facing: a worker whose whole LLM chain fails
 // records it through agent/capture.go as a "result" activity shown in the run
-// transcript. So its text must be Korean, while its identity (errors.Is) must be
+// transcript. So its text must be Simplified Chinese, while its identity (errors.Is) must be
 // preserved for callers that branch on the sentinel.
 func TestExhaustedErrorLocalized(t *testing.T) {
-	assertKoreanErrText(t, "ErrExhausted", ErrExhausted.Error())
+	assertChineseErrText(t, "ErrExhausted", ErrExhausted.Error())
 
 	// Drive both surfaced paths so a future edit to either wrap site is caught.
 	streamChain := New([]*Member{
@@ -78,13 +78,13 @@ func TestExhaustedErrorLocalized(t *testing.T) {
 	assertSurfacedExhaustion(t, "Complete", cerr)
 }
 
-// assertKoreanErrText fails unless s contains Hangul and no Han character.
-func assertKoreanErrText(t *testing.T, label, s string) {
+// assertChineseErrText fails unless s contains Han and no Hangul character.
+func assertChineseErrText(t *testing.T, label, s string) {
 	t.Helper()
-	if !hasHangul(s) {
-		t.Errorf("%s: 한글이 없습니다: %q", label, s)
+	if !hasHan(s) {
+		t.Errorf("%s：未包含中文：%q", label, s)
 	}
-	if hasHanzi(s) {
-		t.Errorf("%s: 중국어 한자가 남아 있습니다: %q", label, s)
+	if hasHangul(s) {
+		t.Errorf("%s：仍有韩文残留：%q", label, s)
 	}
 }

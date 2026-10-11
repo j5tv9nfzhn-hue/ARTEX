@@ -14,24 +14,13 @@ import (
 	actool "github.com/Autumn-27/norma/tool"
 )
 
-// 현지화 보존 판정(artex-ko): 이 파일의 중국어 문자열은 전부 에이전트(두뇌) 입력이고
-// HTTP 사용자 응답으로 나가지 않는다. BRIEF 경계 #1(두뇌는 번역하지 않는다 — 성능
-// 보존)에 따라 원문을 그대로 둔다. 이 파일에 writeErr 는 0 — 사용자 노출 경로가 없다.
-// 싱크는 세 갈래다(행 번호 대신 심볼로 가리킨다. 편집으로 밀려도 유효하게).
-//
-//	(1) 도구 설명·스키마 description: report_finding 의 evidence_hint_id·hints.text,
-//	    bind_finding_traffic 의 wrTool 설명·finding_id strParam. LLM 이 읽는 도구
-//	    정의라 두뇌 입력이다.
-//	(2) 마이그레이션 매칭 문자열: seedFindingWorkflowTools 의 legacy 변수(옛 traffic_search
-//	    설명)는 traffic.TrafficSearchDescription(그 자체도 중국어 도구 설명)으로 올리는
-//	    UPDATE … WHERE description=$2 의 비교값이다. 번역하면 기존 행과 매칭되지 않아
-//	    업그레이드가 멈춘다.
-//	(3) actool.Errorf 도구 결과: agentFindingTrafficAccess 의 오류들은 유일 호출처
-//	    toolBindFindingTraffic(이 파일)과 get_finding_traffic(finding_traffic.go) 두
-//	    도구에서 모두 actool.Errorf(err.Error()) 로 감싸 에이전트에게 되돌아가고,
-//	    toolBindFindingTraffic 의 바인딩 비활성·빈 traffic_refs 문구는 직접 actool.Errorf 다.
-//
-// 다음 기여자가 "마저 번역"하다 벤치마크된 두뇌 입력을 바꾸지 않도록 둔다(F16 계열).
+// 本文件中文字符串均为模型输入，不直接经过 writeErr 返回 HTTP 用户响应。
+// 保留三类耦合格式：
+// 1. report_finding 的 evidence_hint_id、hints.text 与 bind_finding_traffic 工具 schema；
+// 2. seedFindingWorkflowTools 的旧 traffic_search description 是 UPDATE WHERE description=$2
+// 的匹配值，用于升级为 TrafficSearchDescription，不能翻译后破坏存量匹配；
+// 3. agentFindingTrafficAccess 和绑定错误通过 actool.Errorf 返回模型。
+// 不要因语言整理改变工具定义、升级匹配或模型错误的既有语义。
 func (s *Server) seedFindingWorkflowTools() {
 	const hostSearchDescriptionFlag = "finding_workflow_tools_v3_host_search_description"
 	if value, _, _ := s.m.pg.GetSetting(hostSearchDescriptionFlag); value != "true" {

@@ -49,11 +49,9 @@ func newNotifyFixture(t *testing.T) *notifyFixture {
 	// （防 SSRF 打到同机服务与云元数据）。测试显式打开这个开关；
 	// 守卫「默认拒绝」的行为由 notify 包的 ssrf_test.go 覆盖。
 	t.Setenv(notify.AllowLocalTargetsEnv, "1")
-	// 백그라운드 투递 루프(3초 tick)를 끈다. 이 파일의 케이스들은 stepRealtime·
-	// stepDigest 를 직접 호출해 한 번의 분배 결과(앞 K건 송달·나머지 보류)를 검증하는데,
-	// 백그라운드 루프가 같은 채널을 동시에 처리하면 집계가 타이밍에 따라 흔들려(느린 CI
-	// 에서 간헐 실패) 결정성이 깨진다. 이 변수는 trafficEvidenceServer 가 서버를 세우기
-	// 전에 설정돼야 효과가 있다.
+	// 在 trafficEvidenceServer 创建服务器前关闭三秒后台投递循环。
+	// 本文件直接调用 stepRealtime、stepDigest 验证前 K 条投递和其余保留；
+	// 避免后台同时处理同一渠道导致慢速 CI 偶发计数不稳定。
 	t.Setenv(notifyBackgroundDisabledEnv, "1")
 	s, _, request := trafficEvidenceServer(t)
 	pg := s.m.pg
@@ -247,10 +245,9 @@ func TestNotifyEndToEndRealtimeDelivery(t *testing.T) {
 		t.Fatalf("应发出 1 条消息，实际 %d", hook.count())
 	}
 	text := markdownText(t, hook.last(t))
-	// "SQL注入" 은 입력으로 넣은 취약점 제목이라 카드에 그대로 에코된다(사용자 데이터,
-	// 번역 대상 아님). "높음"·"개요" 는 렌더 라벨이다 — 심각도는 notify.SeverityLabel("high")
-	// 가 내는 "🟠 높음", 요약 머리글은 writeItem 이 붙이는 "**개요**:" 에 각각 들어 있다.
-	for _, want := range []string{"SQL注入", "높음", "개요"} {
+	// SQL注入 是输入的漏洞标题，作为用户数据原样回显。
+	// 高危来自 notify.SeverityLabel(high)，概述是 writeItem 的中文包装标签。
+	for _, want := range []string{"SQL注入", "高危", "总览"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("消息正文缺少 %q:\n%s", want, text)
 		}
@@ -356,17 +353,13 @@ func TestNotifyChannelAPICreateValidation(t *testing.T) {
 		payload map[string]any
 		wantSub string
 	}{
-		// wantSub 는 server/notify_api.go 가 내보내는 한국어 검증 오류와 일치시킨다
-		// (notifyErrKindInvalidFmt·notifyErrNameMissing·notifyErrModeInvalid 의 안정 문구).
-		// webhook 두 건은 notify/dingtalk.go 의 Validate 가 내는 오류인데, 그 webhook 주소
-		// 검증 문구는 이미 한국어로 현지화됐으므로(notify/dingtalk_feishu_wecom_localized_test.go
-		// 가 "Webhook 주소가 없습니다"·"Webhook 주소가 올바르지 않습니다" 로 검증한다) 기대
-		// 문자열도 한국어 안정 문구로 맞춘다.
-		{"类型非法", map[string]any{"name": "x", "kind": "nope", "config": map[string]any{}}, "채널 유형이 올바르지 않습니다"},
-		{"缺名称", map[string]any{"kind": notify.KindDingTalk, "config": map[string]any{"webhook": "https://e.com/h"}}, "채널 이름을 입력하세요"},
-		{"缺 webhook", map[string]any{"name": "x", "kind": notify.KindDingTalk, "config": map[string]any{}}, "Webhook 주소가 없습니다"},
-		{"webhook 协议非法", map[string]any{"name": "x", "kind": notify.KindDingTalk, "config": map[string]any{"webhook": "file:///etc/passwd"}}, "Webhook 주소가 올바르지 않습니다"},
-		{"模式非法", map[string]any{"name": "x", "kind": notify.KindDingTalk, "mode": "sometimes", "config": map[string]any{"webhook": "https://e.com/h"}}, "발송 모드가 올바르지 않습니다"},
+		// wantSub 与通知 API 稳定中文错误一致：渠道类型、名称、发送模式校验。
+		// Webhook 的两类验证错误由 notify 包产生，期望文案与其中文回归测试同步。
+		{"类型非法", map[string]any{"name": "x", "kind": "nope", "config": map[string]any{}}, "渠道类型无效"},
+		{"缺名称", map[string]any{"kind": notify.KindDingTalk, "config": map[string]any{"webhook": "https://e.com/h"}}, "请填写渠道名称"},
+		{"缺 webhook", map[string]any{"name": "x", "kind": notify.KindDingTalk, "config": map[string]any{}}, "未设置 Webhook 地址"},
+		{"webhook 协议非法", map[string]any{"name": "x", "kind": notify.KindDingTalk, "config": map[string]any{"webhook": "file:///etc/passwd"}}, "Webhook 地址无效"},
+		{"模式非法", map[string]any{"name": "x", "kind": notify.KindDingTalk, "mode": "sometimes", "config": map[string]any{"webhook": "https://e.com/h"}}, "发送模式无效"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -442,9 +435,9 @@ func TestNotifyDigestBatchesMultipleFindingsIntoOneMessage(t *testing.T) {
 		t.Fatalf("三条应汇总成一条消息，实际发了 %d 条", got)
 	}
 	text := markdownText(t, hook.last(t))
-	// 시간창이 있는 다이제스트 머리말은 markdown.go 가 "**최근 N분간 신규 취약점 N건**"
-	// 으로 렌더한다(digestInterval 기본 30분이라 WindowMinutes>0).
-	if !strings.Contains(text, "최근") || !strings.Contains(text, "신규 취약점 3건") {
+	// 有时间窗口的摘要由 markdown.go 渲染为“最近 N 分钟新增 N 个漏洞”，
+	// 默认 digestInterval 为 30 分钟，因此 WindowMinutes > 0。
+	if !strings.Contains(text, "最近") || !strings.Contains(text, "新增 3 个漏洞") {
 		t.Fatalf("汇总消息缺少条数/时间窗文案:\n%s", text)
 	}
 	for i := 1; i <= 3; i++ {
@@ -505,9 +498,9 @@ func TestNotifyStatusChangeDelivery(t *testing.T) {
 	found := false
 	for i := 0; i < hook.count(); i++ {
 		text := markdownText(t, hook.body(t, i))
-		// 상태 변경 카드는 markdown.go 가 "**상태 변경**: %s → %s" 로, 상태값은
-		// notify.StatusLabel 이 렌더한다(fixed → "수정됨").
-		if strings.Contains(text, "상태 변경") && strings.Contains(text, "수정됨") {
+		// 状态变更卡片渲染“状态变更：旧状态 → 新状态”；
+		// 状态值由 notify.StatusLabel 转换，fixed → 已修复。
+		if strings.Contains(text, "状态变更") && strings.Contains(text, "已修复") {
 			found = true
 		}
 	}
@@ -556,9 +549,9 @@ func TestNotifyTestMessageEndpoint(t *testing.T) {
 	if hook.count() != 1 {
 		t.Fatalf("假接收端应收到 1 条测试消息，得到 %d", hook.count())
 	}
-	// 测试消息必须一眼能看出是测试，不能被误当成真实漏洞。
-	// 테스트 메시지 제목은 notify_api.go 의 notifyTestName("테스트 메시지 · 채널 설정 정상").
-	if text := markdownText(t, hook.last(t)); !strings.Contains(text, "테스트") {
+	// 测试消息必须一眼可辨，不能误认为真实漏洞。
+	// 标题来自 notify_api.go 的 notifyTestName：“测试消息 · 渠道配置正常”。
+	if text := markdownText(t, hook.last(t)); !strings.Contains(text, "测试") {
 		t.Fatalf("测试消息应标明是测试: %s", text)
 	}
 	// 配置坏掉时应把渠道的原始错误如实回给用户。
@@ -736,10 +729,9 @@ func TestNotifyNoDeepLinkWithoutBaseURL(t *testing.T) {
 	if body["msgtype"] != "markdown" {
 		t.Fatalf("未配外部地址时应发 markdown，得到 %v", body["msgtype"])
 	}
-	// 상세 링크 머리글은 markdown.go 가 "[상세 보기](URL)" 로 렌더한다 — 외부 주소가
-	// 없으면 이 링크가 아예 나오지 않아야 한다(옛 중국어 "查看详情" 를 검사하면 라벨이
-	// 한국어로 바뀐 지금은 항상 통과해 회귀를 못 잡는다).
-	if text := markdownText(t, body); strings.Contains(text, "상세 보기") {
+	// markdown.go 仅有外部详情 URL 时输出 [查看详情](URL)。
+	// 没有外部地址时不得出现该链接，断言必须与当前中文标签一致。
+	if text := markdownText(t, body); strings.Contains(text, "查看详情") {
 		t.Fatalf("未配外部地址时不该出现详情链接:\n%s", text)
 	}
 }
@@ -798,9 +790,9 @@ func TestNotifyDigestSegmentsAndDefersRemainder(t *testing.T) {
 	if sent+pending != total {
 		t.Fatalf("条目数对不上：sent=%d pending=%d total=%d（既没送达也没待发=丢失）", sent, pending, total)
 	}
-	// 消息正文必须如实告知还有多少条没包含在本条里。
-	// 분절 안내는 markdown.go 가 "(이 메시지에는 앞 N건만 … 나머지 N건은 다음 메시지에서 …)" 로 렌더한다.
-	if text := markdownText(t, hook.last(t)); !strings.Contains(text, "나머지") {
+	// 正文必须准确说明尚未包含的条目数。
+	// markdown.go 输出“本条仅包含前 N 个，其余 N 个将在后续消息中发送”。
+	if text := markdownText(t, hook.last(t)); !strings.Contains(text, "其余") {
 		t.Fatalf("消息应说明还有条目未包含在本条:\n%.400s", text)
 	}
 

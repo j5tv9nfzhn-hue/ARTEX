@@ -1,79 +1,45 @@
-# ARTEX ATT&CK 커버리지
+# ARTEX ATT&CK 覆盖率
 
-한국어 · [English](README.md)
+简体中文 · [English](README.md)
 
-이 저장소의 탐지 규칙이 태그하는 [MITRE ATT&CK](https://attack.mitre.org/)(Enterprise) 기법을
-Navigator 레이어로 정리한 것입니다. [Sigma 규칙](../sigma/)의 `attack.*` 태그에서 손으로 만들었고,
-모든 기법은 지표가 이 저장소 소스에서 확인한 문자열이나 행동인 규칙에 근거합니다. 추정으로 넣은
-항목은 없으며, [일관성 테스트](../tests/attack/run.sh)가 레이어와 규칙이 서로 어긋나지 않게 지킵니다.
+本层将检测规则的 [MITRE ATT&CK](https://attack.mitre.org/) Enterprise 技术汇总为 Navigator，手工依据 [Sigma](../sigma/) 的 `attack.*` 标签生成。每项来自实际源码字符串/行为，不含推测。[一致性测试](../tests/attack/run.sh)确保层与规则双向一致。
 
-- **`artex_navigator_layer.json`**: ATT&CK Navigator v4.5 형식의 레이어입니다.
+- **`artex_navigator_layer.json`**：ATT&CK Navigator v4.5 格式的层。
 
-## 점수의 의미
+## 分值含义
 
-여기서 커버리지는 "이 저장소가 이 기법을 태그하는 탐지를 제공한다"는 뜻이지, "이 기법이 완전히
-덮인다"는 뜻이 아닙니다. 점수는 탐지 강도를 일부러 정직하게 매겼습니다.
+覆盖表示“本仓库有标记该技术的检测”，不是“该技术已完整覆盖”。分值刻意区分检测强度：
 
-- **100: ARTEX 고유 시그니처 또는 행동.** ARTEX 에만 있는 정적 지표(`artex-enrich/1.0`·
-  `artex-selfupdate` User-Agent, 가드 감사 마커)이거나, 그 위에 세운 행동 규칙(보강 속도·팬아웃,
-  가드 차단 묶음)입니다.
-- **50–65: 일반 헌팅 단서.** ARTEX 가드의 차단 목록을 반영한 파괴적 명령 헌팅입니다. 같은 명령은
-  정당한 관리자도 실행하므로 양성(benign) 활동에서도 발화합니다. 적중은 단서로 다루고 단정의
-  근거로 삼지 마십시오. 65 는 상관 규칙이 그 명령을 ARTEX 가드 마커와 결합해 특이도를 높인
-  경우를 가리킵니다.
+- **100：ARTEX 专属指纹或行为。** 补全、自更新 UA、guard 审计标记，或基于这些指标的速度、fanout、guard 突发。
+- **50–65：通用狩猎线索。** 破坏性命令可能来自正常管理员，不能凭命中归属攻击。65 表示与 ARTEX guard 标记关联，提高了特异性。
 
-## 다루는 기법
+## 覆盖技术
 
-여섯 전술에 걸친 여덟 기법입니다. 각 기법은 그것을 태그하는 규칙에 대응합니다.
+八种技术横跨六种战术，每项对应实际规则：
 
-- **정찰(Reconnaissance): T1595 (Active Scanning), T1592 (Gather Victim Host Information).**
-  [`sigma/artex_enrich_user_agent.yml`](../sigma/artex_enrich_user_agent.yml),
-  [`sigma/correlation/artex_enrich_scan_velocity.yml`](../sigma/correlation/artex_enrich_scan_velocity.yml),
-  [`sigma/correlation/artex_enrich_fanout.yml`](../sigma/correlation/artex_enrich_fanout.yml), 그리고
-  [Suricata 규칙](../suricata/artex.rules)(sid 1000001 / 1000002)입니다.
-- **명령·제어(Command and Control): T1105 (Ingress Tool Transfer).**
-  [`sigma/artex_selfupdate_egress.yml`](../sigma/artex_selfupdate_egress.yml)입니다.
-- **실행(Execution): T1059 (Command and Scripting Interpreter).**
-  [`sigma/artex_guard_audit_framing.yml`](../sigma/artex_guard_audit_framing.yml),
-  [`sigma/correlation/artex_guard_block_burst.yml`](../sigma/correlation/artex_guard_block_burst.yml),
-  [`sigma/correlation/artex_guard_marker_then_destructive.yml`](../sigma/correlation/artex_guard_marker_then_destructive.yml)입니다.
-- **임팩트(Impact): T1485 (Data Destruction), T1561.002 (Disk Wipe: Disk Structure Wipe), T1489 (Service Stop).**
-  [`sigma/destructive_command_hunting.yml`](../sigma/destructive_command_hunting.yml)이며, T1485 는
-  [`sigma/correlation/artex_guard_marker_then_destructive.yml`](../sigma/correlation/artex_guard_marker_then_destructive.yml)로도 보강됩니다.
-- **자격 증명 접근·수집(Credential Access / Collection): T1557 (Adversary-in-the-Middle).**
-  [`sigma/artex_recording_proxy_ca.yml`](../sigma/artex_recording_proxy_ca.yml)이며, 워커 도구의 트래픽을
-  복호화·기록하려고 ARTEX 내장 트래픽 기록기(`traffic/traffic.go`)가 설치하는 MITM 루트 CA 아티팩트를
-  겨냥한 호스트·포렌식 헌팅 단서입니다.
+- **侦察：T1595（Active Scanning）、T1592（Gather Victim Host Information）。** [`artex_enrich_user_agent.yml`](../sigma/artex_enrich_user_agent.yml)、[速度](../sigma/correlation/artex_enrich_scan_velocity.yml)、[fanout](../sigma/correlation/artex_enrich_fanout.yml)与 [Suricata](../suricata/artex.rules) sid 1000001/1000002。
+- **命令与控制：T1105（Ingress Tool Transfer）。** [`artex_selfupdate_egress.yml`](../sigma/artex_selfupdate_egress.yml)。
+- **执行：T1059（Command and Scripting Interpreter）。** [guard 标记](../sigma/artex_guard_audit_framing.yml)、[guard 突发](../sigma/correlation/artex_guard_block_burst.yml)、[标记与破坏行为关联](../sigma/correlation/artex_guard_marker_then_destructive.yml)。
+- **影响：T1485（Data Destruction）、T1561.002（Disk Structure Wipe）、T1489（Service Stop）。** [破坏性命令](../sigma/destructive_command_hunting.yml)，T1485 另有[多阶段关联](../sigma/correlation/artex_guard_marker_then_destructive.yml)。
+- **凭据访问/收集：T1557（Adversary-in-the-Middle）。** [记录代理 CA](../sigma/artex_recording_proxy_ca.yml)检测 `traffic/traffic.go` 为解密、记录 Worker 流量生成的 MITM 根 CA，属于主机取证狩猎线索。
 
-## 사용법
+## 使用方法
 
-1. [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/)를 엽니다.
-2. **Open Existing Layer → Upload from local** 을 골라 `artex_navigator_layer.json` 을 선택합니다
-   (또는 이 저장소의 raw 파일 URL 을 가리킵니다).
-3. 점수를 매긴 기법이 탐지 강도에 따라 색으로 구분되어 나타나고, 각 기법에는 근거가 된 규칙 파일과
-   방어 가이드 절을 적은 주석이 붙어 있습니다.
+1. 打开 [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/)。
+2. 选择 **Open Existing Layer → Upload from local**，加载 `artex_navigator_layer.json`，或使用本仓库 raw URL。
+3. 技术按检测强度着色，注释注明来源规则和防御指南章节。
 
-## 범위와 정직함
+## 范围与局限
 
-- **커버리지는 완전성이 아닙니다.** 여기서 점수를 받은 기법은 규칙이 그것을 태그한다는 뜻이지, 그
-  기법의 모든 변형을 탐지한다는 뜻이 아닙니다. 네트워크 선에서 ARTEX 고유 User-Agent 로 잡히는 신호는
-  정찰 단계의 보강 프로버(`artex-enrich/1.0`)와 공격 단계의 norma SDK WebFetch(`norma/0.4`) 둘뿐이고,
-  그 밖의 공격 트래픽은 도구 기본 지문을 따릅니다. 오래가는 탐지는 행동 기반입니다
-  (방어 가이드 [한국어](../../docs/defense-ko.md) · [English](../../docs/defense-en.md) 1~2절·4.1~4.2절 참조). 순수 웹 다단계 사례는 여전히
-  환경별 기본 규칙이 필요합니다.
-- **정적 지표는 바꿀 수 있습니다.** 운영자가 User-Agent 를 다른 값으로 설정할 수 있으므로, 태그된
-  지표가 없다고 해서 안전하다는 뜻은 아닙니다. 규칙 파일에도 같은 유의점을 달아 두었습니다.
+- **覆盖不代表完整。** 标记技术不意味着检测其所有变种。网络侧两类 UA 仅覆盖补全 `artex-enrich/1.0` 与 WebFetch `norma/0.4`，其余流量使用工具自身指纹；持久检测依赖行为，见防御指南[中文](../../docs/defense-ko.md)/[English](../../docs/defense-en.md)第 1–2、4.1–4.2 节。纯 Web 多阶段仍需环境基础规则。
+- **静态指标可变。** UA 可被配置，未出现不表示安全；同样限制也写在规则文件。
 
-## 검증과 기여
+## 验证与贡献
 
-[일관성 테스트](../tests/attack/run.sh)를 돌리십시오. Docker 만 있으면 되며, 레이어가 점수를 매긴
-기법·전술이 정확히 규칙의 `attack.*` 태그와 같은지, 그리고 모든 기법이 실재하는 규칙 파일에
-근거하는지 단언합니다.
+运行[一致性测试](../tests/attack/run.sh)，仅需 Docker。它要求计分技术/战术与规则 `attack.*` 标签完全一致，且每项都指向真实规则文件。
 
 ```sh
 detections/tests/attack/run.sh
 ```
 
-규칙을 추가하거나 다시 태그하면 이 레이어도 맞춰 갱신하십시오. 규칙의 기법이 레이어에 없거나
-레이어의 기법이 규칙에 없으면 테스트가 실패합니다. [`../README.ko.md`](../README.ko.md)와
-[`../../CONTRIBUTING.md`](../../CONTRIBUTING.md)를 참조하십시오.
+添加规则或修改标签时同步更新层；规则技术缺失于层、或层技术不存在于规则，均会失败。见[规则总览](../README.ko.md)和[贡献指南](../../CONTRIBUTING.md)。
