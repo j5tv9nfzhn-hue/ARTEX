@@ -12,9 +12,8 @@ import (
 )
 
 // TestOutputLanguageCacheFollowsSettings pins that the cached output language
-// (read by every writeErr and label) is refreshed by PUT /api/settings, so a
-// switch applies to the very next response without re-reading the settings
-// table per message.
+// (read by every writeErr and label) is refreshed by PUT /api/settings and stays
+// Simplified Chinese: 本仓库只支持 zh，任何其他语言代码都必须被拒绝。
 func TestOutputLanguageCacheFollowsSettings(t *testing.T) {
 	t.Setenv("ARTEX_LANG", "")
 	m, err := NewManager(t.TempDir(), "")
@@ -65,17 +64,29 @@ func TestOutputLanguageCacheFollowsSettings(t *testing.T) {
 		t.Fatalf("zh error = %q, want %q", got, errOutputLanguageInvalid)
 	}
 
-	if rec := do(http.MethodPut, "/api/settings", map[string]any{"output_language": "en"}); rec.Code != http.StatusOK {
-		t.Fatalf("set en status=%d body=%s", rec.Code, rec.Body.String())
+	// 非简体中文的取值必须被拒绝，且不得写入设置。
+	for _, lang := range []string{"en", "es", "ko", "fr"} {
+		rec := do(http.MethodPut, "/api/settings", map[string]any{"output_language": lang})
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("set %s status=%d，预期 400（body %s）", lang, rec.Code, rec.Body.String())
+		}
+		if got := errOf(rec); got != errOutputLanguageInvalid {
+			t.Errorf("set %s error = %q，预期 %q", lang, got, errOutputLanguageInvalid)
+		}
 	}
-	if got := errOf(do(http.MethodPut, "/api/settings", map[string]any{"output_language": "fr"})); got == errOutputLanguageInvalid || got == "" {
-		t.Fatalf("after switching to en the error should be translated, got %q", got)
+
+	// 显式设置简体中文应被接受，并回显为 zh。
+	if rec := do(http.MethodPut, "/api/settings", map[string]any{"output_language": "zh"}); rec.Code != http.StatusOK {
+		t.Fatalf("set zh status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := s.outputLanguage(); got != "zh" {
+		t.Fatalf("写入 zh 后缓存语言 = %q，预期 zh", got)
 	}
 	var settings struct {
 		OutputLanguage string `json:"output_language"`
 	}
 	_ = json.Unmarshal(do(http.MethodGet, "/api/settings", nil).Body.Bytes(), &settings)
-	if settings.OutputLanguage != "en" {
-		t.Fatalf("GET /api/settings output_language = %q, want en", settings.OutputLanguage)
+	if settings.OutputLanguage != "zh" {
+		t.Fatalf("GET /api/settings output_language = %q，预期 zh", settings.OutputLanguage)
 	}
 }

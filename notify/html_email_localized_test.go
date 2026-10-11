@@ -29,7 +29,7 @@ func TestHTMLItemLabelsLocalized(t *testing.T) {
 		t.Errorf("邮件正文仍有韩文残留：\n%s", out)
 	}
 	for _, want := range []string{
-		"状态变更", "类型", "资产", "总览", "查看详情", "在平台查看全部",
+		"状态变更", "类型", "资产", "概述", "查看详情", "在平台查看全部",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("邮件正文缺少 %q 标签：\n%s", want, out)

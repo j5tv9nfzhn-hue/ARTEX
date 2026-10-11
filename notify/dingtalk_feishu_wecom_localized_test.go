@@ -179,7 +179,7 @@ func TestChinaPlatformSendErrorsLocalized(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s：非 JSON 响应应返回错误", pc.kind)
 		}
-		want := pc.platform + "无法解析 "
+		want := "无法解析 " + pc.platform + " 响应"
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%s：解析错误应包含 %q，收到 %q", pc.kind, want, err)
 		}

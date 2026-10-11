@@ -247,7 +247,7 @@ func TestNotifyEndToEndRealtimeDelivery(t *testing.T) {
 	text := markdownText(t, hook.last(t))
 	// SQL注入 是输入的漏洞标题，作为用户数据原样回显。
 	// 高危来自 notify.SeverityLabel(high)，概述是 writeItem 的中文包装标签。
-	for _, want := range []string{"SQL注入", "高危", "总览"} {
+	for _, want := range []string{"SQL注入", "高危", "概述"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("消息正文缺少 %q:\n%s", want, text)
 		}

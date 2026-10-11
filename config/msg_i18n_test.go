@@ -7,32 +7,27 @@ import (
 	"testing"
 )
 
-// TestStartupMessageSwitchesLanguage 验证中文默认、旧 ko 别名与 en/es 切换。
+// TestStartupMessageAlwaysChinese 验证启动消息恒为简体中文。
+// 本仓库只提供简体中文一种语言，任何语言配置值都回退到中文源消息。
 // 启动消息使用环境/文件默认语言，不读取尚未可用的数据库设置。
-func TestStartupMessageSwitchesLanguage(t *testing.T) {
+func TestStartupMessageAlwaysChinese(t *testing.T) {
 	t.Setenv("ARTEX_PG_DSN", "")
 	t.Setenv("ARTEX_CONFIG", filepath.Join(t.TempDir(), "nope.json"))
 	t.Setenv("ARTEX_LANG", "")
 	source := mustDSNErr(t)
 	assertChinese(t, "默认启动错误", source)
 
-	for _, lang := range []string{"zh", "ko", " ZH ", " KO ", "fr", ""} {
+	for _, lang := range []string{"zh", "ko", "en", "es", " ZH ", " KO ", "fr", ""} {
 		t.Setenv("ARTEX_LANG", lang)
 		if got := mustDSNErr(t); got != source {
-			t.Errorf("%q 应使用中文源消息：got=%q source=%q", lang, got, source)
+			t.Errorf("%q 应回退到中文源消息：got=%q source=%q", lang, got, source)
 		}
 	}
 
-	for _, lang := range []string{"en", "es"} {
-		t.Setenv("ARTEX_LANG", lang)
-		got := mustDSNErr(t)
-		if got == "" || got == source || hasHan(got) || hasHangul(got) {
-			t.Errorf("%s 应使用非空译文，不能回退中文或包含韩文：%q", lang, got)
-		}
-		for _, id := range []string{"ARTEX_PG_DSN", "database", "dsn", "host/user/dbname"} {
-			if !containsStr(got, id) {
-				t.Errorf("%s 启动错误必须保留标识 %q：%q", lang, id, got)
-			}
+	// 启动错误必须保留定位问题所需的技术标识，不能被翻译。
+	for _, id := range []string{"ARTEX_PG_DSN", "database", "dsn", "host/user/dbname"} {
+		if !containsStr(source, id) {
+			t.Errorf("启动错误必须保留标识 %q：%q", id, source)
 		}
 	}
 }

@@ -14,12 +14,11 @@ import (
 	"github.com/Autumn-27/artex/config"
 )
 
-// TestLogTTemplatesHaveTranslations pins that every logT("…") template in this
-// package has an en/zh/es entry in config's log catalog. config.T falls back to
-// the Simplified Chinese source on a miss, so a key that drifts by one character (spacing,
-// an escaped quote) would otherwise ship Simplified Chinese console logs to other-language
-// operators without any test noticing.
-func TestLogTTemplatesHaveTranslations(t *testing.T) {
+// TestLogTTemplatesAreChinese pins that every logT("…") template in this package
+// is Simplified Chinese with no leftover Hangul, and that every template resolves
+// to itself under any language setting. 本仓库只提供简体中文一种语言，
+// 因此这里不再检查其他语言译文，只保证调用点模板本身是中文且可安全回退。
+func TestLogTTemplatesAreChinese(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -69,14 +68,22 @@ func TestLogTTemplatesHaveTranslations(t *testing.T) {
 	if len(keys) == 0 {
 		t.Fatal("found no logT call sites; the scan is broken")
 	}
-	for _, lang := range []string{"en", "es"} {
+	// 模板必须是无韩文的中文，且在任何语言设置下都稳定返回自身。
+	for _, lang := range []string{"zh", "ko", "en", "es", "fr", ""} {
 		t.Setenv("ARTEX_LANG", lang)
 		for _, k := range keys {
-			if config.T(k) == k {
-				t.Errorf("logT template has no %s translation: %q", lang, k)
+			if hasHangulRune(k) {
+				t.Errorf("logT 模板仍有韩文残留：%q", k)
+			}
+			if got := config.T(k); got != k {
+				t.Errorf("logT 模板在 %s 下应回退到中文源模板：got=%q want=%q", lang, got, k)
 			}
 		}
 	}
+}
+
+func hasHangulRune(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return unicode.Is(unicode.Hangul, r) }) >= 0
 }
 
 // TestErrCatalogFormatVerbsMatch pins that translated API error templates keep the
@@ -94,10 +101,9 @@ func TestErrCatalogFormatVerbsMatch(t *testing.T) {
 	}
 }
 
-// TestAuthErrorsTranslated pins that every authErr* message the auth endpoints
-// return has an en/zh/es translation, so a other-language user who fails a login or
-// the first-run setup sees the error in the chosen language.
-func TestAuthErrorsTranslated(t *testing.T) {
+// TestAuthErrorsAreChinese pins that every authErr* message the auth endpoints
+// return is Simplified Chinese and survives any language setting unchanged.
+func TestAuthErrorsAreChinese(t *testing.T) {
 	t.Cleanup(func() { config.CurrentLanguage = nil })
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "auth.go", nil, 0)
@@ -126,11 +132,14 @@ func TestAuthErrorsTranslated(t *testing.T) {
 	if len(msgs) == 0 {
 		t.Fatal("found no authErr constants; the scan is broken")
 	}
-	for _, lang := range []string{"en", "es"} {
+	for _, lang := range []string{"zh", "ko", "en", "es", "fr", ""} {
 		config.CurrentLanguage = func() string { return lang }
 		for _, m := range msgs {
-			if trMsg(m) == m {
-				t.Errorf("auth error has no %s translation: %q", lang, m)
+			if hasHangulRune(m) {
+				t.Errorf("认证错误仍有韩文残留：%q", m)
+			}
+			if got := trMsg(m); got != m {
+				t.Errorf("认证错误在 %s 下应回退到中文源消息：got=%q want=%q", lang, got, m)
 			}
 		}
 	}

@@ -538,11 +538,12 @@ func (s *Server) conversationRunContext(id int64, busyKey string) (context.Conte
 // transcriptErrorSummary 生成执行失败时的活动摘要。
 // 聊天轮次 label 为空，任务主 Agent 使用“主 Agent”；均以中文括号和错误标签包装。
 // 仅翻译外层标签，内部 err 原文完整保留。
+// 包装使用中文全角括号与全角冒号，内部提示不额外插入空格，避免混排。
 func transcriptErrorSummary(label, errMsg string) string {
 	if label != "" {
 		label += " "
 	}
-	return "(" + label + "错误： " + errMsg + ")"
+	return "（" + label + "错误：" + errMsg + "）"
 }
 
 func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelCauseFunc, c *db.Conversation, msg, busyKey string) {
