@@ -49,16 +49,54 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-
 
+      # 产物需要内嵌前端，因此本 job 自行构建静态资源。
+      # 不复用 web job 的 artifact：让 go 与 web 保持独立，
+      # 任意一方失败都不掩盖另一方的结果；npm 与 Next 缓存已共享，重复成本很低。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: 恢复 npm 与 Next.js 构建缓存
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.npm
+            web/.next/cache
+            web/node_modules/.cache
+          key: node-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            node-${{ runner.os }}-
+      - name: 构建前端静态资源并同步到内嵌目录
+        working-directory: web
+        run: |
+          npm ci
+          npm run build:static
+      - name: 同步 web/out 到 server/webui/dist（避免嵌套 out/out）
+        run: |
+          rm -rf server/webui/dist
+          mkdir -p server/webui/dist
+          cp -a web/out/. server/webui/dist/
+          test -f server/webui/dist/index.html || { echo "内嵌目录缺少 index.html"; exit 1; }
+
       - name: go build
         run: go build ./...
       - name: go vet
         run: go vet ./...
+      # 内嵌前端路径只在 -tags embedui 下参与编译，默认构建覆盖不到。
+      # 单独 vet 一次，确保 embedui 分支不会因为长期不构建而悄悄腐化。
+      # 注意不把它加到下面的 go test 上：webui_stub_localized_test.go
+      # 带 !embedui 约束，加了 tag 等于把这个测试静默跳过。
+      - name: go vet（含内嵌前端）
+        run: go vet -tags embedui ./server/
       - name: go test（无数据库，集成测试跳过）
         run: go test ./... -count=1
 
       # 可下载产物：验证用的 Windows 单二进制（amd64 + arm64）。
       # Linux runner 无法执行 PE，用结构校验代替运行冒烟测试。
       # release.yml 负责打包 zip 与发布。
+      #
+      # -tags embedui 是必须的：上面刚把 web/out 同步到 server/webui/dist，
+      # 少了这个 tag，go build 会走 webui_stub.go，产物双击后首页返回 404。
       - name: 构建验证用 Windows 二进制
         env:
           CGO_ENABLED: "0"
@@ -66,6 +104,7 @@ jobs:
           mkdir -p dist
           for arch in amd64 arm64; do
             GOOS=windows GOARCH=$arch go build -trimpath -ldflags "-s -w" \
+              -tags embedui \
               -o "dist/artex-windows-$arch.exe" ./cmd/artex
           done
       - name: 校验 PE 结构与目标架构

@@ -58,6 +58,10 @@ func run() int {
 	)
 	flag.Parse()
 
+	// exeDir 是发行包根目录：内置 pg/ 与用户数据都相对它定位。
+	// 单独求值一次，供自举逻辑复用，避免与 config.BaseDir() 的解析时机耦合。
+	exeDir := config.BaseDir()
+
 	// hand the build version to the server package so GET /api/health can report it
 	// to the frontend top bar.
 	server.BuildVersion = version
@@ -88,6 +92,13 @@ func run() int {
 		log.Printf(config.T("[config] 配置文件: %s"), cfgPath)
 	} else {
 		log.Printf(config.T("[config] 配置文件: %s (文件不存在 · 仅使用环境变量 ARTEX_PG_DSN)"), cfgPath)
+	}
+
+	// 自举：先解决端口占用与数据库可用性，再打开任何存储。
+	// 位置在 selfupdate 之后——自举会真正开始接管端口与数据库，
+	// 不应与更新的换装流程交错。
+	if err := bootBeforeStart(*addr, *proxy, exeDir); err != nil {
+		log.Fatalf("自举启动失败：%v", err)
 	}
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
