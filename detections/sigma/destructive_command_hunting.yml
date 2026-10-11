@@ -15,9 +15,8 @@ description: |
     rather than destroy data and are noisy in routine migrations.
 references:
     - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
-    - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
     - https://github.com/jiwoochris/artex-ko
-author: artex-ko defense guide
+author: ARTEX defense guide
 date: 2026-10-05
 tags:
     - attack.impact

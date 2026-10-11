@@ -17,9 +17,8 @@ description: |
     command ran outside or despite the guard near an ARTEX run. Treat it as a high-priority lead.
 references:
     - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
-    - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
     - https://github.com/jiwoochris/artex-ko
-author: artex-ko defense guide
+author: ARTEX defense guide
 date: 2026-10-05
 tags:
     - attack.execution

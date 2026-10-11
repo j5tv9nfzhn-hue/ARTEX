@@ -11,9 +11,8 @@ description: |
     indicator and combine it with the behaviour-based detection in the defense guide, section 4.
 references:
     - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
-    - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
     - https://github.com/jiwoochris/artex-ko
-author: artex-ko defense guide
+author: ARTEX defense guide
 date: 2026-10-05
 tags:
     - attack.reconnaissance
