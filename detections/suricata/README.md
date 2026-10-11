@@ -1,94 +1,47 @@
-# ARTEX detection rules (Suricata / network)
+# ARTEX 检测规则（Suricata / 网络）
 
-English · [简体中文](README.ko.md)
 
-> 简体中文：本目录将[防御指南](../../docs/defense-ko.md)第 2、4 节的网络指纹表达为可部署 Suricata。日志/主机层见 [Sigma](../sigma/)。仅用于防御自有或书面授权系统。完整中文说明见 [README.ko.md](README.ko.md)。
+这是 [Sigma](../sigma/)的网络层配套，[Suricata](https://suricata.io)检测两类实际 UA。主机/日志层在 [sigma](../sigma/)，背景见指南[中文](../../docs/defense.md)/[English](../../docs/defense.md)。指标依据实际源码或下面明确说明的固定 SDK 例外，不是猜测。
 
-The network-layer companion to the [Sigma rules](../sigma/). These [Suricata](https://suricata.io)
-signatures cover the two ARTEX artifacts that are observable on the wire, and every indicator is grounded in a
-string or behaviour verified in this repository's source, not inferred. The host, log, and SIEM layers live
-under [`../sigma/`](../sigma/); the defense guide ([Korean](../../docs/defense-ko.md) ·
-[English](../../docs/defense-en.md)) explains the full picture.
+## 规则：[`artex.rules`](artex.rules)
 
-## Rules — [`artex.rules`](artex.rules)
+- **sid 1000001**：`ARTEX enrichment prober User-Agent`，UA 以 `artex-enrich/` 开头的入站 GET，来源 `enrich/enrich.go:233`，单请求存在指标，`classtype: attempted-recon`。
+- **sid 1000002**：`ARTEX enrichment prober high-rate enumeration`，同 UA 的 `detection_filter` 超过**每来源 300 秒 30 请求**，表达自动化速度，对应 Sigma scan_velocity，`attempted-recon`。
+- **sid 1000003**：`ARTEX worker WebFetch User-Agent`，UA 以 `norma/` 开头。SDK `github.com/Autumn-27/norma/tool/webfetch.go` 的原记录在 v0.1.0–v0.4.3 固定此 UA；记录代理不改请求头，因此到达目标。与补全不同，可在主动漏洞探测阶段观察，`attempted-recon`。
 
-- **sid 1000001** — `ARTEX enrichment prober User-Agent`. An inbound HTTP `GET` whose User-Agent starts with
-  `artex-enrich/` — the asset-enrichment prober (`enrich/enrich.go:233`). The single-request presence
-  indicator. `classtype: attempted-recon`.
-- **sid 1000002** — `ARTEX enrichment prober high-rate enumeration`. The same User-Agent crossing a
-  `detection_filter` rate of **30 requests in 300 s per source** — the machine-speed velocity a single-hit
-  rule misses. Mirrors the Sigma correlation `artex_enrich_scan_velocity`. `classtype: attempted-recon`.
-- **sid 1000003** — `ARTEX worker WebFetch User-Agent`. An inbound HTTP request whose User-Agent starts with
-  `norma/` — the norma SDK's WebFetch tool (`github.com/Autumn-27/norma/tool/webfetch.go`). This UA is hardcoded across all norma
-  versions (v0.1.0–v0.4.3, verified) and reaches the target through the recording proxy, which does not
-  modify request headers (`traffic/traffic.go`). Unlike the enrich prober, this fires during the **attack
-  phase** (active vulnerability probing). `classtype: attempted-recon`.
+## 部署前须知：范围与局限
 
-## Scope and honesty — read before deploying
+- **两类 UA 可见。** 侦察补全发 `artex-enrich/1.0`，WebFetch 发 `norma/0.4`；traffic 代理不改头。curl、nmap 等其他工具使用自身 UA，应结合常规扫描器签名和 [Sigma 行为规则](../sigma/)。
+- **UA 只在可读取 HTTP 的位置可见。** 明文 HTTP 或终止 TLS 的代理/WAF 可检查，端到端 TLS 下不可直接读取。
+- **静态 UA 可改变，缺失不证明安全。** 更持久的速度、广度信号由 sid 1000002 与 Sigma 关联表达，纯 Web 多阶段仍需环境基础规则。
+- **刻意排除：** `artex-selfupdate` 通过 HTTPS 到 GitHub，普通 SNI 太常见；审计标记属于运营主机日志，使用 [guard Sigma](../sigma/artex_guard_audit_framing.yml)；服务/代理端口用于主机 ss/netstat 取证，不是网络签名。
+- **固定依赖例外：** sid 1000003 的 `norma/` 来自 SDK，而非本仓库文件。go.mod 固定 v0.4.3、未 vendor；v0.1.0–v0.4.3 的硬编码是原分支记录，非本次重验。指标来源测试无法重读外部 SDK，故与 [CSV 说明](../indicators/README.md)一样明确这一例外，不把它冒称本地源码指标。
 
-- **Two ARTEX User-Agents are network-observable.** The enrich prober sends `artex-enrich/1.0`
-  (`enrich/enrich.go:233`) during reconnaissance; the norma SDK's WebFetch tool sends `norma/0.4`
-  (`github.com/Autumn-27/norma/tool/webfetch.go`) during the attack phase. The recording proxy (`traffic/traffic.go`) does not
-  modify request headers, so both UAs reach the target on the wire. Other worker tools (Bash subprocesses
-  like `curl`, `nmap`) use their own User-Agents — detect those with generic scanner signatures and the
-  behavioural SIEM rules under [`../sigma/`](../sigma/).
-- **The User-Agent is only visible in plaintext.** It appears where traffic is plaintext HTTP or inspected at
-  a TLS-terminating proxy / WAF. End-to-end TLS encrypts it, so deploy these where you actually see the HTTP
-  request buffer.
-- **A static User-Agent can be changed** by the operator, so its absence does **not** mean safety. The durable
-  signal is behaviour — rate and breadth — which is why sid 1000002 (and the Sigma correlation layer) key on
-  velocity, and why pure web multi-stage detection needs base rules specific to your environment.
-- **Deliberately omitted.** The self-update User-Agent `artex-selfupdate` travels over HTTPS to GitHub and is
-  not network-observable (TLS SNI alone is too common to alert on). The audit-control marker is an
-  operator-side log artifact, not target-facing traffic — detect it with
-  [`../sigma/artex_guard_audit_framing.yml`](../sigma/artex_guard_audit_framing.yml). The server port `:8787`
-  and recording proxy `127.0.0.1:8788` (`cmd/artex/main.go`) are host-forensic (`ss`/`netstat`), not a
-  network signature.
-- **One indicator rests on a pinned dependency, not this repository's own source.** The opening line says
-  every indicator is verified in this repository's source; sid 1000003 is the single carve-out. Its `norma/`
-  User-Agent is hardcoded in the norma SDK (`github.com/Autumn-27/norma/tool/webfetch.go`), which ARTEX pins
-  at `v0.4.3` in `go.mod` rather than vendoring into this tree, so the string is grounded in that pinned
-  upstream dependency (hardcoded across v0.1.0–v0.4.3, verified), not a file here. This is why the
-  indicator-source test re-reads ARTEX's own emitters but not this one. The
-  [indicators list](../indicators/README.md) states the same caveat; it is noted here too so the
-  "verified in this repository's source" claim above holds without an unstated exception.
+## 验证与测试
 
-## Validate and test
-
-Validated with Suricata 8. The load test needs no traffic and always runs:
+原资料使用 Suricata 8 验证；规则加载检查不需要实际流量。
 
 ```sh
-# syntax + engine load test (expect: "Configuration provided was successfully loaded")
+# 语法与引擎加载，预期 Configuration provided was successfully loaded
 docker run --rm -v "$PWD/detections/suricata":/r -w /r jasonish/suricata:latest \
   suricata -T -S artex.rules -l /tmp --init-errors-fatal
 ```
 
-`--init-errors-fatal` makes a rule that parses but fails to initialise a hard error too, so the load test
-cannot pass with a silently dropped signature.
+`--init-errors-fatal` 把初始化失败也视作错误，避免规则虽可解析却被静默丢弃、加载测试仍通过。
 
-To confirm the rules actually fire, a reproducible regression test lives in
-[`../tests/suricata/`](../tests/suricata/). It runs this same load check first, then synthesizes a
-deterministic capture with scapy, runs `suricata -r` over it, and asserts the alert counts — needing only
-Docker:
+[Suricata 回归](../tests/suricata/)先执行加载检查，再用 scapy 确定性生成 pcap，运行 suricata -r 并断言告警数，仅需 Docker。
 
 ```sh
 detections/tests/suricata/run.sh
 ```
 
-It asserts that sid 1000001 fires exactly once per probe (35 over a 35-flow capture), that sid 1000002
-trips past the 30-in-300 s rate (**5** alerts on Suricata 8.0.7, flows 31–35), and that the same capture
-with a benign browser User-Agent produces **0** alerts — confirming the signatures are specific. See
-[`../tests/README.md`](../tests/README.md). To check against your own traffic instead, capture a loopback
-`curl -A 'artex-enrich/1.0'` against a local server and read the alerts:
+存在规则在 35 流捕获中精确触发 35 次；速度规则超出 300 秒/30 请求，Suricata 8.0.7 基线为 5 次（第 31–35 流）；相同捕获使用正常浏览器 UA 时告警为零。详见[测试说明](../tests/README.md)。自有隔离环境也可捕获 loopback 的 `curl -A 'artex-enrich/1.0'`，不对未授权外部主机测试。
 
 ```sh
 suricata -r enrich.pcap -S artex.rules -l out && \
-  grep -c '"signature_id":1000001' out/eve.json    # presence: one per probe
+  grep -c '"signature_id":1000001' out/eve.json    # 存在规则每探测一次
 ```
 
-## Contributing
+## 贡献
 
-Detection contributions are welcome. New rules should keep every indicator grounded in an observable fact,
-state limitations in a comment, pass `suricata -T` cleanly, and avoid any content that reads as attack
-guidance. See [`../../CONTRIBUTING.en.md`](../../CONTRIBUTING.en.md) and the Sigma layer in
-[`../sigma/`](../sigma/) / [`../README.md`](../README.md).
+欢迎检测贡献。新规则必须有可观察依据，注释注明局限，通过 suricata -T，且不写成攻击指南。见[贡献指南](../../CONTRIBUTING.md)、[Sigma 层](../sigma/)及[总览](../README.md)。

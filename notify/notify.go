@@ -53,27 +53,21 @@ var Lang func() string
 func labelLang() string {
 	if Lang != nil {
 		switch v := Lang(); v {
-		case "ko":
+		case "zh":
 			return "zh"
-		case "en", "zh", "es":
-			return v
 		}
 	}
 	return "zh"
 }
 
-// severityLabels / statusLabels hold the per-language display strings. "ko" keeps
-// the exact Simplified Chinese values the localization golden tests pin.
+// severityLabels / statusLabels hold the display strings for the output language.
+// 本仓库只提供简体中文一种输出语言。
 var severityLabels = map[string]map[string]string{
-	"en": {"critical": "🔴 Critical", "high": "🟠 High", "medium": "🟡 Medium", "low": "🔵 Low"},
 	"zh": {"critical": "🔴 严重", "high": "🟠 高危", "medium": "🟡 中危", "low": "🔵 低危"},
-	"es": {"critical": "🔴 Crítico", "high": "🟠 Alto", "medium": "🟡 Medio", "low": "🔵 Bajo"},
 }
 
 var statusLabels = map[string]map[string]string{
-	"en": {"pending": "Pending", "in_progress": "In progress", "confirmed": "Confirmed", "resolved": "Resolved", "fixed": "Fixed", "false_positive": "False positive", "ignored": "Ignored", "duplicate": "Duplicate", "risk_accepted": "Risk accepted"},
 	"zh": {"pending": "待处理", "in_progress": "处理中", "confirmed": "已确认", "resolved": "已处理", "fixed": "已修复", "false_positive": "误报", "ignored": "忽略", "duplicate": "重复", "risk_accepted": "接受风险"},
-	"es": {"pending": "Pendiente", "in_progress": "En curso", "confirmed": "Confirmado", "resolved": "Resuelto", "fixed": "Corregido", "false_positive": "Falso positivo", "ignored": "Ignorado", "duplicate": "Duplicado", "risk_accepted": "Riesgo aceptado"},
 }
 
 // SeverityLabel 返回带 emoji 的级别名(按当前输出语言)，用于消息标题与卡片配色。

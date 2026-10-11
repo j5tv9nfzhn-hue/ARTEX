@@ -9,21 +9,26 @@ import (
 func TestOutputLanguageDefaultsAndLegacyMigration(t *testing.T) {
 	previous := OutputLanguage
 	t.Cleanup(func() { OutputLanguage = previous })
-	if !reflect.DeepEqual(SupportedOutputLangs, []string{"zh", "en", "es"}) {
+	if !reflect.DeepEqual(SupportedOutputLangs, []string{"zh"}) {
 		t.Fatalf("可选输出语言错误：%v", SupportedOutputLangs)
 	}
 	OutputLanguage = nil
 	if got := resolveOutputLang(); got != "zh" {
 		t.Fatalf("无 Hook 时应默认简体中文，实际 %q", got)
 	}
-	for input, want := range map[string]string{"ko": "zh", " ZH ": "zh", "en": "en", "es": "es", "fr": "zh", "": "zh"} {
+	// 只保留简体中文：任何旧语言代码或未知代码都必须回退到简体中文。
+	for input, want := range map[string]string{
+		" ZH ": "zh", "zh": "zh", "ZH": "zh",
+		"ko": "zh", "en": "zh", "es": "zh", "fr": "zh", "": "zh",
+	} {
 		OutputLanguage = func() string { return input }
 		if got := resolveOutputLang(); got != want {
 			t.Errorf("resolveOutputLang(%q)=%q，预期 %q", input, got, want)
 		}
 	}
+	// 未知语言代码也必须渲染出中文指令，而不是空串或残留其他语言。
 	if got := langDirective("ko"); got != langDirective("zh") {
-		t.Error("旧 ko 别名必须使用中文指令，不能同时禁止中文输出")
+		t.Error("未知语言代码必须回退到中文指令")
 	}
 }
 

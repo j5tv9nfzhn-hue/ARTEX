@@ -3,7 +3,7 @@
 # Documentation-claim consistency check for the inline Sigma correlation template
 # in the defense guide. check-defense-template.sh launches this inside a container
 # that has a pinned sigma-cli (plus the splunk, elasticsearch, loki, and kusto
-# backends) installed, with docs/defense-ko.md and docs/defense-en.md mounted
+# backends) installed, with docs/defense.md mounted
 # read-only under /docs.
 #
 # Why this is a gate and not one of the eight detection suites. The rules under
@@ -25,7 +25,7 @@
 #
 # The ko/en parity assertion compares the Sigma rule BODY, not the whole block.
 # The block's leading comment header is prose and is translated (Simplified Chinese
-# in the legacy defense-ko.md path, English in defense-en.md), like the rest of the
+# in the defense guide path), like the rest of the
 # guide; only the canonical rule content below it — every id, detection, and
 # correlation line a SIEM actually compiles — must stay byte-identical between the
 # two files. Asserting byte-identity of the whole block would wrongly fail on the
@@ -58,8 +58,9 @@ import sys
 import tempfile
 
 DOCS = os.environ.get("ARTEX_DOCS_DIR", "/docs")
-KO = os.path.join(DOCS, "defense-ko.md")
-EN = os.path.join(DOCS, "defense-en.md")
+# 本仓库只保留简体中文一份防御指南，因此不存在跨语言规则体一致性比对这一层；
+# 指南内模板的正确性改由下面的 sigma check 与 convert 矩阵直接验证。
+GUIDE = os.path.join(DOCS, "defense.md")
 
 # The auth leg of the template matches `/login`, `/auth`, `/verify`, `/otp`. The
 # bare word "login" is alphanumeric, so no backend escapes it; its survival into a
@@ -138,68 +139,39 @@ def run_sigma(args):
 
 
 def main():
-    for p in (KO, EN):
-        if not os.path.isfile(p):
-            print(f"FAIL: missing expected defense guide: {p}", file=sys.stderr)
-            sys.exit(1)
+    if not os.path.isfile(GUIDE):
+        print(f"FAIL: missing expected defense guide: {GUIDE}", file=sys.stderr)
+        sys.exit(1)
 
     try:
-        ko_block = extract_yaml_block(KO)
-        en_block = extract_yaml_block(EN)
+        block = extract_yaml_block(GUIDE)
     except ValueError as e:
         print(f"FAIL: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print("== 1  ko/en rule bodies are byte-identical (header is localized prose) ==")
-    ko_body = rule_body(ko_block)
-    en_body = rule_body(en_block)
-    if ko_body == en_body:
-        ok("defense-ko.md and defense-en.md carry the identical Sigma rule body")
+    print("== 1  指南内模板结构完整（非空规则体） ==")
+    body = rule_body(block)
+    if body.strip():
+        ok("defense.md 携带非空的 Sigma 规则体")
     else:
-        bad(
-            "the Sigma rule body differs between defense-ko.md and defense-en.md "
-            "(the localized comment header may differ; the rule content below it "
-            "must not)"
-        )
-        # Surface the first differing line so the drift is actionable.
-        ko_lines, en_lines = ko_body.splitlines(), en_body.splitlines()
-        for n, (a, b) in enumerate(zip(ko_lines, en_lines), 1):
-            if a != b:
-                note(f"      first diff at rule-body line {n}:")
-                note(f"        ko: {a!r}")
-                note(f"        en: {b!r}")
-                break
-        else:
-            note(f"      rule bodies differ in length: ko {len(ko_lines)} lines, "
-                 f"en {len(en_lines)} lines")
+        bad("defense.md 的 ```yaml 代码块没有规则体")
 
-    # Write the ko block to a temp file for sigma-cli. The rule bodies are proven
-    # identical above, so the conversion matrix on the ko block speaks for both.
     with tempfile.NamedTemporaryFile(
         "w", suffix=".yml", encoding="utf-8", delete=False
     ) as tf:
-        tf.write("\n".join(ko_block) + "\n")
+        tf.write("\n".join(block) + "\n")
         template_path = tf.name
 
     try:
-        print("== 2  sigma check passes with zero errors (both languages parse) ==")
-        # Check the ko block, then the en block: the localized header must not break
-        # parsing in either language.
-        for label, block in (("defense-ko.md", ko_block), ("defense-en.md", en_block)):
-            with tempfile.NamedTemporaryFile(
-                "w", suffix=".yml", encoding="utf-8", delete=False
-            ) as tf2:
-                tf2.write("\n".join(block) + "\n")
-                p = tf2.name
-            rc, out = run_sigma(["check", p])
-            os.unlink(p)
-            if rc == 0 and "Found 0 errors" in out and "0 issues" in out:
-                ok(f"{label}: sigma check → 0 errors, 0 condition errors, 0 issues")
-            else:
-                bad(f"{label}: sigma check did not report a clean pass (exit {rc})")
-                for line in out.splitlines():
-                    if "error" in line.lower() or "issue" in line.lower():
-                        note(f"        {line}")
+        print("== 2  sigma check passes with zero errors ==")
+        rc, out = run_sigma(["check", template_path])
+        if rc == 0 and "Found 0 errors" in out and "0 issues" in out:
+            ok("defense.md: sigma check → 0 errors, 0 condition errors, 0 issues")
+        else:
+            bad(f"defense.md: sigma check did not report a clean pass (exit {rc})")
+            for line in out.splitlines():
+                if "error" in line.lower() or "issue" in line.lower():
+                    note(f"        {line}")
 
         print(
             "== 3  the correlation template converts on splunk, eql, and loki =="

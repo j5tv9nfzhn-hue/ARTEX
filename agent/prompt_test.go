@@ -86,17 +86,14 @@ func TestRenderSystemOverrideAndFallback(t *testing.T) {
 // (Chinese) directive, so finding one means the output-language mandate names that
 // language. Used by the directive and role-append tests below.
 var langMarker = map[string]string{
-	"en": "English",
 	"zh": "简体中文",
-	"es": "Español",
 }
 
-// TestLangDirectiveLocalized pins the output-language tail across all
-// three display languages: each language's directive names that language, preserves
-// raw technical strings, forbids mirroring the target/material language, and names
-// the planner situation summary. For every non-Chinese display language the "never
-// emit Chinese to the user" clause is present; for Chinese it is absent (Chinese
-// output is the goal there).
+// TestLangDirectiveLocalized pins the output-language tail: the directive names
+// the display language, preserves raw technical strings, forbids mirroring the
+// target/material language, and names the planner situation summary. Because
+// Chinese is the only supported display language, the "never emit Chinese to the
+// user" clause must be absent — Chinese output is the goal.
 func TestLangDirectiveLocalized(t *testing.T) {
 	for _, code := range SupportedOutputLangs {
 		dir := langDirective(code)

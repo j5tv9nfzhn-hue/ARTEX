@@ -36,7 +36,7 @@ function getSnapshot(): Locale {
 }
 
 // 服务器没有 localStorage，先渲染构建默认 locale，
-// 水合后 getSnapshot 恢复用户选择并兼容旧 ko。
+// 水合后 getSnapshot 恢复用户选择。
 function getServerSnapshot(): Locale {
   return resolveLocale();
 }

@@ -1,6 +1,5 @@
 # 变更日志
 
-简体中文 · [English](CHANGELOG.en.md) · [上游中文历史](CHANGELOG.zh.md)
 
 记录本分支在上游 ARTEX 基础上增加的功能与维护改动，格式参考 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)。上游 0.3.x 及更早版本的发布历史与贡献者署名保留在 [CHANGELOG.zh.md](CHANGELOG.zh.md)，每项改动的详细依据可查看 Git 历史。
 
@@ -24,7 +23,7 @@
 
 ### 防御与检测资料
 
-- **提供防御与检测指南。** [简体中文指南](docs/defense-ko.md)保留旧文件名以兼容链接，与[英文版](docs/defense-en.md)包含相同的自主 AI 行为、可观测指纹、加固、规则与事件响应资料。
+- **提供防御与检测指南。** [简体中文指南](docs/defense.md)保留旧文件名以兼容链接，与[英文版](docs/defense.md)包含相同的自主 AI 行为、可观测指纹、加固、规则与事件响应资料。
 - **提供部署用规则。** [Sigma](detections/sigma/) 处理主机、日志与关联检测；[Suricata](detections/suricata/) 检测 enrich 探测和 norma WebFetch 的 User-Agent。
 - **可视化 ATT&CK 覆盖率。** [Navigator 层](detections/attack/)仅使用规则实际 `attack.*` 标签，不增加推测技术。
 - **标准化机器可读指标。** [CSV 和 MISP](detections/indicators/)逐行同步，规则支持的指标使用 `to_ids`，主机取证线索与可部署检测区分。

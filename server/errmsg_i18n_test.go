@@ -7,8 +7,8 @@ import (
 	"github.com/Autumn-27/artex/config"
 )
 
-// 检查中文源消息、旧 ko 别名及英语/西班牙语词库，不改变底层错误原文。
-func TestTrMsgSwitchesLanguage(t *testing.T) {
+// 检查中文源消息在各种运行时语言取值下保持不变，不改变底层错误原文。
+func TestTrMsgFallsBackToChinese(t *testing.T) {
 	previous := config.CurrentLanguage
 	t.Cleanup(func() { config.CurrentLanguage = previous })
 	hasScript := func(s string, script *unicode.RangeTable) bool {
@@ -28,17 +28,11 @@ func TestTrMsgSwitchesLanguage(t *testing.T) {
 	if got := trMsg(source); got != source {
 		t.Fatalf("未接入运行时配置时必须保留中文源消息：%q", got)
 	}
-	for _, language := range []string{"zh", "ko", "fr", ""} {
+	// 本仓库只保留简体中文：任何语言取值都回退到中文源消息。
+	for _, language := range []string{"zh", "ko", "en", "es", "fr", ""} {
 		config.CurrentLanguage = func() string { return language }
 		if got := trMsg(source); got != source {
-			t.Fatalf("%s：中文、旧别名与未知语言回退应返回源消息：%q", language, got)
-		}
-	}
-	for _, language := range []string{"en", "es"} {
-		config.CurrentLanguage = func() string { return language }
-		got := trMsg(source)
-		if got == "" || got == source || hasScript(got, unicode.Han) || hasScript(got, unicode.Hangul) {
-			t.Fatalf("%s：应使用对应词库，而不是回退到中文或韩文：%q", language, got)
+			t.Fatalf("%s：应回退到中文源消息，实际 %q", language, got)
 		}
 	}
 	config.CurrentLanguage = func() string { return "en" }

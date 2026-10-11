@@ -72,7 +72,7 @@ const (
 	errNotifyDigestRange   = "摘要周期必须介于 1~1440 分钟之间"
 
 	// 用户输出语言设置：putSettings。
-	errOutputLanguageInvalid = "不支持的语言（必须为 en·ko·zh·es 之一）"
+	errOutputLanguageInvalid = "不支持的语言（仅支持简体中文 zh）"
 
 	// 主 Agent 聊天与会话：newMainSession、chat。
 	errTaskDeletingNewSession = "任务正在删除，无法创建新会话"

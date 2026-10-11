@@ -1,6 +1,5 @@
 # 漏洞多流量证据
 
-[English](finding-traffic-evidence-en.md) · [中文设计原稿](finding-traffic-evidence-zh.md)
 
 漏洞详情的「关联流量」支持跨页多选、用途和说明、排序及解除绑定。流量页也可多选记录，一次关联到一个已有漏洞。任务继承的漏洞证据只读，修改需进入来源任务。
 

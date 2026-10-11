@@ -5,25 +5,20 @@ import * as React from "react";
 
 import { NextIntlClientProvider } from "next-intl";
 
-import enMessages from "../../messages/en.json";
-import esMessages from "../../messages/es.json";
 import zhMessages from "../../messages/zh.json";
 import type { Locale } from "./config";
 import { useActiveLocale } from "./locale-store";
 
-// 静态打包 zh、en、es 三份消息，设置页切换时无需重建、刷新或异步加载，
-// 全部组件立即重绘，并兼容 output: export。
+// 本仓库只提供简体中文一种界面语言。静态打包消息，设置页切换时无需重建、
+// 刷新或异步加载，组件立即重绘，并兼容 output: export。
 const MESSAGES: Record<Locale, Record<string, unknown>> = {
-  en: enMessages as Record<string, unknown>,
   zh: zhMessages as Record<string, unknown>,
-  es: esMessages as Record<string, unknown>,
 };
 
 // 浏览器或预渲染服务器的运行时区。
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-// IntlRuntimeProvider 按用户 cookie、localStorage 中的有效 locale 提供 messages，
-// 负责运行时切换，旧 ko 选择归一为 zh。
+// IntlRuntimeProvider 按用户 cookie、localStorage 中的有效 locale 提供 messages。
 export function IntlRuntimeProvider({ children }: Readonly<{ children: ReactNode }>) {
   const locale = useActiveLocale();
 

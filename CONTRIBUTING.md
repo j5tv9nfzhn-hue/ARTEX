@@ -1,6 +1,5 @@
 # 贡献指南（Contributing）
 
-简体中文 · [English](CONTRIBUTING.en.md)
 
 感谢关注 ARTEX。提交贡献前请阅读[使用范围与法律责任](#使用范围与法律责任)、[本地化原则](#本地化原则)和[行为准则](CODE_OF_CONDUCT.md)。
 
@@ -34,7 +33,7 @@ ARTEX 是由 LLM 多 Agent 自主执行渗透测试的进攻性安全工具，�
 
 ## 开发环境
 
-Go 后端可内嵌 Next.js 静态前端，数据库为 PostgreSQL。涉及 `report_finding.traffic_refs` 或报告自动绑定时，先阅读[多流量证据设计](docs/finding-traffic-evidence-ko.md)，中文原稿也保留在[同目录](docs/finding-traffic-evidence-zh.md)。旧 `-ko` 文件名仅为链接兼容。
+Go 后端可内嵌 Next.js 静态前端，数据库为 PostgreSQL。涉及 `report_finding.traffic_refs` 或报告自动绑定时，先阅读[多流量证据设计](docs/finding-traffic-evidence.md)，中文原稿也保留在[同目录](docs/finding-traffic-evidence.md)。旧 `-ko` 文件名仅为链接兼容。
 
 ### 要求版本
 

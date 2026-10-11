@@ -1,13 +1,11 @@
-// 界面支持简体中文、英语和西班牙语；简体中文为默认语言。
-export const LOCALES = ["zh", "en", "es"] as const;
+// 本仓库只提供简体中文一种界面语言。
+export const LOCALES = ["zh"] as const;
 export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "zh";
 
-// 语言选择器使用各语言自身的名称。
+// 界面语言固定为简体中文，语言标识仅保留自身名称。
 export const LOCALE_LABELS: Record<Locale, string> = {
   zh: "简体中文",
-  en: "English",
-  es: "Español",
 };
 
 export const LOCALE_COOKIE = "artex_locale";
@@ -17,12 +15,11 @@ export function isLocale(raw: unknown): raw is Locale {
   return typeof raw === "string" && (LOCALES as readonly string[]).includes(raw);
 }
 
-// 兼容旧浏览器存储和构建环境中的 ko；旧语言代码统一迁移为简体中文。
+// 旧浏览器存储和构建环境中的语言代码统一归一为简体中文。
 export function normalizeLocale(raw: unknown): Locale | undefined {
   if (typeof raw !== "string") return undefined;
   const code = raw.trim().toLowerCase();
-  if (code === "ko") return "zh";
-  return isLocale(code) ? code : undefined;
+  return isLocale(code) ? code : DEFAULT_LOCALE;
 }
 
 // 静态导出不能依赖请求 cookie 或 headers。此值决定预渲染语言，

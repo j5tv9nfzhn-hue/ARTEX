@@ -7,7 +7,7 @@ name: detections
 # Go 构建、静态分析和单元测试由 ci.yml 负责。
 # 除八类规则测试外，还包含三个非规则合并门禁。
 # 分别为 harness 注册表同步、主机 triage 自测与防御模板检查。
-# 防御文档 docs/defense-{ko,en}.md 中的内联 Sigma 模板也需验证。
+# 防御文档 docs/defense.md 中的内联 Sigma 模板也需验证。
 # run-all.sh 同样执行这三类检查，与规则测试分离。
 # 模板门禁复现 sigma check 和 splunk、eql、loki 转换支持。
 # lucene、kusto 不支持相应关联转换，两个语言版本规则主体必须一致。
@@ -37,8 +37,7 @@ on:
       - "traffic/traffic.go"
       # 内联模板门禁读取这两份防御指南。
       # 模板改变后需重新验证，因此加入触发路径。
-      - "docs/defense-ko.md"
-      - "docs/defense-en.md"
+      - "docs/defense.md"
       - ".github/workflows/detections.yml"
   pull_request:
     paths:
@@ -51,8 +50,7 @@ on:
       - "db/schema.sql"
       - "cmd/artex/main.go"
       - "traffic/traffic.go"
-      - "docs/defense-ko.md"
-      - "docs/defense-en.md"
+      - "docs/defense.md"
       - ".github/workflows/detections.yml"
 
 permissions:

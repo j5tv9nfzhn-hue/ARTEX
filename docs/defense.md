@@ -2,7 +2,7 @@
 
 > 本指南帮助防御者了解 ARTEX 等自主 AI 渗透代理，建立检测与阻断能力，不是攻击教程。仅用于保护自有或书面明确授权系统；未授权探测/攻击他人信息通信网络可能违法，参见[根 README 的安全告知](../README.md)。
 >
-> English: **[Defense and Detection Guide](defense-en.md)**.
+> English: **[Defense and Detection Guide](defense.md)**.
 
 自主 AI 工具将人工渗透流程变为可持续运行的自动过程：LLM 分解目标、执行真实工具、积累发现。防御者面对的不再只是单个操作人员，也可能是持续工作的代理群；本指南整理检测与响应所需变化。
 
@@ -42,7 +42,7 @@ UA 和固定字符串可以修改，但多阶段自适应行为更难完全改�
 
 - **补全 UA artex-enrich/1.0：** enrich/enrich.go 在 DNS/HTTP 补全直接发送 GET，非 LLM 生成；不跟随重定向、关闭 keep-alive、只读响应前部提取 title，默认并发 4。多资产短连接、单 GET、读取标题即断开是线索，但 UA 可改，缺失不代表安全。
 - **主测试流量遵循工具默认：** worker 执行 Bash 外部工具或 HTTP，平台只注入 HTTP_PROXY/CA 环境尝试记录，不强制独有 UA。工具默认或自定义头可类似浏览器，不能仅靠 UA，须结合行为。
-- **内置 WebFetch 留下 norma/0.4：** norma SDK 的默认 UA，不等同 Bash 外部工具。可在明文或 TLS 终结处观察，[Suricata sid 1000003](../detections/suricata/README.ko.md)匹配 norma/ 前缀。其他 SDK 使用者也有该 UA，只是辅助线索，缺失不排除 ARTEX。
+- **内置 WebFetch 留下 norma/0.4：** norma SDK 的默认 UA，不等同 Bash 外部工具。可在明文或 TLS 终结处观察，[Suricata sid 1000003](../detections/suricata/README.md)匹配 norma/ 前缀。其他 SDK 使用者也有该 UA，只是辅助线索，缺失不排除 ARTEX。
 - **无目标专用内置限速：** 速率由外部工具决定，默认每任务 3 worker 并行，既可能低速单会话，也可能多角度并发，单一阈值不足。
 - **关键行为为组合出现：** 同一/少量轮换来源短间隔跨侦察、枚举、参数探测与认证/注入阶段；同端点请求按状态码/长度系统调整；非工作时段长时连续；401/403/429 后仍持续变换尝试。
 
@@ -51,7 +51,7 @@ UA 和固定字符串可以修改，但多阶段自适应行为更难完全改�
 用于调查疑似安装或执行 ARTEX 的中转主机。
 
 - **默认 :8787：** main.go --addr 可改；该端口出现仪表盘/任务/资产图 UI 是线索。
-- **记录 MITM 127.0.0.1:8788：** --proxy 默认 loopback，生成 mitmproxy-ca-cert.pem 以解密记录。检查信任 CA 及注入 HTTP_PROXY/CA 的痕迹。worker.go 固定变量名，代理与 mitmproxy CA 同时存在比单端口更特异；[triage](../detections/triage/README.ko.md)读取 /proc 或离线环境转储。
+- **记录 MITM 127.0.0.1:8788：** --proxy 默认 loopback，生成 mitmproxy-ca-cert.pem 以解密记录。检查信任 CA 及注入 HTTP_PROXY/CA 的痕迹。worker.go 固定变量名，代理与 mitmproxy CA 同时存在比单端口更特异；[triage](../detections/triage/README.md)读取 /proc 或离线环境转储。
 - **更新 UA artex-selfupdate：** selfupdate/ 查询 GitHub Release 的出站流量辅助指示二进制存在。
 - **PostgreSQL 双图：** exploration_nodes、assets、companies、activity 及 agent_prompts 种子是数据结构线索。
 - **DB 规则与审计：** intercept/ 按优先级匹配 DB 正则；GET /api/audit 中被阻止调用以 `【ARTEX 平台管控·非目标防御】` framing 记录，是运行证据。
@@ -117,7 +117,7 @@ IP 阻断有用的前提是可信机构/情报来源、有效期审查和误封�
 
 ## 4. 检测规则与日志模式（实践）
 
-以下为产品无关伪规则，须映射到自身 WAF/IPS/SIEM。源码有依据的静态规则及补全速率/目标数、guard burst、guard 与破坏命令同主机共现等关联见 [Sigma](../detections/README.ko.md)。纯 Web 多阶段行为无独有 UA，4.2 提供通用模板。网络 UA 见 [Suricata](../detections/suricata/README.ko.md)：artex-enrich/1.0 的存在性 sid 1000001、速率 sid 1000002，norma/0.4 的 sid 1000003。
+以下为产品无关伪规则，须映射到自身 WAF/IPS/SIEM。源码有依据的静态规则及补全速率/目标数、guard burst、guard 与破坏命令同主机共现等关联见 [Sigma](../detections/README.md)。纯 Web 多阶段行为无独有 UA，4.2 提供通用模板。网络 UA 见 [Suricata](../detections/suricata/README.md)：artex-enrich/1.0 的存在性 sid 1000001、速率 sid 1000002，norma/0.4 的 sid 1000003。
 
 ### 4.1 WAF 与 IPS（行为检测）
 
@@ -149,8 +149,8 @@ description: |
     signature; tune the count and window to your own baseline. On its own this leg is low signal
     and earns weight only inside the correlation below.
 references:
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense-ko.md
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense-en.md
+    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
+    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
 author: artex-ko defense guide (generic template)
 date: 2026-10-07
 tags:
@@ -179,8 +179,8 @@ description: |
     correlation below. Extend the marker list to your own probe corpus and WAF categories; it is
     a coarse proxy for the broader "adapts requests to responses" behaviour the guide describes.
 references:
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense-ko.md
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense-en.md
+    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
+    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
 author: artex-ko defense guide (generic template)
 date: 2026-10-07
 tags:
@@ -212,8 +212,8 @@ description: |
     often expose weaker identity-verification endpoints than the main service and belong here
     too. This leg is broad by design and is only meaningful inside the correlation below.
 references:
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense-ko.md
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense-en.md
+    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
+    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
 author: artex-ko defense guide (generic template)
 date: 2026-10-07
 tags:
@@ -250,8 +250,8 @@ description: |
     session identifier if you have one) and tune the window to your baseline. If three legs are
     too strict and miss cases, relax to any two of the three.
 references:
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense-ko.md
-    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense-en.md
+    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
+    - https://github.com/jiwoochris/artex-ko/blob/main/docs/defense.md
 author: artex-ko defense guide (generic template)
 date: 2026-10-07
 tags:
@@ -274,7 +274,7 @@ level: high
 使用模板时注意：
 
 - 原文验证基线使用与检测包相同工具：全 SigmaHQ check 零错误/问题，Splunk 查询把三阶段按 c-ip、10 分钟聚合。因不是 ARTEX 源码固定指标，故不纳入 detections/ 规则树。[模板门禁](../detections/tests/check-defense-template.sh)在指南变更时由 CI 复查 check、splunk/eql/loki 转换、lucene/kusto 关联拒绝及中英文规则主体字节一致，防止上游升级令承诺过期。
-- 原文 sigma-cli 3.1.0 基线中，全模板可转换为 splunk/eql/loki；kusto/lucene 报 `Backend does not support correlation rules`。后两者可仅转换三子规则，在产品原生功能表达同 c-ip、10 分钟窗口，例如 Sentinel summarize/bin(TimeGenerated, 10m)。见 [后端可移植性](../detections/README.ko.md#sigma-后端可移植性)。本次语言重构未重新执行这些容器验证。
+- 原文 sigma-cli 3.1.0 基线中，全模板可转换为 splunk/eql/loki；kusto/lucene 报 `Backend does not support correlation rules`。后两者可仅转换三子规则，在产品原生功能表达同 c-ip、10 分钟窗口，例如 Sentinel summarize/bin(TimeGenerated, 10m)。见 [后端可移植性](../detections/README.md#sigma-后端可移植性)。本次语言重构未重新执行这些容器验证。
 - 第二阶段依赖注入/遍历标记，单独噪声较高，故子规则 low、关联 high。
 - CDN/代理后需将 c-ip 映射为可信转发链恢复的客户端或会话标识；若三阶段过严，可按本地验证放宽为三选二。
 
@@ -328,7 +328,7 @@ level: high
 
 1. 查访问/认证日志的 artex-enrich/1.0，是否多资产短间隔、无重定向单 GET。UA 可改，未命中仍继续。
 2. 查同一/少量轮换来源的侦察→枚举→探测→认证/注入链，是否按响应调整、401/403/429 后持续。
-3. SIEM 部署适用的 [Sigma 关联](../detections/README.ko.md)并结合通用 Web 模板；达到本地高置信条件时按响应策略隔离来源/失效会话，不能将主机侧 guard 指标误作目标侧流量。
+3. SIEM 部署适用的 [Sigma 关联](../detections/README.md)并结合通用 Web 模板；达到本地高置信条件时按响应策略隔离来源/失效会话，不能将主机侧 guard 指标误作目标侧流量。
 
 **主机取证：某主机是否运行过 ARTEX**
 

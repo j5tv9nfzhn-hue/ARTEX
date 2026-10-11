@@ -1,123 +1,62 @@
-# ARTEX detection rules (Sigma / host · log · SIEM)
+# ARTEX 检测规则（Sigma / 主机、日志、SIEM）
 
-English · [简体中文](README.ko.md)
 
-> 简体中文：本目录将[防御指南](../../docs/defense-ko.md)第 4 节表达为可部署 Sigma，网络层在 [suricata](../suricata/)。仅用于防御自有或书面授权系统。中文说明见 [README.ko.md](README.ko.md)，完整概览见 [../README.ko.md](../README.ko.md)。
+本目录负责主机/日志/SIEM 层，将防御指南[中文](../../docs/defense.md)/[English](../../docs/defense.md)第 4 节表达为厂商中立 [Sigma](https://sigmahq.io)，再转换为产品查询。所有指标基于实际源码，不是猜测。网络层在 [suricata](../suricata/)，完整规则、ATT&CK、CSV/MISP、triage 入口见[总览](../README.md)。仅用于防御自有或书面授权系统。
 
-The host, log, and SIEM layer of the ARTEX detection set. These [Sigma](https://sigmahq.io) rules
-formalize the pseudo-rules in the defense guide ([Korean](../../docs/defense-ko.md) ·
-[English](../../docs/defense-en.md), section 4) into a vendor-neutral format you convert to your own
-SIEM or EDR query language. Every indicator is grounded in a string or behaviour verified in this
-repository's source, not inferred. The network layer lives under [`../suricata/`](../suricata/); the
-full detection set — the ATT&CK coverage layer, the indicator CSV / MISP export, and the host-triage
-script — is indexed in [`../README.md`](../README.md).
+## 原子（atomic）规则
 
-## Atomic rules
+每条对应一个可观察事实，可单独或作为整树一部分转换。
 
-One rule, one observable fact. Convert them individually or as part of the whole tree.
+- **[`artex_enrich_user_agent.yml`](artex_enrich_user_agent.yml)**：*ARTEX Asset Enrichment Probe User-Agent*，`enrich/enrich.go` 入站 `artex-enrich/1.0`，目标侧辅助指标，high。
+- **[`artex_selfupdate_egress.yml`](artex_selfupdate_egress.yml)**：*ARTEX Self-Update Egress User-Agent*，`selfupdate/github.go` 出站 `artex-selfupdate`，主机取证 egress，medium。
+- **[`artex_guard_audit_framing.yml`](artex_guard_audit_framing.yml)**：*ARTEX Platform Guard Audit-Log Framing*，`guard/guard.go` 工具阻断日志的平台标记，主机取证，high。
+- **[`artex_recording_proxy_ca.yml`](artex_recording_proxy_ca.yml)**：*ARTEX Recording-Proxy MITM CA Certificate Artifact*，`traffic/traffic.go` 的 `_ca/mitmproxy-ca-cert.pem`，因文件名与独立 mitmproxy 共享，仅作狩猎线索，medium。
+- **[`destructive_command_hunting.yml`](destructive_command_hunting.yml)**：*Destructive Command Execution (ARTEX Guard-List Hunting)*，对应 `db/db.go` deny 列表，不是 ARTEX 专属，medium。
 
-- **[`artex_enrich_user_agent.yml`](artex_enrich_user_agent.yml)** — *ARTEX Asset Enrichment Probe
-  User-Agent*. Inbound `artex-enrich/1.0` User-Agent from asset enrichment (`enrich/enrich.go`).
-  Target-side, supporting indicator. `level: high`.
-- **[`artex_selfupdate_egress.yml`](artex_selfupdate_egress.yml)** — *ARTEX Self-Update Egress
-  User-Agent*. Outbound `artex-selfupdate` User-Agent from the self-update routine
-  (`selfupdate/github.go`). Host/forensic egress indicator. `level: medium`.
-- **[`artex_guard_audit_framing.yml`](artex_guard_audit_framing.yml)** — *ARTEX Platform Guard
-  Audit-Log Framing*. The platform-guard control marker written to the audit log on a blocked tool
-  call (`guard/guard.go`). Host/forensic indicator. `level: high`.
-- **[`artex_recording_proxy_ca.yml`](artex_recording_proxy_ca.yml)** — *ARTEX Recording-Proxy MITM CA
-  Certificate Artifact*. Creation of the recording proxy's MITM CA file under the
-  `_ca/mitmproxy-ca-cert.pem` layout (`traffic/traffic.go`). Host/forensic artifact; the bare filename
-  is shared with standalone mitmproxy, so it is a hunting lead. `level: medium`.
-- **[`destructive_command_hunting.yml`](destructive_command_hunting.yml)** — *Destructive Command
-  Execution (ARTEX Guard-List Hunting)*. Destructive shell/DB commands mirroring the ARTEX guard's
-  built-in deny list (`db/db.go` seed). Generic hunting lead, **not** an ARTEX signature. `level: medium`.
+## 关联（correlation）规则（行为检测）· [`correlation/`](correlation/)
 
-## Correlation rules (behaviour) — [`correlation/`](correlation/)
+关联规则表达指南 4.1–4.2、4.4 节行为层。通过 `id` 引用原子规则，因此**必须转换整棵 sigma 树**；[Sigma 测试](../tests/sigma/)验证真实引用依赖。
 
-Static strings can be changed; behaviour is harder to hide. These Sigma **correlation** rules encode the
-behaviour-based layer of the defense guide (sections 4.1–4.2 and 4.4). Each references an atomic rule
-above by its `id`, so **convert the whole `sigma/` tree, not a single correlation file**, or the
-reference will not resolve (the [Sigma test](../tests/sigma/) asserts exactly this dependency).
+- **[Enrichment Scan Velocity](correlation/artex_enrich_scan_velocity.yml)**：同源短窗口集中探测；补全并发 4、无限速，`event_count`，high。
+- **[Enrichment Fan-Out](correlation/artex_enrich_fanout.yml)**：同源探测不同主机，关注广度而非仅请求量，`value_count`，high。
+- **[Guard-Block Burst](correlation/artex_guard_block_burst.yml)**：同主机重复产生 guard 标记，区分运行触发与文档引用，`event_count`，high。
+- **[Guard Marker With Destructive Command](correlation/artex_guard_marker_then_destructive.yml)**：同主机窗口内标记与破坏命令组合，提高特异性，`temporal`，high。
 
-- **[`correlation/artex_enrich_scan_velocity.yml`](correlation/artex_enrich_scan_velocity.yml)** —
-  *Enrichment Scan Velocity*. A burst of `artex-enrich/1.0` probes from one source in a short window
-  (enrichment runs at concurrency 4 with no rate limit) — the velocity the single-request rule misses.
-  `event_count`, `level: high`.
-- **[`correlation/artex_enrich_fanout.yml`](correlation/artex_enrich_fanout.yml)** — *Enrichment
-  Fan-Out*. One source carrying the enrichment User-Agent to many *distinct* hosts: machine-speed breadth
-  across an asset list, where the distinct-host count, not request volume, is the tell. `value_count`,
-  `level: high`.
-- **[`correlation/artex_guard_block_burst.yml`](correlation/artex_guard_block_burst.yml)** —
-  *Guard-Block Burst*. Repeated platform-guard control markers on one host — an actively engaged ARTEX
-  run tripping its own guard, not a document that merely quotes the marker. `event_count`, `level: high`.
-- **[`correlation/artex_guard_marker_then_destructive.yml`](correlation/artex_guard_marker_then_destructive.yml)**
-  — *Guard Marker With Destructive Command*. The guard marker and a destructive command co-occurring on
-  one host within a window (defense guide §4.2, multi-stage): combining an ARTEX-specific marker with the
-  otherwise-generic destructive-command signal raises specificity. `temporal`, `level: high`.
+阈值和窗口仅为保守起点，应按自身基线调整。纯 Web 枚举→探测→认证不能归结为单一专属 UA，仍需环境基础检测。[指南 4.2](../../docs/defense.md)提供通用模板，因没有 ARTEX 源码固定依据，刻意不纳入本已测规则树。
 
-Thresholds and windows are conservative defaults — tune them to your baseline. The pure web multi-stage
-case (enumerate → probe → authenticate) still needs base rules specific to your environment, because that
-pattern does not reduce to a single ARTEX-unique User-Agent; a generic behavioural base template to start
-from is in the [defense guide §4.2](../../docs/defense-en.md), kept out of this tested tree because it
-cannot be grounded in ARTEX source.
+## 部署前须知：范围与局限
 
-## Scope and honesty — read before deploying
+- **静态指标可变。** UA、CA 文件可修改，原子指标缺失不证明安全；长期信号是持续、自适应的侦察→枚举→探测→认证/注入行为。
+- **破坏命令是通用狩猎。** 结合管理员正常活动、允许列表和上下文，不凭单次命中归属 ARTEX。
+- **端口/schema 属主机取证。** `:8787`、`127.0.0.1:8788` 与探索 schema 由 [CSV](../indicators/)及 [triage](../triage/)表达，不发布高噪声网络规则。
+- **logsource 与字段为通用值。** category/product、`cs-user-agent`、`CommandLine`、`TargetFilename` 须通过 `-p` 管线映射实际产品 schema。
 
-- **Static indicators can be changed.** An operator can set a different User-Agent or clean up the CA
-  file, so the absence of an atomic indicator does **not** mean safety. The durable signal is the
-  behaviour the `correlation/` rules key on — one source chaining recon → enumeration → probing →
-  auth/injection attempts, adapting to responses, running without pause.
-- **The destructive-command rule is generic hunting.** It mirrors ARTEX's guard deny list, but the same
-  commands are run by legitimate administrators. Treat a hit as a lead, allow-list your environment, and
-  do not attribute it to ARTEX on its own.
-- **Ports and schema are host-forensic, not Sigma.** The server default `:8787` and recording proxy
-  `127.0.0.1:8788` (`cmd/artex/main.go`), and the PostgreSQL exploration-graph schema, are best checked on
-  a suspected host, so they ship in the [indicator CSV](../indicators/) and the
-  [host-triage script](../triage/) rather than as noisy rules.
-- **`logsource` and field names are generic.** The rules use generic `category`/`product` log sources and
-  field names (`cs-user-agent`, `CommandLine`, `TargetFilename`). Map them to your product's schema with a
-  pipeline (`-p`) at convert time; see the backend notes below.
+## 验证与转换
 
-## Validate and convert
-
-Validated with [sigma-cli](https://github.com/SigmaHQ/sigma-cli) (pySigma). From the repository root:
+原资料使用 [sigma-cli](https://github.com/SigmaHQ/sigma-cli)（pySigma）验证；从仓库根执行：
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
 pip install sigma-cli
 
-# structural + best-practice validation (expect: 0 errors, 0 issues)
+# 结构与最佳实践，预期 0 errors、0 issues
 sigma check detections/sigma/
 
-# full SigmaHQ convention set with this rule set's documented baseline (expect: 0 issues)
+# SigmaHQ 全部约定，按已记录基线预期 0 issues
 pip install pySigma-validators-sigmahq
 sigma check --validation-config detections/tests/sigma_lint/validators.yml detections/sigma/
 
-# compile the WHOLE tree so the correlation rules resolve the atomic rules they reference by id
+# 转换整树，以解析关联规则引用
 sigma plugin install splunk
 sigma convert -t splunk --without-pipeline detections/sigma/
 ```
 
-Backends vary in correlation support, so the `-t` choice matters: Splunk, Elasticsearch EQL, and Grafana
-Loki convert the whole tree, while Elasticsearch Lucene, OpenSearch, and the Microsoft `kusto` backend
-convert the five atomic rules only (express the window natively in the product). The measured per-backend
-matrix and the `--without-pipeline` / `-p` field-mapping notes are in [`../README.md`](../README.md), and
-they are reproduced by [`../tests/sigma_backends/`](../tests/sigma_backends/).
+后端关联支持不同，Splunk、Elasticsearch EQL、Loki 转换整树；Lucene、OpenSearch、Microsoft kusto 转换五条原子，在产品内原生表达时间窗。实测支持矩阵、`--without-pipeline` 和 `-p` 映射见[总览](../README.md)，由 [sigma_backends](../tests/sigma_backends/)复现。
 
-## Tests
+## 测试
 
-Four reproducible suites under [`../tests/`](../tests/) cover these rules, each needing only Docker:
-[`sigma/`](../tests/sigma/) (validation, whole-tree compilation, and that a correlation rule fails to
-convert alone), [`sigma_match/`](../tests/sigma_match/) (the rules actually fire on malicious samples and
-stay quiet on benign ones), [`sigma_backends/`](../tests/sigma_backends/) (portability across five
-backends), and [`sigma_lint/`](../tests/sigma_lint/) (the full SigmaHQ validator baseline, 0 issues). See
-[`../tests/README.md`](../tests/README.md).
+[`tests/`](../tests/)中四套 Sigma 测试仅需 Docker：[sigma](../tests/sigma/)验证结构、整树编译及关联单独失败；[sigma_match](../tests/sigma_match/)验证恶意触发、正常静默；[sigma_backends](../tests/sigma_backends/)验证五种后端；[sigma_lint](../tests/sigma_lint/)验证全部 SigmaHQ 基线零问题。见[测试说明](../tests/README.md)。
 
-## Contributing
+## 贡献
 
-Detection contributions are welcome. New rules should keep every indicator grounded in an observable fact,
-state limitations in the `description`, pass the SigmaHQ validator baseline cleanly
-(`sigma check --validation-config ../tests/sigma_lint/validators.yml .`), and avoid any content that reads
-as attack guidance. See [`../../CONTRIBUTING.en.md`](../../CONTRIBUTING.en.md) and the network layer in
-[`../suricata/`](../suricata/) / [`../README.md`](../README.md).
+新规则应有可观察指标依据，description 明确局限，通过 `sigma check --validation-config ../tests/sigma_lint/validators.yml .`，不得成为攻击教程。见[贡献指南](../../CONTRIBUTING.md)、[网络层](../suricata/)与[总览](../README.md)。

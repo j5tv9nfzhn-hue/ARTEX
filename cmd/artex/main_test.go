@@ -24,30 +24,30 @@ func TestShutdownContextPreservesNamedCause(t *testing.T) {
 }
 
 // TestPrintBannerLocalized verifies that the startup banner printed to stdout is
-// Korean and carries no leftover CJK Han characters. This is the first thing a
-// user sees when running ARTEX, so it must not stay in Chinese (backlog F11).
+// Simplified Chinese and carries no leftover Hangul. This is the first thing a
+// user sees when running ARTEX, so it must stay in Chinese.
 // The "[config] ..." log lines in run() are intentionally out of scope — they
 // are logs, which the localization brief ranks lowest (backlog Z2).
 func TestPrintBannerLocalized(t *testing.T) {
 	out := captureStdout(t, func() { printBanner(":8787") })
 	t.Logf("启动横幅示例：\n%s", out)
 
-	hasHangul := strings.ContainsFunc(out, func(r rune) bool {
-		return unicode.Is(unicode.Hangul, r)
-	})
-	if !hasHangul {
+	hasHan := false
+	for _, r := range out {
+		if unicode.Is(unicode.Hangul, r) {
+			t.Fatalf("启动横幅仍有韩文残留 (%q)：%q", r, out)
+		}
+		if unicode.Is(unicode.Han, r) {
+			hasHan = true
+		}
+	}
+	if !hasHan {
 		t.Fatalf("启动横幅未包含中文：%q", out)
 	}
 
 	for _, want := range []string{"自主渗透测试系统", "版本", "监听地址", ":8787"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("启动横幅缺少 %q：%q", want, out)
-		}
-	}
-
-	for _, r := range out {
-		if unicode.Is(unicode.Han, r) {
-			t.Errorf("启动横幅仍有韩文残留 (%q)：%q", r, out)
 		}
 	}
 }

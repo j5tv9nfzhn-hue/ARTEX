@@ -8,14 +8,13 @@ var OutputLanguage func() string
 
 const defaultOutputLang = "zh"
 
-var SupportedOutputLangs = []string{"zh", "en", "es"}
+// 本仓库只提供简体中文一种面向用户的语言。旧版本写入的 ko/en/es 等配置
+// 一律回退到默认值，不再单独处理。
+var SupportedOutputLangs = []string{"zh"}
 
-// normalizeLang 兼容遗留 ko 配置，并对未知语言回退到简体中文。
+// normalizeLang 归一化语言代码；任何非简体中文的取值都回退到默认语言。
 func normalizeLang(code string) string {
 	code = strings.ToLower(strings.TrimSpace(code))
-	if code == "ko" {
-		return "zh"
-	}
 	for _, c := range SupportedOutputLangs {
 		if c == code {
 			return c
@@ -36,12 +35,8 @@ func resolveOutputLang() string {
 // 使用明确的语言名称，避免模型混淆输出语言。
 var langPhrase = map[string]string{
 	"zh": "中文（简体中文）",
-	"en": "英语（English）",
-	"es": "西班牙语（Español）",
 }
 
 var langBare = map[string]string{
 	"zh": "中文",
-	"en": "英语",
-	"es": "西班牙语",
 }

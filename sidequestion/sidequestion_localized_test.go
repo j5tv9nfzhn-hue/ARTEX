@@ -7,9 +7,9 @@ import (
 	"unicode"
 )
 
-// assertChinese fails if msg is empty, carries a CJK Han ideograph (= leftover
-// untranslated Chinese), or has no Hangul at all. ASCII field names and the
-// "1–4000"-style ranges are fine; only Han marks an unlocalized string.
+// assertChinese fails if msg is empty, carries a Hangul character (= leftover
+// Korean), or has no CJK Han ideograph at all. ASCII field names and the
+// "1–4000"-style ranges are fine; only Han marks a properly localized string.
 func assertChinese(t *testing.T, label, msg string) {
 	t.Helper()
 	if msg == "" {

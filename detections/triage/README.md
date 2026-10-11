@@ -1,108 +1,54 @@
-# ARTEX host triage
+# ARTEX 主机研判（triage）
 
-English · [简体中文](README.ko.md)
 
-> 简体中文：本脚本在疑似运行 ARTEX 的单台主机直接进行只读研判，面向无 SIEM 的响应人员。基于源码检查监听端口、代理产物、日志标记、PostgreSQL 结构与进程环境；注明端口可改、CA 名与普通 mitmproxy 共享等局限。仅用于自有或书面授权主机。完整说明见 [README.ko.md](README.ko.md)。
+[`artex_host_triage.py`](artex_host_triage.py)直接在疑似运行过 ARTEX 的**单台主机**执行只读研判。其他目录面向 [SIEM](../sigma/)、[网络传感器](../suricata/)和[情报平台](../indicators/)；本脚本面向无 SIEM、需仅凭本地状态快速且有依据地判断“这里是否运行过 ARTEX”的响应人员。
 
-A read-only triage helper you run **on a single suspected host** to answer "did ARTEX run here?" from
-local state. The rest of this directory serves defenders who run a SIEM ([Sigma](../sigma/)), a network
-sensor ([Suricata](../suricata/)), or a threat-intelligence platform (the [indicators](../indicators/)).
-This script serves the other responder: the one at a host's shell, with no SIEM, who needs a quick,
-defensible answer from what is on the box.
+检查已有指纹，并覆盖[清单](../indicators/artex_indicators.csv)故意不设 Sigma 规则、只能在主机/数据库观察的三项：server-listen-port、recording-proxy-endpoint、postgres-exploration-schema。
 
-It operationalizes the same fingerprints the rest of the directory ships, **plus the three host/DB
-indicators the [indicator list](../indicators/artex_indicators.csv) deliberately carries without a Sigma
-rule** because they are not log- or network-observable and can only be checked on the host itself
-(`server-listen-port`, `recording-proxy-endpoint`, `postgres-exploration-schema`).
+## 检查内容
 
-## What it checks
+所有检查基于本仓库已确认的字符串/路径，每个发现注明与对应 Sigma 规则或指标行相同的局限。
 
-Every check is grounded in a string or path verified in this repository's source, and every finding
-carries the same honest caveat as the matching Sigma rule or indicator row.
+- **监听端口：** :8787 管理 UI 与 127.0.0.1:8788 记录代理，来自 [main.go](../../cmd/artex/main.go)的 --addr/--proxy 默认值。解析 ss/netstat/lsof，或读取 --ports-from 文件。
+- **记录代理产物：** 首次运行生成 `<数据目录>/traffic/_ca/mitmproxy-ca-cert.pem`，以及 `_index/index.sqlite`、`_blobs/`，来源 [traffic.go](../../traffic/traffic.go)。数据默认在可执行文件旁 data/；该 MITM CA 是 HTTP(S) 解密记录器的信任锚（T1557）。
+- **日志标记：** 查找 [补全 UA](../../enrich/enrich.go) artex-enrich/1.0、[更新 UA](../../selfupdate/github.go) artex-selfupdate、[guard 审计标记](../../guard/guard.go)，保留非 ASCII framing 以真实匹配。支持 .gz/.bz2/.xz 历史日志；标准库无编解码器的 .zst/.lz4 明确报告跳过，不当作干净，需解压或手工检查。
+- **PostgreSQL 探索结构：** 检查 [schema.sql](../../db/schema.sql)的 exploration_nodes/_edges/_anchors、assets/companies/activity 与 agent_prompts 种子。提供 DSN 时用 psql 查询，缺少 psql 则打印可手工执行的只读 SQL。
+- **进程环境注入：** 同时带 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 和指向 mitmproxy-ca-cert.pem 的 SSL_CERT_FILE/CURL_CA_BUNDLE/REQUESTS_CA_BUNDLE/GIT_SSL_CAINFO/NODE_EXTRA_CA_CERTS，源于 [worker.go](../../agent/worker.go) proxyEnv 与[断言](../../agent/proxyenv_test.go)。名字固定，仅值可改，较端口更特异，改名/改端口仍可能保留。Linux 读取 /proc，离线读 --proc-from。代理与 CA 同在为高严重度；单独 mitmproxy CA 或默认 127.0.0.1:8788 为中等；无该 CA 的公司代理不作为线索。
 
-- **Listening ports** — `:8787` (admin UI) and `127.0.0.1:8788` (recording proxy), the defaults of the
-  `--addr` / `--proxy` flags in [`cmd/artex/main.go`](../../cmd/artex/main.go). Parsed from `ss`/`netstat`/`lsof`
-  on the live host, or from a file you pass with `--ports-from`.
-- **Recording-proxy artifacts** — the MITM CA the recorder writes on first start,
-  `<data-dir>/traffic/_ca/mitmproxy-ca-cert.pem`, and the sibling `_index/index.sqlite` and `_blobs/`
-  ([`traffic/traffic.go`](../../traffic/traffic.go); the data directory default is `data/` next to the binary).
-  The CA is the trust anchor of an adversary-in-the-middle traffic recorder (ATT&CK T1557).
-- **Log markers** — the enrichment prober UA `artex-enrich/1.0` ([`enrich/enrich.go`](../../enrich/enrich.go)),
-  the self-update egress UA `artex-selfupdate` ([`selfupdate/github.go`](../../selfupdate/github.go)), and
-  the platform-guard audit marker ([`guard/guard.go`](../../guard/guard.go); kept verbatim, including the
-  non-ASCII framing, so the grep matches) in the log file(s) you point it at. Rotated logs compressed as
-  `.gz`/`.bz2`/`.xz` are decompressed and scanned too, so the host's log history is covered; a format with
-  no standard-library codec (`.zst`/`.lz4`) is reported as **skipped** rather than silently treated as
-  clean — decompress it first or `grep` it by hand.
-- **PostgreSQL exploration schema** — the dual-graph tables (`exploration_nodes`/`_edges`/`_anchors` with
-  `assets`/`companies`/`activity` and the `agent_prompts` seed) in the ARTEX store
-  ([`db/schema.sql`](../../db/schema.sql)). Run against a DSN with `psql` if available; otherwise the
-  script prints the exact read-only query for you to run by hand.
-- **Process env injection** — a running process whose environment carries a proxy var (`HTTP_PROXY` /
-  `HTTPS_PROXY` / `ALL_PROXY`) **together with** a toolchain CA-trust var (`SSL_CERT_FILE` /
-  `CURL_CA_BUNDLE` / `REQUESTS_CA_BUNDLE` / `GIT_SSL_CAINFO` / `NODE_EXTRA_CA_CERTS`) pointing at a
-  `mitmproxy-ca-cert.pem`. ARTEX injects exactly these into every worker tool it spawns
-  ([`agent/worker.go`](../../agent/worker.go) `proxyEnv`, asserted by
-  [`agent/proxyenv_test.go`](../../agent/proxyenv_test.go)). The variable **names are hard-coded** in the
-  source (only the values are configurable), so this tell survives an operator renaming the binary or
-  changing the ports — a stronger signal than the bare listen port. Read from `/proc` on the live Linux
-  host, or from a captured dump with `--proc-from`. A proxy and a mitmproxy CA together are reported high;
-  a mitmproxy CA alone, or the ARTEX default proxy endpoint (`127.0.0.1:8788`) alone, is medium; a
-  corporate proxy with no mitmproxy CA is deliberately not flagged.
+**发现是研判线索，不是定论；无发现也不代表安全。** 运营者可改二进制名、数据目录或端口。
 
-A hit is a **triage lead, not an attribution**, and the absence of every finding is **not** a clean bill
-of health: an operator can rename the binary, move the data directory, or change the ports.
+## 平台支持
 
-## Platform support
+纯 Python 3 标准库，原则上适用于支持 Python 3 的平台；项目原有 Linux CI 自测与 macOS 执行记录。两项 OS 相关检查均明确降级，不把不可用当作安全。
 
-The script is pure Python 3 (standard library only), so it runs wherever Python 3 does — verified on
-Linux (the CI self-test) and macOS. Two checks are OS-specific, and both degrade cleanly rather than
-failing:
+- **实时端口：** 依次 ss → netstat → lsof，使用第一个有输出的工具。macOS/BSD 无 ss、netstat 不接受 Linux -ltnp 时转用 `lsof -nP -iTCP -sTCP:LISTEN`；离线用 --ports-from。
+- **实时进程环境：** /proc 仅 Linux 可用；macOS/BSD 报告跳过而不是干净，可在 Linux 捕获后通过 --proc-from 导入。
 
-- **Live port scan** — tries `ss`, then `netstat`, then `lsof`, and uses the first that produces output.
-  On Linux that is `ss`/`netstat`; on macOS/BSD, where `ss` is absent and `netstat` does not take the
-  Linux `-ltnp` flags (it exits with empty output), it falls through to `lsof -nP -iTCP -sTCP:LISTEN`,
-  parsed the same way. Pass `--ports-from` to read a saved listing instead of scanning live.
-- **Live process-env scan** — reads `/proc`, so it runs only on Linux. On a host without `/proc`
-  (macOS/BSD) it is reported as **skipped**, not clean; capture a dump on the Linux host and pass it with
-  `--proc-from` (see Usage).
+其他检查依赖文件系统、日志与可选 DSN 下的 psql，无特定 OS 依赖。
 
-The remaining checks — recording-proxy artifacts, log markers, and the PostgreSQL schema — read the
-filesystem, log files, and (with a DSN) `psql`, so they are OS-independent.
-
-## Usage
+## 使用方法
 
 ```sh
-# check a host end to end
+# 检查主机各类本地线索
 detections/triage/artex_host_triage.py \
     --data-dir /opt/artex/data \
     --log /var/log/syslog --log-dir /var/log/artex \
     --pg-dsn "$ARTEX_PG_DSN"
 
-# machine-readable findings, and exit non-zero if anything fired
+# 输出机器可读格式；出现任何指标则返回非零
 detections/triage/artex_host_triage.py --data-dir /opt/artex/data --json --exit-code
 
-# offline / forensic image: read a captured process-environment dump
-#   make the dump on the host with:
+# 离线/取证镜像：读取捕获的进程环境转储
+#   在原主机生成转储：
 #   for p in /proc/[0-9]*; do echo "# $p"; tr '\0' '\n' < "$p/environ"; echo; done > proc_env_dump.txt
 detections/triage/artex_host_triage.py --proc-from proc_env_dump.txt
 
-# reproducible fixture test (no host state touched)
+# 可复现 fixture 自测，不读取或改变真实主机状态
 detections/triage/artex_host_triage.py --self-test
 ```
 
-The script is pure Python 3 standard library: no install, no network, and it writes nothing anywhere
-except the `--self-test`'s own temporary directory. It reads host state (open ports, a data directory,
-log files, and — only if you pass a DSN — the database) and prints what it found. Exit code is `0` by
-default (triage, not a gate); pass `--exit-code` to make it `1` when any indicator fired.
+无安装、无网络，仅 self-test 写入自己的临时目录。正常执行读取端口、数据目录、日志及仅在提供 DSN 时读取数据库，输出发现。默认退出 0，因用途为研判而非门禁；--exit-code 在发现任何指标时退出 1。
 
-## How this stays honest
+## 如何保持验证可靠
 
-The `--self-test` builds a synthetic host — a data directory with a planted CA, index, and blob store; a
-log containing each marker; a port listing; and a captured process-environment dump — and asserts every
-check fires on it, then asserts a clean host, a benign log, and a corporate-proxy process produce **zero**
-findings (no false positives). It is wired into the
-[`detections` CI workflow](../../.github/workflows/detections.yml) and re-run by
-[`detections/tests/run-all.sh`](../tests/run-all.sh), so a change that breaks a check, or that drifts an
-indicator away from the source string it greps for, fails the merge gate. A detection you cannot run is
-only a claim.
+--self-test 创建合成主机：CA、索引、blob 数据目录，各标记日志、端口表及环境转储。断言所有检测触发，再断言干净主机、正常日志、公司代理零发现。自测接入 [CI](../../.github/workflows/detections.yml)与 [run-all](../tests/run-all.sh)，检查失效或指标偏离源码时应阻止合并，不以不可复现主张代替验证。

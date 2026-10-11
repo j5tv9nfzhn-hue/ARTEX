@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: 🔒 安全漏洞报告 · Report a security vulnerability
     url: https://github.com/jiwoochris/artex-ko/security/policy
-    about: 安全漏洞请勿公开提交，遵循 SECURITY.md 或 SECURITY.en.md 的私密报告流程。 / Do not file security vulnerabilities as public issues; follow the private process in the security policy.
+    about: 安全漏洞请勿公开提交，遵循 SECURITY.md 的私密报告流程。
   - name: 📜 使用范围与法律告知 · Authorized use and legal notice
     url: https://github.com/j5tv9nfzhn-hue/ARTEX#使用范围与法律告知
-    about: 仅可测试自有、明确授权的目标或本地隔离环境，使用前请阅读授权范围与法律告知。 / ARTEX may be used only against targets you own or are authorized to test, or in a local isolated environment. See README.en.md.
+    about: 仅可测试自有、明确授权的目标或本地隔离环境，使用前请阅读授权范围与法律告知。 / ARTEX may be used only against targets you own or are authorized to test, or in a local isolated environment. See README.md.

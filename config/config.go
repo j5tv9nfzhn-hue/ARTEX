@@ -32,18 +32,15 @@ type Config struct {
 	Language string `json:"language"`
 }
 
-// 默认简体中文，保留英语和西班牙语切换能力。
-var SupportedLanguages = []string{"zh", "en", "es"}
+// 本仓库只提供简体中文一种输出语言。
+var SupportedLanguages = []string{"zh"}
 
 const DefaultLanguage = "zh"
 
-// NormalizeLanguage 将旧 ko 配置迁移为 zh；空值和未知值返回空字符串，
-// 让调用方继续尝试优先级较低的配置来源。
+// NormalizeLanguage 只接受简体中文；旧版本的 ko/en/es 配置以及任何未知值都返回
+// 空字符串，让调用方继续尝试优先级较低的配置来源，最终落到默认语言。
 func NormalizeLanguage(code string) string {
 	code = strings.ToLower(strings.TrimSpace(code))
-	if code == "ko" {
-		return "zh"
-	}
 	for _, c := range SupportedLanguages {
 		if c == code {
 			return c

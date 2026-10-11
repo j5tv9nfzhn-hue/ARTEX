@@ -1,6 +1,5 @@
 # 行为准则（Code of Conduct）
 
-简体中文 · [English](CODE_OF_CONDUCT.en.md)
 
 ## 我们的承诺
 

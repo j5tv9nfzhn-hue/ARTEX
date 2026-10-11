@@ -20,8 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { LOCALE_LABELS, LOCALES, type Locale } from "@/i18n/config";
-import { setActiveLocale, useActiveLocale } from "@/i18n/locale-store";
+import { LOCALE_LABELS } from "@/i18n/config";
 import { api } from "@/lib/api";
 import { type ChatSendMode, setChatSendMode, useChatSendMode, useChatSendModeOptions } from "@/lib/chat-send-mode";
 import type { Settings } from "@/lib/types";
@@ -63,8 +62,6 @@ export default function SystemSettingsPage() {
   // 纯前端偏好：不走 /api/settings，直接读写 localStorage。
   const sendMode = useChatSendMode();
   const sendModeOptions = useChatSendModeOptions();
-  // UI 展示语言保存在浏览器 cookie、localStorage；模型输出语言通过 API 单独同步。
-  const activeLocale = useActiveLocale();
 
   const apply = React.useCallback((s: Settings) => {
     setTrafficCapture(!!s.traffic_capture);
@@ -118,16 +115,8 @@ export default function SystemSettingsPage() {
       .catch(() => undefined)
       .finally(() => setSaving(false));
   };
-  // 修改显示语言时立即更新浏览器 UI，并同步服务器 output_language，
-  // 让模型报告、摘要、对话使用相同语言。服务器保存失败时保留 UI 选择，仅提示错误。
-  const changeLanguage = (v: string) => {
-    const loc = v as Locale;
-    setActiveLocale(loc);
-    api
-      .setSettings({ output_language: loc })
-      .then(apply)
-      .catch((e) => toast.error(t("toast.saveFailed", { error: (e as Error).message })));
-  };
+  // 本仓库只提供简体中文一种语言，界面语言与模型输出语言固定为中文，
+  // 因此不再提供语言切换器，也不必同步服务器 output_language。
 
   React.useEffect(() => {
     api
@@ -657,22 +646,8 @@ export default function SystemSettingsPage() {
             </CardTitle>
             <CardDescription>{t("language.desc")}</CardDescription>
           </CardHeader>
-          <CardContent className="flex items-center justify-between gap-4">
-            <Label htmlFor="ui-language" className="text-sm font-normal text-muted-foreground">
-              {t("language.label")}
-            </Label>
-            <Select value={activeLocale} onValueChange={changeLanguage}>
-              <SelectTrigger id="ui-language" className="w-72">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LOCALES.map((loc) => (
-                  <SelectItem key={loc} value={loc}>
-                    {LOCALE_LABELS[loc]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">{LOCALE_LABELS.zh}</p>
           </CardContent>
         </Card>
 

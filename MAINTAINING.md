@@ -1,6 +1,5 @@
 # 上游同步与语言漂移防护（维护指南）
 
-简体中文 · [English](MAINTAINING.en.md)
 
 本文说明如何在吸收 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX) 改动时维护简体中文默认输出。原分支在 2026-10 记录上游无法公开访问；404 可能涉及可见性或权限，不能据此断言永久删除。贡献与授权边界见 [CONTRIBUTING.md](CONTRIBUTING.md)，用户说明见 [README.md](README.md)。
 

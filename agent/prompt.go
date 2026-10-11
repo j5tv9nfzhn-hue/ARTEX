@@ -78,7 +78,7 @@ func renderSystem(agentKey, def string, vars any) string {
 // "never emit Chinese to the user" clause is replaced by one that simply affirms
 // Chinese display and still forbids mirroring the target/material language.
 func langDirective(code string) string {
-	code = normalizeOutputLang(code)
+	code = normalizeLang(code)
 	phrase := langPhrase[code]
 	bare := langBare[code]
 	if phrase == "" || bare == "" {
