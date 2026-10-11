@@ -150,7 +150,7 @@ func ensurePortFree(address, exeDir, label string) error {
 	}
 
 	// 进程被结束后端口不会立刻释放（内核还要回收套接字），
-	必须以“真的能绑上”为准，而不是 sleep 一个固定时长。
+	// 必须以“真的能绑上”为准，而不是 sleep 一个固定时长。
 	deadline := time.Now().Add(bootPortTimeout)
 	for time.Now().Before(deadline) {
 		if l, err := net.Listen("tcp", address); err == nil {
