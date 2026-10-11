@@ -34,8 +34,8 @@
 - **保留安全与法律告知。** 仅允许自有或书面授权目标、隔离实验环境，说明韩国信息通信网络法、个人信息保护法及适用地区法律，不因语言重构削弱授权限制。
 - **预览图片统一为中文演示截图。** 保留原作者署名和图片来源说明，不将历史演示截图伪称为本次生产验证。
 - **完善维护与贡献指南。** [维护手册](MAINTAINING.md)涵盖上游同步、语言漂移、指标契约及发布前置条件；[贡献指南](CONTRIBUTING.md)说明验证范围和检测规则契约。
-- **每次 push、PR 执行合并门禁。** [Go/数据库/语言](.github/workflows/ci.yml)、[前端](.github/workflows/web.yml)、[内部链接与锚点](.github/workflows/docs.yml)分别验证。数据库测试按包隔离 PostgreSQL，内部链接检查只使用标准库、不依赖网络。
-- **外部链接周期检查不阻止合并。** [工作流](.github/workflows/external-links.yml)每周或手动执行浏览器 User-Agent、GET、重定向检查；限流/机器人限制和允许列表中的上游既有失效链接不计为新的失败。
+- **每次 push、PR 执行合并门禁。** [Go/数据库/前端/检测规则/语言检查](.github/workflows/ci.yml)合并在单工作流中执行，检测规则另由[独立工作流](.github/workflows/detections.yml)按路径触发。数据库测试按包隔离 PostgreSQL，内部链接检查只使用标准库、不依赖网络。
+- **外部链接周期检查不阻止合并。** 作为 [ci.yml 的定时任务](.github/workflows/ci.yml)每周或手动执行浏览器 User-Agent、GET、重定向检查；限流/机器人限制和允许列表中的上游既有失效链接不计为新的失败。
 - **保留贡献与治理设施。** [Issue 模板](.github/ISSUE_TEMPLATE/)、[PR 模板](.github/PULL_REQUEST_TEMPLATE.md)、[安全政策](SECURITY.md)、[行为准则](CODE_OF_CONDUCT.md)改为简体中文，英文版本继续提供。
 - **保留英文文档层。** README、变更历史、安全政策、行为准则、贡献/维护指南、防御指南、流量证据设计与检测规则均有英文入口；历史 `*-ko.md` 路径继续有效，但内容现为简体中文。
 

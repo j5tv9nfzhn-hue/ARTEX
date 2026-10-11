@@ -152,7 +152,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: web-out-ci
-          path: out/
+          path: web/out/
           retention-days: 14
           if-no-files-found: error
       - name: biome check（lint、format、a11y 错误为零）

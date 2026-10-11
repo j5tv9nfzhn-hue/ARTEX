@@ -187,7 +187,7 @@ python3 -I scripts/check-external-links.py --list   # 离线预览目标
 python3 -I scripts/check-external-links.py --strict # 需要相应网络访问权限
 ```
 
-外部检查容易波动，**不作为 PR 合并门禁**。[工作流](.github/workflows/external-links.yml)每周一或手动运行；strict 仅对允许列表之外的 DOWN 失败。允许列表需保留无法修复的理由，不能掩盖本仓库可修复的损坏链接。
+外部检查容易波动，**不作为 PR 合并门禁**。[ci.yml 的定时任务](.github/workflows/ci.yml)每周一或手动运行；strict 仅对允许列表之外的 DOWN 失败。允许列表需保留无法修复的理由，不能掩盖本仓库可修复的损坏链接。
 
 ## 9. Release 发布流程
 
