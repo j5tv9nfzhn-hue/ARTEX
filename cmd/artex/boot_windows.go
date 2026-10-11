@@ -42,12 +42,15 @@ const (
 // 直接写死数值，避免依赖 windows 包是否导出该常量。
 const errServiceAlreadyRunning = syscall.Errno(1060)
 
-// windowsServiceCandidates 是可能承载 PostgreSQL 的 Windows 服务名。
-// 第一个是本项目此前注册的实例，其余覆盖常见安装名。
+// windowsServiceCandidates 是可能承载 PostgreSQL 的 Windows 服务名，
+// 仅用于回退：内置 pg/ 启动失败时才会走这条路径。
+//
+// 这里只列"用户系统里正规安装的" PostgreSQL。绝不要把本项目自己的内置实例
+// 也注册成服务再列进来——两份数据目录一旦分叉，回退就会静默连上错误的那个库，
+// 这种故障比直接启动失败难查得多。
 var windowsServiceCandidates = []string{
-	"postgresql-ar",
-	"postgresql-x64-18",
-	"postgresql",
+	"postgresql-x64-18", // PostgreSQL 官方安装版默认名
+	"postgresql",        // 常见自定义名
 	"pgsql",
 }
 
