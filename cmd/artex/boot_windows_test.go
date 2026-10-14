@@ -28,9 +28,14 @@ func TestDecodePort(t *testing.T) {
 		{80}, {443}, {8787}, {8788}, {5432}, {65535}, {1},
 	}
 	for _, c := range cases {
-		// 构造 htons 结果：低 16 位按字节交换后放进 DWORD
+		// 构造 htons 结果：低 16 位按字节交换后放进 DWORD。
+		//
+		// 这里必须交换字节。此前写的是 `(low>>8)<<8 | (low&0xff)`，化简后
+		// 等于 low 本身——即原样传入主机序值，于是用例断言的是恒等函数，
+		// 而 decodePort 按 MSDN 的网络字节序正确地交换了一次，两边对不上。
+		// 用例曾经报 decodePort(0x2253)=21282 而非 8787，根因在这里。
 		low := uint16(c.port)
-		htons := uint32(low>>8)<<8 | uint32(low&0xff)
+		htons := uint32(low&0xff)<<8 | uint32(low>>8)
 		if got := decodePort(htons); got != c.port {
 			t.Errorf("decodePort(%#x) = %d，预期 %d", htons, got, c.port)
 		}

@@ -121,8 +121,11 @@ func (d *DB) UpdateConversationProfile(id int64, llmProfileID *int64) error {
 	}
 	defer tx.Rollback()
 
+	// 行锁子句按引擎取：PG 保留 FOR UPDATE，SQLite 返回空串（见 dialect_locking.go）。
+	// 锁只用来让「确认会话存在 → 改绑 profile」不可被并发删除插入；SQLite 的写事务
+	// 互斥已经覆盖了这一点。
 	var lockedID int64
-	if err := tx.QueryRow(`SELECT id FROM conversations WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(`SELECT id FROM conversations WHERE id=$1`+forUpdateClause(false), id).Scan(&lockedID); err != nil {
 		if err == sql.ErrNoRows {
 			// Preserve the previous UPDATE semantics: an unknown id is a no-op.
 			return tx.Commit()

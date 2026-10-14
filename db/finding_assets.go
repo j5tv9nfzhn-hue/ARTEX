@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Autumn-27/artex/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -141,7 +143,7 @@ func (d *DB) buildFindingAssetTree(f FindingFilter, maxNodes int) (*FindingAsset
 	where, args := f.where()
 
 	rows, err := d.Query(`SELECT COALESCE(f.severity,''), f.created_at,
-       COALESCE(f.asset_ids::text,'[]')
+       `+findingAssetIDsExpr()+`
 FROM findings f LEFT JOIN tasks t ON f.task_id = t.id`+where, args...)
 	if err != nil {
 		return nil, err
@@ -244,6 +246,20 @@ func countFinding(n *FindingAssetNode, h findingAssetHit) {
 	}
 }
 
+// findingAssetIDsExpr 读出 findings.asset_ids（资产 id 数组列）。
+//
+// PostgreSQL 侧 asset_ids 是 jsonb，::text 只是取它的文本形态；SQLite 侧同一列
+// 已经是 TEXT 存 JSON 数组（db/schema_sqlite.sql: `asset_ids TEXT NOT NULL
+// DEFAULT '[]'`），直接读即可，再用 artex_json_array 归一化一遍——
+// schema 默认值 '{}' 不是合法 JSON，归一化后交给 json.Unmarshal 的一定是数组。
+// 两边的结果都是一段能 json.Unmarshal 进 []int64 的 JSON 数组文本。
+func findingAssetIDsExpr() string {
+	if config.Engine() == config.EnginePostgres {
+		return `COALESCE(f.asset_ids::text,'[]')`
+	}
+	return `COALESCE(artex_json_array(f.asset_ids),'[]')`
+}
+
 // loadFindingAssetRows 读取命中的资产行,并逐轮补齐祖先(service 的宿主域名/IP、
 // 子域名的根域名)。祖先自身可能没有任何发现,但树需要它们才能成形。
 func (d *DB) loadFindingAssetRows(ids map[int64]bool) (map[int64]*assetRow, error) {
@@ -255,7 +271,11 @@ func (d *DB) loadFindingAssetRows(ids map[int64]bool) (map[int64]*assetRow, erro
 	for id := range ids {
 		idList = append(idList, id)
 	}
-	rows, err := d.Query(`SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.id = ANY($1::bigint[])`, idList)
+	// `a.id = ANY($1::bigint[])` 退化成 IN (...) 占位符：SQLite 既不能把 []int64
+	// 当一个参数绑定，ANY() 也不是它的函数。语义都是"落在这一组 id 里"。
+	args := []any{}
+	placeholders := appendInPlaceholders(&args, idList)
+	rows, err := d.Query(`SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -386,13 +406,24 @@ func isIPLiteral(host string) bool {
 }
 
 // loadAssetsByHost 按宿主标识批量补齐资产行,返回本轮新增的行数。
+//
+// 四条查询原本都是 `col = ANY($1::text[])` + 一个 []string 参数。SQLite 既不能把
+// 切片当一个参数绑定,ANY() 也不是它的函数,所以统一退化成 IN (...) 占位符,
+// 每个值仍然单独走参数绑定,没有把宿主名拼进 SQL 的机会。语义都是"落在这一组
+// 宿主标识里",两边一致。
+//
+// service 那条原句是 `(a.domain = ANY($1::text[]) OR a.ip = ANY($1::text[]))`:
+// 同一份占位符列表在两个谓词里复用(编号参数本来就是设计成可复用的),等价于
+// "domain 命中这一组 或 ip 命中这一组"。
 func (d *DB) loadAssetsByHost(want missingHosts, byID map[int64]*assetRow) (int, error) {
 	added := 0
-	load := func(q string, arg []string) error {
+	load := func(query func(placeholders string) string, arg []string) error {
 		if len(arg) == 0 {
 			return nil
 		}
-		rows, err := d.Query(q, arg)
+		args := []any{}
+		placeholders := appendInPlaceholdersStr(&args, arg)
+		rows, err := d.Query(query(placeholders), args...)
 		if err != nil {
 			return err
 		}
@@ -409,20 +440,28 @@ func (d *DB) loadAssetsByHost(want missingHosts, byID map[int64]*assetRow) (int,
 		}
 		return nil
 	}
-	if err := load(`SELECT `+findingAssetSelectCols+` FROM assets a
-WHERE a.type='service' AND (a.domain = ANY($1::text[]) OR a.ip = ANY($1::text[]))`, want.services); err != nil {
+	if err := load(func(ph string) string {
+		return `SELECT ` + findingAssetSelectCols + ` FROM assets a
+WHERE a.type='service' AND (a.domain IN (` + ph + `) OR a.ip IN (` + ph + `))`
+	}, want.services); err != nil {
 		return 0, err
 	}
-	if err := load(`SELECT `+findingAssetSelectCols+` FROM assets a
-WHERE a.type='subdomain' AND a.domain = ANY($1::text[])`, want.domains); err != nil {
+	if err := load(func(ph string) string {
+		return `SELECT ` + findingAssetSelectCols + ` FROM assets a
+WHERE a.type='subdomain' AND a.domain IN (` + ph + `)`
+	}, want.domains); err != nil {
 		return 0, err
 	}
-	if err := load(`SELECT `+findingAssetSelectCols+` FROM assets a
-WHERE a.type='ip' AND a.ip = ANY($1::text[])`, want.ips); err != nil {
+	if err := load(func(ph string) string {
+		return `SELECT ` + findingAssetSelectCols + ` FROM assets a
+WHERE a.type='ip' AND a.ip IN (` + ph + `)`
+	}, want.ips); err != nil {
 		return 0, err
 	}
-	if err := load(`SELECT `+findingAssetSelectCols+` FROM assets a
-WHERE a.type='root_domain' AND a.domain = ANY($1::text[])`, want.roots); err != nil {
+	if err := load(func(ph string) string {
+		return `SELECT ` + findingAssetSelectCols + ` FROM assets a
+WHERE a.type='root_domain' AND a.domain IN (` + ph + `)`
+	}, want.roots); err != nil {
 		return 0, err
 	}
 	return added, nil
@@ -533,7 +572,10 @@ func (d *DB) attachCompanyNodes(nodes map[string]*FindingAssetNode, parentOf map
 	for id := range want {
 		ids = append(ids, id)
 	}
-	rows, err := d.Query(`SELECT id, COALESCE(name,'') FROM companies WHERE id = ANY($1::bigint[])`, ids)
+	// 同 loadFindingAssetRows：ANY($1::bigint[]) 退化成 IN (...) 占位符。
+	args := []any{}
+	placeholders := appendInPlaceholders(&args, ids)
+	rows, err := d.Query(`SELECT id, COALESCE(name,'') FROM companies WHERE id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return err
 	}

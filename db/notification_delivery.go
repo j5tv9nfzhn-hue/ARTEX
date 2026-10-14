@@ -76,15 +76,17 @@ func scanNotificationDelivery(sc interface{ Scan(...any) error }) (*Notification
 		lastErr   sql.NullString
 		batchID   sql.NullInt64
 		sentAt    sql.NullTime
-		snapshot  []byte
+		snapshot  jsonValue
 		eventKind string
 		channel   NotificationChannel
 		chEnabled bool
+		config    jsonValue
+		filter    jsonValue
 	)
 	if err := sc.Scan(&dl.ID, &dl.EventID, &dl.ChannelID, &dl.State, &dl.Attempts, &dl.NextAttemptAt,
 		&lastErr, &batchID, &dl.CreatedAt, &sentAt,
 		&snapshot, &eventKind, &dl.FindingID,
-		&channel.ID, &channel.Name, &channel.Kind, &chEnabled, &channel.Config, &channel.Mode, &channel.Filter, &channel.RatePerMin); err != nil {
+		&channel.ID, &channel.Name, &channel.Kind, &chEnabled, &config, &channel.Mode, &filter, &channel.RatePerMin); err != nil {
 		return nil, err
 	}
 	dl.LastError = lastErr.String
@@ -94,17 +96,22 @@ func scanNotificationDelivery(sc interface{ Scan(...any) error }) (*Notification
 	if sentAt.Valid {
 		dl.SentAt = &sentAt.Time
 	}
-	dl.Snapshot = json.RawMessage(snapshot)
+	dl.Snapshot = snapshot.Raw()
 	dl.EventKind = eventKind
 	dl.ChannelName = channel.Name
 	dl.ChannelKind = channel.Kind
 	channel.Enabled = &chEnabled
+	channel.Config, channel.Filter = config.Raw(), filter.Raw()
 	dl.Channel = &channel
 	return &dl, nil
 }
 
-// claimQuery 描述一次领取：先按 sel 选出候选并加锁，再把它们置为 sending 并
-// 延长租约。sel 里的 lease 位置由调用方用 $n 占位并自行传参。
+// claimQuery 描述一次领取：由调用方给出**候选行查询**（自带 WHERE/ORDER BY，且只投影
+// dd.id ——它会被嵌进 SQLite 的 UPDATE … WHERE id IN (…) 里，IN 子查询只能返回一列），
+// 行锁子句与 LIMIT 由 claimDeliveries 按引擎统一拼装——PostgreSQL 拼
+// `FOR UPDATE OF dd SKIP LOCKED`，SQLite 拼空串并把整条查询塞进 UPDATE 的子查询里，
+// 用「更新即领取」替代行锁（见 dialect_locking.go 与 claimDeliveryIDs 的注释）。
+// args 里最后一个参数是 limit。
 type claimQuery struct {
 	sql  string
 	args []any
@@ -119,7 +126,9 @@ type claimQuery struct {
 //
 // 条件含「租约已过期的 sending」——那是崩溃自愈的落点。lease 必须显著大于单次
 // 投递的最坏耗时（渠道 HTTP 客户端超时 15 秒），否则同一行会被两个 dispatcher
-// 同时投递。同时挡掉已停用渠道：停用操作已把存量投递标记为 skipped，
+// 同时投递。注意租约本身才是防重复投递的闸门（next_attempt_at 被推到未来即
+// 不再满足领取条件），行锁只是把「挑行」与「改占用态」之间那段窗口也关掉。
+// 同时挡掉已停用渠道：停用操作已把存量投递标记为 skipped，
 // 这里再拦一道，避免停用与领取并发时的漏网。
 func (d *DB) ClaimRealtimeDeliveries(ctx context.Context, channelID int64, limit int, lease time.Duration) ([]*NotificationDelivery, error) {
 	if limit <= 0 {
@@ -128,11 +137,9 @@ func (d *DB) ClaimRealtimeDeliveries(ctx context.Context, channelID int64, limit
 	return d.claimDeliveries(ctx, lease, claimQuery{
 		sql: `SELECT dd.id FROM notification_deliveries dd
 JOIN notification_channels c ON c.id = dd.channel_id
-WHERE dd.channel_id = $1 AND dd.state IN ($2,$3) AND dd.next_attempt_at <= now()
+WHERE dd.channel_id = $1 AND dd.state IN ($2,$3) AND ` + sqlTimestampNotAfterNow("dd.next_attempt_at") + `
   AND c.enabled AND c.mode = $4
-ORDER BY dd.next_attempt_at, dd.id
-FOR UPDATE OF dd SKIP LOCKED
-LIMIT $5`,
+ORDER BY dd.next_attempt_at, dd.id`,
 		args: []any{channelID, NotifyStatePending, NotifyStateSending, NotifyModeRealtime, limit},
 	}, nil)
 }
@@ -153,9 +160,53 @@ func (d *DB) DigestBatchDue(ctx context.Context, channelID int64, minAge time.Du
   JOIN notification_channels c ON c.id = d.channel_id
   WHERE d.channel_id = $1 AND d.state IN ($2,$3) AND c.enabled
   GROUP BY d.channel_id
-  HAVING min(d.created_at) <= now() - make_interval(secs => $4)
+  HAVING `+sqlNotAfterExpr("min(d.created_at)", sqlNowMinusSeconds("$4"))+`
 )`, channelID, NotifyStatePending, NotifyStateSending, int64(minAge.Seconds())).Scan(&due)
 	return due, err
+}
+
+// sqlNowMinusSeconds 是 sqlNowPlusSeconds 的「减」版本，返回「当前时间 - n 秒」。
+// n 由占位符 arg 给出。
+//
+//	PG:      now() - make_interval(secs => $n)
+//	SQLite:  strftime('%Y-%m-%d %H:%M:%f+00:00','now','-'||$n||' seconds')
+//
+// 为什么单独写一个而不是复用 sqlNowPlusSeconds：后者的 PG 分支是 `+`，套到
+// 「减」上会写出 `now() + make_interval(secs => -$n)`——PG 语义上碰巧也成立，
+// 但生成的 SQL 与原来那句 `now() - make_interval(secs => $4)` 不是同一句话，
+// 而这条语句的 PG 分支必须逐字保留。
+//
+// make_interval 的 `secs => $n` 命名参数是 PG 专有写法，SQLite 解析到 `=>`
+// 会断在 `>` 上（实测 `near ">": syntax error`），只能走字符串拼接；格式串
+// 与 dialect_mixed.go 的 sqlNowPlusSeconds 完全一致，理由见那里的注释
+// （与列默认值同一形状，字典序即时间序）。
+func sqlNowMinusSeconds(arg string) string {
+	if isSQLiteEngine() {
+		return "strftime('%Y-%m-%d %H:%M:%f+00:00','now','-'||" + arg + "||' seconds')"
+	}
+	return "now() - make_interval(secs => " + arg + ")"
+}
+
+// sqlNotAfterExpr 返回「时间戳表达式 <= 某个时间表达式」的比较。
+//
+//	PG:      col <= tsExpr
+//	SQLite:  CAST(col AS TEXT) <= tsExpr
+//
+// 它是 dialect_locking.go 里 sqlTimestampNotAfterNow 的同一条论证的泛化版：
+// 那个助手把右操作数固定成 now()，这里右操作数由调用方给（本文件里是
+// sqlNowMinusSeconds 的结果，也是 TEXT）。PG 侧两边都是 timestamptz，按时间
+// 比较；SQLite 侧时间戳列声明为 TIMESTAMP（NUMERIC 亲和性）而 strftime 返回
+// TEXT，CAST 给左操作数 TEXT 亲和性后比较退回字典序——对本项目这些列等价，
+// 因为写入路径只有列默认值与 now()/strftime 两种，产出同一形状
+// 「2026-10-14 19:16:05.123+00:00」（定宽、UTC、固定 +00:00）。
+//
+// 不依赖「SQLite 给非法文本加数值亲和度时会原样退回文本比较」这条内部行为：
+// 显式 CAST 才是可读且可依赖的写法。
+func sqlNotAfterExpr(col, tsExpr string) string {
+	if isSQLiteEngine() {
+		return "CAST(" + col + " AS TEXT) <= " + tsExpr
+	}
+	return col + " <= " + tsExpr
 }
 
 // ClaimDigestBatch 领取某渠道当前到期的待发投递，作为一个汇总批次，
@@ -186,10 +237,8 @@ func (d *DB) ClaimDigestBatch(ctx context.Context, channelID int64, limit int, l
 	out, err := d.claimDeliveries(ctx, lease, claimQuery{
 		sql: `SELECT dd.id FROM notification_deliveries dd
 JOIN notification_channels c ON c.id = dd.channel_id
-WHERE dd.channel_id = $1 AND dd.state IN ($2,$3) AND dd.next_attempt_at <= now() AND c.enabled
-ORDER BY dd.id
-FOR UPDATE OF dd SKIP LOCKED
-LIMIT $4`,
+WHERE dd.channel_id = $1 AND dd.state IN ($2,$3) AND ` + sqlTimestampNotAfterNow("dd.next_attempt_at") + ` AND c.enabled
+ORDER BY dd.id`,
 		args: []any{channelID, NotifyStatePending, NotifyStateSending, limit},
 	}, func(tx *sql.Tx, ids []int64) error {
 		batchID := ids[0]
@@ -215,21 +264,12 @@ func (d *DB) claimDeliveries(ctx context.Context, lease time.Duration, cq claimQ
 	}
 	defer tx.Rollback() //nolint:errcheck // 提交成功后是 no-op
 
-	ids, err := selectForClaim(ctx, tx, cq.sql, cq.args...)
+	ids, err := claimDeliveryIDs(ctx, tx, lease, cq)
 	if err != nil {
 		return nil, err
 	}
 	if len(ids) == 0 {
 		return nil, tx.Commit()
-	}
-	// 置 sending 并把 next_attempt_at 推到未来：这个未来时刻即租约到期时间，
-	// 「租约未到期」与「未到重试时间」因此共用同一个条件表达，不需要新增列。
-	ph, idArgs := placeholders(3, ids)
-	if _, err := tx.ExecContext(ctx, `UPDATE notification_deliveries
-SET state=$1, attempts=attempts+1, next_attempt_at=now()+make_interval(secs => $2)
-WHERE id IN (`+ph+`)`,
-		append([]any{NotifyStateSending, lease.Seconds()}, idArgs...)...); err != nil {
-		return nil, err
 	}
 	if postClaim != nil {
 		if err := postClaim(tx, ids); err != nil {
@@ -241,6 +281,51 @@ WHERE id IN (`+ph+`)`,
 		return nil, err
 	}
 	return out, tx.Commit()
+}
+
+// claimDeliveryIDs 完成一次领取的前半段——挑出候选行、把它们置为 sending 并延长租约，
+// 返回领到的 id 列表（顺序无意义）。两个引擎走两条写法，等价性论证见 dialect_locking.go：
+//
+//   - PG：SELECT … FOR UPDATE OF dd SKIP LOCKED LIMIT n 挑行，再单独一条 UPDATE 写占用态，
+//     行锁持有到本事务提交。保持原样。
+//   - SQLite：合成一条 UPDATE … WHERE id IN (SELECT … LIMIT n) RETURNING id。领取与占用
+//     标记原子完成，且它是本事务的第一条语句，一开口就拿到库级写锁：并发的第二个
+//     dispatcher 只会在 busy_timeout 内等第一个提交，提交之后它的子查询重新求值时
+//     看到的 next_attempt_at 已被推到未来，于是自然地领到下一批，不会两人领到同一行。
+//     「租约到期」这条领取条件因此既防重复投递，也替代了 SKIP LOCKED 的作用。
+func claimDeliveryIDs(ctx context.Context, tx *sql.Tx, lease time.Duration, cq claimQuery) ([]int64, error) {
+	if isSQLiteEngine() {
+		// SET 子句的占位符排在候选查询之后（cq.args 的最后一个是 limit），
+		// cq.args 里的 $1..$n 一个都不用改。
+		first := len(cq.args) + 1
+		setSQL := fmt.Sprintf("state=$%d, attempts=attempts+1, next_attempt_at=%s",
+			first, sqlNowPlusSeconds(fmt.Sprintf("$%d", first+1)))
+		query, args := sqliteClaimUpdate("notification_deliveries", cq.sql, "id",
+			cq.args, setSQL, NotifyStateSending, lease.Seconds())
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		return claimIDs(rows)
+	}
+	query := cq.sql + forUpdateClause(true, "dd") + fmt.Sprintf("\nLIMIT $%d", len(cq.args))
+	ids, err := selectForClaim(ctx, tx, query, cq.args...)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// 置 sending 并把 next_attempt_at 推到未来：这个未来时刻即租约到期时间，
+	// 「租约未到期」与「未到重试时间」因此共用同一个条件表达，不需要新增列。
+	ph, idArgs := placeholders(3, ids)
+	if _, err := tx.ExecContext(ctx, `UPDATE notification_deliveries
+SET state=$1, attempts=attempts+1, next_attempt_at=now()+make_interval(secs => $2)
+WHERE id IN (`+ph+`)`,
+		append([]any{NotifyStateSending, lease.Seconds()}, idArgs...)...); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func selectForClaim(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]int64, error) {
@@ -299,7 +384,7 @@ func (d *DB) RescheduleDeliveries(ctx context.Context, ids []int64, delay time.D
 		return nil
 	}
 	_, err := d.ExecContext(ctx, `UPDATE notification_deliveries
-SET state=$1, next_attempt_at=now()+make_interval(secs => $2), last_error=$3
+SET state=$1, next_attempt_at=`+sqlNowPlusSeconds("$2")+`, last_error=$3
 WHERE id IN (`+ph+`)`,
 		append([]any{NotifyStatePending, delay.Seconds(), truncateNotifyError(errMsg)}, args...)...)
 	return err

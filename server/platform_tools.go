@@ -78,6 +78,40 @@ func (s *Server) toolDeleteAssetsByHost() actool.CoreTool {
 
 // ---- skills ----
 
+// skillTemplate is the skeleton create_skill falls back to when the agent
+// supplied no instructions.
+//
+// The previous fallback was "## <name>\n\n1. \n2. \n3. \n", which produced a
+// file that parsed as a skill but told the reader nothing: no trigger
+// condition, no failure modes, no way to tell whether the run succeeded. An
+// agent that creates a skill and gets that back has added dead weight to the
+// library, and a later run has no reason to load it.
+//
+// The four sections match the ones the hand-written bundled skills use, so a
+// generated skill and a curated one are shaped the same way:
+//
+//	When to Use   -- the only part a loader can match against, so it has to
+//	                 say when NOT to reach for the skill either
+//	Procedure     -- ordered steps, referencing bundled scripts by path
+//	Pitfalls      -- failure modes seen in practice
+//	Verification  -- the observable condition that proves it worked
+func skillTemplate(name, description string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n%s\n\n", name, description)
+	b.WriteString("## When to Use\n\n")
+	b.WriteString("- 触发条件：<什么情况下应该加载本技能>\n")
+	b.WriteString("- 不适用：<什么情况下应该改用别的技能或直接手工处理>\n\n")
+	b.WriteString("## Procedure\n\n")
+	b.WriteString("1. <第一个步骤，写成可直接执行的动作>\n")
+	b.WriteString("2. <第二个步骤>\n")
+	b.WriteString("3. <第三个步骤>\n\n")
+	b.WriteString("## Pitfalls\n\n")
+	b.WriteString("- <已知失败模式与应对>\n\n")
+	b.WriteString("## Verification\n\n")
+	b.WriteString("<完成后应当能观察到的、用于判定成功与否的现象>\n")
+	return b.String()
+}
+
 func (s *Server) toolCreateSkill() actool.CoreTool {
 	return wrTool("create_skill",
 		"创建一个新 skill(写 SKILL.md，agentskills.io 规范)。name 小写字母/数字/连字符。",
@@ -106,11 +140,15 @@ func (s *Server) toolCreateSkill() actool.CoreTool {
 			b.WriteString("---\n")
 			fmt.Fprintf(&b, "name: %s\n", a.Name)
 			fmt.Fprintf(&b, "description: %s\n", a.Description)
-			b.WriteString("---\n")
-			if strings.TrimSpace(a.Instructions) != "" {
-				b.WriteString(a.Instructions)
+			b.WriteString("---\n\n")
+			if body := strings.TrimSpace(a.Instructions); body != "" {
+				// Caller-written instructions replace the scaffolding rather
+				// than being appended to it: an agent that produced real steps
+				// should not also be handed four empty sections to fill in.
+				b.WriteString(body)
+				b.WriteString("\n")
 			} else {
-				fmt.Fprintf(&b, "## %s\n\n1. \n2. \n3. \n", a.Name)
+				b.WriteString(skillTemplate(a.Name, a.Description))
 			}
 			if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(b.String()), 0o644); err != nil {
 				_ = os.RemoveAll(path)

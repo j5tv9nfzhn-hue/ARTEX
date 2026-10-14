@@ -34,7 +34,14 @@ func (d *DB) GetInterceptExecution(id int64) (*InterceptExecution, error) {
 	var scope any
 	if approval.ConversationID != nil {
 		scope = *approval.ConversationID
-		query = `SELECT id, NULL::bigint, COALESCE(worker,''), kind, COALESCE(tool,''), tool_use_id, is_error, COALESCE(summary,''), created_at, NULL::integer FROM conversation_activities WHERE conversation_id=$1`
+		// 这条查询里唯一的方言点是两个表达式位的 ::type（NULL::bigint / NULL::integer，
+		// SQLite 报 unrecognized token ":"）。PG 语句逐字保留，SQLite 版本见
+		// dialect_intercept.go 的逐条等价性论证。
+		if isSQLiteEngine() {
+			query = interceptConversationActivitiesSQLite
+		} else {
+			query = `SELECT id, NULL::bigint, COALESCE(worker,''), kind, COALESCE(tool,''), tool_use_id, is_error, COALESCE(summary,''), created_at, NULL::integer FROM conversation_activities WHERE conversation_id=$1`
+		}
 	} else if approval.TaskID != nil {
 		taskID, parseErr := strconv.ParseInt(*approval.TaskID, 10, 64)
 		if parseErr != nil || taskID <= 0 {

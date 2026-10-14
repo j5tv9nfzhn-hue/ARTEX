@@ -404,6 +404,9 @@ FROM task_llm_profiles WHERE task_id=$1 ORDER BY position`, taskID)
 // agent-binding/global fallback behavior.
 // 终态(done/failed/timeout)任务同样允许改链:任务结束后主 Agent 对话仍会走这条链,
 // 链上模型不可用时必须能换,否则已完成任务就再也没法交互了。
+//
+// 行锁经 sqlForUpdate() 按引擎取片段：PG 保留 FOR UPDATE，SQLite 返回空串
+// （没有行锁；整个写事务期间库文件被独占，见 dialect_mixed.go 的说明）。
 func (d *DB) ReplaceTaskLLMProfiles(taskID int64, profileIDs []int64, activeProfileID int64) error {
 	tx, err := d.Begin()
 	if err != nil {
@@ -414,7 +417,7 @@ func (d *DB) ReplaceTaskLLMProfiles(taskID int64, profileIDs []int64, activeProf
 	// DeleteProfile. Inserts below may take KEY SHARE locks on llm_profiles for
 	// their foreign keys, so the task row must be locked before any of them.
 	var lockedID int64
-	if err := tx.QueryRow(`SELECT id FROM tasks WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, taskID).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(`SELECT id FROM tasks WHERE id=$1 AND deleted_at IS NULL`+sqlForUpdate(), taskID).Scan(&lockedID); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("task %d not found", taskID)
 		}
@@ -476,7 +479,7 @@ func (d *DB) markTaskLLMProfileQuotaExhausted(taskID, profileID, revision int64,
 		active          sql.NullInt64
 		currentRevision int64
 	)
-	if err := tx.QueryRow(`SELECT active_llm_profile_id, llm_chain_revision FROM tasks WHERE id=$1 FOR UPDATE`, taskID).Scan(&active, &currentRevision); err != nil {
+	if err := tx.QueryRow(`SELECT active_llm_profile_id, llm_chain_revision FROM tasks WHERE id=$1`+sqlForUpdate(), taskID).Scan(&active, &currentRevision); err != nil {
 		return out, err
 	}
 	out.PreviousProfileID = profileID

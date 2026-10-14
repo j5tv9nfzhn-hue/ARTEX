@@ -237,13 +237,21 @@ func (d *DB) PatchTaskTemplate(id int64, patch TaskTemplatePatch) (*TaskTemplate
 	if err != nil {
 		return nil, err
 	}
+	// 占位符上的 ::type 全部去掉：pgx 会把 `$3::text` 整体当成一个名叫
+	// "3::text" 的参数，SQLite 的 $N 是纯位置参数，两边都会因此报错。
+	// 去掉后语义不变——每个占位符的类型本来就由它的落点唯一决定：
+	//   $3/$4/$6/$8 → CASE ... ELSE name/nkey/description/goal（都是 TEXT）
+	//   $10        → CASE ... ELSE category_id（BIGINT）
+	//   $12        → CASE ... ELSE intercept_rules（JSONB）
+	// PostgreSQL 会在 prepare 阶段把这几个参数解析成同样的 OID，
+	// pgx 侧的编码路径（Go string → text/cidr、[]byte → jsonb）也完全不变。
 	t, err := scanTaskTemplate(d.QueryRow(`UPDATE task_templates
-SET name=CASE WHEN $2 THEN $3::text ELSE name END,
-    nkey=CASE WHEN $2 THEN $4::text ELSE nkey END,
-    description=CASE WHEN $5 THEN $6::text ELSE description END,
-    goal=CASE WHEN $7 THEN $8::text ELSE goal END,
-    category_id=CASE WHEN $9 THEN $10::bigint ELSE category_id END,
-    intercept_rules=CASE WHEN $11 THEN $12::jsonb ELSE intercept_rules END
+SET name=CASE WHEN $2 THEN $3 ELSE name END,
+    nkey=CASE WHEN $2 THEN $4 ELSE nkey END,
+    description=CASE WHEN $5 THEN $6 ELSE description END,
+    goal=CASE WHEN $7 THEN $8 ELSE goal END,
+    category_id=CASE WHEN $9 THEN $10 ELSE category_id END,
+    intercept_rules=CASE WHEN $11 THEN $12 ELSE intercept_rules END
 WHERE id=$1
 RETURNING `+taskTemplateCols,
 		id,

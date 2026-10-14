@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -260,20 +261,7 @@ func insertTaskCompanies(tx *sql.Tx, taskID int64, companyIDs []int64) error {
 	if err := lockCompanyScopeMutation(tx); err != nil {
 		return err
 	}
-	var inserted int
-	err := tx.QueryRow(`
-WITH requested(company_id, position) AS (
-    SELECT company_id, position
-    FROM unnest($2::bigint[]) WITH ORDINALITY AS requested(company_id, position)
-), inserted AS (
-    INSERT INTO task_scope(task_id, kind, company_id, source, reason)
-    SELECT $1, 'company', companies.id, 'manual', '创建任务时关联的公司'
-    FROM requested
-    JOIN companies ON companies.id=requested.company_id
-    ORDER BY requested.position
-    RETURNING company_id
-)
-SELECT count(*) FROM inserted`, taskID, companyIDs).Scan(&inserted)
+	inserted, err := insertTaskCompanyScopeRows(tx, taskID, companyIDs)
 	if err != nil {
 		return err
 	}
@@ -307,6 +295,70 @@ SET source=EXCLUDED.source,
 		return err
 	}
 	return nil
+}
+
+// insertTaskCompanyScopeRows writes one task_scope row per company and reports
+// how many rows actually landed, which the caller compares against the request
+// size to detect a missing company.
+//
+// PG keeps the original unnest(... WITH ORDINALITY) + data-modifying CTE shape.
+// SQLite has neither: there is no unnest(), and a CTE may not contain an INSERT
+// (it fails with `near "INSERT"`), so the SQLite branch keeps only the ordering
+// CTE and lets the INSERT be the statement's own top-level command with
+// RETURNING supplying the row count. The ORDER BY requested.position is what
+// makes task_scope.id follow the caller's company order, which TaskCompanyIDs
+// and the creation-result assertions both rely on.
+func insertTaskCompanyScopeRows(tx *sql.Tx, taskID int64, companyIDs []int64) (int, error) {
+	if isSQLiteEngine() {
+		rows := make([]string, 0, len(companyIDs))
+		args := make([]any, 0, 2*len(companyIDs)+1)
+		for position, id := range companyIDs {
+			rows = append(rows, "(?,?)")
+			args = append(args, id, position)
+		}
+		args = append(args, taskID)
+		returned, err := tx.Query(`WITH requested(company_id, position) AS (VALUES `+strings.Join(rows, ",")+`)
+INSERT INTO task_scope(task_id, kind, company_id, source, reason)
+SELECT ?, 'company', companies.id, 'manual', '创建任务时关联的公司'
+FROM requested
+JOIN companies ON companies.id=requested.company_id
+ORDER BY requested.position
+RETURNING company_id`, args...)
+		if err != nil {
+			return 0, err
+		}
+		defer returned.Close()
+		inserted := 0
+		for returned.Next() {
+			var companyID int64
+			if err := returned.Scan(&companyID); err != nil {
+				return 0, err
+			}
+			inserted++
+		}
+		if err := returned.Err(); err != nil {
+			return 0, err
+		}
+		return inserted, nil
+	}
+	var inserted int
+	err := tx.QueryRow(`
+WITH requested(company_id, position) AS (
+    SELECT company_id, position
+    FROM unnest($2::bigint[]) WITH ORDINALITY AS requested(company_id, position)
+), inserted AS (
+    INSERT INTO task_scope(task_id, kind, company_id, source, reason)
+    SELECT $1, 'company', companies.id, 'manual', '创建任务时关联的公司'
+    FROM requested
+    JOIN companies ON companies.id=requested.company_id
+    ORDER BY requested.position
+    RETURNING company_id
+)
+SELECT count(*) FROM inserted`, taskID, companyIDs).Scan(&inserted)
+	if err != nil {
+		return 0, err
+	}
+	return inserted, nil
 }
 
 func insertTaskRelations(tx *sql.Tx, taskID int64, sourceIDs []int64) error {
@@ -396,12 +448,17 @@ type TaskPatch struct {
 
 // UpdateTask applies a partial task name/pin mutation and returns the updated row.
 // Re-pinning an already pinned task preserves its original position.
+//
+// $2/$4 后面刻意不带 ::boolean：pgx 会把 `$2::boolean` 整体当成一个名叫
+// "2::boolean" 的参数，SQLite 的位置参数找不到这个名字，直接报
+// missing named argument "2::boolean"。转换语义完全由 Go 侧绑定的 bool 承担，
+// PG 侧删掉同样不改变参数类型推断结果。
 func (d *DB) UpdateTask(id int64, patch TaskPatch) (*Task, error) {
 	task, err := scanTask(d.QueryRow(`UPDATE tasks SET
-	name = CASE WHEN $2::boolean THEN $3 ELSE name END,
+	name = CASE WHEN $2 THEN $3 ELSE name END,
 	pinned_at = CASE
-		WHEN $4::boolean IS NULL THEN pinned_at
-		WHEN $4::boolean THEN COALESCE(pinned_at, now())
+		WHEN $4 IS NULL THEN pinned_at
+		WHEN $4 THEN COALESCE(pinned_at, now())
 		ELSE NULL
 	END
 WHERE id=$1 AND deleted_at IS NULL
@@ -514,7 +571,7 @@ UPDATE tasks
    SET first_run_at = COALESCE(first_run_at, now()),
        deadline_at  = CASE
            WHEN first_run_at IS NOT NULL THEN deadline_at            -- 已盖过章：不动
-           WHEN $2 > 0 THEN now() + make_interval(secs => $2)
+           WHEN $2 > 0 THEN " + sqlNowPlusSeconds("$2") + "
            ELSE NULL END
  WHERE id = $1
  RETURNING deadline_at`, id, timeoutSeconds).Scan(&deadline)
@@ -559,7 +616,7 @@ func (d *DB) DeleteTaskCascadePrepared(
 	}
 	defer tx.Rollback()
 	var expID int64
-	if err := tx.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1 FOR UPDATE`, id).Scan(&expID); err != nil {
+	if err := tx.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1`+sqlForUpdate(), id).Scan(&expID); err != nil {
 		if err == sql.ErrNoRows {
 			return result, nil // already gone
 		}
@@ -571,8 +628,10 @@ func (d *DB) DeleteTaskCascadePrepared(
 	// prevents phantoms (a distinct asset row for the same host) as well as new
 	// ownership/anchor references until the deletion transaction commits.
 	if deleteAssets || prepare != nil {
-		if _, err := tx.Exec(`LOCK TABLE assets, exploration_anchors IN SHARE ROW EXCLUSIVE MODE`); err != nil {
-			return result, err
+		if lock := sqlLockTableShareRowExclusive("assets", "exploration_anchors"); lock != "" {
+			if _, err := tx.Exec(lock); err != nil {
+				return result, err
+			}
 		}
 	}
 	if prepare != nil {

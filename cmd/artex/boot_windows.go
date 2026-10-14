@@ -228,12 +228,45 @@ func bundledPGLog(exeDir string) string { return filepath.Join(bundledPGDir(exeD
 
 // startBundledPostgres 调用 pg_ctl 启动内置实例。
 // 输出直接落到当前控制台，让 PostgreSQL 的诊断信息可见。
+//
+// 另外用 -o 往 postgres 进程透传三个 WAL 参数：min_wal_size=32MB、
+// max_wal_size=256MB、wal_keep_size=0，用来回收 pg_wal 里的空预分配段。
+//
+// 为什么 pg_wal 值得单独调：里面躺着多少个段，和真实数据量没有关系。
+// PostgreSQL 在每次 checkpoint 结束时会把 WAL 预分配到 min_wal_size
+// （默认 80MB，即 5 个 16MB 的段），这些段是留给下一轮复用的空文件。
+// 本发行包的数据量远达不到需要这么多段的程度，它们却实打实占着磁盘：
+// 实测 pg\data 共 162MB，其中 80MB 全在 pg_wal，而这 5 个段是空的。
+//
+// 为什么是 32MB：PostgreSQL 硬性要求 min_wal_size 不低于 2 个 WAL 段
+// （2 × 16MB），所以 32MB 正是允许的最小值，等于“一段在写、一段待命”。
+// 对单用户桌面场景这个量级够用——WAL 段是循环复用而不是只增不减，
+// 真正会把它撑爆的是分钟级的大批量导入，桌面工具碰不到那种压力。
+//
+// 权衡：min_wal_size 同时也是 checkpoint 的触发阈值，调小会让 checkpoint
+// 更频繁（每攒够 min_wal_size 的写入就做一次，32MB 大约是默认 80MB 的
+// 2.5 倍频次）。代价是每 GB 数据多约 20 次 checkpoint，换来常驻少占 48MB。
+// 对装在用户桌面上的本地库，磁盘比 checkpoint 频率值钱，所以取下限。
+//
+// max_wal_size=256MB 只设上限：归档器落后或批量导入时允许临时多留几段，
+// 但不会像默认的 1GB 那样在磁盘紧张时突然吃掉 1GB。
+// wal_keep_size=0 表示不为复制槽/归档额外保留历史 WAL 段。这本来就是默认值，
+// 写死是为了盖住 postgresql.conf 里的任何改动——命令行参数优先级最高。
+//
+// 踩过的坑：-o 的值必须是“不带引号”的一整串。pg_ctl 会把它原样拼进启动
+// postgres 的命令行，外层若再包一层引号，引号会被 cmd.exe 和 CRT 吃掉，
+// 三个 -c 会塌成“-c min_wal_size=32MB -c ...”这一个参数，postgres 直接
+// FATAL: unrecognized configuration parameter “ min_wal_size” 然后起不来
+// （发行包自带的 PostgreSQL 18.6 上实测就是这个结果）。
+// 下面这个字符串在 Go 里是 exec.Command 的单个参数，空格不要在 shell 层拆开。
 func startBundledPostgres(root, data, logFile string) error {
 	cmd := exec.Command(
 		filepath.Join(root, "bin", "pg_ctl.exe"),
 		"-D", data,
 		"-l", logFile,
-		"-w", "-t", "60", "start",
+		"-w", "-t", "60",
+		"-o", "-c min_wal_size=32MB -c max_wal_size=256MB -c wal_keep_size=0",
+		"start",
 	)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Autumn-27/artex/config"
 )
 
 const (
@@ -90,6 +93,11 @@ func normalizeTaskAssetSource(source, summary string) (string, string, error) {
 
 // SetTaskAssetSource improves the generic trigger-created provenance for one
 // existing task association. It never creates or deletes an asset.
+//
+// `task.id=ANY(asset.task_ids)` 是数组包含判断：SQLite 侧换成
+// artex_json_contains(asset.task_ids, task.id)，语义等价于
+// EXISTS (SELECT 1 FROM json_each(asset.task_ids) WHERE value = task.id)。
+// 详见 db/dialect_arrays.go。
 func (s *AssetStore) SetTaskAssetSource(taskID, assetID int64, source, summary string, sourceNodeID *int64) error {
 	if taskID <= 0 || assetID <= 0 {
 		return fmt.Errorf("%w: task and asset ids must be positive", ErrTaskAssetInvalid)
@@ -102,7 +110,7 @@ func (s *AssetStore) SetTaskAssetSource(taskID, assetID int64, source, summary s
 INSERT INTO task_asset_links(task_id, asset_id, source, source_summary, source_node_id)
 SELECT task.id, asset.id, $3, $4, $5
 FROM tasks task
-JOIN assets asset ON asset.id=$2 AND task.id=ANY(asset.task_ids)
+JOIN assets asset ON asset.id=$2 AND ` + taskIDsAnyExpr("task.id", "asset.task_ids") + `
 WHERE task.id=$1 AND task.deleted_at IS NULL
 ON CONFLICT (task_id, asset_id) DO UPDATE
 SET source=EXCLUDED.source,
@@ -182,7 +190,7 @@ func (s *AssetStore) RegisterTaskAssetScopes(taskID int64, inputs []ScopeInput) 
 			taskScope.Kind = "root_domain"
 			taskScope.Domain = rule.Domain
 			var alreadyLinked bool
-			err := tx.QueryRow(`SELECT id, $2=ANY(task_ids) FROM assets WHERE type='root_domain' AND domain=$1`, rule.Domain, taskID).
+			err := tx.QueryRow(`SELECT id, `+taskIDsAnyExpr("$2", "task_ids")+` FROM assets WHERE type='root_domain' AND domain=$1`, rule.Domain, taskID).
 				Scan(&assetID, &alreadyLinked)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return mutation, err
@@ -205,7 +213,7 @@ func (s *AssetStore) RegisterTaskAssetScopes(taskID int64, inputs []ScopeInput) 
 			}
 			ipValue := ip.String()
 			var alreadyLinked bool
-			err := tx.QueryRow(`SELECT id, $2=ANY(task_ids) FROM assets WHERE type='ip' AND ip=$1`, ipValue, taskID).
+			err := tx.QueryRow(`SELECT id, `+taskIDsAnyExpr("$2", "task_ids")+` FROM assets WHERE type='ip' AND ip=$1`, ipValue, taskID).
 				Scan(&assetID, &alreadyLinked)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return mutation, err
@@ -280,9 +288,14 @@ func (s *AssetStore) AttachAssetsToTask(taskID int64, assetIDs []int64, sourceSu
 		return mutation, ErrTaskAssetTaskNotFound
 	}
 	var found, existing int
+	// `id = ANY($2::bigint[])` 与 `$1 = ANY(task_ids)`：SQLite 既不能把 []int64
+	// 当一个参数绑定，ANY() 也不是它的函数。分别退化成 IN (...) 占位符和
+	// artex_json_contains，语义都是"元素集合相等 / 包含"，见 db/dialect_arrays.go。
+	attachArgs := []any{taskID}
+	attachIDList := appendInPlaceholders(&attachArgs, assetIDs)
 	if err := tx.QueryRow(`
-SELECT count(*), count(*) FILTER (WHERE $1=ANY(task_ids))
-FROM assets WHERE id=ANY($2::bigint[])`, taskID, assetIDs).Scan(&found, &existing); err != nil {
+SELECT count(*), count(*) FILTER (WHERE `+taskIDsAnyExpr("$1", "task_ids")+`)
+FROM assets WHERE id IN (`+attachIDList+`)`, attachArgs...).Scan(&found, &existing); err != nil {
 		return mutation, err
 	}
 	if found != len(assetIDs) {
@@ -292,18 +305,26 @@ FROM assets WHERE id=ANY($2::bigint[])`, taskID, assetIDs).Scan(&found, &existin
 	// link rows with the generic source='system'. The INSERT below must stay
 	// after it so the operator-authored 'manual' provenance wins; swapping the
 	// two statements silently degrades every manual attach back to 'system'.
+	//
+	// `array_append` guarded by `$1=ANY(task_ids)` 是一个"没有才追加"的幂等写；
+	// SQLite 侧 artex_json_add 做的正是同一件事（存在则原样返回，不存在才追加），
+	// 所以不再需要外面那层 CASE。
+	updateArgs := []any{taskID}
+	updateIDList := appendInPlaceholders(&updateArgs, assetIDs)
 	if _, err := tx.Exec(`
 UPDATE assets
-SET task_ids=CASE WHEN $1=ANY(task_ids) THEN task_ids ELSE array_append(task_ids,$1) END
-WHERE id=ANY($2::bigint[])`, taskID, assetIDs); err != nil {
+SET task_ids=artex_json_add(task_ids, $1)
+WHERE id IN (`+updateIDList+`)`, updateArgs...); err != nil {
 		return mutation, err
 	}
+	linkArgs := []any{taskID}
+	linkIDList := appendInPlaceholders(&linkArgs, assetIDs)
 	if _, err := tx.Exec(`
 INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
-SELECT $1, id, 'manual', $3 FROM assets WHERE id=ANY($2::bigint[])
+SELECT $1, id, 'manual', $`+strconv.Itoa(len(linkArgs)+1)+` FROM assets WHERE id IN (`+linkIDList+`)
 ON CONFLICT (task_id, asset_id) DO UPDATE
 SET source='manual', source_summary=EXCLUDED.source_summary, source_node_id=NULL`,
-		taskID, assetIDs, sourceSummary); err != nil {
+		append(linkArgs, sourceSummary)...); err != nil {
 		return mutation, err
 	}
 	mutation.Existing = existing
@@ -313,14 +334,17 @@ SET source='manual', source_summary=EXCLUDED.source_summary, source_node_id=NULL
 
 // DetachAssetFromTask removes only the task association. The global asset and
 // exploration anchors remain available for historical blackboard auditing.
+//
+// `array_remove(task_ids,$1)` → artex_json_remove，`$1=ANY(task_ids)` →
+// artex_json_contains。$1 在两个引擎上都复用同一个编号。
 func (s *AssetStore) DetachAssetFromTask(taskID, assetID int64) (bool, error) {
 	if taskID <= 0 || assetID <= 0 {
 		return false, fmt.Errorf("%w: task and asset ids must be positive", ErrTaskAssetInvalid)
 	}
 	var detachedID int64
 	err := s.db.QueryRow(`
-UPDATE assets SET task_ids=array_remove(task_ids,$1)
-WHERE id=$2 AND $1=ANY(task_ids)
+UPDATE assets SET task_ids=`+removeTaskIDFromTaskIDs("task_ids", "$1")+`
+WHERE id=$2 AND `+taskIDsAnyExpr("$1", "task_ids")+`
 RETURNING id`, taskID, assetID).Scan(&detachedID)
 	if err == sql.ErrNoRows {
 		return false, nil
@@ -331,20 +355,32 @@ RETURNING id`, taskID, assetID).Scan(&detachedID)
 	return detachedID == assetID, nil
 }
 
+// removeTaskIDFromTaskIDs 表达 `array_remove(task_ids, $1)`。
+func removeTaskIDFromTaskIDs(col, param string) string {
+	if config.Engine() == config.EnginePostgres {
+		return "array_remove(" + col + ", " + param + ")"
+	}
+	return "artex_json_remove(" + col + ", " + param + ")"
+}
+
 func (s *AssetStore) hydrateTaskAssetSources(taskID int64, assets []*Asset) error {
 	if len(assets) == 0 {
 		return nil
 	}
 	ids := make([]int64, 0, len(assets))
 	byID := make(map[int64]*Asset, len(assets))
-	for _, asset := range assets {
-		ids = append(ids, asset.ID)
-		byID[asset.ID] = asset
+	for _, a := range assets {
+		ids = append(ids, a.ID)
+		byID[a.ID] = a
 	}
+	// `asset_id=ANY($2::bigint[])` 退化成 IN (...) 占位符：SQLite 既不能把 []int64
+	// 当一个参数绑定，ANY() 也不是它的函数。
+	args := []any{taskID}
+	idList := appendInPlaceholders(&args, ids)
 	rows, err := s.db.Query(`
 SELECT asset_id, source, source_summary, source_node_id
 FROM task_asset_links
-WHERE task_id=$1 AND asset_id=ANY($2::bigint[])`, taskID, ids)
+WHERE task_id=$1 AND asset_id IN (`+idList+`)`, args...)
 	if err != nil {
 		return err
 	}
@@ -389,9 +425,9 @@ SELECT intent.id, asset.id, asset.type,
          WHEN 'subdomain' THEN COALESCE(asset.domain,'')
          WHEN 'ip' THEN COALESCE(asset.ip,'')
          WHEN 'app' THEN COALESCE(asset.app_name,'')
-		 WHEN 'service' THEN COALESCE(NULLIF(asset.url,''), NULLIF(concat_ws(':', COALESCE(NULLIF(asset.domain,''), NULLIF(asset.ip,'')), asset.port::text),''), NULLIF(asset.service_name,''), '#' || asset.id::text)
-         WHEN 'endpoint' THEN COALESCE(NULLIF(asset.url,''), '#' || asset.id::text)
-         ELSE '#' || asset.id::text
+		 WHEN 'service' THEN COALESCE(NULLIF(asset.url,''), NULLIF(concat_ws(':', COALESCE(NULLIF(asset.domain,''), NULLIF(asset.ip,'')), CAST(asset.port AS TEXT)),''), NULLIF(asset.service_name,''), '#' || CAST(asset.id AS TEXT))
+         WHEN 'endpoint' THEN COALESCE(NULLIF(asset.url,''), '#' || CAST(asset.id AS TEXT))
+         ELSE '#' || CAST(asset.id AS TEXT)
        END,
        COALESCE(link.source,'anchor'),
        COALESCE(NULLIF(link.source_summary,''), '意图通过锚点关联的资产'),

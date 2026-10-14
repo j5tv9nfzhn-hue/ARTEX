@@ -255,7 +255,7 @@ func TestCompanyICPAttribution(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		// 不吞错误：清理失败会污染后续用例，必须让它在本次运行里显形。
-		if _, err := d.Exec(`DELETE FROM assets WHERE task_ids @> ARRAY[$1]::bigint[]`, suffix); err != nil {
+		if _, err := d.Exec(`DELETE FROM assets WHERE `+taskIDsAnyExpr("$1", "task_ids"), suffix); err != nil {
 			t.Errorf("清理测试资产失败: %v", err)
 		}
 		if _, err := d.Exec(`DELETE FROM companies WHERE id=$1`, companyID); err != nil {
@@ -342,6 +342,12 @@ func TestCompanyScopeAttribution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertCompany: %v", err)
 	}
+	// 必须连公司一起删：company_scope.company_id 是 ON DELETE CASCADE，但只删资产
+	// 的话，本用例写进 198.51.100.0/24 的 CIDR 范围会永久留在共享库里，之后每次
+	// 运行都会先命中上一轮遗留的公司，断言 company_id=cid 必然失败。
+	t.Cleanup(func() {
+		_, _ = d.Exec(`DELETE FROM companies WHERE id=$1`, cid)
+	})
 
 	// a pre-existing asset (inserted BEFORE any scope) — must be back-filled.
 	preID, err := as.UpsertSubdomain(UpsertSubdomainReq{Domain: sub})

@@ -71,20 +71,57 @@ func withSchemaMigrationLock(ctx context.Context, sqlDB *sql.DB, action func(*sq
 	return action(conn)
 }
 
-// coordinateWithSchemaMigration makes long, multi-table archive transactions
-// mutually exclusive with startup DDL while allowing ordinary runtime queries
-// to continue normally.
-func coordinateWithSchemaMigration(tx *sql.Tx) error {
-	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, schemaMigrationLockKey); err != nil {
-		return fmt.Errorf("coordinate with schema migration: %w", err)
+// engineIsSQLite reports the active engine. Tests and engine-specific helpers
+// use it to skip behaviour that cannot exist on one of the two backends.
+func engineIsSQLite() bool {
+	return config.Engine() == config.EngineSQLite
+}
+
+// advisoryLock takes a transaction-scoped PostgreSQL advisory lock, and does
+// nothing on SQLite.
+//
+// These locks exist to serialise mutations that span several tables against
+// each other on a server that runs many goroutines against one database.
+// SQLite already provides that guarantee structurally: the whole file is
+// locked for the duration of a write transaction, so two concurrent
+// multi-table writes cannot interleave. Emulating the lock would therefore
+// add nothing, and attempting it would turn a correct no-op into
+// "no such function: pg_advisory_xact_lock" on every archive and company-scope
+// write.
+func advisoryLock(ctx context.Context, tx *sql.Tx, key int64) error {
+	if config.Engine() != config.EnginePostgres {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+		return fmt.Errorf("advisory lock %d: %w", key, err)
 	}
 	return nil
 }
 
-// DSN resolves the PostgreSQL connection string and reports where it came from.
-// Precedence: env ARTEX_PG_DSN > config file (config.json). There is no
-// built-in default — it errors if neither source is configured.
+// coordinateWithSchemaMigration makes long, multi-table archive transactions
+// mutually exclusive with startup DDL while allowing ordinary runtime queries
+// to continue normally.
+//
+// On SQLite the whole concern disappears -- see advisoryLock -- so this
+// delegates there rather than issuing an unavailable function.
+func coordinateWithSchemaMigration(tx *sql.Tx) error {
+	return advisoryLock(context.Background(), tx, schemaMigrationLockKey)
+}
+
+// DSN resolves the connection string and reports where it came from.
+// Precedence: env ARTEX_DB_ENGINE picks the engine, then for PostgreSQL
+//
+//	env ARTEX_PG_DSN > config file (config.json); for SQLite
+//	env ARTEX_SQLITE_PATH > config file, defaulting next to the config file.
+//
+// There is no built-in default for PostgreSQL — it errors if unconfigured, so
+// startup fails loudly instead of silently connecting to the wrong database.
+// SQLite needs no configuration and therefore always resolves.
 func DSN() (dsn, source string, err error) {
+	if config.Engine() == config.EngineSQLite {
+		return config.SQLiteDSN(),
+			"SQLite（" + config.EngineSource() + "，" + config.SQLitePath() + "）", nil
+	}
 	return config.PostgresDSN()
 }
 
@@ -125,7 +162,14 @@ func ensureDatabase(dsn string) error {
 }
 
 // Open connects, applies the schema (idempotent), and seeds builtin rows.
+//
+// The engine is taken from the DSN rather than from a parameter, so the many
+// existing call sites that resolve a DSN with DSN() and hand it here keep
+// working unchanged on either backend.
 func Open(dsn string) (*DB, error) {
+	if isSQLiteDSN(dsn) {
+		return openSQLite(dsn)
+	}
 	if err := ensureDatabase(dsn); err != nil {
 		return nil, err
 	}

@@ -1600,7 +1600,14 @@ func skillRelPath(file string) (string, string) {
 	if clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
 		return "", "invalid path"
 	}
-	return clean, ""
+	// Clean rewrites separators to the OS form, which on Windows means "\" --
+	// but this value is part of an API contract: the client submits "/"
+	// (forward slashes are rejected by the whitelist above, so a "\" can only
+	// have been introduced by Clean itself) and the path comes back out in the
+	// same shape in both walkSkillFiles responses and this function's result.
+	// Leaving it platform-dependent would make the returned tree differ between
+	// a Windows build and a Linux build for identical input.
+	return filepath.ToSlash(clean), ""
 }
 
 // walkSkillFiles returns all files under root (relative to root), sorted,

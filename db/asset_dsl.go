@@ -306,8 +306,8 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 			parts = append(parts, col+" ILIKE "+p)
 		}
 		parts = append(parts,
-			"EXISTS (SELECT 1 FROM unnest(technologies) t(v) WHERE v ILIKE "+p+")",
-			"EXISTS (SELECT 1 FROM unnest(bound_domains) t(v) WHERE v ILIKE "+p+")",
+			jsonArrayILikeExpr("technologies", p),
+			jsonArrayILikeExpr("bound_domains", p),
 		)
 		return "(" + strings.Join(parts, " OR ") + ")", nil
 	}
@@ -318,7 +318,7 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("task_id 需要整数值: %s", e.Value)
 		}
-		return b.next(n) + " = ANY(task_ids)", nil
+		return taskIDsAnyExpr(b.next(n), "task_ids"), nil
 	}
 
 	// company_id: exact integer
@@ -350,12 +350,12 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 	if col, ok := knownArrayFields[f]; ok {
 		switch e.Op {
 		case "==":
-			return b.next(e.Value) + " = ANY(" + col + ")", nil
+			return taskIDsAnyExpr(b.next(e.Value), col), nil
 		case "!=":
-			return "NOT (" + b.next(e.Value) + " = ANY(" + col + "))", nil
+			return "NOT (" + taskIDsAnyExpr(b.next(e.Value), col) + ")", nil
 		case "=":
 			p := b.next("%" + e.Value + "%")
-			return "EXISTS (SELECT 1 FROM unnest(" + col + ") t(v) WHERE v ILIKE " + p + ")", nil
+			return jsonArrayILikeExpr(col, p), nil
 		default:
 			return "", fmt.Errorf("数组字段 %s 不支持运算符 %s", f, e.Op)
 		}
@@ -495,7 +495,7 @@ func (s *AssetStore) CountDSL(dsl, typ string, taskID int64) (int, error) {
 	}
 	if taskID > 0 {
 		args = append(args, taskID)
-		where += fmt.Sprintf(" AND $%d = ANY(task_ids)", len(args))
+		where += " AND " + taskIDsAnyExpr(fmt.Sprintf("$%d", len(args)), "task_ids")
 	}
 	var n int
 	err = s.db.QueryRow("SELECT count(*) FROM assets WHERE "+where, args...).Scan(&n)
@@ -527,7 +527,7 @@ func (s *AssetStore) QueryDSL(dsl, typ string, taskID int64, limit, offset int) 
 	}
 	if taskID > 0 {
 		args = append(args, taskID)
-		where += fmt.Sprintf(" AND $%d = ANY(task_ids)", len(args))
+		where += " AND " + taskIDsAnyExpr(fmt.Sprintf("$%d", len(args)), "task_ids")
 	}
 	args = append(args, limit, offset)
 	q := assetSelectCols + " WHERE " + where +

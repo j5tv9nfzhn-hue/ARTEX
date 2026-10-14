@@ -70,10 +70,29 @@ func terminalText(ctx context.Context, term *harness.Terminal, tr *runTrace) (st
 		}
 		sum = "（运行被中断：" + short + "；停在" + stage + progressSuffix(term, tr) + "，未完成）"
 	} else if reason == harness.ReasonMaxTurns || reason == harness.ReasonTimeout {
-		sum = "（达到运行预算上限(" + string(reason) + ")，已收尾写回事实" + progressSuffix(term, tr) + "；本次无文字总结）"
+		// Budget exhausted rather than a failed call. Name the budget that ran
+		// out (see reasonBrief for these two), so the operator raises a limit
+		// instead of chasing a flaky API.
+		//
+		// progressSuffix stays in this branch: it carries the turn/elapsed
+		// counters, and on a budget stop those counters are the whole point --
+		// they say which limit was hit and by how much.
+		sum = "（达到运行预算上限：" + terminalReasonBrief(reason) + "），已收尾写回事实" +
+			progressSuffix(term, tr) + "；本次无文字总结）"
 	} else {
-		hint := terminalReasonHint(reason)
-		sum = "（无文字总结，终态 " + terminalReasonLabel(reason) + "：" + firstLine(hint, 80) + "）"
+		// Only the brief reason here. The hint — a multi-clause explanation of
+		// what this terminal reason means and how to recover — goes into the
+		// Detail block below, where it sits behind one collapsed row instead of
+		// covering the conversation in red.
+		//
+		// The old form was "执行失败：<status>。" + firstLine(hint, 80) + "。",
+		// which inlined an 80-character explanation into the one-line summary.
+		// Nothing was lost by moving it: it was already repeated verbatim in the
+		// Detail block on the very next line.
+		//
+		// The raw reason token stays, in parentheses: it is what makes the line
+		// greppable across a transcript, and reasonBrief on its own is prose.
+		sum = "执行失败（" + terminalReasonLabel(reason) + "）：" + terminalReasonBrief(reason) + "。"
 	}
 
 	var b strings.Builder
@@ -116,6 +135,46 @@ func terminalText(ctx context.Context, term *harness.Terminal, tr *runTrace) (st
 		fmt.Fprintf(&b, "- **中断前最后一个工具**: `%s`（已正常返回）\n", tr.name)
 	}
 	return sum, b.String()
+}
+
+// reasonBrief is the one-line reason shown in the chat transcript's summary.
+//
+// It exists because reasonHint doubles as documentation: each entry explains the
+// terminal reason to someone debugging the run, which makes every entry a long
+// multi-clause sentence. That text is valuable, but it is not a summary — dropped
+// into a one-line activity row it reads as a wall of red and buries the single
+// fact the reader needs ("the model call failed, retries were used up").
+//
+// So the split is: reasonBrief says what happened (one clause, no explanation),
+// reasonHint says why and what to do about it (Detail block, expandable).
+//
+// Keep every entry a single clause — no semicolons, no second sentence. The
+// transcript caps this line and truncates the tail, so a second clause would
+// simply be cut off and read as a dangling fragment.
+var reasonBrief = map[harness.TerminalReason]string{
+	harness.ReasonCompleted:         "模型已回复，本轮正常收尾",
+	harness.ReasonMaxTurns:          "最大轮数",
+	harness.ReasonTimeout:           "最大执行时间",
+	harness.ReasonModelError:        "模型调用失败（网络、鉴权、限流或供应商错误）",
+	harness.ReasonBlockingLimit:     "模型输出被中断，本次未完成",
+	harness.ReasonPromptTooLong:     "提示词超出上下文上限，已被拒绝",
+	harness.ReasonImageError:        "当前模型不支持图像输入",
+	harness.ReasonStopHookPrevented: "被停止钩子拦截，未完成",
+	harness.ReasonHookStopped:       "被流程钩子终止",
+	harness.ReasonAbortedStreaming:  "生成中止（模型回复阶段）",
+	harness.ReasonAbortedTools:      "生成中止（工具执行阶段）",
+}
+
+// terminalReasonBrief returns the one-line reason, falling back to the raw
+// terminal reason for any value a newer harness adds and we have not mapped.
+func terminalReasonBrief(reason harness.TerminalReason) string {
+	if b := reasonBrief[reason]; b != "" {
+		return b
+	}
+	if reason == "" {
+		return "未记录终止原因"
+	}
+	return string(reason)
 }
 
 func terminalReasonLabel(reason harness.TerminalReason) string {

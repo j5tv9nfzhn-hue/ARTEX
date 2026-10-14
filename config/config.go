@@ -22,6 +22,12 @@ type Database struct {
 	Password string `json:"password"`
 	DBName   string `json:"dbname"`
 	SSLMode  string `json:"sslmode"`
+	// Engine selects the storage backend: "sqlite" (default) or "postgres".
+	// See Engine().
+	Engine string `json:"engine"`
+	// Path is the SQLite database file, used when Engine is "sqlite".
+	// See SQLitePath().
+	Path string `json:"path"`
 }
 
 // Config is the on-disk config file shape.

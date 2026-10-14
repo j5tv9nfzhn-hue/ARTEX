@@ -81,10 +81,15 @@ const notificationChannelCols = `id, name, kind, enabled, config, mode, filter, 
 
 func scanNotificationChannel(sc interface{ Scan(...any) error }) (*NotificationChannel, error) {
 	var c NotificationChannel
-	var enabled bool
-	if err := sc.Scan(&c.ID, &c.Name, &c.Kind, &enabled, &c.Config, &c.Mode, &c.Filter, &c.RatePerMin, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	var (
+		enabled bool
+		config  jsonValue
+		filter  jsonValue
+	)
+	if err := sc.Scan(&c.ID, &c.Name, &c.Kind, &enabled, &config, &c.Mode, &filter, &c.RatePerMin, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return nil, err
 	}
+	c.Config, c.Filter = config.Raw(), filter.Raw()
 	c.Enabled = &enabled
 	return &c, nil
 }
@@ -262,9 +267,11 @@ func (d *DB) AddNotificationEvent(ctx context.Context, kind string, findingID in
 // FanOutPendingEvents 把尚未分派的漏洞事件按当前启用的渠道展开成投递任务，
 // 返回本轮处理的事件数与新建的投递数。
 //
-// 整轮操作在一个事务里：事件用 FOR UPDATE SKIP LOCKED 领取，多个进程同时跑
-// 也各自领到不同的行（项目里归档队列的领取用的是同一套手法，见
-// db/task_archives.go 的 completeNextArchiveJob）。
+// 整轮操作在一个事务里：事件按「抢占」语义领取，多个进程同时跑也各自领到不同的行
+// （项目里归档队列的领取用的是同一套手法，见 db/task_archives.go 的
+// ClaimTaskArchiveJob）。抢占在两个引擎上是两条等价但不同的写法：
+// PG 保留原来的 SELECT ... FOR UPDATE SKIP LOCKED；SQLite 没有行锁，改成
+// 「UPDATE 即领取」（见 claimPendingEventsTx 与 dialect_locking.go）。
 //
 // 过滤匹配刻意放在 Go 侧而非 SQL：渠道的过滤条件是一组可选字段的 JSONB，
 // 用 SQL 表达六种组合的匹配会让查询难以维护，而渠道数量是「人手配的几条」，
@@ -286,33 +293,8 @@ func (d *DB) FanOutPendingEvents(ctx context.Context, limit int) (eventCount, de
 	if err != nil {
 		return 0, 0, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id, kind, finding_id, snapshot FROM notification_events
-WHERE NOT fanned_out ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1`, limit)
+	events, parsedSnaps, err := claimPendingEventsTx(ctx, tx, limit)
 	if err != nil {
-		return 0, 0, err
-	}
-	var (
-		events      []NotificationEvent
-		parsedSnaps []notify.Snapshot
-	)
-	for rows.Next() {
-		var ev NotificationEvent
-		if err := rows.Scan(&ev.ID, &ev.Kind, &ev.FindingID, &ev.Snapshot); err != nil {
-			rows.Close()
-			return 0, 0, err
-		}
-		var snap notify.Snapshot
-		// 快照是我们自己写的，理论上必定可解析；解析失败不阻断投递流程，
-		// 但这条事件会因字段全空而被所有带过滤条件的渠道跳过——宁可少推一条
-		// 也不让一个坏行卡死整个队列。
-		_ = json.Unmarshal(ev.Snapshot, &snap)
-		// kind 以行内值为准：快照里那份是渲染用的副本，可能被旧版本写过。
-		snap.Kind = ev.Kind
-		events = append(events, ev)
-		parsedSnaps = append(parsedSnaps, snap)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return 0, 0, err
 	}
 	if len(events) == 0 {
@@ -347,16 +329,79 @@ WHERE NOT fanned_out ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1`, limit)
 	}
 
 	// 标记本轮事件已分派。未命中任何渠道的事件也一起标记（见函数注释）。
-	ids := make([]string, 0, len(events))
-	markArgs := make([]any, 0, len(events))
-	for _, ev := range events {
-		markArgs = append(markArgs, ev.ID)
-		ids = append(ids, fmt.Sprintf("$%d", len(markArgs)))
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE notification_events SET fanned_out=true WHERE id IN (`+strings.Join(ids, ",")+`)`, markArgs...); err != nil {
-		return 0, 0, err
+	//
+	// 只在 PG 分支做：SQLite 分支的领取语句本身就是 UPDATE，已经把 fanned_out 置上，
+	// 这里再写一遍既多余也会让「未命中任何渠道」的事件漏掉标记之外的语义。
+	if isPostgresEngine() {
+		ids := make([]string, 0, len(events))
+		markArgs := make([]any, 0, len(events))
+		for _, ev := range events {
+			markArgs = append(markArgs, ev.ID)
+			ids = append(ids, fmt.Sprintf("$%d", len(markArgs)))
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE notification_events SET fanned_out=true WHERE id IN (`+strings.Join(ids, ",")+`)`, markArgs...); err != nil {
+			return 0, 0, err
+		}
 	}
 	return len(events), len(toInsert), tx.Commit()
+}
+
+// claimPendingEventsTx 领取一批尚未分派的事件，并返回它们的快照。
+//
+// 抢占语义按引擎走两条路（等价性论证见 dialect_locking.go 文件头）：
+//
+//   - PG：SELECT ... FOR UPDATE SKIP LOCKED … LIMIT $1 原样保留；行锁一直持有到本轮
+//     事务提交，「已分派」标记由 FanOutPendingEvents 收尾时统一写。
+//   - SQLite：没有行锁也没有 SKIP LOCKED（写上去就是 `near "FOR"`），改成一条
+//     UPDATE … WHERE id IN (SELECT … LIMIT $1) RETURNING …：领取与「标记已分派」
+//     在同一条语句里原子完成。它同时是本事务的第一条语句，一开口就拿到库级写锁，
+//     因此并发的第二个分派轮次只会在 busy_timeout 内等第一个提交；提交之后它的
+//     子查询已经看不到 fanned_out=true 的行，于是自然地领到下一批，不会重复分派。
+//
+// 两个分支给调用方的东西是同一种：events[i] 与 parsedSnaps[i] 一一对应。
+func claimPendingEventsTx(ctx context.Context, tx *sql.Tx, limit int) ([]NotificationEvent, []notify.Snapshot, error) {
+	// 候选行条件只有一份，两个分支的差别只在「取哪些列」与「怎么防止两人领同一行」。
+	const pending = `FROM notification_events
+	WHERE NOT fanned_out ORDER BY id`
+	query := `SELECT id, kind, finding_id, snapshot ` + pending + forUpdateClause(true) + "\nLIMIT $1"
+	if isSQLiteEngine() {
+		// IN 子查询只能返回一列，所以这里只投影 id；内容由同一条 UPDATE 的
+		// RETURNING 带回来。SET 子句没有占位符，LIMIT 的 $1 仍是 limit。
+		query, _ = sqliteClaimUpdate("notification_events", "SELECT id "+pending,
+			"id, kind, finding_id, snapshot", []any{limit}, "fanned_out=true")
+	}
+	rows, err := tx.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var (
+		events      []NotificationEvent
+		parsedSnaps []notify.Snapshot
+	)
+	for rows.Next() {
+		var (
+			ev       NotificationEvent
+			snapshot jsonValue
+		)
+		if err := rows.Scan(&ev.ID, &ev.Kind, &ev.FindingID, &snapshot); err != nil {
+			return nil, nil, err
+		}
+		ev.Snapshot = snapshot.Raw()
+		var snap notify.Snapshot
+		// 快照是我们自己写的，理论上必定可解析；解析失败不阻断投递流程，
+		// 但这条事件会因字段全空而被所有带过滤条件的渠道跳过——宁可少推一条
+		// 也不让一个坏行卡死整个队列。
+		_ = json.Unmarshal(ev.Snapshot, &snap)
+		// kind 以行内值为准：快照里那份是渲染用的副本，可能被旧版本写过。
+		snap.Kind = ev.Kind
+		events = append(events, ev)
+		parsedSnaps = append(parsedSnaps, snap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return events, parsedSnaps, nil
 }
 
 // listEnabledNotificationChannelsTx 在事务里取启用中的渠道。数量很少，
@@ -371,9 +416,14 @@ FROM notification_channels WHERE enabled ORDER BY id`)
 	out := []*NotificationChannel{}
 	for rows.Next() {
 		var c NotificationChannel
-		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Config, &c.Mode, &c.Filter, &c.RatePerMin); err != nil {
+		var (
+			config jsonValue
+			filter jsonValue
+		)
+		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &config, &c.Mode, &filter, &c.RatePerMin); err != nil {
 			return nil, err
 		}
+		c.Config, c.Filter = config.Raw(), filter.Raw()
 		out = append(out, &c)
 	}
 	return out, rows.Err()
@@ -487,7 +537,7 @@ func SetFindingStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string
 		assetIDs                           []byte
 	)
 	scanErr := tx.QueryRowContext(ctx, `SELECT vulnclass, name, severity, summary, task_id, asset_ids, status
-FROM findings WHERE id=$1 FOR UPDATE`, id).
+FROM findings WHERE id=$1`+forUpdateClause(false), id).
 		Scan(&vulnclass, &name, &severity, &summary, &taskID, &assetIDs, &from)
 	if scanErr == sql.ErrNoRows {
 		return "", false, false, false, nil
@@ -531,18 +581,59 @@ type NotificationStats struct {
 	BacklogAgeMS int64 `json:"backlog_age_ms"` // 最老的待发投递距今毫秒数
 }
 
-// NotificationStatsSnapshot 汇总通知系统的健康度。
-// BacklogAgeMS 是「推送是不是卡住了」最直接的指标——比 pending 计数有用得多，
-// 因为积压 3 条和积压 3 条的差别可以是从 3 秒到 3 小时。
-func (d *DB) NotificationStatsSnapshot(ctx context.Context) (*NotificationStats, error) {
-	var s NotificationStats
-	if err := d.QueryRowContext(ctx, `SELECT
+// notificationStatsQueryPG / notificationStatsQuerySQLite 是同一条统计语句的两种写法。
+//
+// PG 版是原句，逐字未动。SQLite 版只换掉三处 PG 专有构造，其余（列、表、
+// 参数编号 $1..$4、COALESCE 语义）完全共用：
+//
+//  1. `sent_at >= date_trunc('day', now())`
+//     SQLite 没有 date_trunc，也没有注册它——直接跑是 `no such function: date_trunc`。
+//     换成 `CAST(sent_at AS TEXT) >= strftime('%Y-%m-%d','now')||' 00:00:00.000+00:00'`。
+//     为什么要 CAST：schema 里 sent_at 声明为 TIMESTAMP，SQLite 判定其亲和性为
+//     NUMERIC，而 strftime 返回 TEXT，两边亲和性不同会直接报 DATATYPE_MISMATCH
+//     （同 dialect_locking.go 里 sqlTimestampNotAfterNow 的论证）。CAST 之后退回
+//     字典序比较，这对本列是等价的：写入路径只有列默认值与 now()/strftime 两种，
+//     产出同一形状「2026-10-14 19:16:05.123+00:00」——定宽、UTC、固定 +00:00。
+//     右边手工拼出的常量也刻意是同一个形状，否则字典序比较没有意义。
+//     'now' 在 SQLite 里是 UTC，与列值的 UTC 基准一致。
+//
+//  2. `EXTRACT(EPOCH FROM (now() - min(created_at)))`
+//     SQLite 的 EXTRACT 是 SQL/PG 语法糖，解析到 FROM 就断（`near "FROM": syntax
+//     error`）。换成 julian day 之差：`(julianday(now()) - julianday(min(created_at))) *
+//     86400000`。julianday 解析同样的时间文本（含 +00:00 时区后缀），两个 JD 相减
+//     即天数，乘 86400000 得毫秒——与 EXTRACT(EPOCH …) 同义同量纲。
+//     精度：JD 量级约 2^21、float64 尾数 52 位，绝对误差约 1e-10 天（约 0.01ms），
+//     远小于 BacklogAgeMS 的实际取值区间。
+//
+//  3. 末尾的 `::bigint` 是 PG 的类型转换，SQLite 认 `:`（报 `unrecognized token`）。
+//     改成 `CAST(… AS INTEGER)`，顺带把 julianday 相减产生的 REAL 截成整数：
+//     少了这一步，database/sql 会拿 "29499.98…" 去 ParseInt 而失败。
+const notificationStatsQueryPG = `SELECT
     (SELECT count(*) FROM notification_channels),
     (SELECT count(*) FROM notification_channels WHERE enabled),
     (SELECT count(*) FROM notification_deliveries WHERE state IN ($1,$2)),
     (SELECT count(*) FROM notification_deliveries WHERE state=$3),
     (SELECT count(*) FROM notification_deliveries WHERE state=$4 AND sent_at >= date_trunc('day', now())),
-    COALESCE((SELECT EXTRACT(EPOCH FROM (now() - min(created_at))) * 1000 FROM notification_deliveries WHERE state=$1), 0)::bigint`,
+    COALESCE((SELECT EXTRACT(EPOCH FROM (now() - min(created_at))) * 1000 FROM notification_deliveries WHERE state=$1), 0)::bigint`
+
+const notificationStatsQuerySQLite = `SELECT
+    (SELECT count(*) FROM notification_channels),
+    (SELECT count(*) FROM notification_channels WHERE enabled),
+    (SELECT count(*) FROM notification_deliveries WHERE state IN ($1,$2)),
+    (SELECT count(*) FROM notification_deliveries WHERE state=$3),
+    (SELECT count(*) FROM notification_deliveries WHERE state=$4 AND CAST(sent_at AS TEXT) >= strftime('%Y-%m-%d','now')||' 00:00:00.000+00:00'),
+    CAST(COALESCE((SELECT (julianday(now()) - julianday(min(created_at))) * 86400000 FROM notification_deliveries WHERE state=$1), 0) AS INTEGER)`
+
+// NotificationStatsSnapshot 汇总通知系统的健康度。
+// BacklogAgeMS 是「推送是不是卡住了」最直接的指标——比 pending 计数有用得多，
+// 因为积压 3 条和积压 3 条的差别可以是从 3 秒到 3 小时。
+func (d *DB) NotificationStatsSnapshot(ctx context.Context) (*NotificationStats, error) {
+	var s NotificationStats
+	query := notificationStatsQueryPG
+	if isSQLiteEngine() {
+		query = notificationStatsQuerySQLite
+	}
+	if err := d.QueryRowContext(ctx, query,
 		NotifyStatePending, NotifyStateSending, NotifyStateFailed, NotifyStateSent).
 		Scan(&s.Channels, &s.ChannelsOn, &s.Pending, &s.Failed, &s.SentToday, &s.BacklogAgeMS); err != nil {
 		return nil, err

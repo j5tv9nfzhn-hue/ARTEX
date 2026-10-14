@@ -30,7 +30,7 @@ func (d *DB) WithEvidenceTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, findingEvidenceLockKey); err != nil {
+	if err = advisoryLock(ctx, tx, findingEvidenceLockKey); err != nil {
 		return err
 	}
 	if err = fn(tx); err != nil {
@@ -138,12 +138,15 @@ func TrafficSnapshotID(snapshot TrafficEvidenceSnapshot) string {
 
 // LockTaskEvidenceTx serializes writes with archive queueing (which locks the
 // same task row). Once queued, its snapshot must not acquire new evidence.
+//
+// 行锁片段由 sqlForUpdate() 按引擎给出：PG 保留 FOR UPDATE；SQLite 没有行锁，
+// 返回空串，整个写事务期间库文件被独占即可替代（见 dialect_mixed.go）。
 func LockTaskEvidenceTx(tx *sql.Tx, taskID int64) error {
 	if taskID == 0 {
 		return nil
 	}
 	var deleted sql.NullTime
-	if err := tx.QueryRow(`SELECT deleted_at FROM tasks WHERE id=$1 FOR UPDATE`, taskID).Scan(&deleted); err != nil {
+	if err := tx.QueryRow(`SELECT deleted_at FROM tasks WHERE id=$1`+sqlForUpdate(), taskID).Scan(&deleted); err != nil {
 		return err
 	}
 	if deleted.Valid {
@@ -172,7 +175,7 @@ func LockFindingEvidenceTx(tx *sql.Tx, findingID int64, version *int64) error {
 		return err
 	}
 	var current int64
-	if err := tx.QueryRow(`SELECT evidence_version FROM findings WHERE id=$1 FOR UPDATE`, findingID).Scan(&current); err != nil {
+	if err := tx.QueryRow(`SELECT evidence_version FROM findings WHERE id=$1`+sqlForUpdate(), findingID).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrFindingNotFound
 		}
@@ -248,16 +251,41 @@ func FindingTrafficTx(tx *sql.Tx, findingID int64) (*FindingTraffic, error) {
 		}
 		return nil, err
 	}
-	rows, err := tx.Query(`SELECT b.id,b.finding_id,b.snapshot_id,b.role,b.note,b.position,b.created_at,to_jsonb(s)
+	// to_jsonb(<row>) serialises a whole row inside SQL. PostgreSQL has it;
+	// SQLite does not, and because it resolves an unknown name as a column
+	// reference first, the failure surfaces as "no such column: s" -- the
+	// alias -- rather than as the missing function.
+	//
+	// So select the snapshot's columns and rebuild the object in Go, the same
+	// way db/rowjson.go does for the finding retest snapshot. `s.*` keeps the
+	// column set tracking the schema instead of a hand-maintained list, which
+	// is what made this worth moving off the SQL side.
+	rows, err := tx.Query(`SELECT b.id,b.finding_id,b.snapshot_id,b.role,b.note,b.position,b.created_at, s.*
 FROM finding_traffic_bindings b JOIN traffic_evidence_snapshots s ON s.id=b.snapshot_id WHERE b.finding_id=$1 ORDER BY b.position,b.id`, findingID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	const bindingCols = 7
 	for rows.Next() {
 		var b FindingTrafficBinding
-		var raw []byte
-		if err := rows.Scan(&b.ID, &b.FindingID, &b.SnapshotID, &b.Role, &b.Note, &b.Position, &b.CreatedAt, &raw); err != nil {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		if err := scanBindingValues(cols[:bindingCols], vals[:bindingCols], &b); err != nil {
+			return nil, err
+		}
+		raw, err := json.Marshal(rowJSONObject(cols[bindingCols:], vals[bindingCols:]))
+		if err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(raw, &b.Snapshot); err != nil {
@@ -266,6 +294,56 @@ FROM finding_traffic_bindings b JOIN traffic_evidence_snapshots s ON s.id=b.snap
 		out.Bindings = append(out.Bindings, b)
 	}
 	return out, rows.Err()
+}
+
+// scanBindingValues fills the fixed leading columns of the binding row. They
+// are scanned from a generic []any rather than positionally so that the
+// trailing `s.*` expansion can vary without touching this.
+func scanBindingValues(cols []string, vals []any, b *FindingTrafficBinding) error {
+	byName := make(map[string]any, len(cols))
+	for i, name := range cols {
+		byName[name] = vals[i]
+	}
+	if v, ok := byName["id"].(int64); ok {
+		b.ID = v
+	}
+	if v, ok := byName["finding_id"].(int64); ok {
+		b.FindingID = v
+	}
+	if v, ok := byName["snapshot_id"].(string); ok {
+		b.SnapshotID = v
+	}
+	if v, ok := byName["role"].(string); ok {
+		b.Role = v
+	}
+	if v, ok := byName["note"].(string); ok {
+		b.Note = v
+	}
+	if v, ok := byName["position"].(int64); ok {
+		b.Position = int(v)
+	}
+	if err := assignTime(byName["created_at"], &b.CreatedAt); err != nil {
+		return err
+	}
+	return nil
+}
+
+func assignTime(v any, dst *time.Time) error {
+	switch t := v.(type) {
+	case nil:
+		*dst = time.Time{}
+	case time.Time:
+		*dst = t
+	case string:
+		parsed, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", t)
+		if err != nil {
+			return err
+		}
+		*dst = parsed
+	default:
+		return fmt.Errorf("created_at 不是时间：%T", v)
+	}
+	return nil
 }
 
 func (d *DB) GetFindingTraffic(ctx context.Context, findingID int64) (out *FindingTraffic, err error) {
@@ -465,7 +543,7 @@ func (d *DB) SetFindingReportVersionByNodeID(ctx context.Context, nodeID int64, 
 		if err := LockFindingEvidenceTx(tx, id, version); err != nil {
 			return err
 		}
-		res, err := tx.Exec(`UPDATE findings SET report=$2,report_evidence_version=COALESCE($3::bigint,CASE WHEN evidence_version=0 THEN 0 ELSE -1 END) WHERE id=$1`, id, report, version)
+		res, err := tx.Exec(`UPDATE findings SET report=$2,report_evidence_version=COALESCE($3,CASE WHEN evidence_version=0 THEN 0 ELSE -1 END) WHERE id=$1`, id, report, version)
 		if err != nil {
 			return err
 		}

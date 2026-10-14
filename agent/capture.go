@@ -145,7 +145,20 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 					sum, detail = terminalText(ctx, ev.Terminal, lastTool)
 				}
 				u := ev.Terminal.Usage // cumulative token usage for this session
-				rec(db.Activity{Kind: "result", IsError: ev.Terminal.Err != nil,
+				// A terminal event can carry a non-nil Err for a plain user abort:
+				// harness ends the turn with Reason=AbortedTools/AbortedStreaming
+				// and Err=context.Canceled. terminalText above already words that
+				// as "（运行被中断…）", but flagging the row IsError makes the
+				// transcript render an abort in red as if it were a failure.
+				//
+				// The other abort path (the err branch above) already checks
+				// ctx.Err() before setting IsError; this mirrors that judgement so
+				// both paths agree. Kept identical to terminalText's aborted
+				// predicate, including the reason=="" fallback.
+				aborted := ev.Terminal.Reason == harness.ReasonAbortedStreaming ||
+					ev.Terminal.Reason == harness.ReasonAbortedTools ||
+					(ev.Terminal.Reason == "" && ctx.Err() != nil)
+				rec(db.Activity{Kind: "result", IsError: ev.Terminal.Err != nil && !aborted,
 					Summary: firstLine(sum, 400), Detail: detail,
 					InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens,
 					CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})

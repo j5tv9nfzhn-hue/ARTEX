@@ -76,9 +76,14 @@ func (s *AssetStore) upsertTaskScopeResult(ts TaskScope) (bool, error) {
 	if src == "" {
 		src = "auto"
 	}
+	// 参数位上的 ::cidr 直接去掉：pgx 会把 `$5::cidr` 当成一个名叫 "5::cidr"
+	// 的参数（PostgreSQL 侧报 missing named argument，SQLite 侧则把 $5 当纯
+	// 位置参数、找不到名字）。net 列在 SQLite 侧已是 TEXT（schema_sqlite.sql:685），
+	// 存进去的就是字符串，无需转换；PostgreSQL 侧该参数由目标列 net CIDR 推出
+	// 同样的类型，两边语义一致。
 	query := `
 INSERT INTO task_scope(task_id, kind, company_id, domain, net, value, source, reason)
-VALUES ($1,$2,$3,$4,$5::cidr,$6,$7,NULLIF($8,''))
+VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''))
 ON CONFLICT DO NOTHING`
 	var (
 		result sql.Result
@@ -235,7 +240,7 @@ func (s *AssetStore) DeleteTaskScope(taskID, scopeID int64) (bool, error) {
 func (s *AssetStore) ListTaskScope(taskID int64) ([]TaskScope, error) {
 	rows, err := s.db.Query(`
 SELECT ts.id, ts.kind, COALESCE(ts.company_id,0), COALESCE(c.name,''), COALESCE(ts.domain,''),
-       COALESCE(ts.net::text,''), COALESCE(ts.value,''), ts.source, COALESCE(ts.reason,'')
+       COALESCE(`+sqlCastText("ts.net")+`,''), COALESCE(ts.value,''), ts.source, COALESCE(ts.reason,'')
 FROM task_scope ts
 LEFT JOIN companies c ON c.id=ts.company_id
 WHERE ts.task_id=$1 ORDER BY ts.id`, taskID)
@@ -299,36 +304,17 @@ func (s *AssetStore) CoverageEnabled(taskID int64) bool {
 	return enabled
 }
 
-// task_scope→assets match predicate, reused by the count / by-type / untested queries. $1=taskID.
-const covTargetCTE = `
-target AS (
-  SELECT DISTINCT a.id, a.type,
-         COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, '') AS label
-  FROM assets a
-  JOIN task_scope ts ON ts.task_id = $1 AND (
-       (ts.kind='company'     AND a.company_id = ts.company_id)
-    OR (ts.kind='root_domain' AND a.root_domain = ts.domain)
-    OR (ts.kind='subdomain'   AND a.domain = ts.domain)
-    OR (ts.kind IN ('ip','cidr') AND ts.net >>= try_inet(a.ip))
-    OR (ts.kind='icp' AND (
-         lower(regexp_replace(COALESCE(a.icp,''), '[[:space:]]+', '', 'g')) = ts.value
-         OR lower(regexp_replace(COALESCE(a.app_icp,''), '[[:space:]]+', '', 'g')) = ts.value
-       ))
-  )
-),
-tested AS (
-  SELECT DISTINCT ea.asset_id
-  FROM exploration_anchors ea
-  JOIN exploration_nodes en ON en.id = ea.node_id
-  WHERE en.exploration_id = $2 AND en.kind = 'fact'
-)`
+// task_scope→assets match predicate, reused by the count / by-type / untested
+// queries. $1=taskID. The CTE itself moved to db/dialect_dml.go because its
+// `>>=` / try_inet / regexp_replace predicate is PostgreSQL-only; this thin
+// wrapper picks the right text for the active engine.
 
 // TaskCoverage computes rough per-type coverage for a task. taskID indexes
 // task_scope + assets; expID indexes the fact anchors. Reference figure only.
 func (s *AssetStore) TaskCoverage(taskID, expID int64) (*Coverage, error) {
 	cov := &Coverage{ByType: []CoverageByType{}}
 	_ = s.db.QueryRow(`SELECT count(*) FROM task_scope WHERE task_id=$1`, taskID).Scan(&cov.ScopeRows)
-	rows, err := s.db.Query(`WITH `+covTargetCTE+`
+	rows, err := s.db.Query(`WITH `+covTargetCTE()+`
 SELECT t.type, count(*) AS total,
        count(*) FILTER (WHERE t.id IN (SELECT asset_id FROM tested)) AS tested
 FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
@@ -619,12 +605,12 @@ func (s *AssetStore) ListUntestedAssets(taskID, expID int64, typ string, limit, 
 		args = append(args, typ)
 	}
 	var total int
-	_ = s.db.QueryRow(`WITH `+covTargetCTE+`
+	_ = s.db.QueryRow(`WITH `+covTargetCTE()+`
 SELECT count(*) FROM target t WHERE t.id NOT IN (SELECT asset_id FROM tested)`+typeFilter, args...).Scan(&total)
 	pageArgs := append(append([]any{}, args...), limit, offset)
 	limPos := strconv.Itoa(len(args) + 1)
 	offPos := strconv.Itoa(len(args) + 2)
-	rows, err := s.db.Query(`WITH `+covTargetCTE+`
+	rows, err := s.db.Query(`WITH `+covTargetCTE()+`
 SELECT t.id, t.type, t.label FROM target t
 WHERE t.id NOT IN (SELECT asset_id FROM tested)`+typeFilter+`
 ORDER BY t.id LIMIT $`+limPos+` OFFSET $`+offPos, pageArgs...)

@@ -107,6 +107,63 @@ ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC, model`, taskID)
 	return out, rows.Err()
 }
 
+// WorkerTokenStat 是某个 agent 泳道（角色）在一个任务上的 token 汇总，取自常开的
+// llm_usage 计量账本（见 db/llm_usage.go）。Calls 是该角色发起的 LLM 调用次数，
+// 成功与失败都计入。字段与 ModelTokenStat 一一对应，便于前端复用同一套渲染。
+type WorkerTokenStat struct {
+	Worker           string `json:"worker"`
+	Calls            int    `json:"calls"`
+	InputTokens      int    `json:"input_tokens"`
+	OutputTokens     int    `json:"output_tokens"`
+	CacheReadTokens  int    `json:"cache_read_tokens"`
+	CacheWriteTokens int    `json:"cache_write_tokens"`
+}
+
+// TokenByWorker 按 agent 泳道（角色）聚合一个任务的 LLM token 消耗，消耗最多的角色
+// 排在前面，取自常开的 llm_usage 计量账本。taskID 是任务登记表 id。
+// 这是 TokenByModel 给不出的那一维：角色可以被单独绑定不同模型，按模型分组会把
+// "哪个角色烧的 token" 摊平到各模型上；而 worker 列在 llmrec 记账时由 session 前缀
+// 解析而来（llmrec.parseSession，取第一个 '-' 之前的段），实际取值如 worker /
+// planner / main / goals / compactor / btw，所以这里能把一个任务读成"角色视角"，
+// 与"模型视角"互为补充。记账对成功和失败都落行，因此池化轮转、profile 故障转移、
+// 中断运行都不会让角色维度的账目缺失。
+// worker 为空的行（无法从 session 解析出泳道的调用）归入 "(unknown)"，不静默丢弃。
+// WHERE 沿用 TokenByModel 的 COALESCE(task_id,”)=$1 写法：调用方必须传非空 taskID，
+// 否则空串会连 task_id 为 NULL 的 chat / env 行一起捞进来。两个查询同源，改动时应
+// 同步，否则按角色与按模型两张表会对不上。
+//
+// 目前仅供 API 层使用，server 侧尚未接线（db 层不允许有未使用的私有辅助，此处为
+// 导出方法，不触发编译告警）。建议由 server/commands.go 新增 handler 调用，放在
+// pgTokenByModel 旁边，可直接扩展现有路由的返回体：
+//
+//	mux.HandleFunc("GET /api/llm/records/by-worker", s.pgTokenByWorker)
+//
+// 或在 pgTokenByModel 的返回里加 "workers" 字段复用 ?task= 查询参数。
+func (d *DB) TokenByWorker(taskID string) ([]WorkerTokenStat, error) {
+	rows, err := d.Query(`
+SELECT COALESCE(NULLIF(worker,''),'(unknown)') AS worker, COUNT(*) AS calls,
+       COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+       COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0)
+FROM llm_usage
+WHERE COALESCE(task_id,'') = $1
+GROUP BY worker
+ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC, worker`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []WorkerTokenStat{}
+	for rows.Next() {
+		var w WorkerTokenStat
+		if err := rows.Scan(&w.Worker, &w.Calls, &w.InputTokens, &w.OutputTokens,
+			&w.CacheReadTokens, &w.CacheWriteTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // ProfileUsage aggregates the whole ledger's token spend for one LLM profile
 // (global, all tasks). Powers the dashboard's per-profile token card (new source).
 type ProfileUsage struct {

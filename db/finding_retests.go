@@ -84,19 +84,19 @@ func scanRetest(row interface{ Scan(...any) error }) (*FindingRetest, error) {
 // CreateFindingRetest atomically snapshots the source, creates its conversation
 // and persists the first message. A finding row lock deduplicates simultaneous
 // clicks across clients; an existing active run is returned without dispatching.
+//
+// 行锁经 sqlForUpdate() 按引擎取：PG 保留 FOR UPDATE OF f；SQLite 没有行锁，
+// 返回空串。去重之所以仍然成立，是因为 SQLite 侧的 DSN 带了 _txlock=immediate
+// （见 config/engine.go）：事务从 BEGIN 就持有库级写锁，而不是等第一条写语句
+// 才升级，因此「锁行 → 查活动复测 → 插入」这一段没有交错窗口，也避免了
+// deferred 事务升级写锁时的 SQLITE_BUSY_SNAPSHOT。
 func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes string) (*FindingRetest, *Conversation, bool, error) {
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	defer tx.Rollback()
-	var title string
-	var snapshot []byte
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(f.name,''), NULLIF(f.vulnclass,''), '未分类'),
-	jsonb_build_object('finding', to_jsonb(f),
-	 'assets', COALESCE((SELECT jsonb_agg(to_jsonb(a)) FROM assets a WHERE f.asset_ids @> to_jsonb(ARRAY[a.id])), '[]'::jsonb),
-	 'constraints', COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM task_constraints c JOIN tasks t ON t.exploration_id=c.exploration_id WHERE t.id=f.task_id), '[]'::jsonb))
-	FROM findings f WHERE f.id=$1 FOR UPDATE OF f`, findingID).Scan(&title, &snapshot)
+	title, snapshot, err := retestSnapshotTx(ctx, tx, findingID)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -131,6 +131,146 @@ func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes str
 		return nil, nil, false, err
 	}
 	return r, &c, true, nil
+}
+
+// retestSnapshotTx 读出复测快照需要的全部数据，并在 Go 侧拼成
+// {"finding": {…}, "assets": [{…}], "constraints": [{…}]}。
+//
+// 返回值分别是会话标题与快照字节；finding 不存在时返回 sql.ErrNoRows
+// （server/finding_retests.go 依赖 errors.Is 把它翻译成 404）。
+//
+// ── 为什么不再是一条 SQL ────────────────────────────────────────────────────
+//
+// 原来是这么一条语句：
+//
+//	SELECT COALESCE(NULLIF(f.name,''), NULLIF(f.vulnclass,''), '未分类'),
+//	       jsonb_build_object('finding', to_jsonb(f),
+//	        'assets',      COALESCE((SELECT jsonb_agg(to_jsonb(a)) FROM assets a
+//	                                  WHERE f.asset_ids @> to_jsonb(ARRAY[a.id])), '[]'::jsonb),
+//	        'constraints', COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM task_constraints c
+//	                                  JOIN tasks t ON t.exploration_id=c.exploration_id
+//	                                  WHERE t.id=f.task_id), '[]'::jsonb))
+//	FROM findings f WHERE f.id=$1 FOR UPDATE OF f
+//
+// 整行序列化由 to_jsonb(行) 完成，聚合由 jsonb_agg 完成；SQLite 两者都没有：
+// to_jsonb 没有「展开一行」的通用等价物，jsonb_agg 聚合的又是已经算好的 jsonb
+// 值，而整行在那一刻还不是值。所以快照改为在 Go 里组装，两个引擎共用本文件
+// 这一份实现。逐列 json_object 的替代方案为什么不采用，见 db/rowjson.go 开头。
+//
+// ── 事务边界没有变 ──────────────────────────────────────────────────────────
+//
+// 三条语句与原来那条语句在同一个 tx 内按顺序执行，因此看到的是同一份数据：
+// PostgreSQL 侧第一条带 FOR UPDATE OF f，其余两条在同一个事务里只能读到已被
+// 锁住的那一行；SQLite 侧没有行锁，但 DSN 的 _txlock=immediate 让事务从 BEGIN
+// 起就持有库级写锁，整个快照期间不可能有别的写入者进来。原来的单条语句本来
+// 也是一次一致性读，拆成三条并不引入中间态。
+//
+// ── 一处行为变化：聚合顺序 ──────────────────────────────────────────────────
+//
+// 原来的 jsonb_agg 没有 ORDER BY，数组顺序由执行计划决定（实际上是不确定的）。
+// 现在两条子查询都加了 ORDER BY a.id / c.id，让快照里的资产与约束顺序稳定。
+// 这是把「本来就不确定」变成「确定」，不改变任何一条记录是否出现。
+func retestSnapshotTx(ctx context.Context, tx *sql.Tx, findingID int64) (string, []byte, error) {
+	// 1) 锁住 findings 行，同时取出标题与整行内容。
+	//    标题表达式与原语句逐字相同，放在 SQL 里而不是 Go 里，是因为它必须与
+	//    读到的正是同一行；SELECT f.* 则是 to_jsonb(f) 的等价物（列增删自动跟随
+	//    schema），列名由 rows.Columns() 给出，见 db/rowjson.go。
+	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(NULLIF(f.name,''), NULLIF(f.vulnclass,''), '未分类'), f.*
+FROM findings f WHERE f.id=$1`+sqlForUpdate("f"), findingID)
+	if err != nil {
+		return "", nil, err
+	}
+	defer rows.Close()
+	title, finding, err := scanRetestSourceRow(rows)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// 2) 该漏洞关联的资产整行。f.asset_ids @> to_jsonb(ARRAY[a.id]) 是
+	//    「findings 的资产数组里含有这个资产 id」；SQLite 侧换成
+	//    artex_json_contains(f.asset_ids, a.id)，见 findingAssetIDsContainExpr。
+	assetRows, err := tx.QueryContext(ctx, `SELECT a.* FROM assets a
+JOIN findings f ON f.id=$1 WHERE `+findingAssetIDsContainExpr()+` ORDER BY a.id`, findingID)
+	if err != nil {
+		return "", nil, err
+	}
+	assets, err := drainRows(assetRows)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// 3) 该漏洞所属任务的约束整行。t.id=f.task_id 在 f.task_id 为 NULL 时不匹配
+	//    任何任务，结果是空集合——与原语句的 COALESCE(…, '[]'::jsonb) 相同。
+	//    这条语句两个引擎字面相同，不需要方言分支。
+	constRows, err := tx.QueryContext(ctx, `SELECT c.* FROM task_constraints c
+JOIN tasks t ON t.exploration_id=c.exploration_id
+JOIN findings f ON f.task_id=t.id WHERE f.id=$1 ORDER BY c.id`, findingID)
+	if err != nil {
+		return "", nil, err
+	}
+	constraints, err := drainRows(constRows)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// assets / constraints 已经是各自编码好的 JSON 片段，用 json.RawMessage
+	// 原样嵌进外层对象即可，不需要为了「能塞进 map」先解码一遍。空集合由
+	// rowsToJSONObjects 保证是 []，因此这两个键永远不会是 null。
+	snapshot, err := marshalSnapshot(map[string]any{
+		"finding":     finding,
+		"assets":      json.RawMessage(assets),
+		"constraints": json.RawMessage(constraints),
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return title, snapshot, nil
+}
+
+// scanRetestSourceRow 读出「标题 + f.*」这一行的结果：第 0 列是标量标题，
+// 第 1 列起是 findings 整行。
+func scanRetestSourceRow(rows *sql.Rows) (string, map[string]any, error) {
+	cols, err := rows.Columns()
+	if err != nil {
+		return "", nil, err
+	}
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return "", nil, err
+		}
+		return "", nil, sql.ErrNoRows
+	}
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	if err := rows.Scan(ptrs...); err != nil {
+		return "", nil, err
+	}
+	// 关闭结果集：SQLite 一个连接同一时刻只能有一个活动结果集，不关就没法在
+	// 同一事务里继续跑下面两条语句。rows.Close 可重复调用。
+	if err := rows.Close(); err != nil {
+		return "", nil, err
+	}
+	title, _ := vals[0].(string) // COALESCE 恒返回 TEXT，断言失败才退化成空串
+	return title, rowJSONObject(cols[1:], vals[1:]), nil
+}
+
+// findingAssetIDsContainExpr 表达 PG 的 `f.asset_ids @> to_jsonb(ARRAY[a.id])`。
+//
+// 调用点固定写成 `FROM assets a JOIN findings f ON f.id=$1 WHERE <本函数>`，
+// 两个引擎共用同一段语句，只换掉这里的判定表达式。
+//
+// artex_json_contains(col, x) 的语义是「col 解析出的数组里是否存在等于 x 的
+// 元素」，即 EXISTS (SELECT 1 FROM json_each(col) WHERE value = x)，与 PG 的
+// jsonb 数组包含完全对应（db/dialect_arrays.go 里有同样的对照说明）。值作为
+// 函数实参绑定，不存在拼进 SQL 文本的机会。
+func findingAssetIDsContainExpr() string {
+	if engineIsSQLite() {
+		return "artex_json_contains(f.asset_ids, a.id)"
+	}
+	return "f.asset_ids @> to_jsonb(ARRAY[a.id])"
 }
 
 func (r *FindingRetest) InitialMessage() string {
@@ -228,7 +368,7 @@ func (d *DB) FinishFindingRetest(id int64, status, reason string) error {
 	defer tx.Rollback()
 	// Lock the finding before the retest, matching creation and cascading deletion.
 	var findingID int64
-	err = tx.QueryRow(`SELECT f.id FROM findings f WHERE f.id=(SELECT finding_id FROM finding_retests WHERE id=$1) FOR UPDATE OF f`, id).Scan(&findingID)
+	err = tx.QueryRow(`SELECT f.id FROM findings f WHERE f.id=(SELECT finding_id FROM finding_retests WHERE id=$1)`+sqlForUpdate("f"), id).Scan(&findingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // Finding/retest already deleted.
 	}

@@ -16,15 +16,19 @@ var ErrSideParentGone = errors.New("旁路父会话已删除或归档")
 
 // Lock the real parent before the side session, also covering soft task/intent
 // deletion. A delayed checkpoint cannot recreate data after archive cleanup.
+//
+// 行锁子句按引擎取：PG 保留 FOR SHARE，SQLite 没有行锁、返回空串（见 dialect_locking.go）。
+// 这里要挡的是「父行在本事务写入旁路会话期间被并发删掉/归档」，而 SQLite 的写事务从
+// 第一条写语句起独占库文件，并发的删除只能整个排在本事务之前或之后，不存在插入窗口。
 func lockSideParent(ctx context.Context, tx *sql.Tx, p sidequestion.Parent) error {
 	var id int64
 	var err error
 	if p.ConversationID > 0 {
-		err = tx.QueryRowContext(ctx, `SELECT id FROM conversations WHERE id=$1 FOR SHARE`, p.ConversationID).Scan(&id)
+		err = tx.QueryRowContext(ctx, `SELECT id FROM conversations WHERE id=$1`+forShareClause(), p.ConversationID).Scan(&id)
 	} else {
-		err = tx.QueryRowContext(ctx, `SELECT id FROM tasks WHERE id=$1 AND exploration_id=$2 AND deleted_at IS NULL AND archived_at IS NULL FOR SHARE`, p.TaskID, p.ExplorationID).Scan(&id)
+		err = tx.QueryRowContext(ctx, `SELECT id FROM tasks WHERE id=$1 AND exploration_id=$2 AND deleted_at IS NULL AND archived_at IS NULL`+forShareClause(), p.TaskID, p.ExplorationID).Scan(&id)
 		if err == nil && p.IntentID > 0 {
-			err = tx.QueryRowContext(ctx, `SELECT id FROM exploration_nodes WHERE id=$1 AND exploration_id=$2 AND kind='intent' AND state<>'stopped' FOR SHARE`, p.IntentID, p.ExplorationID).Scan(&id)
+			err = tx.QueryRowContext(ctx, `SELECT id FROM exploration_nodes WHERE id=$1 AND exploration_id=$2 AND kind='intent' AND state<>'stopped'`+forShareClause(), p.IntentID, p.ExplorationID).Scan(&id)
 		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -167,7 +171,12 @@ func (d *DB) StartSideRequest(ctx context.Context, s sidequestion.Snapshot, clie
 		return nil, false, err
 	}
 	var generation int64
-	if err = tx.QueryRowContext(ctx, `SELECT generation FROM side_question_sessions WHERE session_key=$1 FOR UPDATE`, s.Parent.Key()).Scan(&generation); err != nil {
+	// 行锁子句按引擎取：PG 保留 FOR UPDATE，SQLite 返回空串（见 dialect_locking.go）。
+	// 锁防的是「同一 session_key 的两个 StartSideRequest 读到同一个 generation 后双双
+	// 插入 running 行」。SQLite 的单写者保证后到的事务读到的是前一个提交后的
+	// generation；即使真撞上，schema 上的 UNIQUE(session_key,generation,client_id)
+	// 与 idx_side_request_running 这条部分唯一索引仍会把重复行挡在库外。
+	if err = tx.QueryRowContext(ctx, `SELECT generation FROM side_question_sessions WHERE session_key=$1`+forUpdateClause(false), s.Parent.Key()).Scan(&generation); err != nil {
 		return nil, false, err
 	}
 	e, err := scanSide(tx.QueryRowContext(ctx, `SELECT `+sideCols+` FROM side_question_requests WHERE session_key=$1 AND generation=$2 AND client_id=$3`, s.Parent.Key(), generation, clientID))
@@ -191,11 +200,34 @@ func (d *DB) StartSideRequest(ctx context.Context, s sidequestion.Snapshot, clie
 	if err != nil {
 		return nil, false, err
 	}
-	e, err = scanSide(tx.QueryRowContext(ctx, `INSERT INTO side_question_requests(id,session_key,generation,client_id,question,status,model,snapshot_at) VALUES($1,$2,$3,$4,$5,'running',$6,$7) RETURNING `+sideCols, uuid.NewString(), s.Parent.Key(), generation, clientID, question, string(model), s.CapturedAt))
+	// ordinal 是分页用的单调序号：PostgreSQL 侧靠 BIGSERIAL 的 nextval 赋值，
+	// 但那个列不是主键，schema 转换后成了没有默认值的普通 INTEGER，新行的
+	// ordinal 因此是 NULL——而 scanSide 扫进非指针的 int64，直接失败。
+	// SQLite 没有序列，所以在事务内取下一个值显式写入。
+	//
+	// 放在同一事务里是安全的：SQLite 同一时刻只有一个写事务（DSN 带
+	// _txlock=immediate，写锁在 BEGIN 就取得），所以 MAX+1 到 INSERT 之间
+	// 不会有别的写入插进来。PostgreSQL 分支仍走 BIGSERIAL，SQL 不变。
+	ordinal, err := nextSideOrdinal(tx)
+	if err != nil {
+		return nil, false, err
+	}
+	e, err = scanSide(tx.QueryRowContext(ctx, `INSERT INTO side_question_requests(id,ordinal,session_key,generation,client_id,question,status,model,snapshot_at) VALUES($1,$2,$3,$4,$5,$6,'running',$7,$8) RETURNING `+sideCols, uuid.NewString(), ordinal, s.Parent.Key(), generation, clientID, question, string(model), s.CapturedAt))
 	if err != nil {
 		return nil, false, err
 	}
 	return &e, true, tx.Commit()
+}
+
+// nextSideOrdinal returns the next paging ordinal inside the caller's
+// transaction. See the call site for why this is computed in Go rather than
+// left to a column default.
+func nextSideOrdinal(tx *sql.Tx) (int64, error) {
+	var max sql.NullInt64
+	if err := tx.QueryRow(`SELECT MAX(ordinal) FROM side_question_requests`).Scan(&max); err != nil {
+		return 0, err
+	}
+	return max.Int64 + 1, nil
 }
 
 // Conditional updates cannot resurrect deleted history or overwrite a terminal
@@ -209,7 +241,7 @@ func (d *DB) UpdateSideRequest(ctx context.Context, e sidequestion.Exchange) (bo
 	if err != nil {
 		return false, err
 	}
-	r, err := d.ExecContext(ctx, `UPDATE side_question_requests r SET answer=$2,status=$3,error=$4,sequence=$5,usage=$6,context_info=$7
+	r, err := d.ExecContext(ctx, `UPDATE side_question_requests AS r SET answer=$2,status=$3,error=$4,sequence=$5,usage=$6,context_info=$7
 WHERE r.id=$1 AND r.status='running' AND r.sequence<$5 AND EXISTS(SELECT 1 FROM side_question_sessions s WHERE s.session_key=r.session_key AND s.generation=r.generation)`, e.ID, e.Answer, e.Status, e.Error, e.Sequence, string(usage), string(info))
 	if err != nil {
 		return false, err
@@ -270,7 +302,7 @@ func (d *DB) SaveSideMemory(ctx context.Context, e sidequestion.Exchange, memory
 	if err != nil {
 		return err
 	}
-	result, err := d.ExecContext(ctx, `UPDATE side_question_sessions s SET memory=$3 WHERE s.session_key=$1 AND s.generation=$2
+	result, err := d.ExecContext(ctx, `UPDATE side_question_sessions AS s SET memory=$3 WHERE s.session_key=$1 AND s.generation=$2
 AND EXISTS(SELECT 1 FROM side_question_requests r WHERE r.id=$4 AND r.session_key=s.session_key AND r.generation=s.generation AND r.status='running')`, e.SessionKey, e.Generation, string(raw), e.ID)
 	if err != nil {
 		return err

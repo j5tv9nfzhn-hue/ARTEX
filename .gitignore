@@ -83,3 +83,86 @@ secrets.env
 # artex.exe 前台运行重定向的日志。
 /artex.out.log
 /artex.err.log
+
+# 浏览器运行时在仓库根目录留下的用户数据目录。
+#
+# 任务里启动 Chrome/Chromium 时若未指定 --user-data-dir，浏览器会在「当前工作
+# 目录」下建一份完整 profile：登录凭据库(Login Data)、信任令牌、扩展数据、
+# 浏览痕迹、GPU 缓存、组件下载缓存等。它们体积极大(实测约 60 MB)、含敏感内容，
+# 且与本项目代码毫无关系，绝不能进入版本库。
+#
+# 这里按 Chrome profile 的固有条目名逐个列出，而不是用一个宽泛的通配符：
+# 通配符容易误伤仓库里真实存在的同名文件，逐条列出会让「为什么这条规则存在」
+# 在这个文件里自解释。
+#
+# 需要长期保存浏览器状态时，请把 profile 放到仓库外（例如 %LOCALAPPDATA%），
+# 并在启动参数里显式指定，不要留在工作目录。
+
+# —— profile 根目录与状态文件 ——
+/Default/
+/Profile/
+/Guest Profile/
+/System Profile/
+/Crashpad/
+/CrashpadMetrics-active.pma
+/BrowserMetrics/
+/BrowserMetrics-spare.pma
+# 以下 7 项是 Chrome 写在 profile 根的「文件」，不是目录。
+# 必须不带尾部斜杠 —— git 的「路径/」只匹配目录，文件永远匹配不上。
+/Local State
+/Last Version
+/Last Browser
+/First Run
+/Variations
+/VariationsSeedV2
+/VariationsSafeSeedV2
+
+# —— 组件与模型下载缓存 ——
+/component_crx_cache/
+/extensions_crx_cache/
+/optimization_guide_model_store/
+/OptimizationGuideModelsManifest/
+/OptimizationHints/
+/optimization_guide_model_store.bin
+/GraphiteDawnCache/
+/DawnGraphiteCache/
+/DawnWebGPUCache/
+/ShaderCache/
+/GrShaderCache/
+/GraphiteDawnCache.bin
+/segmentation_platform/
+/first_party_sets.db
+/first_party_sets.db-journal
+/hyphen-data/
+/WidevineCdm/
+/WasmTtsEngine/
+/ZxcvbnData/
+/MEIPreload/
+/PKIMetadata/
+/SafetyTips/
+/SSLErrorAssistant/
+/OnDeviceHeadSuggestModel/
+/ActorSafetyLists/
+/CertificateRevocation/
+/PrivacySandboxAttestationsPreloaded/
+/TrustTokenKeyCommitments/
+/OriginTrials/
+/FileTypePolicies/
+/CaptchaProviders/
+/Crowd Deny/
+/RecoveryImproved/
+/Extension State/
+/Extension Rules/
+/Extension Scripts/
+/Extension Cookies/
+/Extension State/
+
+# —— 安全与隐私子系统数据 ——
+/Safe Browsing/
+/Subresource Filter/
+/BrowsingTopics/
+
+# —— 杂项 ——
+/GPUPersistentCache/
+/pma_agent/
+/GraphiteDawnCache/

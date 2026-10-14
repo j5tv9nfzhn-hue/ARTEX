@@ -154,6 +154,12 @@ func createTaskDeleteRaceFixture(t *testing.T, d *DB) (first, second *Task, host
 
 func openTaskDeleteTestDB(t *testing.T, dsn string) (*DB, int) {
 	t.Helper()
+	// Concurrent-delete expectations here are stated in terms of PostgreSQL
+	// row locks and FOR UPDATE. SQLite serialises writers on the file, so the
+	// interleaving under test cannot be produced there.
+	if engineIsSQLite() {
+		t.Skip("PG 行锁并发删除用例，SQLite 单写者串行化，跳过")
+	}
 	sqlDB, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)

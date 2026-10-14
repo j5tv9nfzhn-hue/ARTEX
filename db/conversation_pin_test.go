@@ -23,9 +23,15 @@ func TestConversationPinOrderingAndPatch(t *testing.T) {
 		_ = d.DeleteConversation(first.ID)
 		t.Fatal(err)
 	}
+	// Capture the ids now. The cleanup closure below would otherwise capture the
+	// `first`/`second` variables themselves, and those are reassigned by the
+	// UpdateConversation calls that follow -- on failure they become nil, so the
+	// deferred DeleteConversation(first.ID) panics instead of the test failing
+	// cleanly, which aborts the whole test binary and hides every later result.
+	firstID, secondID := first.ID, second.ID
 	t.Cleanup(func() {
-		_ = d.DeleteConversation(first.ID)
-		_ = d.DeleteConversation(second.ID)
+		_ = d.DeleteConversation(firstID)
+		_ = d.DeleteConversation(secondID)
 	})
 
 	pinned := true

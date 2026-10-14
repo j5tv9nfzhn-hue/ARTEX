@@ -248,16 +248,22 @@ func shouldFailover(ctx context.Context, err error) bool {
 	return false
 }
 
-// isHardFailure reports whether the failure is deterministic (the profile will
+// IsHardFailure reports whether the failure is deterministic (the profile will
 // keep failing until a human fixes it) rather than transient. Hard failures open
 // the breaker on the first occurrence.
-func isHardFailure(err error) bool {
+//
+// Exported so the engine's intent-level retry budget can ask the same question
+// instead of growing a second, drifting copy of the status-code list.
+func IsHardFailure(err error) bool {
 	switch statusOf(err) {
 	case 401, 402, 403, 404:
 		return true
 	}
 	return false
 }
+
+// isHardFailure is the in-package spelling kept for the breaker hot path.
+func isHardFailure(err error) bool { return IsHardFailure(err) }
 
 // trimErr shortens an error for logs/UI — provider bodies can be long.
 func trimErr(err error) string {

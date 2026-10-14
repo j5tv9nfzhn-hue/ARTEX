@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+
+	"github.com/Autumn-27/artex/config"
 )
 
 // =====================================================================
@@ -194,6 +196,10 @@ func parseURL(raw string) (domain string, port int, serviceName string) {
 	return
 }
 
+// marshalJSONBArray builds the PostgreSQL jsonb[] array literal. It stays
+// byte-identical because the PostgreSQL branch must not change; the SQLite side
+// goes through encodeJSONBArray in db/dialect_arrays.go, which emits a plain
+// JSON array instead.
 func marshalJSONBArray(items []map[string]any) (string, error) {
 	if len(items) == 0 {
 		return "{}", nil
@@ -213,6 +219,10 @@ func marshalJSONBArray(items []map[string]any) (string, error) {
 	return "{" + strings.Join(parts, ",") + "}", nil
 }
 
+// marshalStringArray builds the PostgreSQL text[] array literal. Call sites that
+// feed a real array column must use encodeTextArray (db/dialect_arrays.go), which
+// picks the right encoding per engine; this raw literal form stays for the
+// PostgreSQL branch and for the unit test that pins the literal format.
 func marshalStringArray(items []string) string {
 	if len(items) == 0 {
 		return "{}"
@@ -224,12 +234,16 @@ func marshalStringArray(items []string) string {
 	return "{" + strings.Join(escaped, ",") + "}"
 }
 
+// marshalPortServices encodes assets.open_ports, whose elements are
+// {"port":N,"service":"..."} objects. The element shape is identical on both
+// engines; only the array wrapper differs (PostgreSQL array literal vs JSON
+// array), so the encoding decision is delegated to encodeJSONBArray.
 func marshalPortServices(ps []PortService) (string, error) {
 	items := make([]map[string]any, len(ps))
 	for i, p := range ps {
 		items[i] = map[string]any{"port": p.Port, "service": p.Service}
 	}
-	return marshalJSONBArray(items)
+	return encodeJSONBArray(items)
 }
 
 // nullableInt64 returns sql.NullInt64.
@@ -267,12 +281,7 @@ func (s *AssetStore) UpsertRootDomain(req UpsertRootDomainReq) (int64, error) {
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := encodeTaskIDArray(req.TaskID)
 
 	var icpVal any
 	if req.ICP != "" {
@@ -280,7 +289,28 @@ func (s *AssetStore) UpsertRootDomain(req UpsertRootDomainReq) (int64, error) {
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(upsertRootDomainSQL(), domain, icpVal, companyID, taskIDs).Scan(&id)
+	return id, err
+}
+
+// upsertRootDomainSQL 返回该引擎认的 upsert 语句。
+//
+// PostgreSQL 分支逐字保留迁移前的写法：$4::bigint[] 的数组字面量转换，以及
+// task_ids 的 ARRAY(SELECT DISTINCT unnest(...)) 去重合并。
+//
+// SQLite 分支的三处替换（依据见 db/dialect_arrays.go 文件头）：
+//
+//	$4::bigint[]  → $4。task_ids 在 SQLite 里是 TEXT 列存 JSON 数组，
+//	  值由 encodeTaskIDArray 在 Go 侧生成（"[5]" / "[]"），SQL 不再转换类型。
+//	  `::` 不是 SQLite 语法：驱动把 `$4::bigint` 当成一个名叫 "4::bigint" 的
+//	  具名参数，于是报 unrecognized token / near "[]"，所以必须删掉。
+//	ARRAY(SELECT DISTINCT unnest(a || b)) → artex_json_merge(a, b)：先拼接再按
+//	  整元素去重、保留首现顺序，与 ARRAY+SELECT DISTINCT 的行为一致。
+//	assets.extra || EXCLUDED.extra 保持原样——它是 jsonb 合并而不是数组操作，
+//	  属于 jsonb 方言层，不在本函数范围内。
+func upsertRootDomainSQL() string {
+	if config.Engine() == config.EnginePostgres {
+		return `
 INSERT INTO assets(type, domain, root_domain, icp, company_id, company_source, task_ids)
 VALUES ('root_domain', $1, $1, $2, $3, 'scope', $4::bigint[])
 ON CONFLICT (domain) WHERE type = 'root_domain' DO UPDATE SET
@@ -297,8 +327,26 @@ ON CONFLICT (domain) WHERE type = 'root_domain' DO UPDATE SET
     task_ids   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
     extra      = assets.extra || EXCLUDED.extra,
     last_seen  = now()
-RETURNING id`, domain, icpVal, companyID, taskIDs).Scan(&id)
-	return id, err
+RETURNING id`
+	}
+	return `
+INSERT INTO assets(type, domain, root_domain, icp, company_id, company_source, task_ids)
+VALUES ('root_domain', $1, $1, $2, $3, 'scope', $4)
+ON CONFLICT (domain) WHERE type = 'root_domain' DO UPDATE SET
+    icp        = COALESCE(EXCLUDED.icp, assets.icp),
+    company_id = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids   = artex_json_merge(assets.task_ids, EXCLUDED.task_ids),
+    extra      = assets.extra || EXCLUDED.extra,
+    last_seen  = now()
+RETURNING id`
 }
 
 // ErrAssetIPInvalid marks a non-address value in an asset's ip field. Both
@@ -353,14 +401,9 @@ func (s *AssetStore) UpsertIP(req UpsertIPReq) (int64, error) {
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := encodeTaskIDArray(req.TaskID)
 
-	boundDomains := marshalStringArray(req.BoundDomains)
+	boundDomains := encodeTextArray(req.BoundDomains)
 	openPortsJSON, err := marshalPortServices(req.OpenPorts)
 	if err != nil {
 		return 0, err
@@ -372,7 +415,28 @@ func (s *AssetStore) UpsertIP(req UpsertIPReq) (int64, error) {
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(upsertIPSQL(), req.IP, csegVal, boundDomains, openPortsJSON, companyID, taskIDs).Scan(&id)
+	return id, err
+}
+
+// upsertIPSQL 返回该引擎认的 upsert 语句。
+//
+// SQLite 分支的四处替换：
+//
+//	$2::cidr / $3::text[] / $4::jsonb[] / $6::bigint[] 全部去掉。
+//	  四个数组列（bound_domains、open_ports、task_ids）在 SQLite 里就是 TEXT 列，
+//	  值由 encodeTextArray / marshalPortServices / encodeTaskIDArray 在 Go 侧生成为
+//	  JSON 数组，列本身不需要类型转换；c_segment 同样是 TEXT 列。`::cidr` 这类
+//	  裸转换不是 SQLite 语法，会被驱动解析成具名参数 "2::cidr" 并报
+//	  missing named argument，因此必须删。
+//	bound_domains 的 ARRAY(SELECT DISTINCT unnest(...)) → artex_json_merge：
+//	  拼接后按整元素去重、保留首现顺序。
+//	open_ports 的 DISTINCT ON (端口) + ORDER BY 端口/服务名 → artex_json_merge_ports：
+//	  一端口一条、同端口优先留 service 非空的、结果按端口号升序。
+//	task_ids 同上 → artex_json_merge。
+func upsertIPSQL() string {
+	if config.Engine() == config.EnginePostgres {
+		return `
 INSERT INTO assets(type, ip, c_segment, bound_domains, open_ports, company_id, company_source, task_ids)
 VALUES ('ip', $1, $2::cidr, $3::text[], $4::jsonb[], $5, 'scope', $6::bigint[])
 ON CONFLICT (ip) WHERE type = 'ip' DO UPDATE SET
@@ -397,8 +461,27 @@ ON CONFLICT (ip) WHERE type = 'ip' DO UPDATE SET
     END,
     task_ids   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
     last_seen  = now()
-RETURNING id`, req.IP, csegVal, boundDomains, openPortsJSON, companyID, taskIDs).Scan(&id)
-	return id, err
+RETURNING id`
+	}
+	return `
+INSERT INTO assets(type, ip, c_segment, bound_domains, open_ports, company_id, company_source, task_ids)
+VALUES ('ip', $1, $2, $3, $4, $5, 'scope', $6)
+ON CONFLICT (ip) WHERE type = 'ip' DO UPDATE SET
+    bound_domains = artex_json_merge(assets.bound_domains, EXCLUDED.bound_domains),
+    open_ports    = artex_json_merge_ports(assets.open_ports, EXCLUDED.open_ports),
+    c_segment  = COALESCE(assets.c_segment, EXCLUDED.c_segment),
+    company_id = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids   = artex_json_merge(assets.task_ids, EXCLUDED.task_ids),
+    last_seen  = now()
+RETURNING id`
 }
 
 // AppendIPPort appends a {port, service} entry to an existing IP asset's open_ports.
@@ -407,7 +490,12 @@ func (s *AssetStore) AppendIPPort(ipStr string, port int, serviceName string) er
 		return nil
 	}
 	entry, _ := json.Marshal(map[string]any{"port": port, "service": serviceName})
-	_, err := s.db.Exec(`
+	// Postgres 侧是 unnest(open_ports || ARRAY[$1::jsonb])：$1 只是一个 jsonb 对象，
+	// ARRAY[...] 把它包成单元素数组再拼接。SQLite 侧的 artex_json_merge_ports 会对
+	// 第二个参数做同样的"不是数组就包成单元素"处理，所以这里传的仍是裸对象 JSON，
+	// 不需要在 Go 侧多包一层数组。
+	if config.Engine() == config.EnginePostgres {
+		_, err := s.db.Exec(`
 UPDATE assets SET
     open_ports = (
         SELECT ARRAY(
@@ -419,6 +507,13 @@ UPDATE assets SET
     ),
     last_seen = now()
 WHERE type = 'ip' AND ip = $2`, string(entry), ipStr)
+		return err
+	}
+	_, err := s.db.Exec(`
+UPDATE assets SET
+    open_ports = artex_json_merge_ports(open_ports, $1),
+    last_seen = now()
+WHERE type = 'ip' AND ip = $2`, string(entry), ipStr)
 	return err
 }
 
@@ -427,9 +522,19 @@ func (s *AssetStore) AppendIPBoundDomain(ipStr, domain string) error {
 	if ipStr == "" || domain == "" {
 		return nil
 	}
-	_, err := s.db.Exec(`
+	// Postgres: bound_domains || ARRAY[$1::text]，DISTINCT 保证同一个域名不重复。
+	// SQLite: artex_json_merge 把 $1 当单元素数组拼进去并按元素去重，语义相同。
+	if config.Engine() == config.EnginePostgres {
+		_, err := s.db.Exec(`
 UPDATE assets SET
     bound_domains = (SELECT ARRAY(SELECT DISTINCT unnest(bound_domains || ARRAY[$1::text]))),
+    last_seen = now()
+WHERE type = 'ip' AND ip = $2`, domain, ipStr)
+		return err
+	}
+	_, err := s.db.Exec(`
+UPDATE assets SET
+    bound_domains = artex_json_merge(bound_domains, $1),
     last_seen = now()
 WHERE type = 'ip' AND ip = $2`, domain, ipStr)
 	return err
@@ -505,12 +610,7 @@ func (s *AssetStore) UpsertSubdomain(req UpsertSubdomainReq) (id int64, err erro
 		companyID, _ = s.resolveCompanyWithICP("", ipStr, "")
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := encodeTaskIDArray(req.TaskID)
 
 	var icpVal, csegVal, ipVal any
 	if req.ICP != "" {
@@ -523,9 +623,24 @@ func (s *AssetStore) UpsertSubdomain(req UpsertSubdomainReq) (id int64, err erro
 		ipVal = ipStr
 	}
 	recordType := req.RecordType
-	recordValueArr := marshalStringArray(req.RecordValue)
+	recordValueArr := encodeTextArray(req.RecordValue)
 
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(upsertSubdomainSQL(), domain, rootDomain, recordType, recordValueArr, ipVal, csegVal, icpVal, companyID, taskIDs).Scan(&id)
+	return id, err
+}
+
+// upsertSubdomainSQL 返回该引擎认的 upsert 语句。
+//
+// 与 upsertIPSQL 同理：SQLite 分支去掉 $4::text[] / $6::cidr / $9::bigint[]
+// 三处类型转换（record_value、c_segment、task_ids 在 SQLite 里都是 TEXT 列，
+// 值已由 encodeTextArray / encodeTaskIDArray 生成为 JSON 数组），并把两处
+// ARRAY(SELECT DISTINCT unnest(...)) 换成 artex_json_merge。
+//
+// ON CONFLICT (domain, COALESCE(record_type,”)) 是 SQLite 原生支持的表达式
+// 冲突目标，对应 schema 里的部分唯一索引 uq_av2_subdomain，两边行为一致。
+func upsertSubdomainSQL() string {
+	if config.Engine() == config.EnginePostgres {
+		return `
 INSERT INTO assets(type, domain, root_domain, record_type, record_value, ip, c_segment, icp, company_id, company_source, task_ids)
 VALUES ('subdomain', $1, $2, $3, $4::text[], $5, $6::cidr, $7, $8, 'scope', $9::bigint[])
 ON CONFLICT (domain, COALESCE(record_type,'')) WHERE type = 'subdomain' DO UPDATE SET
@@ -545,8 +660,29 @@ ON CONFLICT (domain, COALESCE(record_type,'')) WHERE type = 'subdomain' DO UPDAT
     record_value = (SELECT ARRAY(SELECT DISTINCT unnest(assets.record_value || EXCLUDED.record_value))),
     extra        = assets.extra || EXCLUDED.extra,
     last_seen    = now()
-RETURNING id`, domain, rootDomain, recordType, recordValueArr, ipVal, csegVal, icpVal, companyID, taskIDs).Scan(&id)
-	return id, err
+RETURNING id`
+	}
+	return `
+INSERT INTO assets(type, domain, root_domain, record_type, record_value, ip, c_segment, icp, company_id, company_source, task_ids)
+VALUES ('subdomain', $1, $2, $3, $4, $5, $6, $7, $8, 'scope', $9)
+ON CONFLICT (domain, COALESCE(record_type,'')) WHERE type = 'subdomain' DO UPDATE SET
+    ip           = COALESCE(EXCLUDED.ip, assets.ip),
+    c_segment    = COALESCE(EXCLUDED.c_segment, assets.c_segment),
+    icp          = COALESCE(EXCLUDED.icp, assets.icp),
+    company_id   = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids     = artex_json_merge(assets.task_ids, EXCLUDED.task_ids),
+    record_value = artex_json_merge(assets.record_value, EXCLUDED.record_value),
+    extra        = assets.extra || EXCLUDED.extra,
+    last_seen    = now()
+RETURNING id`
 }
 
 // =====================================================================
@@ -575,12 +711,7 @@ func (s *AssetStore) UpsertApp(req UpsertAppReq) (int64, error) {
 		})
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := encodeTaskIDArray(req.TaskID)
 
 	var bundleVal, catVal, descVal, icpVal, companyIDVal any
 	companySource := "scope"
@@ -613,7 +744,26 @@ func (s *AssetStore) UpsertApp(req UpsertAppReq) (int64, error) {
 	var err error
 
 	if req.BundleID != "" {
-		err = s.tx.QueryRow(`
+		err = s.tx.QueryRow(upsertAppByBundleSQL(), bundleVal, req.Name, catVal, descVal, icpVal, companyIDVal, companySource, taskIDs).Scan(&id)
+	} else {
+		err = s.tx.QueryRow(upsertAppByNameSQL(), req.Name, catVal, descVal, icpVal, companyIDVal, companySource, taskIDs).Scan(&id)
+	}
+	return id, err
+}
+
+// upsertAppByBundleSQL / upsertAppByNameSQL 是 UpsertApp 的两条冲突分支。
+//
+// SQLite 分支同样只去掉 $8::bigint[] / $7::bigint[] 这一处类型转换（task_ids
+// 在 SQLite 里是 TEXT 列存 JSON 数组），并把 task_ids 的
+// ARRAY(SELECT DISTINCT unnest(...)) 换成 artex_json_merge。
+//
+// 注意：这条语句没有列出 bound_domains / open_ports / technologies / auth /
+// params 这些列，SQLite 会给它们填 schema 默认值 '{}'——那不是合法 JSON。
+// 读取侧与合并侧都经过 db/dialect_arrays.go 的 jsonArrayOf 归一化，所以 '{}'
+// 会被当作空数组，不会触发 malformed JSON。
+func upsertAppByBundleSQL() string {
+	if config.Engine() == config.EnginePostgres {
+		return `
 INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
 VALUES ('app', $1, $2, $3, $4, $5, $6, $7, $8::bigint[])
 ON CONFLICT (bundle_id) WHERE type = 'app' AND bundle_id IS NOT NULL DO UPDATE SET
@@ -634,9 +784,35 @@ ON CONFLICT (bundle_id) WHERE type = 'app' AND bundle_id IS NOT NULL DO UPDATE S
     END,
     task_ids        = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
     last_seen       = now()
-RETURNING id`, bundleVal, req.Name, catVal, descVal, icpVal, companyIDVal, companySource, taskIDs).Scan(&id)
-	} else {
-		err = s.tx.QueryRow(`
+RETURNING id`
+	}
+	return `
+INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
+VALUES ('app', $1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (bundle_id) WHERE type = 'app' AND bundle_id IS NOT NULL DO UPDATE SET
+    app_name        = COALESCE(EXCLUDED.app_name, assets.app_name),
+    category        = COALESCE(EXCLUDED.category, assets.category),
+    app_description = COALESCE(EXCLUDED.app_description, assets.app_description),
+    app_icp         = COALESCE(EXCLUDED.app_icp, assets.app_icp),
+    company_id      = CASE
+        WHEN EXCLUDED.company_source = 'explicit' THEN EXCLUDED.company_id
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source  = CASE
+        WHEN EXCLUDED.company_source = 'explicit' THEN 'explicit'
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids        = artex_json_merge(assets.task_ids, EXCLUDED.task_ids),
+    last_seen       = now()
+RETURNING id`
+}
+
+func upsertAppByNameSQL() string {
+	if config.Engine() == config.EnginePostgres {
+		return `
 INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
 VALUES ('app', NULL, $1, $2, $3, $4, $5, $6, $7::bigint[])
 ON CONFLICT (app_name) WHERE type = 'app' AND bundle_id IS NULL DO UPDATE SET
@@ -656,9 +832,29 @@ ON CONFLICT (app_name) WHERE type = 'app' AND bundle_id IS NULL DO UPDATE SET
     END,
     task_ids        = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
     last_seen       = now()
-RETURNING id`, req.Name, catVal, descVal, icpVal, companyIDVal, companySource, taskIDs).Scan(&id)
+RETURNING id`
 	}
-	return id, err
+	return `
+INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
+VALUES ('app', NULL, $1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (app_name) WHERE type = 'app' AND bundle_id IS NULL DO UPDATE SET
+    category        = COALESCE(EXCLUDED.category, assets.category),
+    app_description = COALESCE(EXCLUDED.app_description, assets.app_description),
+    app_icp         = COALESCE(EXCLUDED.app_icp, assets.app_icp),
+    company_id      = CASE
+        WHEN EXCLUDED.company_source = 'explicit' THEN EXCLUDED.company_id
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source  = CASE
+        WHEN EXCLUDED.company_source = 'explicit' THEN 'explicit'
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids        = artex_json_merge(assets.task_ids, EXCLUDED.task_ids),
+    last_seen       = now()
+RETURNING id`
 }
 
 // =====================================================================
@@ -705,15 +901,10 @@ func (s *AssetStore) UpsertHTTPService(req UpsertHTTPServiceReq) (int64, error) 
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := encodeTaskIDArray(req.TaskID)
 
-	techsArr := marshalStringArray(req.Technologies)
-	authJSON, err := marshalJSONBArray(req.Auth)
+	techsArr := encodeTextArray(req.Technologies)
+	authJSON, err := encodeJSONBArray(req.Auth)
 	if err != nil {
 		return 0, err
 	}
@@ -736,7 +927,51 @@ func (s *AssetStore) UpsertHTTPService(req UpsertHTTPServiceReq) (int64, error) 
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(upsertHTTPServiceSQL(),
+		normURL, serviceName, domainVal, ipVal, nullableInt(port), rootDomain,
+		csegVal, faviconVal, techsArr, req.StatusCode, req.ContentLength, titleVal,
+		authJSON, companyID, taskIDs,
+	).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+
+	// side effects: register root_domain + subdomain as their own assets too
+	s.linkHostAssets(domain, rootDomain, req.TaskID)
+	if req.IP != "" {
+		var boundDomains []string
+		if domain != "" {
+			boundDomains = []string{domain}
+		}
+		var openPorts []PortService
+		if port > 0 {
+			openPorts = []PortService{{Port: port, Service: serviceName}}
+		}
+		_, _ = s.UpsertIP(UpsertIPReq{
+			IP:           req.IP,
+			BoundDomains: boundDomains,
+			OpenPorts:    openPorts,
+			TaskID:       req.TaskID,
+		})
+	}
+	return id, nil
+}
+
+// upsertHTTPServiceSQL 返回该引擎认的 HTTP 服务 upsert 语句。
+//
+// SQLite 分支的替换：
+//
+//	$7::cidr / $9::text[] / $13::jsonb[] / $15::bigint[] → 去掉。technologies 与
+//	  auth 在 SQLite 里是 TEXT 列存 JSON 数组，值由 encodeTextArray /
+//	  encodeJSONBArray 生成；c_segment 是 TEXT 列。`::` 转换在 SQLite 不是语法。
+//	technologies 的 ARRAY(SELECT DISTINCT unnest(...)) → artex_json_merge。
+//	auth 的 DISTINCT ON (elem::text) → artex_json_merge：键是"整个元素相等"，
+//	  与 elem::text 的去重键等价（Go 的 json.Marshal 会把对象键排序，正好对上
+//	  PostgreSQL jsonb ::text 的规范化形态）。
+//	task_ids 同上 → artex_json_merge。
+func upsertHTTPServiceSQL() string {
+	if config.Engine() == config.EnginePostgres {
+		return `
 INSERT INTO assets(
     type, url, service_type, service_name, domain, ip, port, root_domain,
     c_segment, favicon_mmh3, technologies, status_code, content_length, page_title,
@@ -772,34 +1007,40 @@ ON CONFLICT (url) WHERE type = 'service' AND service_type = 'http' DO UPDATE SET
         ELSE assets.company_source
     END,
     last_seen      = now()
-RETURNING id`,
-		normURL, serviceName, domainVal, ipVal, nullableInt(port), rootDomain,
-		csegVal, faviconVal, techsArr, req.StatusCode, req.ContentLength, titleVal,
-		authJSON, companyID, taskIDs,
-	).Scan(&id)
-	if err != nil {
-		return 0, err
+RETURNING id`
 	}
-
-	// side effects: register root_domain + subdomain as their own assets too
-	s.linkHostAssets(domain, rootDomain, req.TaskID)
-	if req.IP != "" {
-		var boundDomains []string
-		if domain != "" {
-			boundDomains = []string{domain}
-		}
-		var openPorts []PortService
-		if port > 0 {
-			openPorts = []PortService{{Port: port, Service: serviceName}}
-		}
-		_, _ = s.UpsertIP(UpsertIPReq{
-			IP:           req.IP,
-			BoundDomains: boundDomains,
-			OpenPorts:    openPorts,
-			TaskID:       req.TaskID,
-		})
-	}
-	return id, nil
+	return `
+INSERT INTO assets(
+    type, url, service_type, service_name, domain, ip, port, root_domain,
+    c_segment, favicon_mmh3, technologies, status_code, content_length, page_title,
+    auth, company_id, company_source, task_ids
+)
+VALUES (
+    'service', $1, 'http', $2, $3, $4, $5, $6,
+    $7, $8, $9, $10, $11, $12,
+    $13, $14, 'scope', $15
+)
+ON CONFLICT (url) WHERE type = 'service' AND service_type = 'http' DO UPDATE SET
+    status_code    = COALESCE(EXCLUDED.status_code,    assets.status_code),
+    content_length = COALESCE(EXCLUDED.content_length, assets.content_length),
+    page_title     = COALESCE(EXCLUDED.page_title,     assets.page_title),
+    favicon_mmh3   = COALESCE(EXCLUDED.favicon_mmh3,   assets.favicon_mmh3),
+    ip             = COALESCE(EXCLUDED.ip,             assets.ip),
+    c_segment      = COALESCE(EXCLUDED.c_segment,      assets.c_segment),
+    technologies   = artex_json_merge(assets.technologies, EXCLUDED.technologies),
+    auth           = artex_json_merge(assets.auth, EXCLUDED.auth),
+    task_ids       = artex_json_merge(assets.task_ids, EXCLUDED.task_ids),
+    company_id     = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    last_seen      = now()
+RETURNING id`
 }
 
 // =====================================================================
@@ -854,14 +1095,9 @@ func (s *AssetStore) UpsertOtherService(req UpsertOtherServiceReq) (int64, error
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := encodeTaskIDArray(req.TaskID)
 
-	authJSON, err := marshalJSONBArray(req.Auth)
+	authJSON, err := encodeJSONBArray(req.Auth)
 	if err != nil {
 		return 0, err
 	}
@@ -881,7 +1117,39 @@ func (s *AssetStore) UpsertOtherService(req UpsertOtherServiceReq) (int64, error
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(upsertOtherServiceSQL(),
+		serviceName, domainVal, ipVal, req.Port, rootDomainVal,
+		csegVal, authJSON, companyID, taskIDs,
+	).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+
+	// side effects
+	if req.IP != "" && req.Port > 0 {
+		var boundDomains []string
+		if domain != "" {
+			boundDomains = []string{domain}
+		}
+		_, _ = s.UpsertIP(UpsertIPReq{
+			IP:           req.IP,
+			BoundDomains: boundDomains,
+			OpenPorts:    []PortService{{Port: req.Port, Service: serviceName}},
+			TaskID:       req.TaskID,
+		})
+	}
+	s.linkHostAssets(domain, rootDomain, req.TaskID)
+	return id, nil
+}
+
+// upsertOtherServiceSQL 返回该引擎认的非 HTTP 服务 upsert 语句。
+//
+// SQLite 分支与 upsertHTTPServiceSQL 同构：去掉 $6::cidr / $7::jsonb[] /
+// $9::bigint[] 三处类型转换，auth 的 DISTINCT ON (elem::text) 与 task_ids 的
+// ARRAY(SELECT DISTINCT unnest(...)) 都换成 artex_json_merge。
+func upsertOtherServiceSQL() string {
+	if config.Engine() == config.EnginePostgres {
+		return `
 INSERT INTO assets(
     type, service_type, service_name, domain, ip, port, root_domain,
     c_segment, auth, company_id, company_source, task_ids
@@ -908,29 +1176,31 @@ ON CONFLICT (COALESCE(domain,''), COALESCE(ip,''), port, service_name) WHERE typ
         ELSE assets.company_source
     END,
     last_seen  = now()
-RETURNING id`,
-		serviceName, domainVal, ipVal, req.Port, rootDomainVal,
-		csegVal, authJSON, companyID, taskIDs,
-	).Scan(&id)
-	if err != nil {
-		return 0, err
+RETURNING id`
 	}
-
-	// side effects
-	if req.IP != "" && req.Port > 0 {
-		var boundDomains []string
-		if domain != "" {
-			boundDomains = []string{domain}
-		}
-		_, _ = s.UpsertIP(UpsertIPReq{
-			IP:           req.IP,
-			BoundDomains: boundDomains,
-			OpenPorts:    []PortService{{Port: req.Port, Service: serviceName}},
-			TaskID:       req.TaskID,
-		})
-	}
-	s.linkHostAssets(domain, rootDomain, req.TaskID)
-	return id, nil
+	return `
+INSERT INTO assets(
+    type, service_type, service_name, domain, ip, port, root_domain,
+    c_segment, auth, company_id, company_source, task_ids
+)
+VALUES ('service', 'other', $1, $2, $3, $4, $5, $6, $7, $8, 'scope', $9)
+ON CONFLICT (COALESCE(domain,''), COALESCE(ip,''), port, service_name) WHERE type = 'service' AND service_type = 'other' DO UPDATE SET
+    domain     = COALESCE(EXCLUDED.domain,     assets.domain),
+    ip         = COALESCE(EXCLUDED.ip,         assets.ip),
+    c_segment  = COALESCE(EXCLUDED.c_segment,  assets.c_segment),
+    auth       = artex_json_merge(assets.auth, EXCLUDED.auth),
+    task_ids   = artex_json_merge(assets.task_ids, EXCLUDED.task_ids),
+    company_id = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    last_seen  = now()
+RETURNING id`
 }
 
 // linkHostAssets ensures a service/endpoint's host is also registered as its own
@@ -989,14 +1259,9 @@ func (s *AssetStore) UpsertEndpoint(req UpsertEndpointReq) (int64, error) {
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := encodeTaskIDArray(req.TaskID)
 
-	paramsJSON, err := marshalJSONBArray(req.Params)
+	paramsJSON, err := encodeJSONBArray(req.Params)
 	if err != nil {
 		return 0, err
 	}
@@ -1016,7 +1281,38 @@ func (s *AssetStore) UpsertEndpoint(req UpsertEndpointReq) (int64, error) {
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(upsertEndpointSQL(),
+		normURL, method, domainVal, ipVal, nullableInt(port), rootDomainVal,
+		paramsJSON, companyID, taskIDs, csegVal,
+	).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	// side effects: endpoint previously registered none — register its host as
+	// root_domain + subdomain(+IP) so those asset types get populated too.
+	s.linkHostAssets(domain, rootDomain, req.TaskID)
+	if req.IP != "" {
+		_, _ = s.UpsertIP(UpsertIPReq{IP: req.IP, TaskID: req.TaskID})
+	}
+	return id, nil
+}
+
+// upsertEndpointSQL 返回该引擎认的 endpoint upsert 语句。
+//
+// SQLite 分支去掉 $7::jsonb[] / $9::bigint[] / $10::cidr 三处类型转换，并把
+//
+//	SELECT ARRAY(
+//	    SELECT DISTINCT ON ((elem->>'location'), (elem->>'name')) elem
+//	    FROM unnest(assets.params || EXCLUDED.params) AS elem
+//	    ORDER BY (elem->>'location'), (elem->>'name'), elem::text DESC
+//	)
+//
+// 换成 artex_json_merge_params：键是 (location, name)，同键保留 elem::text 最大的
+// 一条（PG 的 ORDER BY ... DESC + DISTINCT ON 就是这个意思），结果按 location、
+// name 升序排列，NULL 排最后。详见 db/dialect_arrays.go。
+func upsertEndpointSQL() string {
+	if config.Engine() == config.EnginePostgres {
+		return `
 INSERT INTO assets(
     type, url, method, domain, ip, port, root_domain,
     params, company_id, company_source, task_ids, c_segment
@@ -1043,20 +1339,30 @@ ON CONFLICT (url, method) WHERE type = 'endpoint' DO UPDATE SET
         ELSE assets.company_source
     END,
     last_seen  = now()
-RETURNING id`,
-		normURL, method, domainVal, ipVal, nullableInt(port), rootDomainVal,
-		paramsJSON, companyID, taskIDs, csegVal,
-	).Scan(&id)
-	if err != nil {
-		return 0, err
+RETURNING id`
 	}
-	// side effects: endpoint previously registered none — register its host as
-	// root_domain + subdomain(+IP) so those asset types get populated too.
-	s.linkHostAssets(domain, rootDomain, req.TaskID)
-	if req.IP != "" {
-		_, _ = s.UpsertIP(UpsertIPReq{IP: req.IP, TaskID: req.TaskID})
-	}
-	return id, nil
+	return `
+INSERT INTO assets(
+    type, url, method, domain, ip, port, root_domain,
+    params, company_id, company_source, task_ids, c_segment
+)
+VALUES ('endpoint', $1, $2, $3, $4, $5, $6, $7, $8, 'scope', $9, $10)
+ON CONFLICT (url, method) WHERE type = 'endpoint' DO UPDATE SET
+    params     = artex_json_merge_params(assets.params, EXCLUDED.params),
+    ip         = COALESCE(EXCLUDED.ip,        assets.ip),
+    c_segment  = COALESCE(EXCLUDED.c_segment, assets.c_segment),
+    task_ids   = artex_json_merge(assets.task_ids, EXCLUDED.task_ids),
+    company_id = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    last_seen  = now()
+RETURNING id`
 }
 
 // =====================================================================
@@ -1071,18 +1377,7 @@ func (s *AssetStore) QueryByType(typ string, limit, offset int) ([]*Asset, error
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := s.db.Query(`
-SELECT id, type, company_id, array_to_json(task_ids)::text,
-       COALESCE(domain,''), COALESCE(root_domain,''), COALESCE(ip,''),
-       COALESCE(c_segment::text,''), port,
-       COALESCE(icp,''), array_to_json(bound_domains)::text, array_to_json(open_ports)::text, COALESCE(record_type,''),
-       array_to_json(record_value)::text, COALESCE(bundle_id,''), COALESCE(app_name,''),
-       COALESCE(category,''), COALESCE(app_description,''), COALESCE(app_icp,''),
-       COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
-       COALESCE(favicon_mmh3,''), status_code, content_length,
-       COALESCE(page_title,''), array_to_json(technologies)::text, array_to_json(auth)::text,
-       COALESCE(method,''), array_to_json(params)::text, extra, last_seen::text
-FROM assets
+	rows, err := s.db.Query(assetProjection+assetsFromPrefix+`
 WHERE type = $1
 ORDER BY last_seen DESC, id DESC
 LIMIT $2 OFFSET $3`, typ, limit, offset)
@@ -1103,17 +1398,7 @@ func (s *AssetStore) CountByType(typ string) (int, error) {
 // QueryByCompany returns assets for a company, optionally filtered by type.
 // limit <= 0 means no limit.
 func (s *AssetStore) QueryByCompany(companyID int64, typ string, limit, offset int) ([]*Asset, error) {
-	q := `SELECT id, type, company_id, array_to_json(task_ids)::text,
-       COALESCE(domain,''), COALESCE(root_domain,''), COALESCE(ip,''),
-       COALESCE(c_segment::text,''), port,
-       COALESCE(icp,''), array_to_json(bound_domains)::text, array_to_json(open_ports)::text, COALESCE(record_type,''),
-       array_to_json(record_value)::text, COALESCE(bundle_id,''), COALESCE(app_name,''),
-       COALESCE(category,''), COALESCE(app_description,''), COALESCE(app_icp,''),
-       COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
-       COALESCE(favicon_mmh3,''), status_code, content_length,
-       COALESCE(page_title,''), array_to_json(technologies)::text, array_to_json(auth)::text,
-       COALESCE(method,''), array_to_json(params)::text, extra, last_seen::text
-FROM assets WHERE company_id = $1`
+	q := assetProjection + assetsFromPrefix + `WHERE company_id = $1`
 	args := []any{companyID}
 	if typ != "" {
 		args = append(args, typ)
@@ -1155,17 +1440,7 @@ func pageClause(args *[]any, limit, offset int) string {
 
 // QueryByTask returns assets rows that have a given task_id in task_ids.
 func (s *AssetStore) QueryByTask(taskID int64, typ string, limit, offset int) ([]*Asset, error) {
-	q := `SELECT id, type, company_id, array_to_json(task_ids)::text,
-       COALESCE(domain,''), COALESCE(root_domain,''), COALESCE(ip,''),
-       COALESCE(c_segment::text,''), port,
-       COALESCE(icp,''), array_to_json(bound_domains)::text, array_to_json(open_ports)::text, COALESCE(record_type,''),
-       array_to_json(record_value)::text, COALESCE(bundle_id,''), COALESCE(app_name,''),
-       COALESCE(category,''), COALESCE(app_description,''), COALESCE(app_icp,''),
-       COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
-       COALESCE(favicon_mmh3,''), status_code, content_length,
-       COALESCE(page_title,''), array_to_json(technologies)::text, array_to_json(auth)::text,
-       COALESCE(method,''), array_to_json(params)::text, extra, last_seen::text
-FROM assets WHERE $1 = ANY(task_ids)`
+	q := assetProjection + assetsFromPrefix + `WHERE ` + assetContainsTaskID()
 	args := []any{taskID}
 	if typ != "" {
 		args = append(args, typ)
@@ -1188,7 +1463,7 @@ FROM assets WHERE $1 = ANY(task_ids)`
 }
 
 func (s *AssetStore) CountByTask(taskID int64, typ string) (int, error) {
-	q := `SELECT count(*) FROM assets WHERE $1 = ANY(task_ids)`
+	q := `SELECT count(*) FROM assets WHERE ` + assetContainsTaskID()
 	args := []any{taskID}
 	if typ != "" {
 		args = append(args, typ)
@@ -1200,7 +1475,7 @@ func (s *AssetStore) CountByTask(taskID int64, typ string) (int, error) {
 }
 
 func (s *AssetStore) CountsByTypeForTask(taskID int64) (map[string]int, error) {
-	rows, err := s.db.Query(`SELECT type, COUNT(*) FROM assets WHERE $1 = ANY(task_ids) GROUP BY type`, taskID)
+	rows, err := s.db.Query(`SELECT type, COUNT(*) FROM assets WHERE `+assetContainsTaskID()+` GROUP BY type`, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -1212,13 +1487,35 @@ func (s *AssetStore) CountsByTypeForTask(taskID int64) (map[string]int, error) {
 // assets shared with other tasks. Full task deletion uses the coordinated
 // transaction in DeleteTaskCascadePrepared; this method remains for callers
 // that explicitly manage only asset associations.
+//
+// 两条语句都含数组运算：
+//
+//	task_ids = ARRAY[$1]::bigint[]
+//	  → artex_json_equals(task_ids, $1)。PG 的数组相等是"同长度 + 逐元素相等 +
+//	    顺序敏感"，只有 task_ids 恰好是 {taskID} 这一种形状的行会被删。
+//	array_remove(task_ids, $1) ... WHERE $1 = ANY(task_ids)
+//	  → artex_json_remove / artex_json_contains。$1 在两个语句里复用同一个编号，
+//	    两个引擎都支持占位符复用。
 func (s *AssetStore) DeleteByTaskID(taskID int64) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM assets WHERE task_ids = ARRAY[$1]::bigint[]`, taskID)
+	var err error
+	var res sql.Result
+	if config.Engine() == config.EnginePostgres {
+		res, err = s.db.Exec(`DELETE FROM assets WHERE task_ids = ARRAY[$1]::bigint[]`, taskID)
+	} else {
+		res, err = s.db.Exec(`DELETE FROM assets WHERE artex_json_equals(task_ids, $1)`, encodeTaskIDArray(taskID))
+	}
 	if err != nil {
 		return 0, err
 	}
 	deleted, _ := res.RowsAffected()
-	if _, err := s.db.Exec(`UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, taskID); err != nil {
+	if config.Engine() == config.EnginePostgres {
+		_, err = s.db.Exec(`UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, taskID)
+	} else {
+		_, err = s.db.Exec(`
+UPDATE assets SET task_ids = artex_json_remove(task_ids, $1)
+WHERE artex_json_contains(task_ids, $1)`, taskID)
+	}
+	if err != nil {
 		return deleted, err
 	}
 	return deleted, nil
@@ -1230,7 +1527,7 @@ func (s *AssetStore) DeleteByTaskID(taskID int64) (int64, error) {
 func (s *AssetStore) HostsByTask(taskID int64) ([]string, error) {
 	rows, err := s.db.Query(`
 SELECT COALESCE(domain,''), COALESCE(ip,''), COALESCE(url,'')
-FROM assets WHERE $1 = ANY(task_ids)`, taskID)
+FROM assets WHERE `+assetContainsTaskID(), taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -1285,7 +1582,7 @@ type rowsQuerier interface {
 func hostsForTaskDeletion(q rowsQuerier, taskID, explorationID int64) ([]string, error) {
 	rows, err := q.Query(`
 WITH current_assets AS (
-  SELECT id FROM assets WHERE $1 = ANY(task_ids)
+  SELECT id FROM assets WHERE `+assetContainsTaskID()+`
   UNION
   SELECT ea.asset_id
   FROM exploration_anchors ea
@@ -1297,7 +1594,7 @@ other_assets AS (
   FROM assets a
   WHERE EXISTS (
     SELECT 1 FROM tasks t
-    WHERE t.id<>$1 AND t.deleted_at IS NULL AND t.id=ANY(a.task_ids)
+    WHERE t.id<>$1 AND t.deleted_at IS NULL AND `+assetContainsTaskIDAlias("a")+`
   ) OR EXISTS (
     SELECT 1
     FROM exploration_anchors ea
@@ -1353,16 +1650,10 @@ FROM assets a JOIN other_assets o ON o.id=a.id`, taskID, explorationID)
 	return out, nil
 }
 
-const assetSelectCols = `SELECT id, type, company_id, array_to_json(task_ids)::text,
-       COALESCE(domain,''), COALESCE(root_domain,''), COALESCE(ip,''),
-       COALESCE(c_segment::text,''), port,
-       COALESCE(icp,''), array_to_json(bound_domains)::text, array_to_json(open_ports)::text, COALESCE(record_type,''),
-       array_to_json(record_value)::text, COALESCE(bundle_id,''), COALESCE(app_name,''),
-       COALESCE(category,''), COALESCE(app_description,''), COALESCE(app_icp,''),
-       COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
-       COALESCE(favicon_mmh3,''), status_code, content_length,
-       COALESCE(page_title,''), array_to_json(technologies)::text, array_to_json(auth)::text,
-       COALESCE(method,''), array_to_json(params)::text, extra, last_seen::text
+// assetSelectCols is the projection plus FROM clause. It is also consumed by
+// db/asset_dsl.go, so the column list lives in db/dialect_arrays.go
+// (assetProjection) where the array-read dialect decision is documented.
+const assetSelectCols = assetProjection + `
 FROM assets`
 
 // GetByIDs returns assets with the given ids (order preserved by id array order).

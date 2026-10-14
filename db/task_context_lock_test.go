@@ -465,6 +465,14 @@ VALUES ($1,$2,0)`, task.ID, profileID); err != nil {
 
 func openSingleConnectionTestDB(t *testing.T, dsn string) (*DB, int) {
 	t.Helper()
+	// These cases assert on PostgreSQL row-lock behaviour: a writer blocks on
+	// FOR UPDATE and the caller retries against a locked row. SQLite has no
+	// row-level locks at all -- the whole file is locked for the duration of a
+	// write transaction -- so the contention they exercise cannot occur. Run
+	// them only against PostgreSQL rather than reporting a false pass.
+	if engineIsSQLite() {
+		t.Skip("PG 行锁竞争用例，SQLite 无行级锁，跳过")
+	}
 	sqlDB, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)

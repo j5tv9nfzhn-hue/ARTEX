@@ -229,6 +229,8 @@ func (d *DB) deleteProfile(ctx context.Context, id int64) (bool, error) {
 	// same order: the old profile -> child order deadlocked with a setter's child
 	// -> profile order. Sorting also gives concurrent profile deletions a stable
 	// order when their chains overlap multiple tasks.
+	// 行锁片段按引擎取：PG 保留 FOR UPDATE [OF t]，SQLite 没有行锁、返回空串，
+	// 而锁要防的东西（WAL 下的库级写锁互斥）由 SQLite 自己提供，见 dialect_locking.go。
 	lockedTasks, err := lockProfileReferenceRows(ctx, tx, `SELECT t.id
 FROM tasks t
 WHERE t.llm_profile_id=$1
@@ -237,28 +239,25 @@ WHERE t.llm_profile_id=$1
        SELECT 1 FROM task_llm_profiles x
        WHERE x.task_id=t.id AND x.profile_id=$1
    )
-ORDER BY t.id
-FOR UPDATE OF t`, id)
+ORDER BY t.id`+sqlForUpdate("t"), id)
 	if err != nil {
 		return false, err
 	}
 	lockedAgents, err := lockProfileReferenceRows(ctx, tx, `SELECT id FROM agents
 WHERE llm_profile_id=$1
-ORDER BY id
-FOR UPDATE`, id)
+ORDER BY id`+sqlForUpdate(), id)
 	if err != nil {
 		return false, err
 	}
 	lockedConversations, err := lockProfileReferenceRows(ctx, tx, `SELECT id FROM conversations
 WHERE llm_profile_id=$1
-ORDER BY id
-FOR UPDATE`, id)
+ORDER BY id`+sqlForUpdate(), id)
 	if err != nil {
 		return false, err
 	}
 
 	var isDefault bool
-	if err := tx.QueryRowContext(ctx, `SELECT is_default FROM llm_profiles WHERE id=$1 FOR UPDATE`, id).Scan(&isDefault); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT is_default FROM llm_profiles WHERE id=$1`+forUpdateClause(false), id).Scan(&isDefault); err != nil {
 		if err == sql.ErrNoRows {
 			return false, ErrLLMProfileNotFound
 		}
@@ -602,8 +601,9 @@ func (d *DB) SetAgentLLMProfile(key string, id *int64) error {
 
 	// DeleteProfile locks reference rows before the profile row. Keep the same
 	// order here so a concurrent rebind cannot form a child/profile deadlock.
+	// 行锁子句按引擎取：PG 保留 FOR UPDATE，SQLite 返回空串（见 dialect_locking.go）。
 	var agentID int64
-	if err := tx.QueryRow(`SELECT id FROM agents WHERE key=$1 FOR UPDATE`, key).Scan(&agentID); err != nil {
+	if err := tx.QueryRow(`SELECT id FROM agents WHERE key=$1`+forUpdateClause(false), key).Scan(&agentID); err != nil {
 		if err == sql.ErrNoRows {
 			// Preserve the previous UPDATE semantics: an unknown key is a no-op.
 			return tx.Commit()
@@ -626,7 +626,7 @@ func lockLLMProfileForReference(tx *sql.Tx, profileID *int64) error {
 		return nil
 	}
 	var lockedID int64
-	if err := tx.QueryRow(`SELECT id FROM llm_profiles WHERE id=$1 FOR KEY SHARE`, *profileID).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(`SELECT id FROM llm_profiles WHERE id=$1`+forKeyShareClause(), *profileID).Scan(&lockedID); err != nil {
 		if err == sql.ErrNoRows {
 			return ErrLLMProfileNotFound
 		}
@@ -815,7 +815,7 @@ type MCPServer struct {
 	Env       json.RawMessage `json:"env"`
 	URL       string          `json:"url,omitempty"`
 	Enabled   bool            `json:"enabled"`
-	Insecure  bool            `json:"insecure"` // http: skip TLS cert verification (self-signed servers, issue #108)
+	Insecure  bool            `json:"insecure"`        // http: skip TLS cert verification (self-signed servers, issue #108)
 	Tools     []string        `json:"tools,omitempty"` // cached tool names (mcp_tools_cache)
 }
 

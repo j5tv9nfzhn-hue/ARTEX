@@ -5,6 +5,8 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/llmpool"
+	"github.com/Autumn-27/norma/harness"
 )
 
 // 重试策略的服务端解析，见 docs/LLM重试设计.md。五层里：
@@ -62,10 +64,65 @@ func (s *Server) applyRetryPolicy() {
 	}
 }
 
+// modelErrorRetryPolicyFor picks the retry budget from the failure that just
+// happened, so a slow provider is waited out while a dead credential is not.
+//
+// Transient failures — timeouts, resets, 429, 5xx, truncated streams — get the
+// full modelErrorRetries budget: these are the ones that clear on their own, and
+// a slow response is exactly the case this budget exists for.
+//
+// Hard failures (401/402/403/404, exhausted balance) get modelErrorHardFailRetries:
+// replaying them cannot change the answer, so waiting the full ladder would only
+// postpone telling the operator their key is dead.
+//
+// reason is accepted so the caller can hand over both halves without a second
+// lookup; a non-model_error reason never reaches the retry loop, so it falls
+// through to the transient budget and the loop condition rejects it anyway.
+func (e *Engine) modelErrorRetryPolicyFor(reason harness.TerminalReason, err error) (retries int, backoff time.Duration) {
+	if reason == harness.ReasonModelError && isHardModelError(err) {
+		return e.modelErrorHardRetryPolicy()
+	}
+	return e.modelErrorRetryPolicy()
+}
+
+// isHardModelError mirrors llmpool's breaker judgement for the intent layer.
+// It reuses llmpool.IsHardFailure rather than re-listing status codes, so the
+// two layers cannot drift apart.
+func isHardModelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if llmpool.IsHardFailure(err) {
+		return true
+	}
+	// Quota/billing exhaustion is a hard failure even when the provider answered
+	// with a generic status that does not carry 402.
+	return isQuotaExhaustedError(err)
+}
+
 // modelErrorRetryPolicy resolves the intent-level replay knobs (layer ⑤): how
 // many times a model_error work is re-run and how long to back off between runs.
 func (e *Engine) modelErrorRetryPolicy() (retries int, backoff time.Duration) {
-	retries, backoff = modelErrorRetries, modelErrorRetryBackoff
+	return e.modelErrorRetryPolicyLimited(modelErrorRetries)
+}
+
+// modelErrorHardRetryPolicy is modelErrorRetryPolicy for errors that retrying
+// cannot fix — an invalid/expired key, an exhausted balance, a malformed request.
+// Waiting out ten attempts there only delays the same failure by half a minute,
+// so these stop after modelErrorHardFailRetries.
+func (e *Engine) modelErrorHardRetryPolicy() (retries int, backoff time.Duration) {
+	return e.modelErrorRetryPolicyLimited(modelErrorHardFailRetries)
+}
+
+// modelErrorRetryPolicyLimited is the shared resolver; fallback is the built-in
+// count used when neither the settings table nor the hard-failure cap applies.
+//
+// The stored policy (settings.llm_retry_policy → Intent) still wins when set,
+// so an operator who pinned a count keeps it. The hard-failure cap is applied
+// only to the built-in default: an explicit configuration is a deliberate choice
+// and is not silently overridden by a constant.
+func (e *Engine) modelErrorRetryPolicyLimited(fallback int) (retries int, backoff time.Duration) {
+	retries, backoff = fallback, modelErrorRetryBackoff
 	if e == nil || e.m == nil || e.m.pg == nil {
 		return retries, backoff
 	}

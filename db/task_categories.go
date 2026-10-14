@@ -65,15 +65,12 @@ func (d *DB) CreateTaskCategory(name string) (*TaskCategory, error) {
 	if err != nil {
 		return nil, err
 	}
-	category, err := scanTaskCategory(d.QueryRow(`
-WITH inserted AS (
-    INSERT INTO task_categories(name, nkey)
-    VALUES ($1,$2)
-    ON CONFLICT (nkey) DO NOTHING
-    RETURNING *
-)
-SELECT inserted.id, inserted.name, inserted.nkey, 0, inserted.created_at, inserted.updated_at
-FROM inserted`, name, nkey))
+	// 顶层 INSERT ... RETURNING：SQLite 的 CTE 里不能放 DML（原语句是
+	// `WITH inserted AS (INSERT ... RETURNING *) SELECT ... FROM inserted`，
+	// 会报 near "INSERT"）。等价性与逐列对照见 db/dialect_dml.go 的
+	// taskCategoryInsertQuery。冲突判定由 RETURNING 的返回行数给出：
+	// 0 行 → sql.ErrNoRows → ErrTaskCategoryNameConflict。
+	category, err := scanTaskCategory(d.QueryRow(taskCategoryInsertQuery, name, nkey))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskCategoryNameConflict
 	}
@@ -126,14 +123,7 @@ func (d *DB) RenameTaskCategory(id int64, name string) (*TaskCategory, error) {
 	if err != nil {
 		return nil, err
 	}
-	category, err := scanTaskCategory(d.QueryRow(`
-WITH updated AS (
-    UPDATE task_categories SET name=$2, nkey=$3 WHERE id=$1 RETURNING *
-)
-SELECT updated.id, updated.name, updated.nkey,
-       (SELECT count(*) FROM tasks WHERE category_id=updated.id AND deleted_at IS NULL),
-       updated.created_at, updated.updated_at
-FROM updated`, id, name, nkey))
+	category, err := scanTaskCategory(d.QueryRow(taskCategoryRenameQuery, id, name, nkey))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskCategoryNotFound
 	}
@@ -176,32 +166,62 @@ func (d *DB) SetTaskCategory(taskID int64, categoryID *int64) (*TaskCategory, er
 	if *categoryID <= 0 {
 		return nil, fmt.Errorf("%w: category id must be positive", ErrTaskCategoryInvalid)
 	}
-	category, err := scanTaskCategory(d.QueryRow(`
-WITH selected AS (
-    SELECT * FROM task_categories WHERE id=$2
-), updated AS (
-    UPDATE tasks SET category_id=$2
-    WHERE id=$1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM selected)
-    RETURNING id
-)
-SELECT selected.id, selected.name, selected.nkey,
-       (SELECT count(*) FROM tasks WHERE category_id=selected.id AND deleted_at IS NULL),
-       selected.created_at, selected.updated_at
-FROM selected, updated`, taskID, *categoryID))
+	// 0 行 = 「任务不存在且已删除」或「分类不存在」，两个引擎都收敛到这条路径，
+	// 由 taskCategoryAssignMissing 区分。
+	if isPostgresEngine() {
+		category, err := scanTaskCategory(d.QueryRow(taskCategoryAssignPG, taskID, *categoryID))
+		if err == sql.ErrNoRows {
+			return nil, d.taskCategoryAssignMissing(taskID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &category, nil
+	}
+	// SQLite 的 CTE 里不能放 DML，塌成同一事务里的两条语句：先挂分类，再读回
+	// 改完之后口径的分类行。第 1 步是写语句，事务一开就拿到写锁，两步之间没有
+	// 别的连接插进来。等价性论证见 db/dialect_dml.go 的 taskCategoryAssignSQLite*。
+	return d.setTaskCategorySQLite(taskID, *categoryID)
+}
+
+// setTaskCategorySQLite 是 SetTaskCategory 在 SQLite 上的两语句等价物。
+func (d *DB) setTaskCategorySQLite(taskID, categoryID int64) (*TaskCategory, error) {
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var movedID int64
+	err = tx.QueryRow(taskCategoryAssignSQLiteUpdate, taskID, categoryID).Scan(&movedID)
 	if err == sql.ErrNoRows {
-		var taskExists bool
-		if checkErr := d.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL)`, taskID).Scan(&taskExists); checkErr != nil {
-			return nil, checkErr
-		}
-		if !taskExists {
-			return nil, ErrTaskCategoryTaskNotFound
-		}
-		return nil, ErrTaskCategoryNotFound
+		// 未挂上：不提交，让 defer 里的 Rollback 收掉这个事务。
+		return nil, d.taskCategoryAssignMissing(taskID)
 	}
 	if err != nil {
 		return nil, err
 	}
+	category, err := scanTaskCategory(tx.QueryRow(taskCategoryAssignSQLiteSelect, categoryID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return &category, nil
+}
+
+// taskCategoryAssignMissing 判定「一条都没改」到底是任务没了还是分类没了，
+// 与两个引擎的 0 行路径共用。
+func (d *DB) taskCategoryAssignMissing(taskID int64) error {
+	var taskExists bool
+	if checkErr := d.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL)`, taskID).Scan(&taskExists); checkErr != nil {
+		return checkErr
+	}
+	if !taskExists {
+		return ErrTaskCategoryTaskNotFound
+	}
+	return ErrTaskCategoryNotFound
 }
 
 // SetTasksCategory moves several tasks into one category (nil = uncategorized)
@@ -241,10 +261,11 @@ func (d *DB) SetTasksCategory(taskIDs []int64, categoryID *int64) ([]int64, *Tas
 			return nil, nil, ErrTaskCategoryNotFound
 		}
 	}
-	rows, err := tx.Query(`
-UPDATE tasks SET category_id=$2
-WHERE id=ANY($1::bigint[]) AND deleted_at IS NULL
-RETURNING id`, taskIDs, categoryID)
+	// = ANY($1::bigint[]) 只有 PostgreSQL 有（SQLite 既无 ANY 也绑不了
+	// []int64），SQLite 侧展开成 IN ($2,...)；语句与参数顺序见
+	// db/dialect_dml.go:taskCategoryBatchMoveStmt。
+	args := []any{}
+	rows, err := tx.Query(taskCategoryBatchMoveStmt(&args, taskIDs, categoryID), args...)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -194,7 +194,9 @@ func (f FindingFilter) where() (string, []any) {
 		args = append(args, tid)
 		conds = append(conds, fmt.Sprintf("f.task_id = $%d", len(args)))
 	}
-	// 资产筛选:asset_ids 是 jsonb 数组,@> ANY(...) 能走 idx_findings_asset_ids。
+	// 资产筛选:asset_ids 在 PostgreSQL 是 jsonb 数组,@> ANY(...) 能走
+	// idx_findings_asset_ids;SQLite 侧是 TEXT 存 JSON,等价物见
+	// findingAssetScopeIDsCond / findingAssetRowsGoneCond。
 	switch {
 	case f.assetMiss:
 		conds = append(conds, "FALSE")
@@ -203,27 +205,23 @@ func (f FindingFilter) where() (string, []any) {
 		// (资产已被删除)。两类都进资产树的未关联桶,这里必须同样收下,否则桶上
 		// 的计数会大于点开后能查到的条数。
 		conds = append(conds, `(
-			jsonb_array_length(COALESCE(f.asset_ids, '[]'::jsonb)) = 0
-			OR NOT EXISTS (
-				SELECT 1 FROM jsonb_array_elements_text(f.asset_ids) e(v)
-				JOIN assets a ON a.id = e.v::bigint
-			)
+			`+companyJSONArrayLength("f.asset_ids")+` = 0
+			OR `+findingAssetRowsGoneCond("f.asset_ids")+`
 		)`)
 	case len(f.assetIDs) > 0:
-		args = append(args, assetIDContainments(f.assetIDs))
-		conds = append(conds, fmt.Sprintf("f.asset_ids @> ANY($%d::jsonb[])", len(args)))
+		conds = append(conds, findingAssetScopeIDsCond("f.asset_ids", f.assetIDs, &args))
 	}
 	if query := strings.TrimSpace(f.Query); query != "" {
 		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
 		args = append(args, "%"+escaped+"%")
 		placeholder := fmt.Sprintf("$%d", len(args))
 		conds = append(conds, fmt.Sprintf(`(
-			COALESCE(f.name, '') ILIKE %s ESCAPE '\' OR
-			f.vulnclass ILIKE %s ESCAPE '\' OR
-			f.summary ILIKE %s ESCAPE '\' OR
-			f.evidence ILIKE %s ESCAPE '\' OR
-			COALESCE(f.report, '') ILIKE %s ESCAPE '\'
-		)`, placeholder, placeholder, placeholder, placeholder, placeholder))
+			COALESCE(f.name, '') %[1]s `+placeholder+` ESCAPE '\' OR
+			f.vulnclass %[1]s `+placeholder+` ESCAPE '\' OR
+			f.summary %[1]s `+placeholder+` ESCAPE '\' OR
+			f.evidence %[1]s `+placeholder+` ESCAPE '\' OR
+			COALESCE(f.report, '') %[1]s `+placeholder+` ESCAPE '\'
+		)`, sqlILike()))
 	}
 	if len(conds) == 0 {
 		return "", args
@@ -349,13 +347,17 @@ func (d *DB) ListFindingGroups(f FindingFilter, page, pageSize int) ([]FindingGr
 	for rows.Next() {
 		var group FindingGroup
 		var taskID sql.NullInt64
+		lastFound := findingTimestampScan{}
 		if err := rows.Scan(&taskID, &group.TaskName, &group.TaskDescription, &group.TaskStatus, &group.Count,
-			&group.Critical, &group.High, &group.Medium, &group.Low, &group.LastFoundAt); err != nil {
+			&group.Critical, &group.High, &group.Medium, &group.Low, lastFound.dest()); err != nil {
 			return nil, 0, 0, err
 		}
 		if taskID.Valid {
 			id := taskID.Int64
 			group.TaskID = &id
+		}
+		if group.LastFoundAt, err = lastFound.value(); err != nil {
+			return nil, 0, 0, err
 		}
 		groups = append(groups, group)
 	}
@@ -383,8 +385,7 @@ func (s *ExplorationStore) AddFindingFollowUpIntent(findingID, findingNodeID int
 		FROM findings f
 		JOIN tasks t ON t.id=f.task_id
 		JOIN exploration_nodes n ON n.id=f.node_id AND n.exploration_id=t.exploration_id
-		WHERE f.id=$1 AND f.node_id=$2 AND t.exploration_id=$3 AND n.kind='finding'
-		FOR SHARE OF f, t, n`, findingID, findingNodeID, s.expID).Scan(&liveNodeID)
+		WHERE f.id=$1 AND f.node_id=$2 AND t.exploration_id=$3 AND n.kind='finding'`+findingShareOfClause("f", "t", "n"), findingID, findingNodeID, s.expID).Scan(&liveNodeID)
 	if err == sql.ErrNoRows {
 		return 0, Activity{}, ErrFindingOriginUnavailable
 	}
@@ -726,7 +727,7 @@ func (d *DB) setFindingCol(id int64, col, jsonKey, val string) (int64, error) {
 	}
 	if nodeID != nil {
 		_, _ = d.Exec(`UPDATE exploration_nodes
-			SET payload = jsonb_set(payload, '{`+jsonKey+`}', to_jsonb($1::text))
+			SET payload = `+findingNodePayloadSetExpr(jsonKey)+`
 			WHERE id = $2`, val, *nodeID)
 	}
 	return 1, nil

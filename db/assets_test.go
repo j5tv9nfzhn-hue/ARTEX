@@ -24,6 +24,38 @@ func deleteAsset(d *DB, id int64) {
 	d.Exec(`DELETE FROM assets WHERE id = $1`, id)
 }
 
+// testTaskIDsInsert returns the SQL fragment that stores a single task id in
+// assets.task_ids together with the driver value to bind to it.
+//
+//	PostgreSQL: ARRAY[$N]::bigint[]  ← bound with the raw int64
+//	SQLite:     $N                   ← bound with encodeTaskIDArray(id)
+//
+// 两个引擎没有共同写法：SQLite 既没有 `::` 转换也没有 ARRAY[] 构造子，只能收
+// 文本；而 pgx 无法把 Go string 编码成 bigint[] 参数（array codec 只认切片、
+// 数组文本类型或 TextValuer），所以 PG 分支逐字保留原句，行为零变化。
+func testTaskIDsInsert(placeholder string, taskID int64) (string, any) {
+	if engineIsSQLite() {
+		return placeholder, encodeTaskIDArray(taskID)
+	}
+	return "ARRAY[" + placeholder + "]::bigint[]", taskID
+}
+
+// testArrayLenExpr 返回「数组列有几个元素」的表达式。
+//
+//	PostgreSQL: cardinality(col) / array_length(col, 1)
+//	SQLite:     json_array_length(col)
+//
+// 这些列（open_ports / auth / params / technologies / bound_domains）在 PG 是
+// 数组、在 SQLite 是存 JSON 数组文本的 TEXT 列，长度函数的拼法不通用。SQLite 侧
+// 用内建 json_array_length：空数组文本 '[]' 返回 0，与 PG 的 cardinality('{}') 一致；
+// 两边在列本身为 NULL 时同样返回 NULL。
+func testArrayLenExpr(col string) string {
+	if engineIsSQLite() {
+		return "json_array_length(" + col + ")"
+	}
+	return "cardinality(" + col + ")"
+}
+
 // =====================================================================
 // RootDomain
 // =====================================================================
@@ -92,7 +124,7 @@ func TestUpsertIP(t *testing.T) {
 
 	// c_segment should be 192.168.10.0/24
 	var cseg *string
-	d.QueryRow(`SELECT c_segment::text FROM assets WHERE id = $1`, id1).Scan(&cseg)
+	d.QueryRow(`SELECT `+sqlCastText("c_segment")+` FROM assets WHERE id = $1`, id1).Scan(&cseg)
 	if cseg == nil || *cseg != "192.168.10.0/24" {
 		t.Errorf("c_segment: want 192.168.10.0/24, got %v", cseg)
 	}
@@ -112,7 +144,7 @@ func TestUpsertIP(t *testing.T) {
 
 	// verify all 3 ports present
 	var cnt int
-	d.QueryRow(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, id1).Scan(&cnt)
+	d.QueryRow(`SELECT `+testArrayLenExpr("open_ports")+` FROM assets WHERE id = $1`, id1).Scan(&cnt)
 	if cnt != 3 {
 		t.Errorf("open_ports merge: want 3 ports, got %d", cnt)
 	}
@@ -144,7 +176,7 @@ func TestUpsertIPBoundDomains(t *testing.T) {
 	}
 
 	var cnt int
-	d.QueryRow(`SELECT array_length(bound_domains, 1) FROM assets WHERE id = $1`, id).Scan(&cnt)
+	d.QueryRow(`SELECT `+testArrayLenExpr("bound_domains")+` FROM assets WHERE id = $1`, id).Scan(&cnt)
 	if cnt != 2 {
 		t.Errorf("bound_domains merge: want 2, got %d", cnt)
 	}
@@ -168,7 +200,7 @@ func TestAppendIPPort(t *testing.T) {
 	}
 
 	var cnt int
-	d.QueryRow(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, id).Scan(&cnt)
+	d.QueryRow(`SELECT `+testArrayLenExpr("open_ports")+` FROM assets WHERE id = $1`, id).Scan(&cnt)
 	if cnt != 2 {
 		t.Errorf("AppendIPPort: want 2 ports, got %d", cnt)
 	}
@@ -311,7 +343,7 @@ func TestUpsertHTTPService(t *testing.T) {
 
 	// verify technology was stored
 	var techCnt int
-	d.QueryRow(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, id1).Scan(&techCnt)
+	d.QueryRow(`SELECT `+testArrayLenExpr("technologies")+` FROM assets WHERE id = $1`, id1).Scan(&techCnt)
 	if techCnt != 2 {
 		t.Errorf("technologies: want 2, got %d", techCnt)
 	}
@@ -329,7 +361,7 @@ func TestUpsertHTTPService(t *testing.T) {
 		t.Errorf("http service dedup failed: %d vs %d", id2, id1)
 	}
 
-	d.QueryRow(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, id1).Scan(&techCnt)
+	d.QueryRow(`SELECT `+testArrayLenExpr("technologies")+` FROM assets WHERE id = $1`, id1).Scan(&techCnt)
 	if techCnt != 4 {
 		t.Errorf("technologies merge: want 4, got %d", techCnt)
 	}
@@ -365,7 +397,7 @@ func TestUpsertHTTPServiceAuthAppend(t *testing.T) {
 
 	// auth should have 2 items now
 	var authCnt int
-	d.QueryRow(`SELECT cardinality(auth) FROM assets WHERE id = $1`, id1).Scan(&authCnt)
+	d.QueryRow(`SELECT `+testArrayLenExpr("auth")+` FROM assets WHERE id = $1`, id1).Scan(&authCnt)
 	if authCnt != 2 {
 		t.Errorf("auth append: want 2, got %d", authCnt)
 	}
@@ -409,7 +441,7 @@ func TestUpsertOtherService(t *testing.T) {
 
 	// side-effect: IP asset should have port 22 in open_ports
 	var cnt int
-	d.QueryRow(`SELECT cardinality(open_ports) FROM assets WHERE type='ip' AND ip='172.16.0.1'`).Scan(&cnt)
+	d.QueryRow(`SELECT ` + testArrayLenExpr("open_ports") + ` FROM assets WHERE type='ip' AND ip='172.16.0.1'`).Scan(&cnt)
 	if cnt == 0 {
 		t.Error("side-effect: IP open_ports not populated")
 	}
@@ -443,7 +475,7 @@ func TestUpsertOtherServiceAuthAppend(t *testing.T) {
 	}
 
 	var authCnt int
-	d.QueryRow(`SELECT cardinality(auth) FROM assets WHERE id = $1`, id1).Scan(&authCnt)
+	d.QueryRow(`SELECT `+testArrayLenExpr("auth")+` FROM assets WHERE id = $1`, id1).Scan(&authCnt)
 	if authCnt != 2 {
 		t.Errorf("auth append: want 2, got %d", authCnt)
 	}
@@ -489,7 +521,7 @@ func TestUpsertEndpoint(t *testing.T) {
 
 	// params should be merged (2 distinct params)
 	var paramCnt int
-	d.QueryRow(`SELECT cardinality(params) FROM assets WHERE id = $1`, id1).Scan(&paramCnt)
+	d.QueryRow(`SELECT `+testArrayLenExpr("params")+` FROM assets WHERE id = $1`, id1).Scan(&paramCnt)
 	if paramCnt != 2 {
 		t.Errorf("params merge: want 2, got %d", paramCnt)
 	}
@@ -908,18 +940,25 @@ func TestAssetPaginationUsesStableIDTieBreaker(t *testing.T) {
 	taskID := stamp
 	marker := fmt.Sprintf("stable-page-%d", stamp)
 	sharedSeen := time.Date(2026, time.August, 21, 9, 0, 0, 0, time.UTC)
+	taskIDsExpr, taskIDsArg := testTaskIDsInsert("$2", taskID)
 	ids := make([]int64, 0, 5)
 	for i := 0; i < 5; i++ {
 		var id int64
 		domain := fmt.Sprintf("%s-%d.invalid", marker, i)
 		if err := d.QueryRow(`INSERT INTO assets(type,domain,root_domain,task_ids,last_seen)
-			VALUES ('root_domain',$1,$1,ARRAY[$2]::bigint[],$3) RETURNING id`,
-			domain, taskID, sharedSeen).Scan(&id); err != nil {
+			VALUES ('root_domain',$1,$1,`+taskIDsExpr+`,$3) RETURNING id`,
+			domain, taskIDsArg, sharedSeen).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, id)
 	}
-	defer func() { _, _ = d.Exec(`DELETE FROM assets WHERE id=ANY($1::bigint[])`, ids) }()
+	defer func() {
+		delArgs := []any{}
+		if len(ids) == 0 {
+			return
+		}
+		_, _ = d.Exec(`DELETE FROM assets WHERE id IN (`+appendInPlaceholders(&delArgs, ids)+`)`, delArgs...)
+	}()
 
 	want := slices.Clone(ids)
 	slices.Reverse(want)
@@ -1025,11 +1064,11 @@ func TestQueryDSLInScopeMembership(t *testing.T) {
 	}
 
 	stamp := time.Now().UnixNano()
-	root := fmt.Sprintf("sc%d.invalid", stamp)           // in-scope root domain (task)
-	srcRoot := fmt.Sprintf("src%d.invalid", stamp)       // in-scope via source task
-	out := fmt.Sprintf("out%d.invalid", stamp)           // out of every scope
-	marker := fmt.Sprintf("mk%d", stamp)                 // bare-text token present in all rows
-	foreignTask := stamp + 777                           // asset produced by an unrelated task
+	root := fmt.Sprintf("sc%d.invalid", stamp)     // in-scope root domain (task)
+	srcRoot := fmt.Sprintf("src%d.invalid", stamp) // in-scope via source task
+	out := fmt.Sprintf("out%d.invalid", stamp)     // out of every scope
+	marker := fmt.Sprintf("mk%d", stamp)           // bare-text token present in all rows
+	foreignTask := stamp + 777                     // asset produced by an unrelated task
 
 	// Scope: task owns root; source task owns srcRoot; task owns an IP /24.
 	for _, sc := range []struct {
@@ -1057,17 +1096,18 @@ func TestQueryDSLInScopeMembership(t *testing.T) {
 		{"subdomain", "api." + root, root, "", "", "", marker},                        // under task root
 		{"service", "www." + root, root, "https://www." + root + "/", "", "", marker}, // service under task root
 		{"endpoint", "www." + root, root, "https://www." + root + "/a?" + marker + "=1", "GET", "", ""},
-		{"subdomain", "dev." + srcRoot, srcRoot, "", "", "", marker}, // under source-task root
+		{"subdomain", "dev." + srcRoot, srcRoot, "", "", "", marker},                                      // under source-task root
 		{"endpoint", "198.51.100.9", "198.51.100.9", "http://198.51.100.9:8080/" + marker, "GET", "", ""}, // IP-literal host, ip col empty
 		{"subdomain", "x." + out, out, "", "", "", marker},                                                // out of scope
 	}
 	var inScopeIDs, outIDs []int64
+	insertTaskIDs, insertTaskIDsArg := testTaskIDsInsert("$8", foreignTask)
 	for _, r := range rows {
 		var id int64
 		if err := d.QueryRow(`INSERT INTO assets(type,domain,root_domain,url,method,ip,page_title,task_ids,last_seen)
-			VALUES ($1,NULLIF($2,''),NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),ARRAY[$8]::bigint[],now())
+			VALUES ($1,NULLIF($2,''),NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),`+insertTaskIDs+`,now())
 			RETURNING id`,
-			r.typ, r.domain, r.rootDom, r.url, r.method, r.ip, r.title, foreignTask).Scan(&id); err != nil {
+			r.typ, r.domain, r.rootDom, r.url, r.method, r.ip, r.title, insertTaskIDsArg).Scan(&id); err != nil {
 			t.Fatalf("insert %s: %v", r.domain, err)
 		}
 		if r.rootDom == out {
@@ -1077,7 +1117,18 @@ func TestQueryDSLInScopeMembership(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
-		_, _ = d.Exec(`DELETE FROM assets WHERE id=ANY($1::bigint[]) OR id=ANY($2::bigint[])`, inScopeIDs, outIDs)
+		delArgs := []any{}
+		conds := []string{}
+		if len(inScopeIDs) > 0 {
+			conds = append(conds, "id IN ("+appendInPlaceholders(&delArgs, inScopeIDs)+")")
+		}
+		if len(outIDs) > 0 {
+			conds = append(conds, "id IN ("+appendInPlaceholders(&delArgs, outIDs)+")")
+		}
+		if len(conds) == 0 {
+			return
+		}
+		_, _ = d.Exec(`DELETE FROM assets WHERE `+strings.Join(conds, " OR "), delArgs...)
 	})
 
 	got, err := assets.QueryDSLInScope(marker, "", task.ID, 50, 0)

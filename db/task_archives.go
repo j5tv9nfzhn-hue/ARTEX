@@ -192,7 +192,12 @@ func (d *DB) ListTaskArchives(search, state string, page, size int) (TaskArchive
 	}
 	search = strings.TrimSpace(search)
 	state = strings.TrimSpace(state)
-	where := `WHERE ($1='' OR task_id::text ILIKE '%'||$1||'%' OR task_name ILIKE '%'||$1||'%' OR task_description ILIKE '%'||$1||'%')
+	// task_id::text / ILIKE 都是 PG 写法：裸的 `::` 会被 SQLite 判成
+	// unrecognized token ":"，ILIKE 更是没有对应关键字。这里按引擎换成
+	// CAST(... AS TEXT) + LIKE（SQLite 的 LIKE 对 ASCII 本就大小写不敏感）。
+	where := `WHERE ($1='' OR ` + sqlCastText("task_id") + ` ` + sqlILike() + ` '%'||$1||'%'
+  OR task_name ` + sqlILike() + ` '%'||$1||'%'
+  OR task_description ` + sqlILike() + ` '%'||$1||'%')
 AND ($2='' OR state=$2)`
 	var out TaskArchivePage
 	out.Page, out.Size = page, size
@@ -230,7 +235,7 @@ func (d *DB) QueueTaskArchive(taskID int64) (*TaskArchive, error) {
 	err = tx.QueryRow(`SELECT COALESCE(t.name,''), t.description, t.goal, t.status,
  t.category_id, COALESCE(c.name,''), t.paused, t.queued, t.deadline_at
 FROM tasks t LEFT JOIN task_categories c ON c.id=t.category_id
-WHERE t.id=$1 AND t.deleted_at IS NULL FOR UPDATE OF t`, taskID).Scan(
+WHERE t.id=$1 AND t.deleted_at IS NULL`+sqlForUpdate("t"), taskID).Scan(
 		&name, &description, &goal, &status, &categoryID, &categoryName, &paused, &queued, &deadline,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -328,7 +333,7 @@ func (d *DB) QueueTaskArchiveDelete(id int64) (*TaskArchive, error) {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	var taskID int64
-	if err := tx.QueryRow(`SELECT task_id FROM task_archives WHERE id=$1 AND state IN ('ready','delete_failed') FOR UPDATE`, id).Scan(&taskID); err != nil {
+	if err := tx.QueryRow(`SELECT task_id FROM task_archives WHERE id=$1 AND state IN ('ready','delete_failed')`+sqlForUpdate(), id).Scan(&taskID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrTaskArchiveState
 		}
@@ -368,12 +373,41 @@ func (d *DB) RecoverTaskArchiveJobs() error {
 
 // ClaimTaskArchiveJob claims one persistent FIFO item for the single archive
 // worker. It returns nil when the queue is empty.
+//
+// 抢占语义按引擎走两条路：
+//
+//   - PG：先 SELECT ... FOR UPDATE SKIP LOCKED 拿到队首，再单独 UPDATE 成占用态。
+//     行锁 + 跳锁保证并发领取者各拿一行。
+//   - SQLite：没有行锁也没有 SKIP LOCKED（`near "FOR"`）。改成一条
+//     UPDATE ... WHERE id = (SELECT ... ORDER BY ... LIMIT 1) RETURNING ...：
+//     UPDATE 一开始就拿写锁，子查询在同一条语句里求值，因此抢占是原子的，
+//     并发领取者会串行地各领一行或领不到，绝不会两人领到同一行。
+//     state 的映射由 CASE 就地完成，RETURNING 直接给出占用态后的整行。
 func (d *DB) ClaimTaskArchiveJob(ctx context.Context) (*TaskArchive, error) {
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if isSQLiteEngine() {
+		item, err := scanTaskArchive(tx.QueryRowContext(ctx, `UPDATE task_archives
+SET state=CASE state
+        WHEN 'archive_queued' THEN '`+Archiving+`'
+        WHEN 'restore_queued' THEN '`+Restoring+`'
+        ELSE '`+Deleting+`' END,
+    phase='starting',progress=1,error=''
+WHERE id=(SELECT id FROM task_archives
+          WHERE state IN ('archive_queued','restore_queued','delete_queued')
+          ORDER BY requested_at,id LIMIT 1)
+RETURNING `+taskArchiveCols))
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return item, tx.Commit()
+	}
 	var id int64
 	var queuedState string
 	err = tx.QueryRowContext(ctx, `SELECT id,state FROM task_archives
@@ -409,7 +443,15 @@ func (d *DB) AppendTaskArchiveWarning(id int64, warning string) error {
 	if strings.TrimSpace(warning) == "" {
 		return nil
 	}
-	_, err := d.Exec(`UPDATE task_archives SET warnings=warnings || jsonb_build_array($2::text) WHERE id=$1`, id, warning)
+	// warnings 列两边都是 JSON 数组文本。PG 用 `warnings || jsonb_build_array($2::text)`
+	// 追加；SQLite 没有 jsonb_ 函数，改用 json_insert 的 '$[#]' 追加下标，
+	// 语义一致（末尾追加一个字符串元素）。占位符上的 ::text 同样必须去掉，
+	// 否则 SQLite 会去找名为 "2::text" 的命名参数。
+	query := `UPDATE task_archives SET warnings=warnings || jsonb_build_array($2) WHERE id=$1`
+	if isSQLiteEngine() {
+		query = `UPDATE task_archives SET warnings=json_insert(warnings,'$[#]',$2) WHERE id=$1`
+	}
+	_, err := d.Exec(query, id, warning)
 	return err
 }
 

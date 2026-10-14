@@ -69,8 +69,20 @@ func preview(s string, n int) string {
 // blocked 会白丢一条意图，所以这里对该终态额外重跑几次，每次之间退避一下，给
 // provider 恢复的时间；重试期间若被暂停/终止/取消则立即让位给对应分支处理。
 const (
-	modelErrorRetries      = 2               // model_error 收场后额外重试的次数
-	modelErrorRetryBackoff = 3 * time.Second // 每次重试前的退避
+	// model_error 收场后整条意图的重跑次数。
+	//
+	// 调高到 10 是为了容纳“供应商响应变慢”这一类瞬时抖动：单次重跑只花
+	// modelErrorRetryBackoff(3s) 的等待，10 次合计约 30 秒缓冲，
+	// 足以扛过一次排队或短时限流，不必因为一次慢响应就把整条意图判死。
+	//
+	// 硬失败（密钥失效、余额不足、参数非法）不值得等满 10 次——重试不会
+	// 让它们变好，只会把失败推迟 30 秒后才告诉用户。这类错误由
+	// modelErrorHardFailRetries 单独限制到 3 次。
+	modelErrorRetries = 10
+	// modelErrorHardFailRetries 是硬失败的意图重跑上限。
+	modelErrorHardFailRetries = 3
+	// modelErrorRetryBackoff 是每次重跑前的固定退避。
+	modelErrorRetryBackoff = 3 * time.Second
 	workControlWaitTimeout = 30 * time.Second
 )
 
@@ -1050,7 +1062,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	// model_error 收场 → 额外重跑几次（退避后再试）。仅在意图仍属本 work、任务
 	// 未暂停/未终止/未取消【且未进入收尾】时重试；否则让位给对应分支处理(收尾期不
 	// 再重试,避免退避挤占其他 worker 的优雅收尾窗口)。
-	maxRetries, retryBackoff := e.modelErrorRetryPolicy()
+	maxRetries, retryBackoff := e.modelErrorRetryPolicyFor(reason, err)
 	for attempt := 1; attempt <= maxRetries &&
 		retryableWorkerModelError(reason, err) &&
 		workCtx.Err() == nil && ectx.Err() == nil && !e.IsPaused(t.ID) && !e.isSettling(t.ID); attempt++ {
@@ -1066,6 +1078,8 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 			reason, wrote, err = worker.Execute(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding)
 		}
 		e.EndLLMCall(t.ID)
+		// 错误性质可能在重跑中改变（先超时、后 401），按当前错误重新定档。
+		maxRetries, _ = e.modelErrorRetryPolicyFor(reason, err)
 	}
 	// Capture kill state before detachWork cancels workCtx. kill = this work's
 	// ctx was cancelled (planner kill_work) while the TASK ctx kept running; a
