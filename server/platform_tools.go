@@ -19,6 +19,10 @@ func (s *Server) platformTools() []actool.CoreTool {
 	return []actool.CoreTool{
 		s.toolCreateSkill(),
 		s.toolUpdateSkillFile(),
+		s.toolListSkillGaps(),
+		s.toolProposeSkill(),
+		s.toolListSkillProposals(),
+		s.toolReviewSkillProposal(),
 		s.toolCreateCustomTool(),
 		s.toolUpdateCustomTool(),
 		s.toolCreateMCP(),
@@ -120,7 +124,7 @@ func (s *Server) toolCreateSkill() actool.CoreTool {
 			"description":  strParam("skill 描述(必填，说明它做什么/何时用)"),
 			"instructions": strParam("Markdown 正文说明(可选)"),
 		}, "name", "description"),
-		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct{ Name, Description, Instructions string }
 			_ = json.Unmarshal(in, &a)
 			if !validSkillName(a.Name) {
@@ -129,28 +133,22 @@ func (s *Server) toolCreateSkill() actool.CoreTool {
 			if strings.TrimSpace(a.Description) == "" {
 				return actool.Errorf("description 必填"), nil
 			}
-			path := filepath.Join(s.skillDir, a.Name)
-			if _, err := os.Stat(path); err == nil {
+			// 占位检查放在门控之前：重复提交一份已
+			// 存在的技能不该进入审阅队列——审阅者的
+			// 时间比磁盘宝。
+			if _, err := os.Stat(filepath.Join(s.skillDir, a.Name)); err == nil {
 				return actool.Errorf("skill 已存在: " + a.Name), nil
 			}
+			doc := buildSkillDocument(a.Name, a.Description, a.Instructions)
+			if s.SkillReviewGateEnabled() {
+				return s.proposeOrWrite(ctx, a.Name, "", doc,
+					"create_skill 工具调用，无外部依据", "agent")
+			}
+			path := filepath.Join(s.skillDir, a.Name)
 			if err := os.MkdirAll(path, 0o755); err != nil {
 				return actool.Errorf(err.Error()), nil
 			}
-			var b strings.Builder
-			b.WriteString("---\n")
-			fmt.Fprintf(&b, "name: %s\n", a.Name)
-			fmt.Fprintf(&b, "description: %s\n", a.Description)
-			b.WriteString("---\n\n")
-			if body := strings.TrimSpace(a.Instructions); body != "" {
-				// Caller-written instructions replace the scaffolding rather
-				// than being appended to it: an agent that produced real steps
-				// should not also be handed four empty sections to fill in.
-				b.WriteString(body)
-				b.WriteString("\n")
-			} else {
-				b.WriteString(skillTemplate(a.Name, a.Description))
-			}
-			if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(b.String()), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(doc), 0o644); err != nil {
 				_ = os.RemoveAll(path)
 				return actool.Errorf(err.Error()), nil
 			}
@@ -166,7 +164,7 @@ func (s *Server) toolUpdateSkillFile() actool.CoreTool {
 			"file":    strParam("相对路径(可选，默认 SKILL.md，如 scripts/run.py)"),
 			"content": strParam("文件完整内容"),
 		}, "name", "content"),
-		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct{ Name, File, Content string }
 			_ = json.Unmarshal(in, &a)
 			if !validSkillName(a.Name) {
@@ -183,6 +181,10 @@ func (s *Server) toolUpdateSkillFile() actool.CoreTool {
 			clean, msg := skillRelPath(rel)
 			if msg != "" {
 				return actool.Errorf("非法路径: " + msg), nil
+			}
+			if s.SkillReviewGateEnabled() {
+				return s.proposeOrWrite(ctx, a.Name, clean, a.Content,
+					"update_skill_file 工具调用，无外部依据", "agent")
 			}
 			full := filepath.Join(skillPath, clean)
 			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {

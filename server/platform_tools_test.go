@@ -14,6 +14,11 @@ import (
 func TestSkillTools(t *testing.T) {
 	dir := t.TempDir()
 	s := &Server{skillDir: dir}
+	// This test exercises SKILL.md content generation, not the review gate, and
+	// runs without a database. The gate is on by default (and, with no database
+	// to stage into, writes are refused rather than silently downgraded to a
+	// direct write), so opt out explicitly here.
+	s.setSkillGateOverride(false)
 
 	// create_skill writes a spec-compliant SKILL.md.
 	in, _ := json.Marshal(map[string]any{

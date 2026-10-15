@@ -111,6 +111,11 @@ type Server struct {
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
 
+	// skillGateOverride forces the skill review gate on/off regardless of the
+	// database setting. nil (the normal case) means "follow the database".
+	// See skill_review_tools.go for why this needs to exist at all.
+	skillGateOverride *bool
+
 	// authMu guards the first-run setup token, the cached password hash (tokens
 	// are signed with a key derived from it — see auth.go signingKey) and the
 	// failed-attempt limiter. initMu serialises /api/auth/init check-then-set.
