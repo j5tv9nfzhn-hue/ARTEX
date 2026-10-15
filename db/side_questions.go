@@ -125,7 +125,17 @@ func (d *DB) CurrentSideRequest(ctx context.Context, key string) (*sidequestion.
 }
 
 func (d *DB) SideHistory(ctx context.Context, key string, before int64, limit int) ([]sidequestion.Exchange, error) {
-	rows, err := d.QueryContext(ctx, `SELECT `+sideCols+` FROM side_question_requests WHERE session_key=$1 AND ($2::bigint=0 OR ordinal<$2) ORDER BY ordinal DESC LIMIT $3`, key, before, limit)
+	// The cursor filter uses "before==0 means no filter". PostgreSQL needs the
+	// explicit ::bigint so pgx can type the parameter against both uses in the
+	// OR; SQLite would parse the whole `$2::bigint` as a parameter *named*
+	// "2::bigint" and report "missing named argument" -- exactly the failure
+	// this cast is meant to avoid there. `before` is bound as an integer, so
+	// the bare comparison is already well-typed.
+	cursor := "($2=0 OR ordinal<$2)"
+	if isPostgresEngine() {
+		cursor = "($2::bigint=0 OR ordinal<$2)"
+	}
+	rows, err := d.QueryContext(ctx, `SELECT `+sideCols+` FROM side_question_requests WHERE session_key=$1 AND `+cursor+` ORDER BY ordinal DESC LIMIT $3`, key, before, limit)
 	if err != nil {
 		return nil, err
 	}

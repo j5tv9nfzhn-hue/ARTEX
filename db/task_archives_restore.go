@@ -935,11 +935,16 @@ WHERE task.archived_at IS NOT NULL`)
 	defer rows.Close()
 	var out []json.RawMessage
 	for rows.Next() {
-		var raw json.RawMessage
+		// jsonValue rather than json.RawMessage: SQLite stores this JSON in a
+		// TEXT column and hands back a string, which convertAssign only routes
+		// for an exact *[]byte destination. json.RawMessage is a named []byte
+		// type (a jsontext.Value alias on Go 1.27) and falls through to the
+		// reflection path, which does not handle slices. See db/sqlite_json_scan.go.
+		var raw jsonValue
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		out = append(out, raw)
+		out = append(out, raw.Raw())
 	}
 	return out, rows.Err()
 }

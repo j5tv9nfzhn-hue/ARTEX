@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -228,7 +229,21 @@ func TestSideArchiveRowsWithoutNewFields(t *testing.T) {
 	rows := map[string]json.RawMessage{}
 	for _, table := range []string{"side_question_sessions", "side_question_requests"} {
 		var raw []byte
-		if err = tx.QueryRow(`SELECT json_agg(t) FROM `+table+` t WHERE session_key=$1`, s.Parent.Key()).Scan(&raw); err != nil {
+		// json_agg(t) over a row alias is PostgreSQL-only: SQLite has no way to
+		// say "aggregate this whole row into one JSON object". Aggregating the
+		// columns individually produces the same array of objects, and taking
+		// the column list from the table keeps it from being hand-maintained.
+		cols, err := tableColumnNamesSQLite(tx, table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fragments := make([]string, len(cols))
+		for i, c := range cols {
+			fragments[i] = "'" + c + "',t." + c
+		}
+		agg := `SELECT json_group_array(json_object(` + strings.Join(fragments, ",") + `))
+FROM (SELECT * FROM ` + table + ` t WHERE session_key=$1)`
+		if err = tx.QueryRow(agg, s.Parent.Key()).Scan(&raw); err != nil {
 			t.Fatal(err)
 		}
 		var items []map[string]json.RawMessage

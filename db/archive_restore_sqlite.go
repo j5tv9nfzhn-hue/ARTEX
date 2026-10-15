@@ -56,13 +56,21 @@ func isArchiveTimestampColumn(declared string) bool {
 	return false
 }
 
-// archiveTableColumns 返回表的列，按表定义顺序排列。
+// tableColumnNames 返回表的列，按表定义顺序排列。
 //
-// 用 pragma_table_info 这个表值函数而不是 PRAGMA table_info(t)：前者能把表名
-// 作为绑定参数传进去，不必把表名拼进 SQL。表名虽然都来自 insertArchiveRows 的
-// 白名单，但保持"表名永远不进 SQL 字符串"这条性质成本为零。
-func archiveTableColumns(tx *sql.Tx, table string) ([]archiveColumn, error) {
-	rows, err := tx.Query(`SELECT name, type FROM pragma_table_info($1) ORDER BY cid`, table)
+// SQLite 侧用 pragma_table_info 这个表值函数而不是 PRAGMA table_info(t)：前者
+// 能把表名作为绑定参数传进去，不必把表名拼进 SQL。表名虽然都来自
+// insertArchiveRows 的白名单，但保持"表名永远不进 SQL 字符串"这条性质成本为零。
+//
+// PostgreSQL 侧查 pg_attribute，与 PRAGMA 对齐到同一种"定义顺序"语义——这
+// 是 INSERT 列顺序必须正确的依据，不能用字母序。
+func tableColumnNames(tx *sql.Tx, table string) ([]archiveColumn, error) {
+	query := `SELECT name, type FROM pragma_table_info($1) ORDER BY cid`
+	if isPostgresEngine() {
+		query = `SELECT attname, atttypid::regtype::text FROM pg_attribute
+WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
+	}
+	rows, err := tx.Query(query, table)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +90,19 @@ func archiveTableColumns(tx *sql.Tx, table string) ([]archiveColumn, error) {
 		return nil, fmt.Errorf("archive restore: table %q has no columns", table)
 	}
 	return cols, nil
+}
+
+// tableColumnNamesSQLite 只取列名，供测试拼 JSON 聚合表达式时使用。
+func tableColumnNamesSQLite(tx *sql.Tx, table string) ([]string, error) {
+	cols, err := tableColumnNames(tx, table)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = c.Name
+	}
+	return out, nil
 }
 
 // archiveTimeLayouts 是把归档里的时间文本还原成 time.Time 时依次尝试的布局。
@@ -191,7 +212,7 @@ type archiveInserter struct {
 //
 // onConflict 非空时追加对应的冲突子句（task_scope 与 assets 需要 DO NOTHING）。
 func newArchiveInserter(tx *sql.Tx, table, onConflict string) (*archiveInserter, error) {
-	cols, err := archiveTableColumns(tx, table)
+	cols, err := tableColumnNames(tx, table)
 	if err != nil {
 		return nil, err
 	}

@@ -877,46 +877,129 @@ FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2`, strconv.Form
 	for _, item := range []struct {
 		name  string
 		query string
+		lite  string
 		args  []any
 	}{
-		{"token_profiles", `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
+		{name: "token_profiles", args: []any{strconv.FormatInt(taskID, 10), expID},
+			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
 SELECT COALESCE(profile_name,'') profile_name,count(*) calls,1 tasks,
        COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,
        COALESCE(sum(cache_read),0) cache_read_tokens,COALESCE(sum(cache_write),0) cache_write_tokens
 FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2
-GROUP BY profile_name ORDER BY sum(input_tokens)+sum(output_tokens) DESC) x`, []any{strconv.FormatInt(taskID, 10), expID}},
-		{"token_daily", `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
+GROUP BY profile_name ORDER BY sum(input_tokens)+sum(output_tokens) DESC) x`,
+			lite: `SELECT COALESCE(json_group_array(json_object(
+ 'profile_name',x.profile_name,'calls',x.calls,'tasks',x.tasks,
+ 'input_tokens',x.input_tokens,'output_tokens',x.output_tokens,
+ 'cache_read_tokens',x.cache_read_tokens,'cache_write_tokens',x.cache_write_tokens)),'[]') FROM (
+SELECT COALESCE(profile_name,'') profile_name,count(*) calls,1 tasks,
+       COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,
+       COALESCE(sum(cache_read),0) cache_read_tokens,COALESCE(sum(cache_write),0) cache_write_tokens
+FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2
+GROUP BY profile_name ORDER BY sum(input_tokens)+sum(output_tokens) DESC) x`},
+		{name: "token_daily", args: []any{strconv.FormatInt(taskID, 10), expID},
+			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
 SELECT COALESCE(profile_name,'') profile_name,to_char(ts AT TIME ZONE 'UTC','YYYY-MM-DD') date,
        COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,
        COALESCE(sum(cache_read),0) cache_read_tokens
 FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2
-GROUP BY profile_name,date ORDER BY date) x`, []any{strconv.FormatInt(taskID, 10), expID}},
-		{"skills", `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT skill name,count(*) n FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`, []any{taskID, expID}},
-		{"skill_stats", `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
+GROUP BY profile_name,date ORDER BY date) x`,
+			// substr(ts,1,10) is the same "YYYY-MM-DD" prefix to_char would produce:
+			// SQLite stores ts as "2006-01-02 15:04:05..." so the first ten bytes
+			// are exactly the UTC date.
+			lite: `SELECT COALESCE(json_group_array(json_object(
+ 'profile_name',x.profile_name,'date',x.date,
+ 'input_tokens',x.input_tokens,'output_tokens',x.output_tokens,
+ 'cache_read_tokens',x.cache_read_tokens)),'[]') FROM (
+SELECT COALESCE(profile_name,'') profile_name,substr(ts,1,10) date,
+       COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,
+       COALESCE(sum(cache_read),0) cache_read_tokens
+FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2
+GROUP BY profile_name,date ORDER BY date) x`},
+		{name: "skills", args: []any{taskID, expID},
+			query: `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT skill name,count(*) n FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`,
+			lite:  `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT skill name,count(*) n FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`},
+		{name: "tools", args: []any{taskID, expID},
+			query: `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT tool_key name,count(*) n FROM tool_usage WHERE task_id=$1 OR exploration_id=$2 GROUP BY tool_key) x`,
+			lite:  `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT tool_key name,count(*) n FROM tool_usage WHERE task_id=$1 OR exploration_id=$2 GROUP BY tool_key) x`},
+		{name: "findings", args: []any{taskID},
+			query: `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT COALESCE(NULLIF(severity,''),'unknown') name,count(*) n FROM findings WHERE task_id=$1 GROUP BY severity) x`,
+			lite:  `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT COALESCE(NULLIF(severity,''),'unknown') name,count(*) n FROM findings WHERE task_id=$1 GROUP BY severity) x`},
+		{name: "skill_stats", args: []any{taskID, expID},
+			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
 SELECT skill,count(*) calls,1 tasks,
        COALESCE(array_agg(DISTINCT agent_key) FILTER (WHERE agent_key IS NOT NULL),ARRAY[]::text[]) agents,
        max(ts) last_used
-FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`, []any{taskID, expID}},
-		{"missing_skill_stats", `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
+FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`,
+			// The distinct agent list is a correlated subquery rather than
+			// json_group_array(DISTINCT ...): the DISTINCT-in-aggregate form is
+			// only valid for single-argument json_group_array and arrived late in
+			// SQLite's history, so nesting a plain DISTINCT subquery is the
+			// shape that does not depend on the bundled SQLite version.
+			// json() around the nested aggregate is not cosmetic. SQLite's JSON functions
+			// // quote any argument that is not itself already JSON, so a bare
+			// json_group_array(...) passed to json_object lands as the *string*
+			// "[\"agent-a\"]" instead of an array, and unmarshalling into []string fails.
+			// json() marks the subquery result as already-JSON so it is inlined.
+			lite: `SELECT COALESCE(json_group_array(json_object(
+ 'skill',x.skill,'calls',x.calls,'tasks',x.tasks,'agents',x.agents,'last_used',x.last_used)),'[]') FROM (
+SELECT skill,count(*) calls,1 tasks,
+       json((SELECT COALESCE(json_group_array(d.a),'[]') FROM (
+          SELECT DISTINCT s2.agent_key a FROM skill_usage s2
+          WHERE (s2.task_id=$1 OR s2.exploration_id=$2) AND s2.found
+            AND s2.skill=skill_usage.skill AND s2.agent_key IS NOT NULL) d)) agents,
+       max(ts) last_used
+FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`},
+		{name: "missing_skill_stats", args: []any{taskID, expID},
+			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
 SELECT skill,count(*) calls,0 tasks,
        COALESCE(array_agg(DISTINCT agent_key) FILTER (WHERE agent_key IS NOT NULL),ARRAY[]::text[]) agents,
        max(ts) last_used
-FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND NOT found GROUP BY skill) x`, []any{taskID, expID}},
-		{"tools", `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT tool_key name,count(*) n FROM tool_usage WHERE task_id=$1 OR exploration_id=$2 GROUP BY tool_key) x`, []any{taskID, expID}},
-		{"findings", `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT COALESCE(NULLIF(severity,''),'unknown') name,count(*) n FROM findings WHERE task_id=$1 GROUP BY severity) x`, []any{taskID}},
-		{"finding_stats", `SELECT jsonb_build_object(
+FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND NOT found GROUP BY skill) x`,
+			lite: `SELECT COALESCE(json_group_array(json_object(
+ 'skill',x.skill,'calls',x.calls,'tasks',x.tasks,'agents',x.agents,'last_used',x.last_used)),'[]') FROM (
+SELECT skill,count(*) calls,0 tasks,
+       json((SELECT COALESCE(json_group_array(d.a),'[]') FROM (
+          SELECT DISTINCT s2.agent_key a FROM skill_usage s2
+          WHERE (s2.task_id=$1 OR s2.exploration_id=$2) AND NOT s2.found
+            AND s2.skill=skill_usage.skill AND s2.agent_key IS NOT NULL) d)) agents,
+       max(ts) last_used
+FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND NOT found GROUP BY skill) x`},
+		{name: "finding_stats", args: []any{taskID},
+			query: `SELECT jsonb_build_object(
  'total',count(*),'pending',count(*) FILTER (WHERE status='pending'),
  'critical',count(*) FILTER (WHERE severity='critical'),'high',count(*) FILTER (WHERE severity='high'),
  'medium',count(*) FILTER (WHERE severity='medium'),'low',count(*) FILTER (WHERE severity='low'),
  'vulnclasses',COALESCE(jsonb_agg(DISTINCT vulnclass) FILTER (WHERE vulnclass<>''),'[]'::jsonb))
-FROM findings WHERE task_id=$1`, []any{taskID}},
+FROM findings WHERE task_id=$1`,
+			// count(*) FILTER (WHERE p) becomes SUM(CASE WHEN p THEN 1 ELSE 0 END).
+			// COALESCE matters: with no matching rows SUM yields NULL, and
+			// json_object would then emit a null where PostgreSQL emits 0.
+			lite: `SELECT json_object(
+ 'total',count(*),
+ 'pending',COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),
+ 'critical',COALESCE(SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END),0),
+ 'high',COALESCE(SUM(CASE WHEN severity='high' THEN 1 ELSE 0 END),0),
+ 'medium',COALESCE(SUM(CASE WHEN severity='medium' THEN 1 ELSE 0 END),0),
+ 'low',COALESCE(SUM(CASE WHEN severity='low' THEN 1 ELSE 0 END),0),
+ 'vulnclasses',json(COALESCE((SELECT json_group_array(v) FROM (
+    SELECT DISTINCT f2.vulnclass v FROM findings f2 WHERE f2.task_id=$1 AND f2.vulnclass<>'')),'[]')))
+FROM findings WHERE task_id=$1`},
 	} {
-		var raw []byte
-		if err := tx.QueryRow(item.query, item.args...).Scan(&raw); err != nil {
+		query := item.query
+		if isSQLiteEngine() {
+			query = item.lite
+		}
+		// jsonValue rather than []byte: SQLite returns the JSON column as a
+		// string, and database/sql's convertAssign only has a []byte source
+		// branch for an exact *[]byte destination. json.RawMessage is a named
+		// []byte type (jsontext.Value alias on Go 1.27), so it falls through
+		// to reflection and fails. See db/sqlite_json_scan.go.
+		var raw jsonValue
+		if err := tx.QueryRow(query, item.args...).Scan(&raw); err != nil {
 			return nil, err
 		}
 		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
+		if err := json.Unmarshal(raw.RawMessage, &value); err != nil {
 			return nil, err
 		}
 		stats[item.name] = value
