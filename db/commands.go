@@ -33,7 +33,7 @@ func commandFilter(expID *int64, q string) (string, []any, int) {
 		argN++
 	}
 	if q != "" {
-		where += fmt.Sprintf(` AND (u.tool ILIKE $%d OR u.detail ILIKE $%d)`, argN, argN)
+		where += fmt.Sprintf(` AND (u.tool `+sqlILike()+` $%d OR u.detail `+sqlILike()+` $%d)`, argN, argN)
 		args = append(args, "%"+q+"%")
 		argN++
 	}
@@ -256,7 +256,7 @@ func (d *DB) ListLLMRecords(model, session, task string, page, size int) ([]LLMR
 		argN++
 	}
 	if session != "" {
-		where += fmt.Sprintf(` AND session_id ILIKE $%d`, argN)
+		where += fmt.Sprintf(` AND session_id `+sqlILike()+` $%d`, argN)
 		args = append(args, "%"+session+"%")
 		argN++
 	}

@@ -2,7 +2,10 @@ package db
 
 import (
 	"database/sql/driver"
+	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +84,80 @@ func init() {
 		func(_ *sqlite.FunctionContext, _ []driver.Value) (driver.Value, error) {
 			return nowFunc(), nil
 		})
+
+	sqlite.MustRegisterDeterministicScalarFunction("concat_ws", -1, concatWSFunc)
+	sqlite.MustRegisterDeterministicScalarFunction("left", 2, leftFunc)
+}
+
+// concatWSFunc backs PostgreSQL's concat_ws(sep, VARIADIC "any").
+//
+// 语义照抄 PG：NULL 参数被跳过，其余按原样用分隔符连接；全部为 NULL 时返回空串。
+// 空串**不**跳过——PG 也不跳过，跳过会让 `concat_ws(' · ', a, ”, b)` 的列数
+// 与调用点预期不一致。
+//
+// 为什么注册 UDF 而不是改写调用点：搜索类的拼接谓词（chat_mentions 的
+// "名字/域名/路径任一命中"）在 SQL 里到处都是 concat_ws，逐个改写成 SQLite 的
+// 拼接表达式既啰嗦又容易在 NULL 处理上和 PG 产生分叉。注册同名的标量函数让
+// 语句在两个引擎上逐字相同——这与 regexp / now 是同一条论证。
+func concatWSFunc(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	sep := argString(args[0])
+	var b strings.Builder
+	for _, a := range args[1:] {
+		if a == nil {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString(sep)
+		}
+		switch t := a.(type) {
+		case string:
+			b.WriteString(t)
+		case []byte:
+			b.Write(t)
+		default:
+			b.WriteString(fmt.Sprint(t))
+		}
+	}
+	return b.String(), nil
+}
+
+// leftFunc backs PostgreSQL's left(string, n).
+//
+// SQLite 的 substr(s,1,n) 与之同义；注册 left 只是为了让调用点的 SQL 在两个
+// 引擎上逐字相同，而不是到处写 substr(...)。
+func leftFunc(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	if len(args) < 2 || args[0] == nil {
+		return nil, nil
+	}
+	s := argString(args[0])
+	n := int(toInt64(args[1]))
+	if n <= 0 {
+		return "", nil
+	}
+	if len(s) <= n {
+		return s, nil
+	}
+	return s[:n], nil
+}
+
+func toInt64(v driver.Value) int64 {
+	switch t := v.(type) {
+	case int64:
+		return t
+	case float64:
+		return int64(t)
+	case string:
+		n, err := strconv.ParseInt(t, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return n
+	default:
+		return 0
+	}
 }
 
 func compileRegexp(pattern string) (*regexp.Regexp, error) {

@@ -765,14 +765,14 @@ ORDER BY id DESC LIMIT $4`, s.expID, kind, before, limit+1)
 }
 
 // listByKindPageFiltered is ListByKindPage with an optional summary keyword
-// filter (payload->>'summary' ILIKE %q%). Fetches one extra row so the caller can
+// filter (payload->>'summary' ` + sqlILike() + ` %q%). Fetches one extra row so the caller can
 // probe hasMore. Empty q = no filter. Newest-first by id.
 func (s *ExplorationStore) listByKindPageFiltered(kind string, before int64, limit int, q string) ([]*Node, error) {
 	where := `exploration_id=$1 AND kind=$2 AND ($3 <= 0 OR id < $3)`
 	args := []any{s.expID, kind, before}
 	if q != "" {
 		args = append(args, "%"+q+"%")
-		where += fmt.Sprintf(` AND payload->>'summary' ILIKE $%d`, len(args))
+		where += fmt.Sprintf(` AND payload->>'summary' `+sqlILike()+` $%d`, len(args))
 	}
 	args = append(args, limit+1)
 	rows, err := s.db.Query(`SELECT `+nodeCols+` FROM exploration_nodes
@@ -791,7 +791,7 @@ func (s *ExplorationStore) countByKindFiltered(kind, q string) (int, error) {
 	args := []any{s.expID, kind}
 	if q != "" {
 		args = append(args, "%"+q+"%")
-		where += fmt.Sprintf(` AND payload->>'summary' ILIKE $%d`, len(args))
+		where += fmt.Sprintf(` AND payload->>'summary' `+sqlILike()+` $%d`, len(args))
 	}
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM exploration_nodes WHERE `+where, args...).Scan(&n)
@@ -885,7 +885,8 @@ func (s *ExplorationStore) NodesPage(f NodeFilter, page, size int) ([]*Node, int
 	if q := strings.TrimSpace(f.Query); q != "" {
 		args = append(args, "%"+q+"%")
 		mark := "$" + fmt.Sprint(len(args))
-		ors := []string{"payload::text ILIKE " + mark, "COALESCE(origin,'') ILIKE " + mark}
+		ors := []string{sqlCastText("payload") + " " + sqlILike() + " " + mark,
+			"COALESCE(origin,'') " + sqlILike() + " " + mark}
 		// 纯数字(或 UI 里带 # 前缀的形式,如「#41」)当作节点 id 精确匹配,方便直接定位某个节点。
 		if idStr := strings.TrimPrefix(q, "#"); idStr != "" {
 			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
@@ -1821,11 +1822,11 @@ func (s *ExplorationStore) ActivityTraceSearch(nodeID *int64, q string, limit in
 	if nodeID != nil {
 		rows, err = s.db.Query(`SELECT `+traceCols+`
 FROM activity WHERE exploration_id=$1 AND node_id=$2 AND kind NOT IN ('thinking','usage')
-AND (summary ILIKE $3 OR detail ILIKE $3) ORDER BY id LIMIT $4`, s.expID, *nodeID, like, limit)
+AND (summary `+sqlILike()+` $3 OR detail `+sqlILike()+` $3) ORDER BY id LIMIT $4`, s.expID, *nodeID, like, limit)
 	} else {
 		rows, err = s.db.Query(`SELECT `+traceCols+`
 FROM activity WHERE exploration_id=$1 AND node_id IS NOT NULL AND kind NOT IN ('thinking','usage')
-AND (summary ILIKE $2 OR detail ILIKE $2) ORDER BY id LIMIT $3`, s.expID, like, limit)
+AND (summary `+sqlILike()+` $2 OR detail `+sqlILike()+` $2) ORDER BY id LIMIT $3`, s.expID, like, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -1847,7 +1848,7 @@ func (s *ExplorationStore) ActivityTraceSearchForTerminalIntent(nodeID int64, q 
 	WHERE a.exploration_id=$1 AND a.node_id=$2 AND n.kind='intent'
 	  AND n.state IN ('done','blocked','exhausted','stopped')
 	  AND a.kind NOT IN ('thinking','usage')
-	  AND (a.summary ILIKE $3 OR a.detail ILIKE $3)
+	  AND (a.summary `+sqlILike()+` $3 OR a.detail `+sqlILike()+` $3)
 	ORDER BY a.id LIMIT $4`, s.expID, nodeID, like, limit)
 	if err != nil {
 		return nil, err
@@ -1869,7 +1870,7 @@ func (s *ExplorationStore) ActivityTraceSearchTerminalIntents(q string, limit in
 	WHERE a.exploration_id=$1 AND n.kind='intent'
 	  AND n.state IN ('done','blocked','exhausted','stopped')
 	  AND a.kind NOT IN ('thinking','usage')
-	  AND (a.summary ILIKE $2 OR a.detail ILIKE $2)
+	  AND (a.summary `+sqlILike()+` $2 OR a.detail `+sqlILike()+` $2)
 	ORDER BY a.id LIMIT $3`, s.expID, like, limit)
 	if err != nil {
 		return nil, err
@@ -1940,7 +1941,7 @@ func (s *ExplorationStore) ActivityTraceSearchExcluding(excludeNodeID int64, q s
 	rows, err := s.db.Query(`SELECT `+traceCols+`
 FROM activity WHERE exploration_id=$1 AND node_id IS NOT NULL AND node_id <> $2
 AND kind NOT IN ('thinking','usage')
-AND (summary ILIKE $3 OR detail ILIKE $3) ORDER BY id LIMIT $4`, s.expID, excludeNodeID, like, limit)
+AND (summary `+sqlILike()+` $3 OR detail `+sqlILike()+` $3) ORDER BY id LIMIT $4`, s.expID, excludeNodeID, like, limit)
 	if err != nil {
 		return nil, err
 	}

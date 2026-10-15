@@ -303,7 +303,7 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 		p := b.next("%" + e.Value + "%")
 		var parts []string
 		for _, col := range fullTextCols {
-			parts = append(parts, col+" ILIKE "+p)
+			parts = append(parts, col+" "+sqlILike()+" "+p)
 		}
 		parts = append(parts,
 			jsonArrayILikeExpr("technologies", p),
@@ -365,11 +365,11 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 	if col, ok := knownStringFields[f]; ok {
 		switch e.Op {
 		case "=":
-			return col + " ILIKE " + b.next("%"+e.Value+"%"), nil
+			return col + " " + sqlILike() + " " + b.next("%"+e.Value+"%"), nil
 		case "==":
 			return col + " = " + b.next(e.Value), nil
 		case "!=":
-			return col + " NOT ILIKE " + b.next("%"+e.Value+"%"), nil
+			return col + " " + sqlNotILike() + " " + b.next("%"+e.Value+"%"), nil
 		default:
 			return "", fmt.Errorf("字符串字段 %s 不支持运算符 %s", f, e.Op)
 		}

@@ -71,24 +71,24 @@ SELECT kind, id, left(label, 160), left(description, 240) FROM (
  (SELECT 'finding' AS kind, id, COALESCE(NULLIF(name,''), vulnclass) AS label,
          concat_ws(' · ', severity, status, left(summary, 160)) AS description
   FROM findings WHERE ($1='' OR $1='finding') AND
-    ($2='' OR id::text=$2 OR concat_ws(' ',name,vulnclass,summary) ILIKE $3)
-    AND ($4::bigint=0 OR (id::text=$2)<$6 OR ((id::text=$2)=$6 AND (id<$4 OR (id=$4 AND 'finding'>$5))))
-  ORDER BY (id::text=$2) DESC, id DESC LIMIT 21)
+    ($2='' OR `+sqlCastText("id")+`=$2 OR concat_ws(' ',name,vulnclass,summary) `+sqlILike()+` $3)
+    AND ($4=0 OR (`+sqlCastText("id")+`=$2)<$6 OR ((`+sqlCastText("id")+`=$2)=$6 AND (id<$4 OR (id=$4 AND 'finding'>$5))))
+  ORDER BY (`+sqlCastText("id")+`=$2) DESC, id DESC LIMIT 21)
  UNION ALL
  (SELECT 'company', id, name, nkey FROM companies
-  WHERE ($1='' OR $1='company') AND ($2='' OR id::text=$2 OR name ILIKE $3 OR nkey ILIKE $3)
-    AND ($4::bigint=0 OR (id::text=$2)<$6 OR ((id::text=$2)=$6 AND (id<$4 OR (id=$4 AND 'company'>$5))))
-  ORDER BY (id::text=$2) DESC, id DESC LIMIT 21)
+  WHERE ($1='' OR $1='company') AND ($2='' OR `+sqlCastText("id")+`=$2 OR name `+sqlILike()+` $3 OR nkey `+sqlILike()+` $3)
+    AND ($4=0 OR (`+sqlCastText("id")+`=$2)<$6 OR ((`+sqlCastText("id")+`=$2)=$6 AND (id<$4 OR (id=$4 AND 'company'>$5))))
+  ORDER BY (`+sqlCastText("id")+`=$2) DESC, id DESC LIMIT 21)
  UNION ALL
  (SELECT type, id,
     CASE WHEN type='endpoint' THEN concat_ws(' ',NULLIF(method,''),url)
-         ELSE COALESCE(NULLIF(app_name,''),NULLIF(url,''),NULLIF(domain,''),NULLIF(ip,''),NULLIF(bundle_id,''),'资产 #'||id::text) END,
-    concat_ws(' · ',type,NULLIF(page_title,''),NULLIF(service_name,''),NULLIF(bundle_id,''),NULLIF(ip,''),port::text)
+         ELSE COALESCE(NULLIF(app_name,''),NULLIF(url,''),NULLIF(domain,''),NULLIF(ip,''),NULLIF(bundle_id,''),'资产 #'||`+sqlCastText("id")+`) END,
+    concat_ws(' · ',type,NULLIF(page_title,''),NULLIF(service_name,''),NULLIF(bundle_id,''),NULLIF(ip,''),`+sqlCastText("port")+`)
   FROM assets WHERE ($1='' OR $1='asset' OR type=$1) AND
-    ($2='' OR id::text=$2 OR concat_ws(' ',domain,root_domain,ip,url,app_name,bundle_id,page_title,service_name,method) ILIKE $3)
-    AND ($4::bigint=0 OR (id::text=$2)<$6 OR ((id::text=$2)=$6 AND (id<$4 OR (id=$4 AND type>$5))))
-  ORDER BY (id::text=$2) DESC, id DESC LIMIT 21)
-) matches ORDER BY (id::text=$2) DESC, id DESC, kind LIMIT 21`, kind, query, pattern, after.ID, after.Kind, after.Exact)
+    ($2='' OR `+sqlCastText("id")+`=$2 OR concat_ws(' ',domain,root_domain,ip,url,app_name,bundle_id,page_title,service_name,method) `+sqlILike()+` $3)
+    AND ($4=0 OR (`+sqlCastText("id")+`=$2)<$6 OR ((`+sqlCastText("id")+`=$2)=$6 AND (id<$4 OR (id=$4 AND type>$5))))
+  ORDER BY (`+sqlCastText("id")+`=$2) DESC, id DESC LIMIT 21)
+) matches ORDER BY (`+sqlCastText("id")+`=$2) DESC, id DESC, kind LIMIT 21`, kind, query, pattern, after.ID, after.Kind, after.Exact)
 	if err != nil {
 		return page, err
 	}

@@ -96,6 +96,18 @@ func sqlILike() string {
 	return "ILIKE"
 }
 
+// sqlNotILike 返回否定模糊匹配的运算符，与 sqlILike 成对。
+//
+// 单独一个函数而不是让调用点写 "NOT "+sqlILike()：NOT 两侧的空格在调用点
+// 很容易漏，而漏掉之后 `NOTLIKE` 是合法 token 却不是任何引擎认识的运算符
+// ——编译通过、PG 直接报错。
+func sqlNotILike() string {
+	if isSQLiteEngine() {
+		return "NOT LIKE"
+	}
+	return "NOT ILIKE"
+}
+
 // sqlCastText 返回把列转成文本的写法。
 //
 // 用途只有一个：让数值列参与字符串比较（任务 ID 的模糊搜索）。
