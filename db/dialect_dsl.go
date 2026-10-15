@@ -60,6 +60,27 @@ func idSetAnyExpr(args *[]any, ids []int64, prefix string) string {
 	return "id IN (" + joinNonEmpty(marks) + ")"
 }
 
+// sqlIDListExpr 返回「<col> IN ($n,…)」，并把 ids 逐个追加到 *args。
+//
+// 为什么必须展开成 IN 列表而不是绑一个数组参数：
+//
+//   - SQLite 的驱动无法把 []int64 绑成单参（"unsupported type []int64, a slice
+//     of int64"）；
+//   - ANY() 是 PostgreSQL 的数组运算符，不是 SQLite 的函数；
+//   - 展开后每个值仍各自绑定，不存在拼接字面量的注入面。
+//
+// 占位符编号由 *args 当前长度决定，所以调用点必须**先**把自己原有的参数追加
+// 进去，再调用本函数——顺序反了会让 $n 指到别的参数上，而那类错误在
+// PostgreSQL 上完全不报错。
+func sqlIDListExpr(args *[]any, col string, ids []int64) string {
+	marks := make([]string, len(ids))
+	for i, id := range ids {
+		*args = append(*args, id)
+		marks[i] = fmt.Sprintf("$%d", len(*args))
+	}
+	return col + " IN (" + joinNonEmpty(marks) + ")"
+}
+
 func joinNonEmpty(s []string) string {
 	out := ""
 	for i, v := range s {

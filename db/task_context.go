@@ -135,13 +135,15 @@ func (d *DB) hydrateTasksContext(tasks []*Task) error {
 		return nil
 	}
 
+	var llmArgs []any
+	llmWhere := sqlIDListExpr(&llmArgs, "t.id", ids)
 	rows, err := d.Query(`
 SELECT t.id, t.llm_profile_id, t.active_llm_profile_id, t.llm_chain_revision,
        p.profile_id, p.position, p.status, COALESCE(p.last_error,''), p.exhausted_at
 FROM tasks t
 LEFT JOIN task_llm_profiles p ON p.task_id=t.id
-WHERE t.id=ANY($1::bigint[])
-ORDER BY t.id, p.position NULLS LAST`, ids)
+WHERE `+llmWhere+`
+ORDER BY t.id, p.position NULLS LAST`, llmArgs...)
 	if err != nil {
 		return err
 	}
@@ -190,11 +192,13 @@ ORDER BY t.id, p.position NULLS LAST`, ids)
 	}
 	rows.Close()
 
+	var relArgs []any
+	relWhere := sqlIDListExpr(&relArgs, "task_id", ids)
 	rows, err = d.Query(`
 SELECT task_id, source_task_id
 FROM task_relations
-WHERE task_id=ANY($1::bigint[])
-ORDER BY task_id, created_at, source_task_id`, ids)
+WHERE `+relWhere+`
+ORDER BY task_id, created_at, source_task_id`, relArgs...)
 	if err != nil {
 		return err
 	}
@@ -214,11 +218,13 @@ ORDER BY task_id, created_at, source_task_id`, ids)
 	}
 	rows.Close()
 
+	var scopeArgs []any
+	scopeWhere := sqlIDListExpr(&scopeArgs, "task_id", ids)
 	rows, err = d.Query(`
 SELECT task_id, company_id
 FROM task_scope
-WHERE task_id=ANY($1::bigint[]) AND kind='company' AND company_id IS NOT NULL
-ORDER BY task_id, id`, ids)
+WHERE `+scopeWhere+` AND kind='company' AND company_id IS NOT NULL
+ORDER BY task_id, id`, scopeArgs...)
 	if err != nil {
 		return err
 	}

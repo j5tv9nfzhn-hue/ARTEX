@@ -218,7 +218,9 @@ func (d *DB) DeleteConversations(ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return []int64{}, nil
 	}
-	rows, err := d.Query(`DELETE FROM conversations WHERE id=ANY($1::bigint[]) RETURNING id`, ids)
+	var delArgs []any
+	delWhere := sqlIDListExpr(&delArgs, "id", ids)
+	rows, err := d.Query(`DELETE FROM conversations WHERE `+delWhere+` RETURNING id`, delArgs...)
 	if err != nil {
 		return nil, err
 	}
