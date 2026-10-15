@@ -1,7 +1,6 @@
 package db
 
 import (
-	"database/sql"
 	"strings"
 	"time"
 )
@@ -52,6 +51,19 @@ type SkillStat struct {
 	LastUsed *time.Time `json:"last_used"` // nil when never called
 }
 
+// skillAgentsAgg 是 skill_usage 聚合里「去重 agent 名单」的方言写法。
+//
+//	PostgreSQL: STRING_AGG(DISTINCT agent_key, ',')，两参数形态只有 PG 有；
+//	SQLite:     GROUP_CONCAT(DISTINCT agent_key)。SQLite 的 string_agg/group_concat
+//	            在 DISTINCT 形态下只收单参数（双参数报 "DISTINCT aggregates must
+//	            have exactly one argument"），默认连接符恰好就是 ','，与 PG 侧一致。
+func skillAgentsAgg() string {
+	if isSQLiteEngine() {
+		return "COALESCE(GROUP_CONCAT(DISTINCT agent_key), '')"
+	}
+	return "COALESCE(STRING_AGG(DISTINCT agent_key, ','), '')"
+}
+
 // SkillStats aggregates the whole ledger grouped by skill, most-used first. Skills
 // that were never invoked are absent — callers merge against the skill list on disk.
 // Only resolved calls count; misses are reported separately by MissingSkillStats.
@@ -62,7 +74,7 @@ func (d *DB) SkillStats() ([]SkillStat, error) {
 	rows, err := d.Query(`
 SELECT skill, COUNT(*) AS calls,
        COUNT(DISTINCT task_id) AS tasks,
-       COALESCE(STRING_AGG(DISTINCT agent_key, ','), '') AS agents,
+       `+skillAgentsAgg()+` AS agents,
        MAX(ts) AS last_used
 FROM skill_usage
 WHERE found
@@ -76,16 +88,19 @@ ORDER BY COUNT(*) DESC, skill`)
 	for rows.Next() {
 		var s SkillStat
 		var agents string
-		var lastUsed sql.NullTime
-		if err := rows.Scan(&s.Skill, &s.Calls, &s.Tasks, &agents, &lastUsed); err != nil {
+		var lastRaw any
+		if err := rows.Scan(&s.Skill, &s.Calls, &s.Tasks, &agents, &lastRaw); err != nil {
 			return nil, err
 		}
 		s.Agents = []string{}
 		if agents != "" {
 			s.Agents = strings.Split(agents, ",")
 		}
-		if lastUsed.Valid {
-			t := lastUsed.Time
+		if lastRaw != nil {
+			t, err := aggregateTimestamp(lastRaw)
+			if err != nil {
+				return nil, err
+			}
 			s.LastUsed = &t
 		}
 		out = append(out, s)
@@ -109,7 +124,7 @@ func (d *DB) MissingSkillStats(limit int) ([]SkillStat, error) {
 	}
 	rows, err := d.Query(`
 SELECT skill, COUNT(*) AS calls,
-       COALESCE(STRING_AGG(DISTINCT agent_key, ','), '') AS agents,
+       `+skillAgentsAgg()+` AS agents,
        MAX(ts) AS last_used
 FROM skill_usage
 WHERE NOT found
@@ -123,16 +138,19 @@ ORDER BY COUNT(*) DESC, skill`)
 	for rows.Next() {
 		var s SkillStat
 		var agents string
-		var lastUsed sql.NullTime
-		if err := rows.Scan(&s.Skill, &s.Calls, &agents, &lastUsed); err != nil {
+		var lastRaw any
+		if err := rows.Scan(&s.Skill, &s.Calls, &agents, &lastRaw); err != nil {
 			return nil, err
 		}
 		s.Agents = []string{}
 		if agents != "" {
 			s.Agents = strings.Split(agents, ",")
 		}
-		if lastUsed.Valid {
-			t := lastUsed.Time
+		if lastRaw != nil {
+			t, err := aggregateTimestamp(lastRaw)
+			if err != nil {
+				return nil, err
+			}
 			s.LastUsed = &t
 		}
 		out = append(out, s)
@@ -202,13 +220,16 @@ ORDER BY COUNT(*) DESC, skill`, taskID)
 	out := []SkillStat{}
 	for rows.Next() {
 		var s SkillStat
-		var lastUsed sql.NullTime
-		if err := rows.Scan(&s.Skill, &s.Calls, &lastUsed); err != nil {
+		var lastRaw any
+		if err := rows.Scan(&s.Skill, &s.Calls, &lastRaw); err != nil {
 			return nil, err
 		}
 		s.Agents = []string{}
-		if lastUsed.Valid {
-			t := lastUsed.Time
+		if lastRaw != nil {
+			t, err := aggregateTimestamp(lastRaw)
+			if err != nil {
+				return nil, err
+			}
 			s.LastUsed = &t
 		}
 		out = append(out, s)

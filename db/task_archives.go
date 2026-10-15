@@ -936,18 +936,20 @@ FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skil
 			// SQLite's history, so nesting a plain DISTINCT subquery is the
 			// shape that does not depend on the bundled SQLite version.
 			// json() around the nested aggregate is not cosmetic. SQLite's JSON functions
-			// // quote any argument that is not itself already JSON, so a bare
+			// quote any argument that is not itself already JSON, so a bare
 			// json_group_array(...) passed to json_object lands as the *string*
 			// "[\"agent-a\"]" instead of an array, and unmarshalling into []string fails.
-			// json() marks the subquery result as already-JSON so it is inlined.
+			// Subquery materialization drops the JSON subtype, so the outer json_object
+                        // must wrap x.agents with json() again at the argument position — that is
+                        // what keeps the value inlined as an array instead of a quoted string.
 			lite: `SELECT COALESCE(json_group_array(json_object(
- 'skill',x.skill,'calls',x.calls,'tasks',x.tasks,'agents',x.agents,'last_used',x.last_used)),'[]') FROM (
+ 'skill',x.skill,'calls',x.calls,'tasks',x.tasks,'agents',json(x.agents),'last_used',x.last_used)),'[]') FROM (
 SELECT skill,count(*) calls,1 tasks,
        json((SELECT COALESCE(json_group_array(d.a),'[]') FROM (
           SELECT DISTINCT s2.agent_key a FROM skill_usage s2
           WHERE (s2.task_id=$1 OR s2.exploration_id=$2) AND s2.found
             AND s2.skill=skill_usage.skill AND s2.agent_key IS NOT NULL) d)) agents,
-       max(ts) last_used
+       replace(max(ts),' ','T') last_used
 FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`},
 		{name: "missing_skill_stats", args: []any{taskID, expID},
 			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
@@ -956,13 +958,13 @@ SELECT skill,count(*) calls,0 tasks,
        max(ts) last_used
 FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND NOT found GROUP BY skill) x`,
 			lite: `SELECT COALESCE(json_group_array(json_object(
- 'skill',x.skill,'calls',x.calls,'tasks',x.tasks,'agents',x.agents,'last_used',x.last_used)),'[]') FROM (
+ 'skill',x.skill,'calls',x.calls,'tasks',x.tasks,'agents',json(x.agents),'last_used',x.last_used)),'[]') FROM (
 SELECT skill,count(*) calls,0 tasks,
        json((SELECT COALESCE(json_group_array(d.a),'[]') FROM (
           SELECT DISTINCT s2.agent_key a FROM skill_usage s2
           WHERE (s2.task_id=$1 OR s2.exploration_id=$2) AND NOT s2.found
             AND s2.skill=skill_usage.skill AND s2.agent_key IS NOT NULL) d)) agents,
-       max(ts) last_used
+       replace(max(ts),' ','T') last_used
 FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND NOT found GROUP BY skill) x`},
 		{name: "finding_stats", args: []any{taskID},
 			query: `SELECT jsonb_build_object(

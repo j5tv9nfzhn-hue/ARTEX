@@ -150,7 +150,7 @@ func archiveBindValue(col archiveColumn, v any) any {
 			return f
 		}
 		return t.String()
-	case map[string]any, []any:
+	case map[string]any, []any, []int64:
 		raw, err := marshalSnapshot(t)
 		if err != nil {
 			return nil
