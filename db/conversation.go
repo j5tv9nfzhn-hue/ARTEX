@@ -21,7 +21,7 @@ type ConvTokenSummary struct {
 // result-row token usage (0 for conversations with no completed run yet).
 func (d *DB) ConversationTokenSummaries() ([]ConvTokenSummary, error) {
 	rows, err := d.Query(`
-SELECT c.llm_profile_id, c.created_at::text,
+SELECT c.llm_profile_id, CAST(c.created_at AS TEXT),
        COALESCE(sum(ca.input_tokens),0), COALESCE(sum(ca.output_tokens),0),
        COALESCE(sum(ca.cache_read_tokens),0), COALESCE(sum(ca.cache_write_tokens),0)
 FROM conversations c
@@ -176,10 +176,10 @@ func (d *DB) GetConversation(id int64) (*Conversation, error) {
 // row. Pinning an already-pinned conversation preserves its original pin order.
 func (d *DB) UpdateConversation(id int64, patch ConversationPatch) (*Conversation, error) {
 	c, err := scanConv(d.QueryRow(`UPDATE conversations SET
-	title = CASE WHEN $2::boolean THEN $3 ELSE title END,
+	title = CASE WHEN $2 THEN $3 ELSE title END,
 	pinned_at = CASE
-		WHEN $4::boolean IS NULL THEN pinned_at
-		WHEN $4::boolean THEN COALESCE(pinned_at, now())
+		WHEN $4 IS NULL THEN pinned_at
+		WHEN $4 THEN COALESCE(pinned_at, now())
 		ELSE NULL
 	END
 WHERE id=$1

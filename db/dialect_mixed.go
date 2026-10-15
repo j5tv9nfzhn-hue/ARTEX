@@ -250,6 +250,22 @@ func sqlDayStart(col string) string {
 	return "date_trunc('day', " + col + ")"
 }
 
+// sqlEpochInt 返回「时间表达式 -> unix 秒（整型）」的写法。
+//
+//	PostgreSQL: EXTRACT(EPOCH FROM expr)::bigint
+//	SQLite:     CAST(strftime('%s', expr) AS INTEGER)
+//
+// SQLite 没有 EXTRACT(EPOCH FROM ...)；strftime('%s', ...) 返回字符串形态的
+// unix 秒，必须显式 CAST 才能被 Scan 进 int64。与 sqlDayStart 同样依赖 DSN 的
+// _time_format=sqlite 时间文本形态：strftime 按 POSIX 解析，时区后缀换算成
+// UTC 秒，与 Go 的 time.Unix() 对齐。
+func sqlEpochInt(expr string) string {
+	if isSQLiteEngine() {
+		return "CAST(strftime('%s', " + expr + ") AS INTEGER)"
+	}
+	return "EXTRACT(EPOCH FROM " + expr + ")::bigint"
+}
+
 // sqlInt64ArrayArg 返回「可以绑给 id 数组列」的值。
 //
 //	PostgreSQL: 原始 []int64，交给 pgx 转成 int8[]

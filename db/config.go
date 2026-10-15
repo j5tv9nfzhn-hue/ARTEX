@@ -303,7 +303,7 @@ ORDER BY id`+sqlForUpdate(), id)
 	// was not part of the task-first lock set. Never acquire a new task lock while
 	// holding the profile lock, because that would recreate the inversion.
 	rows, err := tx.QueryContext(ctx, `SELECT ref_kind, ref_id FROM (
-	SELECT 'task'::text AS ref_kind, t.id AS ref_id
+	SELECT CAST('task' AS TEXT) AS ref_kind, t.id AS ref_id
 FROM tasks t
 WHERE t.llm_profile_id=$1
    OR t.active_llm_profile_id=$1

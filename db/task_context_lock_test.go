@@ -105,6 +105,7 @@ func TestTaskLLMProfileMutationsLockTaskBeforeProfile(t *testing.T) {
 }
 
 func TestDeleteProfileLocksNonTaskReferencesBeforeProfile(t *testing.T) {
+	requirePGRowLocks(t)
 	dsn := testDSN(t)
 
 	t.Run("agent", func(t *testing.T) {
@@ -218,6 +219,7 @@ func TestDeleteProfileLocksNonTaskReferencesBeforeProfile(t *testing.T) {
 }
 
 func TestNonTaskProfileMutationsLockReferenceBeforeProfile(t *testing.T) {
+	requirePGRowLocks(t)
 	dsn := testDSN(t)
 
 	t.Run("agent", func(t *testing.T) {
@@ -318,6 +320,7 @@ func TestNonTaskProfileMutationsLockReferenceBeforeProfile(t *testing.T) {
 }
 
 func TestCreateConversationAndDeleteProfileDoNotDeadlock(t *testing.T) {
+	requirePGRowLocks(t)
 	dsn := testDSN(t)
 	d, err := Open(dsn)
 	if err != nil {
@@ -460,6 +463,18 @@ VALUES ($1,$2,0)`, task.ID, profileID); err != nil {
 	}
 	if got.ActiveLLMProfileID != nil || len(got.LLMProfileIDs) != 0 || got.LLMChainRevision != 1 {
 		t.Fatalf("late task reference was not handled by a locked retry: %+v", got)
+	}
+}
+
+// requirePGRowLocks skips tests that assert PostgreSQL row-lock contention. Their
+// blocker statements hold FOR UPDATE on reference rows, which SQLite cannot even
+// parse (it has no row-level locks at all). Must run BEFORE any SQL: the guard in
+// openSingleConnectionTestDB skips too, but only after the blocker has already
+// errored out with `near "FOR"`.
+func requirePGRowLocks(t *testing.T) {
+	t.Helper()
+	if engineIsSQLite() {
+		t.Skip("PG 行锁竞争用例，SQLite 无行级锁，跳过")
 	}
 }
 

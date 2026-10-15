@@ -30,7 +30,9 @@
 --   重写  trg_asset_intercept_rules_upd -> asset_intercept_rules_updated_at
 --   重写  trg_task_intercept_rules_upd -> task_intercept_rules_updated_at
 --   重写  trg_notification_channels_upd -> notification_channels_updated_at
---   丢弃  trg_assets_task_links (INSERT OR UPDATE OF task_ids on assets, 调用 sync_task_asset_links()) -- 需人工处理
+--   手工移植 trg_assets_task_links -> trg_assets_task_links_ins / trg_assets_task_links_upd_ids
+--     （SQLite 一个触发器只能绑一个事件；unnest(NEW.task_ids) 换成
+--      json_each(artex_json_array(NEW.task_ids))，见 task_asset_links 表后）
 
 -- 删除   5 条 pg_catalog 探测
 -- 删除  18 条 ADD/DROP CONSTRAINT
@@ -616,6 +618,44 @@ CREATE TRIGGER IF NOT EXISTS trg_task_asset_links_upd_updated_at
 AFTER UPDATE ON task_asset_links
 BEGIN
   UPDATE task_asset_links SET updated_at = (strftime('%Y-%m-%d %H:%M:%f+00:00','now')) WHERE rowid = NEW.rowid;
+END;
+
+-- sync_task_asset_links 的 SQLite 移植（PG 版见 schema.sql 的同名函数）：
+-- assets.task_ids 变化时把 provenance 行同步进 task_asset_links——先把新关联补成
+-- 'system' 通用来源（明细调用方随后用带原因的来源覆盖），再删掉已不在 task_ids
+-- 里的旧关联。两个触发器对应 PG 的 AFTER INSERT OR UPDATE OF task_ids（SQLite
+-- 一个触发器只能绑一个事件）。unnest(NEW.task_ids) 换成
+-- json_each(artex_json_array(NEW.task_ids))：artex_json_array 把 PG 数组字面量
+-- 与 schema 默认值 '{}' 归一化成 JSON 数组（见 dialect_arrays.go）。函数解析发生在
+-- 触发时刻，artex_json_array 由 db 包 init() 在任何 sql.Open 之前注册。
+DROP TRIGGER IF EXISTS trg_assets_task_links_ins;
+CREATE TRIGGER IF NOT EXISTS trg_assets_task_links_ins
+AFTER INSERT ON assets
+BEGIN
+  INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
+  SELECT task.id, NEW.id, 'system', '任务执行期间自动关联'
+  FROM json_each(artex_json_array(NEW.task_ids)) AS requested
+  JOIN tasks task ON task.id=requested.value AND task.deleted_at IS NULL
+  ON CONFLICT (task_id, asset_id) DO NOTHING;
+
+  DELETE FROM task_asset_links
+  WHERE asset_id=NEW.id
+    AND task_id NOT IN (SELECT value FROM json_each(artex_json_array(NEW.task_ids)));
+END;
+
+DROP TRIGGER IF EXISTS trg_assets_task_links_upd_ids;
+CREATE TRIGGER IF NOT EXISTS trg_assets_task_links_upd_ids
+AFTER UPDATE OF task_ids ON assets
+BEGIN
+  INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
+  SELECT task.id, NEW.id, 'system', '任务执行期间自动关联'
+  FROM json_each(artex_json_array(NEW.task_ids)) AS requested
+  JOIN tasks task ON task.id=requested.value AND task.deleted_at IS NULL
+  ON CONFLICT (task_id, asset_id) DO NOTHING;
+
+  DELETE FROM task_asset_links
+  WHERE asset_id=NEW.id
+    AND task_id NOT IN (SELECT value FROM json_each(artex_json_array(NEW.task_ids)));
 END;
 
 

@@ -272,6 +272,42 @@ func insertTaskCompanies(tx *sql.Tx, taskID int64, companyIDs []int64) error {
 	// Updating task_ids fires sync_task_asset_links, which first creates generic
 	// source rows. The provenance upsert must therefore run afterwards so the
 	// company name and creation-time reason remain visible to operators.
+	if isSQLiteEngine() {
+		// SQLite 侧的三处 PG 专有写法逐一对齐：
+		//   - company_id=ANY($2::bigint[]) → 展开成 IN 列表。ANY() 不是 SQLite
+		//     的运算符，`$2::bigint[]` 会让驱动把参数名当成 "2::bigint"，而
+		//     绑定 []int64 本身就会得到 "unsupported type []int64"。
+		//   - $1=ANY(task_ids) / array_append → sqlArrayAddIfMissing（JSON 数组）。
+		//   - $1=ANY(asset.task_ids) → taskIDsAnyExpr。
+		// 占位符编号由 sqlIDListExpr 按 args 当前长度续号，所以必须先 append
+		// 原有参数（taskID / source）再调助手。
+		var args []any
+		args = append(args, taskID)
+		companyIn := sqlIDListExpr(&args, "company_id", companyIDs)
+		if _, err := tx.Exec(`
+UPDATE assets
+SET task_ids=`+sqlArrayAddIfMissing("task_ids", "$1")+`
+WHERE `+companyIn, args...); err != nil {
+			return err
+		}
+
+		args = []any{taskID, taskCompanyAssetSource}
+		assetCompanyIn := sqlIDListExpr(&args, "asset.company_id", companyIDs)
+		if _, err := tx.Exec(`
+INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
+SELECT $1, asset.id, $2, '创建任务时关联的公司： ' || company.name
+FROM assets asset
+JOIN companies company ON company.id=asset.company_id
+WHERE `+assetCompanyIn+`
+  AND `+taskIDsAnyExpr("$1", "asset.task_ids")+`
+ON CONFLICT (task_id, asset_id) DO UPDATE
+SET source=excluded.source,
+    source_summary=excluded.source_summary,
+    source_node_id=NULL`, args...); err != nil {
+			return err
+		}
+		return nil
+	}
 	if _, err := tx.Exec(`
 UPDATE assets
 SET task_ids=CASE
@@ -651,9 +687,17 @@ func (d *DB) DeleteTaskCascadePrepared(
 		// An asset is deletable only when no other live task references it through
 		// either mechanism. This covers legacy anchor-only seeds without destroying
 		// evidence anchored by another task.
+		//
+		// DELETE ... USING 是 PG 专有写法，SQLite 只认 `DELETE FROM t AS alias
+		// WHERE ...`；两边共用同一个 WITH 主体（assetContainsTaskID /
+		// assetContainsTaskIDAlias 在 PG 分支逐字产出原来的 `=ANY(...)`）。
+		deleteTail := "DELETE FROM assets a USING deletable d WHERE a.id=d.id"
+		if isSQLiteEngine() {
+			deleteTail = "DELETE FROM assets AS a WHERE a.id IN (SELECT d.id FROM deletable d)"
+		}
 		res, err := tx.Exec(`
 WITH candidate_assets AS (
-  SELECT id FROM assets WHERE $1 = ANY(task_ids)
+  SELECT id FROM assets WHERE `+assetContainsTaskID()+`
   UNION
   SELECT ea.asset_id
   FROM exploration_anchors ea
@@ -666,7 +710,7 @@ deletable AS (
   JOIN candidate_assets c ON c.id=a.id
   WHERE NOT EXISTS (
     SELECT 1 FROM tasks t
-    WHERE t.id<>$1 AND t.deleted_at IS NULL AND t.id=ANY(a.task_ids)
+    WHERE t.id<>$1 AND t.deleted_at IS NULL AND `+assetContainsTaskIDAlias("a")+`
   ) AND NOT EXISTS (
     SELECT 1
     FROM exploration_anchors ea
@@ -675,13 +719,13 @@ deletable AS (
     WHERE ea.asset_id=a.id AND t.id<>$1 AND t.deleted_at IS NULL
   )
 )
-DELETE FROM assets a USING deletable d WHERE a.id=d.id`, id, expID)
+`+deleteTail, id, expID)
 		if err != nil {
 			return result, err
 		}
 		result.AssetsDeleted, _ = res.RowsAffected()
 
-		res, err = tx.Exec(`UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, id)
+		res, err = tx.Exec(`UPDATE assets SET task_ids = `+sqlArrayRemove("task_ids", "$1")+` WHERE `+assetContainsTaskID(), id)
 		if err != nil {
 			return result, err
 		}

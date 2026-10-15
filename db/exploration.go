@@ -1036,7 +1036,7 @@ func (s *ExplorationStore) FindingLineage(nodeID int64) ([]*Node, []Edge, error)
 	// anc = the node + everything that can reach it via edges (walk src<-dst).
 	nodeRows, err := s.db.Query(`
 WITH RECURSIVE anc(id) AS (
-    SELECT $2::bigint
+    SELECT $2
   UNION
     SELECT e.src_id
     FROM exploration_edges e
@@ -1060,7 +1060,7 @@ ORDER BY id`, s.expID, nodeID)
 	// edges among the ancestor set only (the lineage's internal relations).
 	edgeRows, err := s.db.Query(`
 WITH RECURSIVE anc(id) AS (
-    SELECT $2::bigint
+    SELECT $2
   UNION
     SELECT e.src_id
     FROM exploration_edges e
@@ -1277,7 +1277,7 @@ func (d *DB) TokenTotalsAll() (map[int64]TokenUsage, error) {
 // Persisted (unlike Engine.LastActivity's in-memory map), so it survives restarts
 // and gives终态任务 a stable "ran until" time for computing run duration.
 func (d *DB) LastActivityAll() (map[int64]int64, error) {
-	rows, err := d.Query(`SELECT exploration_id, EXTRACT(EPOCH FROM MAX(created_at))::bigint FROM activity GROUP BY exploration_id`)
+	rows, err := d.Query(`SELECT exploration_id, ` + sqlEpochInt("MAX(created_at)") + ` FROM activity GROUP BY exploration_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1309,11 +1309,48 @@ type TaskListMetrics struct {
 	Findings       FindingSeverityCounts // findings 表里该任务的漏洞数（按严重度分档）
 }
 
+// taskListMetricsSQLite 是 TaskListMetricsAll 的 SQLite 方言：SQLite 不支持
+// LEFT JOIN LATERAL (...) ON true（LATERAL 会被当成表别名，随后的 (SELECT 直接
+// near "SELECT" 语法错），改写成 SELECT 列表里的相关子查询。语义与 PG 版逐项
+// 对齐：FILTER (WHERE ...) 用 COUNT(*) WHERE 等价表达，epoch 用 strftime('%s')
+// （列值是 _time_format=sqlite 的文本时间，POSIX 解析、时区换算 UTC 秒）。
+const taskListMetricsSQLite = `
+                SELECT task.exploration_id,
+                       COALESCE((SELECT SUM(input_tokens) FROM activity
+                                 WHERE exploration_id=task.exploration_id AND kind='result'),0),
+                       COALESCE((SELECT SUM(output_tokens) FROM activity
+                                 WHERE exploration_id=task.exploration_id AND kind='result'),0),
+                       COALESCE((SELECT SUM(cache_read_tokens) FROM activity
+                                 WHERE exploration_id=task.exploration_id AND kind='result'),0),
+                       COALESCE((SELECT SUM(cache_write_tokens) FROM activity
+                                 WHERE exploration_id=task.exploration_id AND kind='result'),0),
+                       COALESCE((SELECT CAST(strftime('%s', created_at) AS INTEGER)
+                                 FROM activity
+                                 WHERE exploration_id=task.exploration_id
+                                 ORDER BY created_at DESC
+                                 LIMIT 1),0),
+                       COALESCE((SELECT COUNT(*) FROM exploration_nodes
+                                 WHERE exploration_id=task.exploration_id AND kind='goal'),0),
+                       COALESCE((SELECT COUNT(*) FROM exploration_nodes
+                                 WHERE exploration_id=task.exploration_id AND kind='goal' AND state='met'),0),
+                       COALESCE((SELECT COUNT(*) FROM exploration_nodes
+                                 WHERE exploration_id=task.exploration_id AND kind='intent' AND state='running'),0),
+                       COALESCE((SELECT COUNT(*) FROM findings
+                                 WHERE task_id=task.id AND severity='critical'),0),
+                       COALESCE((SELECT COUNT(*) FROM findings
+                                 WHERE task_id=task.id AND severity='high'),0),
+                       COALESCE((SELECT COUNT(*) FROM findings
+                                 WHERE task_id=task.id AND severity='medium'),0),
+                       COALESCE((SELECT COUNT(*) FROM findings
+                                 WHERE task_id=task.id AND severity='low'),0)
+                FROM tasks task
+                WHERE task.deleted_at IS NULL`
+
 // TaskListMetricsAll returns list aggregates for every live task in one query.
 // The lateral lookups use the per-exploration indexes instead of grouping the
 // complete activity history on every poll.
 func (d *DB) TaskListMetricsAll() (map[int64]TaskListMetrics, error) {
-	rows, err := d.Query(`
+	metricsQuery := `
 		SELECT task.exploration_id,
 		       COALESCE(token_metrics.input_tokens,0),
 		       COALESCE(token_metrics.output_tokens,0),
@@ -1362,7 +1399,11 @@ func (d *DB) TaskListMetricsAll() (map[int64]TaskListMetrics, error) {
 			FROM findings
 			WHERE task_id=task.id
 		) finding_metrics ON true
-		WHERE task.deleted_at IS NULL`)
+		WHERE task.deleted_at IS NULL`
+	if isSQLiteEngine() {
+		metricsQuery = taskListMetricsSQLite
+	}
+	rows, err := d.Query(metricsQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -1448,9 +1489,9 @@ func (s *ExplorationStore) TokenStatsByWorker() ([]TokenUsage, error) {
 func (s *ExplorationStore) TokenStatsBySession() ([]SessionTokenUsage, error) {
 	rows, err := s.db.Query(`SELECT
 		CASE
-			WHEN COALESCE(a.worker,'')='mainagent' THEN 'main:' || COALESCE(a.main_seg,0)::text
+			WHEN COALESCE(a.worker,'')='mainagent' THEN 'main:' || CAST(COALESCE(a.main_seg,0) AS TEXT)
 			WHEN COALESCE(a.worker,'')='planner' THEN 'plan'
-			WHEN n.id IS NOT NULL THEN 'intent:' || n.id::text
+			WHEN n.id IS NOT NULL THEN 'intent:' || CAST(n.id AS TEXT)
 			ELSE ''
 		END AS session_key,
 		COALESCE(SUM(a.input_tokens),0), COALESCE(SUM(a.output_tokens),0),
