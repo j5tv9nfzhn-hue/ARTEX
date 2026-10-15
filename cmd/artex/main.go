@@ -101,6 +101,13 @@ func run() int {
 		log.Fatalf("自举启动失败：%v", err)
 	}
 
+	// 凭据主密钥必须先于任何存储读写装好：llm_profiles.api_key 等加密字段
+	// 没有它读不出来。密钥文件与 jwt.key 同放 exeDir，不进可浏览的 dataDir，
+	// 也绝不与它保护的数据库文件同目录。
+	if err := server.InstallCredentialKey(exeDir); err != nil {
+		log.Fatalf("凭据主密钥初始化失败：%v", err)
+	}
+
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, shutdown := shutdownContext(sigCtx)
