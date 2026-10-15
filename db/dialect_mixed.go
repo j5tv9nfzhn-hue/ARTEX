@@ -234,6 +234,22 @@ func pgTypeSQL(ddl string) string {
 	return strings.NewReplacer("@SERIAL@", serial, "@TS@", ts, "@NOW@", now).Replace(ddl)
 }
 
+// sqlDayStart 返回「把时间列截断到当天 00:00:00」的表达式。
+//
+//	PostgreSQL: date_trunc('day', X)
+//	SQLite:     strftime('%Y-%m-%d 00:00:00+00:00', X)
+//
+// 与 sqlUTCDate 一样依赖 DSN 的 _time_format=sqlite：那个格式以空格分隔、
+// 带数字时区后缀，而 SQLite 的 strftime 只按 POSIX 解析日期部分，多余的
+// " 12:34:56+00:00" 会被忽略——对截断到天这个用途恰好无害，但若哪天改掉那个
+// DSN 参数，这两处会一起开始出错。
+func sqlDayStart(col string) string {
+	if isSQLiteEngine() {
+		return "strftime('%Y-%m-%d 00:00:00+00:00', " + col + ")"
+	}
+	return "date_trunc('day', " + col + ")"
+}
+
 // sqlInt64ArrayArg 返回「可以绑给 id 数组列」的值。
 //
 //	PostgreSQL: 原始 []int64，交给 pgx 转成 int8[]

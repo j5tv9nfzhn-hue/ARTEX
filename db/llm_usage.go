@@ -258,7 +258,7 @@ func (d *DB) UsageDaily(days int) ([]ProfileDayUsage, error) {
 	}
 	rows, err := d.Query(`
 SELECT COALESCE(profile_name,'') AS profile_name,
-       to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+       sqlUTCDate("ts") AS day,
        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read),0)
 FROM llm_usage
 WHERE ts >= now() - ($1 * interval '1 day')

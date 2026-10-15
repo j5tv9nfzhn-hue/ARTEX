@@ -144,7 +144,7 @@ func (d *DB) TokenDailyAll(days int) ([]DailyTokenBucket, error) {
 		days = 30
 	}
 	rows, err := d.Query(`
-		SELECT TO_CHAR(DATE_TRUNC('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+		SELECT sqlUTCDate("created_at") AS day,
 		       COALESCE(SUM(input_tokens), 0),
 		       COALESCE(SUM(output_tokens), 0),
 		       COALESCE(SUM(cache_read_tokens), 0)
