@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/Autumn-27/artex/config"
@@ -122,4 +123,128 @@ func sqlNowPlusSeconds(arg string) string {
 		return "strftime('%Y-%m-%d %H:%M:%f+00:00','now','+'||" + arg + "||' seconds')"
 	}
 	return "now() + make_interval(secs => " + arg + ")"
+}
+
+// sqlArrayRemove 返回「从 <col> 的数组里删掉 <expr>」的方言形式。
+//
+//	PostgreSQL: array_remove(col, expr)
+//	SQLite:     artex_json_remove(col, expr)
+//
+// SQLite 侧存的是 JSON 数组文本而不是 PG 的 {1,2,3} 字面量，所以函数名与
+// 参数顺序都换了；语义（删掉所有等于该值的元素）由该 UDF 保证。
+func sqlArrayRemove(col, expr string) string {
+	if isSQLiteEngine() {
+		return "artex_json_remove(" + col + ", " + expr + ")"
+	}
+	return "array_remove(" + col + ", " + expr + ")"
+}
+
+// sqlArrayAddIfMissing 返回「<col> 已含 <expr> 则原样，否则追加」的表达式。
+//
+//	PostgreSQL: CASE WHEN expr=ANY(col) THEN col ELSE array_append(col, expr) END
+//	SQLite:     CASE WHEN artex_json_contains(col, expr) THEN col
+//	                   ELSE artex_json_add(col, expr) END
+//
+// 为什么要带这个 CASE 而不直接追加：调用点是在恢复归档时把任务重新挂到资产上，
+// 同一个任务可能已经被别的恢复路径挂过一次，无条件追加就会产生重复成员。
+func sqlArrayAddIfMissing(col, expr string) string {
+	if isSQLiteEngine() {
+		return "CASE WHEN artex_json_contains(" + col + ", " + expr + ") THEN " + col +
+			" ELSE artex_json_add(" + col + ", " + expr + ") END"
+	}
+	return "CASE WHEN " + expr + "=ANY(" + col + ") THEN " + col +
+		" ELSE array_append(" + col + ", " + expr + ") END"
+}
+
+// sqlNextSequenceValue 返回取下一个自增序列值的表达式。
+//
+//	PostgreSQL: nextval(pg_get_serial_sequence('assets','id'))
+//	SQLite:     (SELECT seq FROM sqlite_sequence WHERE name='assets')
+//
+// 这里不能用 max(id)+1 作为首选：并发下两个插入会拿到同一个值。SQLite 侧
+// sqlite_sequence 由 AUTOINCREMENT 维护，读它即可，语义与 nextval 一致。
+// 外层 COALESCE 是因为 sqlite_sequence 只在该表**首次插入之后**才有行；归档
+// 恢复走到这里时表里必然已有行（否则 rowExists 为假），但兜底比"依赖调用点
+// 的隐含前提"便宜。
+func sqlNextSequenceValue(table string) string {
+	if isSQLiteEngine() {
+		return "(SELECT COALESCE((SELECT seq + 1 FROM sqlite_sequence WHERE name = '" + table + "')," +
+			"(SELECT COALESCE(MAX(id), 0) + 1 FROM " + table + ")))"
+	}
+	return "nextval(pg_get_serial_sequence('" + table + "','id'))"
+}
+
+// sqlNullableTimestampArg 返回「该参数可空、且是时间」的表达式。
+//
+//	PostgreSQL: $n::timestamptz
+//	SQLite:     $n
+//
+// SQLite 侧的裸 $n 不是省事：调用点此时绑的是 Go 的 time.Time 或 nil，值类型
+// 本就确定了，加一个 SQLite 不认识的 `::timestamptz` 只会得到 unrecognized
+// token ":"。PG 侧必须留着转换——pgx 靠它把参数类型定成 timestamptz，否则
+// COALESCE 的两个分支类型不一致会直接报错。
+func sqlNullableTimestampArg(arg string) string {
+	if isSQLiteEngine() {
+		return arg
+	}
+	return arg + "::timestamptz"
+}
+
+// sqlCoalesceNow 返回 COALESCE(<arg>, now())。
+//
+// 与 sqlNullableTimestampArg 同理：PG 保留 `::timestamptz` 以便 pgx 推断类型，
+// SQLite 侧去掉。调用点绑 nil 时走 now() 分支，绑 time.Time 时走参数分支。
+func sqlCoalesceNow(arg string) string {
+	return "COALESCE(" + sqlNullableTimestampArg(arg) + ", now())"
+}
+
+// pgTypeSQL 把 Go 里拼装的 DDL 中的占位符换成当前引擎的写法。
+//
+//	@SERIAL@  BIGSERIAL  /  INTEGER
+//	@TS@      TIMESTAMPTZ /  TIMESTAMP
+//	@NOW@     now()      /  (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
+//
+// 存在的理由是这条路径上的三件事都不是「换个类型名」那么简单：
+//
+//  1. TIMESTAMPTZ 在 SQLite 里不合法，直接 unrecognized token ":"。
+//  2. BIGSERIAL 在 SQLite 里虽然能被当成任意类型名接受，但列就不是
+//     INTEGER PRIMARY KEY，拿不到 rowid 别名，主键不会自增。
+//  3. **SQLite 的列默认值不允许裸函数调用**，`DEFAULT now()` 直接
+//     near "("。必须是括号包裹的 (strftime(...))，这也是
+//     db/schema_sqlite.sql 里其余表默认时间的写法，两边存下来的文本形态
+//     因此一致——同一列里混两种时间格式会直接破坏排序。
+func pgTypeSQL(ddl string) string {
+	serial, ts, now := "BIGSERIAL", "TIMESTAMPTZ", "now()"
+	if isSQLiteEngine() {
+		serial, ts = "INTEGER", "TIMESTAMP"
+		now = `(strftime('%Y-%m-%d %H:%M:%f+00:00','now'))`
+	}
+	return strings.NewReplacer("@SERIAL@", serial, "@TS@", ts, "@NOW@", now).Replace(ddl)
+}
+
+// sqlInt64ArrayArg 返回「可以绑给 id 数组列」的值。
+//
+//	PostgreSQL: 原始 []int64，交给 pgx 转成 int8[]
+//	SQLite:     JSON 数组文本 "[1,2,3]"
+//
+// SQLite 驱动不认切片——直接绑 []int64 会得到
+// "sql: converting argument $N type: unsupported type []int64"。
+//
+// 编码成 JSON 而不是 PG 的 "{1,2,3}" 字面量，是因为 task_archives.source_task_ids
+// 在 SQLite 侧本来就按 JSON 数组文本存：读侧 taskIDsAnyExpr 用
+// artex_json_contains 遍历元素。写入格式必须与读侧配对，写成 PG 字面量的话
+// 依赖检查会静默失效——artex_json_contains 对非 JSON 文本返回假，任务因此
+// 永远可以被归档，尽管它实际上被别的归档依赖着。
+func sqlInt64ArrayArg(ids []int64) any {
+	if !isSQLiteEngine() {
+		return ids
+	}
+	if len(ids) == 0 {
+		return "[]"
+	}
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.FormatInt(id, 10)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }

@@ -132,18 +132,28 @@ type TaskArchiveSnapshot struct {
 func scanTaskArchive(sc interface{ Scan(...any) error }) (*TaskArchive, error) {
 	var item TaskArchive
 	var sources string
+	// warnings / data_counts / aggregate_stats 三个 JSON 列必须先落进 jsonValue。
+	// SQLite 把 JSON 存在 TEXT 列、交出 string，而 json.RawMessage 在 Go 1.27
+	// 上是 jsontext.Value 的别名——database/sql 的 convertAssign 只对精确的
+	// *[]byte 写了 string/[]byte 两个分支，具名的 []byte 类型一个都不沾，
+	// 于是报 "unsupported Scan ... into type *jsontext.Value"。PG 侧一直没暴露，
+	// 是因为 pgx 把 JSONB 交成 []byte，恰好撞在反射兜底上。详见 sqlite_json_scan.go。
+	var warnings, dataCounts, aggregateStats jsonValue
 	err := sc.Scan(
 		&item.ID, &item.TaskID, &item.State, &item.Phase, &item.Progress, &item.Error,
-		&item.Warnings, &item.FormatVersion, &item.ArchivePath, &item.SHA256,
+		&warnings, &item.FormatVersion, &item.ArchivePath, &item.SHA256,
 		&item.OriginalSize, &item.CompressedSize, &item.TaskName, &item.TaskDescription,
 		&item.TaskGoal, &item.OriginalStatus, &item.CategoryIDSnapshot,
 		&item.CategoryNameSnapshot, &sources, &item.RemainingTimeoutSeconds,
-		&item.DataCounts, &item.AggregateStats, &item.ArchivedAt, &item.RequestedAt,
+		&dataCounts, &aggregateStats, &item.ArchivedAt, &item.RequestedAt,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
+	item.Warnings = warnings.Raw()
+	item.DataCounts = dataCounts.Raw()
+	item.AggregateStats = aggregateStats.Raw()
 	if err := json.Unmarshal([]byte(sources), &item.SourceTaskIDs); err != nil {
 		return nil, err
 	}
@@ -159,11 +169,13 @@ func scanTaskArchive(sc interface{ Scan(...any) error }) (*TaskArchive, error) {
 	return &item, nil
 }
 
-const taskArchiveCols = `id, task_id, state, phase, progress, COALESCE(error,''), warnings,
+// taskArchiveCols 是读取列清单。声明成 var 而非 const：source_task_ids 的
+// 读法按引擎不同（`::text` vs CAST），而 const 求值期不能调用函数。
+var taskArchiveCols = `id, task_id, state, phase, progress, COALESCE(error,''), warnings,
 format_version, COALESCE(archive_path,''), COALESCE(sha256,''), original_size,
 compressed_size, COALESCE(task_name,''), COALESCE(task_description,''),
 COALESCE(task_goal,''), COALESCE(original_status,''), category_id_snapshot,
-COALESCE(category_name_snapshot,''), array_to_json(source_task_ids)::text,
+COALESCE(category_name_snapshot,''), ` + sqlCastText("array_to_json(source_task_ids)") + `,
 remaining_timeout_seconds, data_counts, aggregate_stats, archived_at,
 requested_at, created_at, updated_at`
 
@@ -302,7 +314,7 @@ VALUES ($1,$2,'queued',0,'','[]',$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
 	 format_version=CASE WHEN task_archives.state IN ('archive_failed') THEN EXCLUDED.format_version ELSE task_archives.format_version END,
 	 requested_at=CASE WHEN task_archives.state IN ('archive_failed') THEN now() ELSE task_archives.requested_at END`,
 		taskID, ArchiveQueued, TaskArchiveFormatVersion, name, description, goal, status,
-		categoryID, categoryName, sources, remaining)
+		categoryID, categoryName, sqlInt64ArrayArg(sources), remaining)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +353,7 @@ func (d *DB) QueueTaskArchiveDelete(id int64) (*TaskArchive, error) {
 	}
 	var dependent int64
 	err = tx.QueryRow(`SELECT task_id FROM task_archives
-WHERE id<>$1 AND $2=ANY(source_task_ids) AND state NOT IN ('delete_queued','deleting') LIMIT 1`, id, taskID).Scan(&dependent)
+WHERE id<>$1 AND `+taskIDsAnyExpr("$2", "source_task_ids")+` AND state NOT IN ('delete_queued','deleting') LIMIT 1`, id, taskID).Scan(&dependent)
 	if err == nil {
 		return nil, fmt.Errorf("%w: task %d", ErrTaskArchiveDeleteBlocked, dependent)
 	}
@@ -481,6 +493,31 @@ func (d *DB) FailTaskArchiveJob(id int64, activeState string, cause error) error
 func queryArchiveRows(q interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }, inner string, args ...any) (json.RawMessage, int64, error) {
+	if isSQLiteEngine() {
+		// SQLite has no row_to_json, and the `::text` that follows it is a
+		// syntax error there on its own ("unrecognized token ':'"). Read the
+		// inner query directly and assemble {"col": value} per row off
+		// rows.Columns() -- same output shape as row_to_json, and the column
+		// list follows the schema instead of being hand-listed.
+		rows, err := q.Query(inner, args...)
+		if err != nil {
+			return nil, 0, err
+		}
+		objs, err := rowJSONObjects(rows)
+		// A SQLite connection holds one active result set at a time, so Close
+		// has to happen before the caller issues its next statement.
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		raw, err := marshalSnapshot(objs)
+		if err != nil {
+			return nil, 0, err
+		}
+		return json.RawMessage(raw), int64(len(objs)), nil
+	}
 	// Do not aggregate the result in PostgreSQL. A jsonb array has a hard limit
 	// of 256 MiB for its elements, which large LLM request/response histories can
 	// exceed even though every individual record is valid. Reading row JSON in
@@ -551,12 +588,65 @@ func writeArchiveRows(rows interface {
 func streamArchiveRows(q interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }, writer io.Writer, inner string, args ...any) (int64, error) {
+	if isSQLiteEngine() {
+		return writeArchiveRowsFromQuery(q, writer, inner, args...)
+	}
 	rows, err := q.Query(`SELECT row_to_json(row_data)::text FROM (`+inner+`) row_data`, args...)
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
 	return writeArchiveRows(rows, writer)
+}
+
+// writeArchiveRowsFromQuery 是 streamArchiveRows 在 SQLite 侧的分支。
+//
+// SQLite 既没有 row_to_json，紧跟其后的 `::text` 本身也是语法错误，所以整行
+// JSON 改由 Go 侧从 rows.Columns() 加扫描值装配。输出仍是每行一个 JSON 对象，
+// 与 llm_records 流式格式一致；jsonSafeValue 的存在保证 JSON 列仍然内联、
+// 时间列仍然是 RFC3339Nano，与导出侧的另一半（rowjson.go）同形。
+func writeArchiveRowsFromQuery(q interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}, writer io.Writer, inner string, args ...any) (int64, error) {
+	rows, err := q.Query(inner, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return 0, err
+		}
+		raw, err := marshalSnapshot(rowJSONObject(cols, vals))
+		if err != nil {
+			return 0, err
+		}
+		if written, err := writer.Write(raw); err != nil {
+			return 0, err
+		} else if written != len(raw) {
+			return 0, io.ErrShortWrite
+		}
+		if written, err := io.WriteString(writer, "\n"); err != nil {
+			return 0, err
+		} else if written != 1 {
+			return 0, io.ErrShortWrite
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func rawRowCount(raw json.RawMessage) int64 {
@@ -568,6 +658,27 @@ func rawRowCount(raw json.RawMessage) int64 {
 }
 
 func archiveAssetIDsQuery() string {
+	if isSQLiteEngine() {
+		// SQLite has no LATERAL, but it does accept a table-valued function
+		// whose argument references a table earlier in the FROM clause -- a
+		// comma join is enough, no LATERAL keyword. Verified against SQLite
+		// 3.45: `FROM findings f, json_each(f.asset_ids) je` correlates fine.
+		//
+		// The json_valid guard is load-bearing rather than defensive: on SQLite
+		// findings.asset_ids is a plain TEXT column, and rowjson.go documents
+		// that a TEXT column cannot be told apart from a JSON column by its
+		// declared type. An archive written from a row where that column held
+		// non-JSON text would otherwise abort the whole snapshot with
+		// "malformed JSON". PG does not need it because jsonb_array_elements_text
+		// is only ever handed real jsonb there.
+		return `SELECT id FROM assets WHERE ` + taskIDsAnyExpr("$1", "task_ids") + `
+  UNION SELECT link.asset_id FROM task_asset_links link WHERE link.task_id=$1
+  UNION SELECT anchor.asset_id FROM exploration_anchors anchor
+  JOIN exploration_nodes node ON node.id=anchor.node_id WHERE node.exploration_id=$2
+  UNION SELECT CAST(je.value AS INTEGER) FROM findings finding
+  JOIN json_each(CASE WHEN json_valid(finding.asset_ids) THEN finding.asset_ids ELSE '[]' END) je
+  WHERE finding.task_id=$1 AND regexp(je.value, '^[0-9]+$')`
+	}
 	return `SELECT id FROM assets WHERE $1=ANY(task_ids)
 UNION SELECT link.asset_id FROM task_asset_links link WHERE link.task_id=$1
 UNION SELECT anchor.asset_id FROM exploration_anchors anchor
@@ -724,7 +835,7 @@ func archiveAssetMetadata(tx *sql.Tx, taskID, expID int64, assetRows json.RawMes
 	rowsID, err := tx.Query(`WITH candidate AS (`+archiveAssetIDsQuery()+`)
 SELECT asset.id FROM assets asset JOIN candidate ON candidate.id=asset.id
 WHERE asset.company_id IS NULL
-AND NOT EXISTS (SELECT 1 FROM tasks task WHERE task.id<>$1 AND task.deleted_at IS NULL AND task.id=ANY(asset.task_ids))
+AND NOT EXISTS (SELECT 1 FROM tasks task WHERE task.id<>$1 AND task.deleted_at IS NULL AND `+taskIDsAnyExpr("task.id", "asset.task_ids")+`)
 AND NOT EXISTS (
  SELECT 1 FROM exploration_anchors anchor JOIN exploration_nodes node ON node.id=anchor.node_id
  JOIN tasks task ON task.exploration_id=node.exploration_id

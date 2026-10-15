@@ -34,8 +34,8 @@ var ErrSkillProposalNotFound = errors.New("skill proposal not found")
 // ErrSkillProposalConflict 表示提议已被审阅过，不允许重复处理。
 var ErrSkillProposalConflict = errors.New("skill proposal already reviewed")
 
-// skillProposalSchema 用 @TS@ 占位时间戳类型，因为这段 DDL 由 Go 拼装且
-// 两种引擎都会执行：PostgreSQL 的 TIMESTAMPTZ 在 SQLite 里不合法。
+// skillProposalSchema 用占位符标记时间戳类型与默认值，因为这段 DDL 由 Go 拼装
+// 且两种引擎都会执行——见 pgTypeSQL 里三条约束的说明。
 const skillProposalSchema = `CREATE TABLE IF NOT EXISTS skill_proposals (
     id          TEXT PRIMARY KEY,
     ts          @TS@ NOT NULL DEFAULT @NOW@,
@@ -57,18 +57,7 @@ const skillProposalSchema = `CREATE TABLE IF NOT EXISTS skill_proposals (
 )`
 
 func skillProposalSchemaSQL() string {
-	ts, now := "TIMESTAMPTZ", "now()"
-	if engineIsSQLite() {
-		// SQLite only accepts a constant, CURRENT_TIMESTAMP, or a
-		// parenthesised expression as a column default -- a bare function call
-		// is a syntax error. The parenthesised strftime form is also what the
-		// translated schema uses everywhere else, so both engines store the
-		// same timestamp shape.
-		ts = "TIMESTAMP"
-		now = `(strftime('%Y-%m-%d %H:%M:%f+00:00','now'))`
-	}
-	out := strings.ReplaceAll(skillProposalSchema, "@TS@", ts)
-	return strings.ReplaceAll(out, "@NOW@", now)
+	return pgTypeSQL(skillProposalSchema)
 }
 
 func (d *DB) ensureSkillProposalTable() error {

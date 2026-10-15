@@ -28,8 +28,8 @@ type LLMUsage struct {
 
 const llmUsageSchema = `
 CREATE TABLE IF NOT EXISTS llm_usage (
-    id             BIGSERIAL PRIMARY KEY,
-    ts             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id             @SERIAL@ PRIMARY KEY,
+    ts             @TS@ NOT NULL DEFAULT @NOW@,
     task_id        TEXT,
     exploration_id BIGINT,
     worker         TEXT,
@@ -57,7 +57,7 @@ func (d *DB) EnsureLLMUsageTable() error {
 	if err := coordinateWithSchemaMigration(tx); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(llmUsageSchema); err != nil {
+	if _, err := tx.Exec(pgTypeSQL(llmUsageSchema)); err != nil {
 		return err
 	}
 	return tx.Commit()

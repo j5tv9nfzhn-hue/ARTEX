@@ -155,8 +155,8 @@ type LLMRecord struct {
 
 const llmRecordsSchema = `
 CREATE TABLE IF NOT EXISTS llm_records (
-    id            BIGSERIAL PRIMARY KEY,
-    ts            TIMESTAMPTZ DEFAULT now(),
+    id            @SERIAL@ PRIMARY KEY,
+    ts            @TS@ DEFAULT @NOW@,
     model         TEXT,
     profile_name  TEXT,
     session_id    TEXT,
@@ -187,6 +187,21 @@ ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS raw_request TEXT;
 ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS raw_response TEXT;
 `
 
+// llmRecordsMigrateSQL 返回实际要执行的迁移语句。
+//
+// SQLite 没有 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`，这五条在那边一律是
+// 语法错误。但它们在那边也没有存在理由：这五条补的列（task_id / worker /
+// profile_name / raw_request / raw_response）已经全部写在 llmRecordsSchema 的
+// 建表语句里，而 llm_records 在 SQLite 侧只由这一个建表语句创建，不存在"老表
+// 缺列"的中间状态。与 coordinateWithSchemaMigration 在 SQLite 侧短路是同一条
+// 论证。
+func llmRecordsMigrateSQL() string {
+	if isSQLiteEngine() {
+		return ""
+	}
+	return llmRecordsMigrate
+}
+
 // EnsureLLMRecordsTable creates the llm_records table if it does not exist.
 func (d *DB) EnsureLLMRecordsTable() error {
 	tx, err := d.Begin()
@@ -197,11 +212,15 @@ func (d *DB) EnsureLLMRecordsTable() error {
 	if err := coordinateWithSchemaMigration(tx); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(llmRecordsSchema); err != nil {
+	if _, err := tx.Exec(pgTypeSQL(llmRecordsSchema)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(llmRecordsMigrate); err != nil {
-		return err
+	// Empty on SQLite; an empty statement is a syntax error there, so skip it
+	// rather than executing a no-op.
+	if migrate := llmRecordsMigrateSQL(); migrate != "" {
+		if _, err := tx.Exec(migrate); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
