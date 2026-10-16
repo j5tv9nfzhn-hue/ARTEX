@@ -111,44 +111,40 @@ jobs:
       - name: go test（含数据库集成，全部真实执行）
         run: go test ./... -count=1 -timeout 600s
 
-      # 可下载产物：验证用的 Windows 单二进制（amd64 + arm64）。
-      # Linux runner 无法执行 PE，用结构校验代替运行冒烟测试。
-      # release.yml 负责打包 zip 与发布。
-      #
-      # -tags embedui 是必须的：上面刚把 web/out 同步到 server/webui/dist，
-      # 少了这个 tag，go build 会走 webui_stub.go，产物双击后首页返回 404。
-      - name: 构建验证用 Windows 二进制
+      # 可下载产物：三端发布包 zip（linux/darwin/windows × amd64/arm64），与
+      # release.yml 走同一个 build.sh——内嵌前端（-tags embedui）、start 脚本、
+      # skills 与 config.example.json，版本号默认取提交短 sha。runner 不执行
+      # 非宿主平台二进制，用文件头结构校验代替冒烟测试；正式发布见 release.yml。
+      - name: 构建三端发布包（复用 build.sh）
         env:
-          CGO_ENABLED: "0"
-        run: |
-          mkdir -p dist
-          for arch in amd64 arm64; do
-            GOOS=windows GOARCH=$arch go build -trimpath -ldflags "-s -w" \
-              -tags embedui \
-              -o "dist/artex-windows-$arch.exe" ./cmd/artex
-          done
-      - name: 校验 PE 结构与目标架构
-        run: |
-          python3 - <<'PY'
-          import struct, sys, glob
-          for path in sorted(glob.glob("dist/artex-windows-*.exe")):
-              data = open(path, "rb").read()
-              if data[:2] != b"MZ":
-                  sys.exit(f"{path}: 不是 Windows PE（缺少 MZ 头）")
-              pe = struct.unpack_from("<I", data, 0x3C)[0]
-              if data[pe:pe + 4] != b"PE\0\0":
-                  sys.exit(f"{path}: 缺少 PE\\0\\0 签名")
-              machine = struct.unpack_from("<H", data, pe + 4)[0]
-              want = 0x8664 if "amd64" in path else 0xAA64
-              if machine != want:
-                  sys.exit(f"{path}: 机器类型 0x{machine:X} 与预期 0x{want:X} 不符")
-              print(f"PE 校验通过：{path} machine=0x{machine:X}")
-          PY
-      - name: 上传构建产物
+          ARTEX_SKIP_FRONTEND: "1"
+          ARTEX_SKIP_NPM_CI: "1"
+          # 与 release 一致：Go linker 去符号 + zip 压缩，不用 UPX。
+          ARTEX_COMPRESS: "0"
+          ARTEX_PACKAGE: "1"
+          ARTEX_PACKAGE_DIR: dist
+        run: ./build.sh --release
+      - name: 校验可执行文件头与目标架构
+        run: python3 -I scripts/check-binary-headers.py linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
+      - name: 上传构建产物（Linux 双架构）
+        uses: actions/upload-artifact@v7
+        with:
+          name: artex-linux-ci
+          path: "dist/*-linux-*.zip"
+          retention-days: 14
+          if-no-files-found: error
+      - name: 上传构建产物（macOS 双架构）
+        uses: actions/upload-artifact@v7
+        with:
+          name: artex-darwin-ci
+          path: "dist/*-darwin-*.zip"
+          retention-days: 14
+          if-no-files-found: error
+      - name: 上传构建产物（Windows 双架构）
         uses: actions/upload-artifact@v7
         with:
           name: artex-windows-ci
-          path: dist/
+          path: "dist/*-windows-*.zip"
           retention-days: 14
           if-no-files-found: error
 

@@ -88,39 +88,10 @@ jobs:
           ARTEX_PACKAGE_DIR: dist
         run: |
           ./build.sh --target "${ARTEX_TARGET_OS}/${ARTEX_TARGET_ARCH}"
-      # runner 不执行非宿主平台的二进制；统一用文件头结构校验代替冒烟测试：
-      # windows → PE：MZ 头、PE 签名、机器类型（0x8664=AMD64，0xAA64=ARM64）；
-      # linux → ELF：魔数、64 位、e_machine（0x3E=x86-64，0xB7=AArch64）；
-      # darwin → Mach-O：64 位 thin 魔数、cputype（0x01000007 / 0x0100000C）。
+      # runner 不执行非宿主平台的二进制；用 scripts/check-binary-headers.py
+      # 校验可执行文件头与目标架构（PE/ELF/Mach-O 的魔数与机器类型）代替冒烟测试。
       - name: 校验可执行文件头与目标架构
-        run: |
-          python3 - "${{ matrix.goos }}" "${{ matrix.goarch }}" <<'PY'
-          import struct, sys
-          goos, arch = sys.argv[1], sys.argv[2]
-          binary = f"dist/artex-{goos}-{arch}/artex" + (".exe" if goos == "windows" else "")
-          data = open(binary, "rb").read(4096)
-          if goos == "windows":
-              if data[:2] != b"MZ":
-                  sys.exit(f"{binary}: 不是 Windows PE（缺少 MZ 头）")
-              pe = struct.unpack_from("<I", data, 0x3C)[0]
-              if data[pe:pe + 4] != b"PE\0\0":
-                  sys.exit(f"{binary}: 缺少 PE\\0\\0 签名")
-              machine = struct.unpack_from("<H", data, pe + 4)[0]
-              want = {"amd64": 0x8664, "arm64": 0xAA64}[arch]
-          elif goos == "linux":
-              if data[:4] != b"\x7fELF" or data[4] != 2:
-                  sys.exit(f"{binary}: 不是 64 位 ELF")
-              machine = struct.unpack_from("<H", data, 18)[0]
-              want = {"amd64": 0x3E, "arm64": 0xB7}[arch]
-          else:
-              if data[:4] != b"\xcf\xfa\xed\xfe":
-                  sys.exit(f"{binary}: 不是 64 位 thin Mach-O")
-              machine = struct.unpack_from("<I", data, 4)[0]
-              want = {"amd64": 0x01000007, "arm64": 0x0100000C}[arch]
-          if machine != want:
-              sys.exit(f"{binary}: 机器类型 0x{machine:X} 与目标 {goos}/{arch} (0x{want:X}) 不符")
-          print(f"结构校验通过：{binary} machine=0x{machine:X} ({goos}/{arch})")
-          PY
+        run: python3 -I scripts/check-binary-headers.py "${{ matrix.goos }}/${{ matrix.goarch }}"
       - uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
