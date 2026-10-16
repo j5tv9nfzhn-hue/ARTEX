@@ -95,17 +95,17 @@ CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
 
 ### 方式五：构建 Release 压缩包
 
-`build.sh` 会先构建并嵌入前端，再使用 Go linker 去除调试信息，并将发布文件压缩为 zip。**本分支只支持 Windows 目标**，Release 模式默认生成 Windows amd64/arm64 的 zip 包（上游原稿曾支持多平台，相关描述不再适用）：
+`build.sh` 会先构建并嵌入前端，再使用 Go linker 去除调试信息，并将发布文件压缩为 zip。Release 模式默认构建三端（Linux/macOS/Windows）amd64/arm64 目标并产出 zip（三端打包能力已按 Git 历史恢复；GitHub Release 工作流当前仍只发布 Windows 包）：
 
 ```bash
 ./build.sh --release
-# 产物：dist/artex-<版本>-windows-{amd64,arm64}.zip
+# 产物：dist/artex-<版本>-<os>-<arch>.zip（linux/darwin/windows × amd64/arm64）
 ```
 
 UPX 自解压二进制可能与部分内核、虚拟化环境或安全策略不兼容，因此默认不启用。可用 `ARTEX_TARGETS` 自定义目标；确认目标运行环境兼容时，可显式传入 `--upx` 进一步缩小二进制：
 
 ```bash
-ARTEX_TARGETS=windows/amd64,windows/arm64 ./build.sh --release
+ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 ./build.sh --target windows/amd64 --upx
 ```
 

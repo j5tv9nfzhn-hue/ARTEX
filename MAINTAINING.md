@@ -202,13 +202,13 @@ python3 -I scripts/check-external-links.py --strict # 需要相应网络访问�
 - **binaries：** Windows amd64/arm64 交叉编译和 zip；Linux runner 无法执行 PE，改用 PE 结构校验（MZ 头、PE 签名、机器类型）。
 - **release：** 汇总 zip、生成 SHA256SUMS，创建 GitHub Release。
 
-本项目只发布 Windows 可执行程序，不再构建 Linux/macOS 目标，也不再发布 Docker 镜像。
+GitHub Release 只发布 Windows 可执行程序，不再发布 Docker 镜像；三端（Linux/macOS/Windows）打包由 `build.sh` 提供，本地可用 `./build.sh --release` 产出（见 §9.3）。
 
 ### 9.3 构建路径与前置条件
 
 - web-dist 放入 `server/webui/dist`，`server/webui_embed.go` 的 `//go:embed all:webui/dist` 内嵌它；binaries 用 `ARTEX_SKIP_FRONTEND=1` 防止重复编译前端。
-- `build.sh --target windows/ARCH` 输出 `dist/artex-windows-ARCH/artex.exe` 和 zip；包含 `start.bat`、skills、config.example.json、README。
-- 一键更新由 `selfupdate.AssetName` 按当前平台拼 `artex-<版本>-windows-<架构>.zip`，与 `package_binary` 命名一致。
+- `build.sh --target OS/ARCH` 输出 `dist/artex-OS-ARCH/artex`（Windows 为 `artex.exe`）和 zip；包含对应启动脚本（`start.bat` / `start.sh`）、skills、config.example.json、README。
+- 一键更新由 `selfupdate.AssetName` 按当前平台拼 `artex-<版本>-<os>-<架构>.zip`，与 `package_binary` 命名一致。
 
 ### 9.4 不发布 tag 的本地验证
 

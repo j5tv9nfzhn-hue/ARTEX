@@ -2,12 +2,12 @@
 # ARTEX cross-platform release builder.
 #
 # The default mode builds one target and embeds the already-exported frontend.
-# `./build.sh --release` builds and packages the supported Windows targets.
+# `./build.sh --release` builds and packages all supported desktop/server targets.
 #
 # Environment variables:
-#   ARTEX_TARGET_OS=windows           One target OS in single-target mode.
+#   ARTEX_TARGET_OS=linux             One target OS in single-target mode.
 #   ARTEX_TARGET_ARCH=amd64           One target arch in single-target mode.
-#   ARTEX_TARGETS=windows/amd64,...   Comma-separated targets for multi-target mode.
+#   ARTEX_TARGETS=linux/amd64,...     Comma-separated targets for multi-target mode.
 #   ARTEX_BUILD_VERSION=v0.3.3        Version embedded in the binary and archive name.
 #   ARTEX_OUTPUT=/path/to/artex       Explicit binary path in single-target mode.
 #   ARTEX_OUTPUT_DIR=dist             Directory for default binary paths.
@@ -31,22 +31,22 @@ usage() {
   cat <<'EOF'
 用法：
   ./build.sh                         构建当前系统与架构
-  ./build.sh --target windows/amd64  构建指定目标
-  ./build.sh --release               构建并打包全部受支持的 Windows 目标
+  ./build.sh --target linux/amd64     构建指定目标
+  ./build.sh --release               构建并打包全部支持平台
 
 选项：
-  --release              构建 Windows 的 amd64/arm64 目标并生成 zip
+  --release              构建 Linux、macOS、Windows 的受支持 amd64/arm64 目标并生成 zip
   --target OS/ARCH       指定单一目标，如 windows/amd64
-  --upx                  强制 UPX 压缩
+  --upx                  强制 UPX 压缩，可能影响部分 Linux 环境的兼容性
   --no-compress          禁用 UPX，仅通过 Go linker 去符号并压缩 zip
   --help                 显示帮助
 
 可通过 ARTEX_TARGETS 覆盖目标列表，例如：
-  ARTEX_TARGETS=windows/amd64,windows/arm64 ./build.sh --release
+  ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 EOF
 }
 
-RELEASE_TARGETS_DEFAULT="windows/amd64,windows/arm64"
+RELEASE_TARGETS_DEFAULT="linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64,windows/arm64"
 ARTEX_RELEASE="${ARTEX_RELEASE:-0}"
 ARTEX_COMPRESS="${ARTEX_COMPRESS:-off}"
 ARTEX_PACKAGE="${ARTEX_PACKAGE:-0}"
@@ -67,7 +67,7 @@ while [ "$#" -gt 0 ]; do
           ARTEX_TARGET_ARCH="${target_arg##*/}"
           ARTEX_TARGETS="$target_arg"
           ;;
-        *) die "目标必须为 OS/ARCH，例如 windows/amd64" ;;
+        *) die "目标必须为 OS/ARCH，例如 linux/amd64" ;;
       esac
       shift 2
       ;;
@@ -148,6 +148,7 @@ compress_binary() {
 
   before=$(wc -c < "$binary" | tr -d ' ')
   upx_args="$ARTEX_UPX_ARGS"
+  [ "$goos" = "darwin" ] && upx_args="$upx_args --force-macos"
   # shellcheck disable=SC2086
   if ! upx $upx_args -- "$binary"; then
     if [ "$ARTEX_COMPRESS" = "required" ]; then
@@ -173,8 +174,13 @@ package_binary() {
   mkdir -p "$package_root"
   cp "$binary" "$package_root/"
   # 启动监护脚本是正式入口；页面一键更新需要进程退出后由脚本重启。
-  # 直接运行 artex.exe 不会自动重启，发布包带上 Windows 的 start.bat。
-  cp start.bat "$package_root/"
+  # 直接运行 artex 不会自动重启，发布包仅包含对应系统的启动脚本。
+  if [ "$goos" = "windows" ]; then
+    cp start.bat "$package_root/"
+  else
+    cp start.sh "$package_root/"
+    chmod +x "$package_root/start.sh"
+  fi
   cp -R skills "$package_root/"
   cp config.example.json "$package_root/"
   if [ -f README.md ]; then cp README.md "$package_root/"; fi
@@ -192,8 +198,8 @@ build_target() {
   goos="${target%%/*}"
   goarch="${target##*/}"
   case "$goos" in
-    windows) ;;
-    *) die "不支持的系统：$goos，本项目只支持 windows" ;;
+    linux|darwin|windows) ;;
+    *) die "不支持的系统：$goos，支持 linux、darwin、windows" ;;
   esac
 
   binary_name="artex"

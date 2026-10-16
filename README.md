@@ -105,7 +105,7 @@ start.bat
 或直接使用打包脚本（自动完成前端构建、内嵌与 zip 打包）：
 
 ```bash
-./build.sh --release          # 产出 dist/artex-<版本>-windows-{amd64,arm64}.zip
+./build.sh --release          # 三端（Linux/macOS/Windows）amd64/arm64，产出 dist/artex-<版本>-<os>-<arch>.zip
 ```
 
 - `npm ci` 需要 devDependencies，例如 `@tailwindcss/postcss`。若环境为 `NODE_ENV=production`，使用 `npm ci --include=dev`，避免构建时缺包。

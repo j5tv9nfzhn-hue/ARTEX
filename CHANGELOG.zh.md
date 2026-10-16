@@ -85,6 +85,7 @@
 - **功能与可靠性**：独立轻量「测试连接」、模型输入模态声明、Agent 备用链、metrics/stageerr/fsutil 基础包与 guard 审计 `call_id`、任务环境快照与检查点回滚、凭据与 MCP env 加密。
 - **防御与检测**：防御指南、Sigma/Suricata 规则、ATT&CK 层、CSV/MISP 指标与八类可复现测试。
 - **仓库维护**：安全与法律告知、维护/贡献指南、CI/检测工作流重塑、Go lint 门禁与外部链接周期检查；历史截图预览已移除，两版 README 的「系统架构」章节重写为六视图全新展示（全景分层 · 任务闭环 · 数据底座 · 协作机制 · 成本控制面 · 部署交付）。
+- **构建**：按 Git 历史恢复 `build.sh` 三端打包能力（Linux/macOS/Windows 默认目标、非 Windows 包附 `start.sh`）；Release 工作流矩阵暂维持 Windows。
 
 ## [0.3.14] - 2026-09-24
 
