@@ -49,10 +49,10 @@ UA 和固定字符串可以修改，但多阶段自适应行为更难完全改�
 
 用于调查疑似安装或执行 ARTEX 的中转主机。
 
-- **默认 :8787：** main.go --addr 可改；该端口出现仪表盘/任务/资产图 UI 是线索。
+- **默认 127.0.0.1:8787：** `--addr` 可改；该端口出现仪表盘/任务/资产图 UI 是线索（默认只绑回环，`cmd/artex/main.go`）。
 - **记录 MITM 127.0.0.1:8788：** --proxy 默认 loopback，生成 mitmproxy-ca-cert.pem 以解密记录。检查信任 CA 及注入 HTTP_PROXY/CA 的痕迹。worker.go 固定变量名，代理与 mitmproxy CA 同时存在比单端口更特异；[triage](../detections/triage/README.md)读取 /proc 或离线环境转储。
 - **更新 UA artex-selfupdate：** selfupdate/ 查询 GitHub Release 的出站流量辅助指示二进制存在。
-- **PostgreSQL 双图：** exploration_nodes、assets、companies、activity 及 agent_prompts 种子是数据结构线索。
+- **SQLite 单文件双图：** 默认与 `config.json` 同目录的 `artex.db` 中，exploration_nodes、assets、companies、activity 及 agent_prompts 种子是数据结构线索。
 - **DB 规则与审计：** intercept/ 按优先级匹配 DB 正则；GET /api/audit 中被阻止调用以 `【ARTEX 平台管控·非目标防御】` framing 记录，是运行证据。
 - **破坏性命令狩猎：** rm -rf、mkfs、dd of=/dev/、shred/wipe、DROP DATABASE/TABLE、TRUNCATE、MongoDB drop/dropDatabase、Redis FLUSHALL/FLUSHDB、curl/wget -X DELETE 等是通用线索。`curl … | nc …` 属于外流而非破坏；平台因正常逆向连接/传输误报默认关闭此规则，[部署狩猎规则](../detections/sigma/destructive_command_hunting.yml)也仅含破坏范围，不含该管道。外流须单独研判调优，不能直接等同恶意或立即阻断。
 
@@ -327,7 +327,7 @@ level: high
 
 **主机取证：某主机是否运行过 ARTEX**
 
-依据第 2 节及 [CSV](../detections/indicators/artex_indicators.csv)，先用只读 [triage](../detections/triage/)检查端口、出站/guard 日志、状态/代理存储；第五项通用破坏命令不属于独有指纹，需人工对照历史。无 SIEM 时也可执行；所有命中只是线索。
+依据第 2 节及 [CSV](../detections/indicators/artex_indicators.csv)，先用只读 [triage](../detections/triage/)检查端口、出站/guard 日志、状态/代理存储（triage 的数据库结构检查仍针对上游 PostgreSQL 布局，本分支 SQLite 暂未覆盖，不影响端口/代理/日志类检查）；第五项通用破坏命令不属于独有指纹，需人工对照历史。无 SIEM 时也可执行；所有命中只是线索。
 
 1. **端口：** 本机检查默认 :8787 与 127.0.0.1:8788。
    ```sh
@@ -336,7 +336,7 @@ level: high
    --addr/--proxy 可改，结果为空仍检查全部监听与内部管理 UI。
 2. **出站：** selfupdate/ 的 artex-selfupdate 查询 GitHub Release。
 3. **审计：** guard/guard.go 的 `【ARTEX 平台管控·非目标防御】`，被阻止工具调用带此 framing。
-4. **存储：** PostgreSQL exploration_nodes/assets/companies/activity 与 agent_prompts；--data 默认可执行文件旁数据目录，含 tasks/、transcripts/。server/manager.go 将 traffic/ 用作记录存储，CA 在 traffic/_ca/mitmproxy-ca-cert.pem，索引在 traffic/_index/index.sqlite，正文在 traffic/_blobs/；组合出现较强地支持代理运行。
+4. **存储：** SQLite 单文件 `artex.db`（默认与 `config.json` 同目录）中的 exploration_nodes/assets/companies/activity 与 agent_prompts 表；`--data` 默认可执行文件旁数据目录，含 tasks/、transcripts/。server/manager.go 将 traffic/ 用作记录存储，CA 在 traffic/_ca/mitmproxy-ca-cert.pem，索引在 traffic/_index/index.sqlite，正文在 traffic/_blobs/；组合出现较强地支持代理运行。
 5. **命令审计：** 对照 rm -rf、DROP DATABASE、FLUSHALL、外流管道等通用狩猎线索，正常管理员也会执行，不单凭此定论。
 
 端口、UA、标记均可修改/清除，缺失不等于安全。结合目标侧行为与主机侧证据才是研判核心。

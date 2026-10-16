@@ -23,7 +23,7 @@ ARTEX 是由 LLM 多 Agent 自主执行渗透测试的进攻性安全工具，�
 - **保留推理语义。** `agent/promptcatalog.go` 与 `agent_prompts` 的原有中文行为正文不作无关翻译；角色、范围、工具边界不能因语言重构改变。其他项目自有韩文提示、说明和注释仍应译为简体中文。
 - **明确用户输出语言。** `report_finding`、`record_fact`、最终报告、对话默认中文，`agent/prompt.go` 的 `langDirective()` 在角色 system prompt 末尾追加约束；收尾也遵循选定语言。
 - **协议与原始材料不改写。** 命令、payload、API/JSON 字段、枚举、工具名、SQL、URL、用户输入、原始日志和外部供应商诊断保持原样。
-- **中文作为源词库。** UI 使用 `web/messages/zh.json` 的稳定消息键，en/es 键同步；ko.json 仅为中文兼容副本。新界面语言选项只包含 zh/en/es。
+- **中文作为唯一词库。** UI 使用 `web/messages/zh.json` 的稳定消息键（仓库只有这一份词库，`web/src/i18n/config.ts` 的 `LOCALES` 只含 `zh`）；历史 ko/en/es 配置一律归一回退为 zh。提取脚本中残留的外语输出路径属历史遗留，不构成新的界面语言选项。
 - **兼容旧配置。** ko 归一为 zh，空值或未知值按各层既定优先级回退；不把未知环境变量误当作有效值屏蔽文件配置。
 - **格式与结构必须保留。** `%s/%d/%v/%w`、ICU 参数、模板占位符、Markdown 结构及用于解析的审批标记需同步前后端和测试。
 - **输出约束是提示而非硬过滤。** 模型可能混入技术英文或受角色影响；不能为了“纯中文”破坏代码或证据。模型端到端质量需在授权沙箱独立验证，不能仅凭构建成功推断。
@@ -33,13 +33,13 @@ ARTEX 是由 LLM 多 Agent 自主执行渗透测试的进攻性安全工具，�
 
 ## 开发环境
 
-Go 后端可内嵌 Next.js 静态前端，数据库为 PostgreSQL。涉及 `report_finding.traffic_refs` 或报告自动绑定时，先阅读[多流量证据设计](docs/finding-traffic-evidence.md)，中文原稿也保留在[同目录](docs/finding-traffic-evidence.md)。旧 `-ko` 文件名仅为链接兼容。
+Go 后端可内嵌 Next.js 静态前端，数据库为 **SQLite**（单文件，无需安装、无需服务）。涉及 `report_finding.traffic_refs` 或报告自动绑定时，先阅读[多流量证据设计](docs/finding-traffic-evidence.md)，中文原稿也保留在[同目录](docs/finding-traffic-evidence.md)。旧 `-ko` 文件名仅为链接兼容。
 
 ### 要求版本
 
 - Go 1.26 或以上，以 `go.mod` 为准。
 - Node 22 LTS 或更新版本；Node 类型擦除测试至少需要 22.6，与 CI 使用 Node 22 一致。
-- Docker、Docker Compose，用于可复现依赖与数据库隔离测试。
+- Docker（可选）：用于可复现的依赖构建环境；数据库测试已不需要容器（各包自带临时 SQLite 库）。
 
 ### 后端（Go）
 
@@ -57,31 +57,16 @@ docker run --rm -v "$PWD":/src -w /src \
   golang:1.26 sh -c 'go build ./... && go vet ./... && go test ./...'
 ```
 
-#### 数据库集成测试（需要 PostgreSQL）
+#### 数据库测试（SQLite，无需外部服务）
 
-无数据库时 `agent`、`config`、`db`、`evidence`、`llmrec`、`server` 中部分测试会 `SKIP`，包仍可能显示 `ok`。**跳过不等于数据库路径通过**，修改这些包后必须另外提供数据库；CI `go-db` 为每包创建独立 PostgreSQL，避免共享数据、连接清理和 schema 依赖。
-
-以下在隔离 Docker 网络使用与 CI 相同的 `postgres:16-alpine`，示例密码仅用于一次性本地测试：
+数据库相关包（`agent`、`config`、`db`、`evidence`、`llmrec`、`server` 等）的测试在各自的包里创建**临时 SQLite 库**（各包 `TestMain` 把临时库路径写入 `ARTEX_SQLITE_PATH`，复用与生产相同的 DSN/pragma 契约），不依赖任何数据库服务，跨包也没有共享库与全局锁；CI 同样没有独立的数据库 job。显式配置失败必须报错，不允许静默跳过：
 
 ```bash
-# 1. 创建隔离网络和空数据库
-docker network create artexko-db 2>/dev/null || true
-docker run -d --name artexko-pg --network artexko-db \
-  -e POSTGRES_USER=artex -e POSTGRES_PASSWORD=artex -e POSTGRES_DB=artex \
-  postgres:16-alpine
-until docker exec artexko-pg pg_isready -U artex -d artex >/dev/null 2>&1; do sleep 1; done
+go test ./... -count=1
 
-# 2. 提供 DSN，仅执行一个集成包；其他包分别使用新的空数据库
-docker run --rm --network artexko-db -v "$PWD":/src -w /src \
-  -v artexko-gomod:/go/pkg/mod -v artexko-gocache:/root/.cache/go-build \
-  -e ARTEX_PG_DSN='postgres://artex:artex@artexko-pg:5432/artex?sslmode=disable' \
-  golang:1.26 sh -c 'go test ./agent/ -count=1'
-
-# 3. 清理此示例创建的容器和网络，不操作其他环境
-docker rm -f artexko-pg && docker network rm artexko-db
+# 仅跑迁移/证据/归档相关重点包（示例）
+go test -race -p 1 ./evidence ./db ./agent ./server -run 'TestEvidence|TestFindingTraffic|TestFindingEvidence|TestReportFindingAtomicContract|TestTaskArchive'
 ```
-
-其余包将 `./agent/` 替换为对应包，使用各自新建的数据库。
 
 ### 前端（web）
 
@@ -106,20 +91,20 @@ docker run --rm -v "$PWD":/src -w /src/web \
 
 `lint-staged` 在提交时对已暂存文件执行 `biome check --write`。Biome error 必须为零；已有 warning/info 不改变退出码，不应借语言重构无关地清理全部样式债务。
 
-### 完整运行（Docker Compose）
+### 完整运行（单二进制）
 
 ```bash
-cp .env.example .env  # 必须修改 POSTGRES_PASSWORD
-docker compose up -d
+./dev.sh    # 开发：后端 :8787、流量代理 :8788、前端 :5173
+# 或按 README 的源码构建流程产出内嵌前端的单二进制，用 start.bat / start.sh 启动
 ```
 
-此路径依赖 Compose 中配置的镜像，原分支记录上游镜像曾无法拉取；需要本分支改动时应先源码构建，见 [README](README.md#快速开始windows-二进制)。本项目现已只发布 Windows 二进制，不再维护 Docker 镜像。
+本项目只发布 Windows 二进制；历史上游产物（Docker Compose、install.sh/update.sh）在本分支已移除，源码构建与发布包流程见 [README](README.md#快速开始windows-二进制) 与[构建与产物](docs/构建与产物.md)。
 
 ## 贡献流程
 
 1. 大改动先开 Issue 协调方向；拼写、链接、明确缺陷可直接提交 PR。
 2. 在自己的工作分支完成改动，遵循所在开发环境的分支约束。
-3. **实际运行相关验证并记录边界。** Go 运行 build/vet/test，数据库包另跑集成；Web 运行 Node 回归、Biome 与静态构建。无工具、依赖无法获取、SKIP 或仅解析源码，均应明确标记，不得当作完整通过。
+3. **实际运行相关验证并记录边界。** Go 运行 build/vet/test（数据库测试已内置于各包、无需外部服务）；Web 运行 Node 回归、Biome 与静态构建。无工具、依赖无法获取、SKIP 或仅解析源码，均应明确标记，不得当作完整通过。
 4. 任何自有文本改动后运行语言检查；文档改动运行内部链接检查。锚点按 GitHub slug 计算，修改标题时必须同步引用。
 
    ```bash

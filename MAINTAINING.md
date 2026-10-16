@@ -3,7 +3,7 @@
 
 本文说明如何在吸收 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX) 改动时维护简体中文默认输出。原分支在 2026-10 记录上游无法公开访问；404 可能涉及可见性或权限，不能据此断言永久删除。贡献与授权边界见 [CONTRIBUTING.md](CONTRIBUTING.md)，用户说明见 [README.md](README.md)。
 
-目标是**保留技术行为，将项目自有韩文统一为简体中文，并保留 en/es 功能及旧 ko 配置兼容**。
+目标是**保留技术行为，将项目自有韩文统一为简体中文；历史 ko/en/es 配置一律归一回退为 zh**。
 
 ## 1. 本地化结构概览
 
@@ -11,7 +11,7 @@
 
 - 原有中文推理正文、工具协议与外部原始材料，不作无关改写。
 - 代码固定的输出语言约束：`langDirective()` 默认简体中文，收尾同样遵循选定语言。
-- 用户可见文案：`web/messages/zh.json` 为源词库，en/es 保持同键，ko.json 为中文兼容副本；后端 Go 消息和注释也统一中文。
+- 用户可见文案：`web/messages/zh.json` 是**唯一词库**（en/es 词库与 ko 兼容副本已移除）；后端 Go 消息和注释也统一中文。
 
 浏览器显示语言与数据库输出语言是不同配置。默认配置优先级是 `ARTEX_LANG > config.json.language > zh`，运行时数据库设置由 server Hook 接入。
 
@@ -54,9 +54,9 @@ git log --name-status --oneline d003372..upstream/main
 ```
 
 - 推理正文、种子或兼作 Agent 输入的消息：保留技术语义，审查语言尾指令与解析接口。
-- Go 逻辑：保留上游功能，新用户消息译为简体中文；更新 en/es 词库及对应测试。
-- UI：提取稳定消息键，更新 zh/en/es，与 ko 中文副本同步，不重新硬编码到 JSX。
-- 固定检测指标：`enrich`、`selfupdate` 的 User-Agent，`guard` 审计标记、`db` 破坏性命令 deny 列表、`cmd/artex/main.go` 端口、`traffic` CA 文件名和 `db/schema.sql` 指纹，不属于普通文案。若上游确实改变指标，应同步 Sigma、Suricata、ATT&CK、CSV、MISP 和测试。
+- Go 逻辑：保留上游功能，新用户消息译为简体中文；更新 zh 词库及对应测试。
+- UI：提取稳定消息键，更新 zh 词库，不重新硬编码到 JSX。
+- 固定检测指标：`enrich`、`selfupdate` 的 User-Agent，`guard` 审计标记、`db` 破坏性命令 deny 列表、`cmd/artex/main.go` 端口、`traffic` CA 文件名和 `db/schema_sqlite.sql` 指纹，不属于普通文案。若上游确实改变指标，应同步 Sigma、Suricata、ATT&CK、CSV、MISP 和测试。
 
 ### 4.3 合入与翻译
 
@@ -66,26 +66,25 @@ git log --name-status --oneline d003372..upstream/main
 
 ## 5. 词库对称与语言漂移检查
 
-### 5.1 zh/en/es 词库对称与 ko 兼容副本
+### 5.1 唯一词库（zh）与残留检查
 
-`npm run extract:i18n` 递归增量合并词库，保留人工维护键及已改为 `t(key)` 的消息，不自动删除旧键。en/es 已有译文不被中文覆盖，新提取但尚未人工翻译的键使用中文回退。提取来源元数据保存到 `zh.sources.json`。
+`npm run extract:i18n` 递归增量合并词库，保留人工维护键及已改为 `t(key)` 的消息，不自动删除旧键。**当前仓库只有一份词库 `web/messages/zh.json`**（en/es 词库与 ko 兼容副本已移除；`web/src/i18n/config.ts` 的 `LOCALES` 只含 `zh`）；提取脚本里对其他语言路径的输出分支是历史遗留，不构成新的 UI 语言选项。
 
-中文允许且是默认语言，**不能再要求 ko 词库没有 Han 字符**。现要求：
+现要求：
 
-- zh/en/es 的叶子键集合一致。
-- ko.json 深度等于 zh.json，只用于兼容，不作为新 UI 语言选项。
+- 任何新界面文案必须落进 `zh.json` 的消息键，不硬编码在 JSX。
 - 项目词库无韩文字母/音节；ICU 参数与格式占位符保持一致。
 
 ```bash
 cd web
 npm test
 npm run extract:i18n  # 修改源消息后提取，审阅生成差异
-npm test             # 确认没有丢失人工维护键或破坏兼容副本
+npm test
 cd ..
 python3 -I scripts/check-language.py --source
 ```
 
-旧维护记录曾有 2,950 个 ko/zh 叶子键及“ko 无 Han”的基线；后者不再适用本分支。键数量可增长，不能为了固定旧计数删除新消息。
+旧维护记录曾有 2,950 个 ko/zh 叶子键及“ko 无 Han”的基线；均不再适用本分支。键数量可增长，不能为了固定旧计数删除新消息。
 
 ### 5.2 检查推理正文的原有语义
 
@@ -135,9 +134,9 @@ docker run --rm -v "$PWD":/src -w /src \
   golang:1.26 sh -c 'go build ./... && go vet ./... && go test ./... -count=1'
 ```
 
-用户消息测试应断言中文包含 Han、不含 Hangul；en/es 译文不可因词库缺项退回中文源消息。zh 与 ko 兼容别名返回源消息是正确行为，不能断言它们“必须不同于源消息”。底层错误和用户证据则必须保留。
+用户消息测试应断言中文包含 Han、不含 Hangul；历史语言值（ko/en/es 等）归一回退到 zh 词库是正确行为，不能断言回退结果“必须不同于源消息”。底层错误和用户证据则必须保留。
 
-数据库相关包需各自独立 PostgreSQL；缺 Go、Docker、数据库或 SDK 时如实标记未验证。模型质量需要授权沙箱端到端检查，不以便宜模型、前端构建或 Go 解析替代。
+数据库相关包各自使用临时 SQLite 库、无需外部数据库服务；缺 Go、Docker 或 SDK 时如实标记未验证。模型质量需要授权沙箱端到端检查，不以便宜模型、前端构建或 Go 解析替代。
 
 ## 7. 基线更新记录
 

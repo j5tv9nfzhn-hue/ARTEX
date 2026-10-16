@@ -56,15 +56,15 @@
 
 ## 存储与迁移
 
-启动幂等迁移 PostgreSQL：新增 `traffic_evidence_snapshots`、`finding_traffic_bindings`，以及 `findings.evidence_version` / `report_evidence_version`（默认 0）。不根据历史文字猜测补绑。
+启动幂等迁移（SQLite）：新增 `traffic_evidence_snapshots`、`finding_traffic_bindings`，以及 `findings.evidence_version` / `report_evidence_version`（默认 0）。不根据历史文字猜测补绑。
 
 快照保存原流量 ID、采集时间、URL、方法、状态、请求/响应头、正文长度和 SHA-256。正文按哈希存放在 `<data>/evidence/blobs/<前两位>/<hash>.bin`，与可清理的 `data/traffic` 独立，多个漏洞可共享快照/正文。快照不提供内容更新接口，校验不一致时读取和导出失败。
 
-在原流量写锁下读取完整正文，包括大正文 blob 和旧目录记录。先持久化并校验文件，再用单个 PostgreSQL 事务写入探索节点、意图关系、漏洞、快照和绑定；提交后才通知规划者。失败可能遗留无引用文件，但不产生部分业务记录。
+在原流量写锁下读取完整正文，包括大正文 blob 和旧目录记录。先持久化并校验文件，再用单个 SQLite 事务写入探索节点、意图关系、漏洞、快照和绑定；提交后才通知规划者。失败可能遗留无引用文件，但不产生部分业务记录。
 
-PostgreSQL advisory lock `7337741004` 协调证据文件和 SQL 引用；任务行锁禁止归档排队后的证据修改。恢复从正文安装到元数据提交全程保持证据锁。删除漏洞级联移除绑定。
+证据文件与 SQL 引用的协调锁键 `7337741004`（`db/finding_traffic.go`）继续保留：SQLite 下跨表写入本来就由库级写锁串行化，`advisoryLock` 为**有意的 no-op**（`db/db.go:488-497`，调用点保留以标明这段写入需要原子）；任务行锁禁止归档排队后的证据修改。恢复从正文安装到元数据提交全程保持证据锁。删除漏洞级联移除绑定。
 
-清理器每小时运行，只回收无引用且非进行中操作的内容，至少延迟 24 小时。普通流量清理不触及证据目录。备份热数据时同时备份 PostgreSQL 和 `data/evidence`。
+清理器每小时运行，只回收无引用且非进行中操作的内容，至少延迟 24 小时。普通流量清理不触及证据目录。备份热数据时同时备份 SQLite 数据库文件（`artex.db`，建议连同 WAL 一起）和 `data/evidence`。
 
 ## 导出与归档
 
@@ -85,10 +85,10 @@ Markdown 通过相对链接引用报文。发送下载前完成附件复制、�
 
 ## 验证与边界
 
-为每个测试包设置独立、新建的 PostgreSQL 测试库，通过 `ARTEX_PG_DSN` 指定，避免残留任务/模型夹具触发后台运行。运行相关包完整测试，并确认没有配置缺失导致的跳过：
+为每个测试包使用自己的临时 SQLite 库（各包 TestMain 自动建库、用完即弃，无需外部数据库服务；临时库 DSN 同走 `config.SQLiteDSNFor`，与生产相同的 pragma 契约）。旧写法「每包一个 PostgreSQL 测试库 + `ARTEX_PG_DSN`」已随迁移失效。运行相关包完整测试，并确认没有配置缺失导致的跳过：
 
 ```sh
-# 每个包运行前将 ARTEX_PG_DSN 设为对应的独立测试库；显式配置失败必须报错。
+# 无需外部数据库：各包测试自带临时 SQLite 库；显式配置失败必须报错。
 go test ./<package> -count=1
 go test -race -p 1 ./evidence ./db ./agent ./server -run 'TestEvidence|TestFindingTraffic|TestFindingEvidence|TestReportFindingAtomicContract|TestTaskArchive'
 ```

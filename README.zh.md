@@ -13,6 +13,8 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 > ⚠️ **安全与合规提示**：本分支基于 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)，当前默认简体中文。仅可在自有或明确授权的环境中进行学习、研究和防御验证。原分支保留了 2026 年 10 月韩国金融机构事件的媒体报道警告，本次语言重构不代表独立核实。完整授权限制、法律告知和免责声明见 [README.md](README.md#使用范围与法律告知) 与 [README.md](README.md)。
 
+> ℹ️ **本文件的定位**：本文是上游项目的简体中文技术原稿。下方「安装 / 更新升级」章节描述上游产物（install.sh、Docker 镜像、多平台发布包等），本分支只发布 Windows 二进制，请以 [README.md](README.md) 的说明为准；存储已由 PostgreSQL 迁移为 SQLite 单文件，相关描述按此理解。
+
 ---
 
 ## 截图预览
@@ -68,7 +70,7 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 ## 安装
 
-> 依赖数据库 **PostgreSQL**；探索需配置 **LLM**（`ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`，也可在 UI 里配）。
+> 依赖数据库 **SQLite**（一个文件，无需安装、无需服务）；探索需配置 **LLM**（`ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`，也可在 UI 里配）。
 
 ### 方式一：一键安装脚本（推荐）
 
@@ -90,8 +92,8 @@ cd ARTEX
 ```bash
 git clone https://github.com/Autumn-27/ARTEX.git
 cd ARTEX
-cp .env.example .env          # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
-docker compose up -d          # 拉取 autumn27/artex 镜像 + postgres
+cp .env.example .env          # 按注释填写（LLM 密钥、ARTEX_SQLITE_PATH 等）
+docker compose up -d          # 拉取 autumn27/artex 镜像
 # → http://localhost:8787
 ```
 
@@ -126,27 +128,27 @@ CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
 ./start.sh
 ```
 
-### 方式五：构建跨平台 Release 压缩包
+### 方式五：构建 Release 压缩包
 
-`build.sh` 会先构建并嵌入前端，再使用 Go linker 去除调试信息，并将发布文件压缩为 zip。Release 模式默认生成 Linux amd64/arm64、macOS amd64/arm64 和 Windows amd64 的 zip 包：
+`build.sh` 会先构建并嵌入前端，再使用 Go linker 去除调试信息，并将发布文件压缩为 zip。**本分支只支持 Windows 目标**，Release 模式默认生成 Windows amd64/arm64 的 zip 包（上游原稿曾支持多平台，相关描述不再适用）：
 
 ```bash
 ./build.sh --release
-# 产物：dist/artex-0.3.3-*.zip
+# 产物：dist/artex-<版本>-windows-{amd64,arm64}.zip
 ```
 
-UPX 自解压二进制可能与部分 Linux 内核、虚拟化环境或安全策略不兼容，因此默认不启用。可用 `ARTEX_TARGETS` 自定义目标；确认目标运行环境兼容时，可显式传入 `--upx` 进一步缩小二进制：
+UPX 自解压二进制可能与部分内核、虚拟化环境或安全策略不兼容，因此默认不启用。可用 `ARTEX_TARGETS` 自定义目标；确认目标运行环境兼容时，可显式传入 `--upx` 进一步缩小二进制：
 
 ```bash
-ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
-./build.sh --target linux/amd64 --upx
+ARTEX_TARGETS=windows/amd64,windows/arm64 ./build.sh --release
+./build.sh --target windows/amd64 --upx
 ```
 
 ---
 
 ## 更新升级
 
-> 升级只换程序、不动数据：Postgres 数据卷 `pgdata`、`./data`（jwt.key / SQLite 等）、`./skills` 都会保留。**数据库迁移无需手动执行**——`artex` 每次启动会幂等重跑 `schema.sql`（含 `ADD COLUMN` / `CREATE INDEX IF NOT EXISTS`），即“重启即迁移”。升级前仍建议先备份 `./data` 与数据库。
+> 升级只换程序、不动数据：SQLite 数据库文件（默认 `config.json` 旁自动创建的 `artex.db`，Docker 由 `ARTEX_SQLITE_PATH` 指向持久化卷）、`./data`（jwt.key 等）、`./skills` 都会保留。**数据库迁移无需手动执行**——`artex` 每次启动会幂等重跑 `db/schema_sqlite.sql`（含列增量与索引创建），即“重启即迁移”。升级前仍建议先备份 `./data`、`./skills` 与数据库文件。
 
 ### 方式一：页面一键更新（推荐）
 
@@ -207,22 +209,22 @@ CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
 
 ## 配置
 
-**数据库**（`config.json`，或用环境变量 `ARTEX_PG_DSN` 覆盖）：
+**数据库**（`config.json`，或用环境变量 `ARTEX_SQLITE_PATH` 覆盖）：
 
 ```json
 {
-  "database": {
-    "host": "127.0.0.1", "port": 5432,
-    "user": "artex", "password": "yourpass",
-    "dbname": "artex", "sslmode": "disable"
-  }
+  "database": { "path": "" }
 }
 ```
+
+`database.path` 留空时，首次启动会在 `config.json` 旁自动创建 `artex.db`；完整注释与示例见 [config.example.json](config.example.json)。
 
 **LLM**：`export ANTHROPIC_API_KEY=sk-...`（或 `OPENAI_API_KEY`），也可在 UI 的「LLM 配置」页填写。
 可选：`ARTEX_LLM_PROVIDER` / `ARTEX_LLM_MODEL` / `ARTEX_LLM_BASE_URL` / `ARTEX_LLM_PROXY`。
 
 **并发**：每个任务的 work agent 数在「系统设置」里配置（默认 3）。
+
+**成本与效率**：新建任务默认 Token 预算 `default_task_token_budget`、模型价目表 `price_table`、LLM 重试策略 `llm_retry_policy` 在「系统配置」页填写；说明与默认值见[成本效率优化实施记录](docs/成本效率优化-实施记录.md)。
 
 **常用参数**：`./start.sh -addr :8787 -proxy :8788`（`-addr` 前端+API，`-proxy` 流量录制代理）。启动脚本会把参数原样透传给 `artex`。本分支中 `-addr` 默认值为 `127.0.0.1:8787`（仅本机），需要从其他机器访问时请显式指定如 `:8787`。
 
@@ -230,7 +232,7 @@ CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
 
 - **设置令牌**：尚未设置密码时，启动日志会打印一行 `[auth] … 设置令牌: …`（设置令牌；Docker 用 `docker compose logs artex` 查看）。`/setup` 与 `POST /api/auth/init`（`setup_token` 字段）必须带上该值才能创建密码，错误尝试会被限速。无人值守部署可用 `ARTEX_SETUP_TOKEN` 固定令牌，或用 `ARTEX_ADMIN_PASSWORD` 直接设置密码（至少 8 位）。
 - **默认只绑定 127.0.0.1**：`-addr` 默认值与 `docker-compose.yml` 的端口发布都只开在本机回环地址。需要从其他机器访问时改为 `-addr :8787` 或在 `.env` 中设置 `ARTEX_BIND=0.0.0.0`，但请先完成初始设置，并优先使用下方的反向代理方案。
-- **修改密码会使所有旧会话失效**：令牌签名密钥与密码哈希绑定，无论通过界面、`reset-password.sh` 还是直接改库，旧令牌都会在几秒内失效。
+- **修改密码会使所有旧会话失效**：令牌签名密钥与密码哈希绑定，无论通过界面、`reset-password.sh` 还是直接改库，旧令牌都会在几秒内失效。忘记密码时可在本机运行仓库根目录的 `reset-password.sh`（内部调用 `artex -reset-password`，无需数据库客户端）。
 - **CORS**：`/api` 仅允许 `ARTEX_CORS_ORIGINS`（逗号分隔）中列出的来源跨域调用；内置 UI 同源，通常留空。
 
 ### 反向代理部署（HTTPS / 只开放 443）
@@ -292,7 +294,7 @@ server {
 
 ## 系统技术架构
 
-ARTEX 是一套 **LLM 多 agent 驱动的自主渗透系统**：Go 单体后端（内嵌 Next.js 前端）+ PostgreSQL，agent 能力由 [`norma`](https://github.com/Autumn-27/norma) SDK 提供（`agentcore` / `tool` / `permission` / `harness` / `memory` / `transcript`）。核心是**双图架构**，以及围绕它的两条自主性机制：**worker 间过程级信息交换**与 **planner 多轮共享 todolist 稳定攻击链路**。
+ARTEX 是一套 **LLM 多 agent 驱动的自主渗透系统**：Go 单体后端（内嵌 Next.js 前端）+ SQLite（单文件），agent 能力由 [`norma`](https://github.com/Autumn-27/norma) SDK 提供（`agentcore` / `tool` / `permission` / `harness` / `memory` / `transcript`）。核心是**双图架构**，以及围绕它的两条自主性机制：**worker 间过程级信息交换**与 **planner 多轮共享 todolist 稳定攻击链路**。
 
 ### 总体分层
 
@@ -312,7 +314,7 @@ flowchart TB
     WK["worker　执行者 ×N"]
     MA["mainagent　人在环路"]
   end
-  subgraph DB["PostgreSQL"]
+  subgraph DB["SQLite"]
     AGRAPH["资产图　assets / companies / task_scope"]
     EGRAPH["探索图　exploration_nodes / anchors / activity"]
   end
@@ -347,7 +349,7 @@ flowchart TB
 | **server** | `net/http` 路由 + JWT 鉴权 + SSE；`Manager` 托管任务、引擎、DB store 的生命周期 |
 | **engine** | 每任务一个 `plannerLoop` + N 个 worker goroutine；意图领取、超时/暂停/drain |
 | **agent** | goals / planner / worker / mainagent，`ToolSet` 把双图暴露成 LLM 工具 |
-| **db** | 双图的 Postgres 落地（pgx）；schema 随 `go:embed` 每次启动幂等建表 |
+| **db** | 双图的 SQLite 落地（modernc，纯 Go、无 CGO）；schema 随 `go:embed` 每次启动幂等建表/迁移 |
 | **支撑** | 记录型 MITM 代理、审批门、异步补全、MCP/技能/记忆/报告 |
 
 ### 双图架构：探索图 + 资产图
@@ -473,7 +475,10 @@ flowchart TB
 ---
 ## 参考
 
-https://github.com/oritera/Cairn
+- 分支维护账本：[开发总清单](docs/开发总清单.md)、[修复台账](docs/修复台账.md)、[成本效率优化实施记录](docs/成本效率优化-实施记录.md)
+- 架构与构建：[架构分层](docs/架构分层.md)、[构建与产物](docs/构建与产物.md)
+- 审计与设计：[UTF-8 审计](docs/utf8-audit.md)、[XSS 审计](docs/xss-audit.md)、[漏洞多流量证据](docs/finding-traffic-evidence.md)
+- https://github.com/oritera/Cairn
 
 
 ## 许可与免责声明
