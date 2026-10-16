@@ -36,7 +36,7 @@ repos:
         entry: detections/tests/run-all.sh
         language: script
         pass_filenames: false
-        files: '^(detections/|enrich/enrich\.go|selfupdate/(github|stage)\.go|guard/guard\.go|db/db\.go|db/schema\.sql|cmd/artex/main\.go|traffic/traffic\.go|docs/defense-(ko|en)\.md)'
+        files: '^(detections/|enrich/enrich\.go|selfupdate/(github|stage)\.go|guard/guard\.go|db/db\.go|db/schema_sqlite\.sql|cmd/artex/main\.go|traffic/traffic\.go|docs/defense-(ko|en)\.md)'
       - id: docs
         name: 文档内部链接、图片与标题锚点检查
         entry: python3 -I scripts/check-doc-links.py

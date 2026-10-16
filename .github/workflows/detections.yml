@@ -46,7 +46,7 @@ on:
       - "selfupdate/stage.go"
       - "guard/guard.go"
       - "db/db.go"
-      - "db/schema.sql"
+      - "db/schema_sqlite.sql"
       - "cmd/artex/main.go"
       - "traffic/traffic.go"
       - "docs/defense.md"
