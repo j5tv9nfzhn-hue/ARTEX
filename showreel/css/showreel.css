@@ -1,0 +1,107 @@
+/* ARTEX showreel player chrome — the film itself is 1920×1080 canvas. */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --paper: #EDE6D5;
+  --blue: #1B3ED2;
+  --cyan: #45F0DD;
+  --black: #07080A;
+  --graphite: #16161A;
+  --white: #FFFFFF;
+}
+
+html, body {
+  background: var(--black);
+  color: var(--paper);
+  font-family: Geist, system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 18px 28px 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  font-size: 13px;
+}
+
+.brand { color: var(--cyan); letter-spacing: 0.22em; }
+.brand .dim { color: rgba(237, 230, 213, 0.55); }
+.meta { color: rgba(237, 230, 213, 0.8); display: flex; gap: 12px; }
+.meta .sep { color: rgba(237, 230, 213, 0.3); }
+
+.stage-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 0 28px;
+}
+
+#stage {
+  width: min(100%, calc((100vh - 300px) * 16 / 9));
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: var(--paper);
+  border: 1px solid rgba(237, 230, 213, 0.16);
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 28px 6px;
+}
+
+#playpause {
+  background: var(--cyan);
+  color: var(--black);
+  border: 0;
+  font: 700 12px/1 Geist, sans-serif;
+  letter-spacing: 0.18em;
+  padding: 12px 22px;
+  cursor: pointer;
+}
+#playpause:hover { background: var(--white); }
+
+#scrub {
+  flex: 1;
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--cyan);
+  border: 1px solid rgba(69, 240, 221, 0.4);
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.caption {
+  max-width: 980px;
+  margin: 20px auto 60px;
+  padding: 0 28px;
+  color: rgba(237, 230, 213, 0.82);
+  font-size: 14px;
+  line-height: 1.75;
+}
+.caption h2 {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--white);
+  margin-bottom: 12px;
+}
+.caption p { margin-bottom: 10px; }
+.caption .details { font-weight: 700; letter-spacing: 0.12em; color: var(--cyan); margin-top: 16px; }
+.caption ul { margin: 8px 0 0 18px; }
+.caption li { margin-bottom: 4px; }
+
+@media (max-width: 720px) {
+  .meta { display: none; }
+  .badge { display: none; }
+}
