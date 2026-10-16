@@ -19,6 +19,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { AssetDslSearch } from "@/components/asset-dsl-search";
+import { EmptyState } from "@/components/empty-state";
 import { ScopeTextEditor } from "@/components/scope-text-editor";
 import {
   AlertDialog,
@@ -197,8 +198,8 @@ function AssetCard({
   } else {
     tableRows = (
       <TableRow>
-        <TableCell colSpan={cols.length} className="py-10 text-center text-muted-foreground text-sm">
-          {t("empty")}
+        <TableCell colSpan={cols.length} className="p-0">
+          <EmptyState illustration="nodes" title={t("empty")} />
         </TableCell>
       </TableRow>
     );

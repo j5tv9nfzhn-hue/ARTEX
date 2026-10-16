@@ -14,6 +14,7 @@ import type {
   ArchiveBatchItem,
   Asset,
   BatchControlItem,
+  Checkpoint,
   Company,
   CompanyScopeRule,
   Conversation,
@@ -51,6 +52,81 @@ const mockTaskCategories = structuredClone(D.taskCategories);
 const mockConversations = structuredClone(D.conversations);
 const mockRetests: FindingRetest[] = [];
 const mockRetestMessages: Record<number, Activity[]> = {};
+
+// ── 检查点时间线（批次 6）───────────────────────────────────────────────────
+// demo：每个 scope（conv-<id> / task-<id>）懒生成一份固定的示例时间线；回滚会作废
+// 更新的检查点并追加一条「回滚标记」。真实语义（隐藏步骤/截断 transcript）由后端执行。
+let mockCheckpointID = 0;
+const mockCheckpointsByScope = new Map<string, Checkpoint[]>();
+
+function mockCheckpointList(scope: string): Checkpoint[] {
+  const existing = mockCheckpointsByScope.get(scope);
+  if (existing) return existing;
+  const now = Date.now();
+  const at = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
+  const isTask = scope.startsWith("task-");
+  const entries: Array<{ reason: string; summary: string; counts?: Record<string, number> }> = isTask
+    ? [
+        { reason: "admit", summary: "任务准入：探测共享环境并建立基线", counts: { nodes: 6, edges: 5, max_node_id: 6 } },
+        { reason: "intent_settled", summary: "意图 #3 结束：已完成" },
+        { reason: "interrupt", summary: "任务暂停（后台压缩已打断）" },
+        { reason: "intent_settled", summary: "意图 #4 结束：受阻" },
+      ]
+    : [
+        { reason: "user_message", summary: "用户消息：排查订单查询接口" },
+        { reason: "turn_complete", summary: "回合结束：完成" },
+        { reason: "interrupt", summary: "手动停止" },
+        { reason: "user_message", summary: "用户消息：继续验证越权读取" },
+      ];
+  const list: Checkpoint[] = entries.map((entry, index) => {
+    const seq = index + 1;
+    return {
+      id: ++mockCheckpointID,
+      scope,
+      seq,
+      reason: entry.reason,
+      status: "active",
+      summary: entry.summary,
+      snapshot: { activity_id: seq * 12, transcript_size: seq * 4096, counts: entry.counts },
+      created_at: at((entries.length - index) * 7),
+    };
+  });
+  mockCheckpointsByScope.set(scope, list);
+  return list;
+}
+
+function mockRevertCheckpoint(scope: string, checkpointID: number) {
+  const list = mockCheckpointList(scope);
+  const target = list.find((item) => item.id === checkpointID);
+  if (!target) throw new Error("检查点不存在");
+  if (target.status !== "active") throw new Error("该检查点已被后续回滚作废，请选择更新的检查点");
+  let superseded = 0;
+  for (const item of list) {
+    if (item.seq > target.seq && item.status === "active") {
+      item.status = "superseded";
+      superseded += 1;
+    }
+  }
+  const marker: Checkpoint = {
+    id: ++mockCheckpointID,
+    scope,
+    seq: list.reduce((max, item) => Math.max(max, item.seq), 0) + 1,
+    reason: "revert",
+    status: "active",
+    summary: `回滚到检查点 #${target.seq}（${target.reason}）`,
+    snapshot: { activity_id: target.snapshot.activity_id, transcript_size: target.snapshot.transcript_size },
+    created_at: new Date().toISOString(),
+  };
+  list.push(marker);
+  return {
+    status: "reverted",
+    hidden: 3,
+    superseded,
+    transcript_truncated: true,
+    checkpoint: marker,
+    reopened: scope.startsWith("task-") ? [4, 5] : undefined,
+  };
+}
 
 // ── 关联流量证据(finding traffic) ─────────────────────────────────────────────
 // 后端把请求/响应快照独立存到 evidence 表,前端详情页用 FindingTrafficPanel 展示。
@@ -1518,6 +1594,12 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   }
   if (seg[0] === "tasks" && seg[2] === "chat" && seg[3] === "status") return { running: false };
   if (seg[0] === "tasks" && seg[2] === "chat" && seg[3] === "stop") return { status: "stopped" };
+  if (seg[0] === "tasks" && seg[2] === "checkpoints" && seg.length === 3 && m === "GET") {
+    return { checkpoints: [...mockCheckpointList(`task-${seg[1]}`)].sort((x, y) => y.seq - x.seq) };
+  }
+  if (seg[0] === "tasks" && seg[2] === "checkpoints" && seg[4] === "revert" && m === "POST") {
+    return mockRevertCheckpoint(`task-${seg[1]}`, Number(seg[3]));
+  }
   if (path === "/active") {
     const id = String(b.id ?? mockActiveTask);
     if (mockTasks.some((item) => item.id === id)) {
@@ -1623,6 +1705,38 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       ],
     };
 
+  // ── 按角色 token 用量（demo：与 by-model 同源；worker 为泳道标识：
+  //    worker / planner / main / goals / compactor / btw）──
+  if (path === "/llm/records/by-worker")
+    return {
+      workers: [
+        {
+          worker: "main",
+          calls: 30,
+          input_tokens: 980000,
+          output_tokens: 62000,
+          cache_read_tokens: 720000,
+          cache_write_tokens: 90000,
+        },
+        {
+          worker: "worker",
+          calls: 24,
+          input_tokens: 510000,
+          output_tokens: 42000,
+          cache_read_tokens: 360000,
+          cache_write_tokens: 40000,
+        },
+        {
+          worker: "planner",
+          calls: 6,
+          input_tokens: 80000,
+          output_tokens: 6000,
+          cache_read_tokens: 40000,
+          cache_write_tokens: 10000,
+        },
+      ],
+    };
+
   // ── 工作空间文件管理器（demo：静态示例树；写/建/删走下方写兜底 {ok:true}）──
   if (path === "/workspace/list") return D.workspaceList(q.get("path") ?? "");
   if (path === "/workspace/read") return D.workspaceRead(q.get("path") ?? "");
@@ -1631,6 +1745,28 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/stats") {
     return D.stats(task, { tasks: mockTasks, findings: mockFindings, activeTask: mockActiveTask });
   }
+
+  // ── metrics（可靠性：本次启动以来的工具调用/重放/中断/协议计数）──
+  if (path === "/metrics")
+    return {
+      since: Math.floor(Date.now() / 1000) - 86400,
+      tools: {
+        calls: 1284,
+        errors: 37,
+        error_rate: 0.029,
+        by_stage: { exec: 24, hook: 6, timeout: 5, parse: 2, validate: 0 },
+        top_tools: [
+          { tool: "Bash", calls: 542, errors: 18, stages: { exec: 12, timeout: 5, hook: 1 } },
+          { tool: "curl_request", calls: 143, errors: 7, stages: { exec: 6, parse: 1 } },
+          { tool: "nuclei_scan", calls: 86, errors: 5, stages: { exec: 4, hook: 1 } },
+          { tool: "python_exec", calls: 61, errors: 4, stages: { exec: 4 } },
+          { tool: "http_probe", calls: 208, errors: 3, stages: { exec: 3 } },
+        ],
+      },
+      replay: { attempts: 9, succeeded: 7, failed: 2, pending: 0, success_rate: 0.78 },
+      interrupts: { attempts: 12, succeeded: 10, failed: 1, pending: 1, success_rate: 0.91 },
+      protocol: { unpaired_results: 0, unknown_results: 2, missing_results: 1 },
+    };
 
   // ── assets ──
   if (path === "/assets/counts") return mockAssetCounts(q.get("task_id"));
@@ -2273,6 +2409,11 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/llm/profiles" && m === "GET") return { profiles: D.llmProfiles };
   if (path === "/llm/profiles" && m === "POST") return { id: Number(b.id) || 3 };
   if (path === "/llm/profiles/active") return { ok: true };
+  // 凭据实体（计划 46–47）：与后端同形——响应只有 hint，保存回 id 字符串。
+  if (path === "/llm/credentials" && m === "GET") return { credentials: D.llmCredentials };
+  if (path === "/llm/credentials" && m === "POST") return { id: String(Number(b.id) || 4) };
+  if (seg[0] === "llm" && seg[1] === "credentials" && seg.length === 3 && m === "DELETE")
+    return { deleted: seg[2], unbound_profiles: 1 };
   if (path === "/llm/pool" && m === "GET") return D.llmPool;
   if (path === "/llm/pool/reset")
     return { ...D.llmPool, chain: D.llmPool.chain.map((c) => ({ ...c, state: "ok", fails: 0, cooldown_secs: 0 })) };
@@ -2291,6 +2432,14 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       enabled: true,
     };
   if (seg[0] === "agents" && seg.length === 2 && m === "GET") return D.agentDetail(seg[1]);
+  // 备用模型链（#139/#144）：链首=agent.llm_profile_id，这里整体读写其后的顺序。
+  if (seg[0] === "agents" && seg[2] === "llm-chain" && m === "GET")
+    return { fallback_profile_ids: D.agentDetail(seg[1]).llm_chain_fallbacks ?? [] };
+  if (seg[0] === "agents" && seg[2] === "llm-chain" && m === "PUT") {
+    const raw = Array.isArray(b.profile_ids) ? b.profile_ids : [];
+    const ids = [...new Set(raw.map((id) => Number(id)).filter((id) => Number.isFinite(id)))];
+    return { fallback_profile_ids: ids };
+  }
   if (seg[0] === "agents" && seg[2] === "triggers" && m === "GET") return { triggers: [] };
   if (seg[0] === "agents" && seg[2] === "prompts") return { versions: D.agentDetail(seg[1]).versions };
   if (seg[0] === "agents" && seg[2] === "variables") return { variables: D.agentDetail(seg[1]).variables };
@@ -2377,6 +2526,12 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (seg[0] === "conversations" && seg[2] === "stop") {
     stopMockRetest(Number(seg[1]));
     return { status: "stopped" };
+  }
+  if (seg[0] === "conversations" && seg[2] === "checkpoints" && seg.length === 3 && m === "GET") {
+    return { checkpoints: [...mockCheckpointList(`conv-${seg[1]}`)].sort((x, y) => y.seq - x.seq) };
+  }
+  if (seg[0] === "conversations" && seg[2] === "checkpoints" && seg[4] === "revert" && m === "POST") {
+    return mockRevertCheckpoint(`conv-${seg[1]}`, Number(seg[3]));
   }
 
   // ── tools ──

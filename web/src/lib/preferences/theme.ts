@@ -1,7 +1,7 @@
 export const THEME_MODE_OPTIONS = [
-  { label: "Light", value: "light" },
-  { label: "Dark", value: "dark" },
-  { label: "System", value: "system" },
+  { label: "浅色", value: "light" },
+  { label: "深色", value: "dark" },
+  { label: "跟随系统", value: "system" },
 ] as const;
 
 export const THEME_MODE_VALUES = THEME_MODE_OPTIONS.map((o) => o.value);
@@ -12,7 +12,7 @@ export type ResolvedThemeMode = "light" | "dark";
 
 export const THEME_PRESET_OPTIONS = [
   {
-    label: "Default",
+    label: "默认",
     value: "default",
     primary: {
       light: "oklch(0.205 0 0)",
@@ -20,7 +20,15 @@ export const THEME_PRESET_OPTIONS = [
     },
   },
   {
-    label: "Brutalist",
+    label: "琥珀终端",
+    value: "amber-crt",
+    primary: {
+      light: "oklch(0.58 0.14 58)",
+      dark: "oklch(0.79 0.17 74)",
+    },
+  },
+  {
+    label: "粗野主义",
     value: "brutalist",
     primary: {
       light: "oklch(0.6489 0.237 26.9728)",
@@ -28,7 +36,23 @@ export const THEME_PRESET_OPTIONS = [
     },
   },
   {
-    label: "Soft Pop",
+    label: "深空指挥室",
+    value: "command",
+    primary: {
+      light: "oklch(0.52 0.105 223.13)",
+      dark: "oklch(0.79 0.15 211.5)",
+    },
+  },
+  {
+    label: "矩阵绿",
+    value: "matrix",
+    primary: {
+      light: "oklch(0.52 0.15 152)",
+      dark: "oklch(0.84 0.25 148)",
+    },
+  },
+  {
+    label: "柔和流行",
     value: "soft-pop",
     primary: {
       light: "oklch(0.5106 0.2301 276.9656)",
@@ -36,7 +60,7 @@ export const THEME_PRESET_OPTIONS = [
     },
   },
   {
-    label: "Tangerine",
+    label: "柑橘",
     value: "tangerine",
     primary: {
       light: "oklch(0.64 0.17 36.44)",

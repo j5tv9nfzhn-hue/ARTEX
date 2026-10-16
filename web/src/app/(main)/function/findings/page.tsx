@@ -18,7 +18,10 @@ import {
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
+import { useNewFindingsAlert } from "@/components/finding-alert";
 import { FindingRetestDialog } from "@/components/finding-retest-dialog";
+import { useStaggerOnce } from "@/components/motion";
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
 import { Button } from "@/components/ui/button";
@@ -41,6 +44,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { api } from "@/lib/api";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
+import { SEVERITIES, severityFilterChipClass, severityTextClass } from "@/lib/severity";
 import type {
   ActiveFindingRetest,
   Finding,
@@ -61,7 +65,6 @@ import {
   findingRowKey,
   fmtTime,
   isSameFinding,
-  SEVERITIES,
   UNASSIGNED_TASK,
 } from "./_components/findings-table";
 
@@ -109,9 +112,13 @@ interface FlatFindingsState {
   total: number;
   loaded: boolean;
   loading: boolean;
+  // 数据批次指纹(筛选|页码|页大小|资产范围),成功写入时记录:
+  // 发现战报的差集检测用它区分"同批轮询刷新"与"翻页/改筛选换了一批数据",
+  // 只有 items 与当前请求参数批次一致才算就绪,避免把新页数据误判为新增发现。
+  requestKey: string;
 }
 
-const EMPTY_FLAT_STATE: FlatFindingsState = { items: [], total: 0, loaded: false, loading: false };
+const EMPTY_FLAT_STATE: FlatFindingsState = { items: [], total: 0, loaded: false, loading: false, requestKey: "" };
 
 function findingGroupKey(group: FindingGroup) {
   return group.task_id === null ? UNASSIGNED_TASK : String(group.task_id);
@@ -321,6 +328,8 @@ export default function FindingsPage() {
     const requestFilter = filterFingerprint;
     if (activeFilterFingerprint.current !== requestFilter) return;
     const request = ++flatRequest.current;
+    // 批次指纹与下面实际发出的请求参数一一对应;仅在成功写入时生效(失败保持旧值)。
+    const requestKey = `${requestFilter}|${flatPage}|${flatPageSize}|${activeAssetScope ?? ""}`;
     setFlat((current) => ({ ...current, loading: true }));
     try {
       const result = await api.findingsPage({
@@ -335,7 +344,7 @@ export default function FindingsPage() {
         assetScope: activeAssetScope ?? undefined,
       });
       if (request !== flatRequest.current || activeFilterFingerprint.current !== requestFilter) return;
-      setFlat({ items: result.items, total: result.total, loaded: true, loading: false });
+      setFlat({ items: result.items, total: result.total, loaded: true, loading: false, requestKey });
     } catch {
       if (request !== flatRequest.current || activeFilterFingerprint.current !== requestFilter) return;
       // Polling keeps the last successful snapshot visible.
@@ -753,13 +762,15 @@ export default function FindingsPage() {
     }
   }
 
+  // pending 属于处置状态语义(findings 状态色),不属于严重度色,保持原样;
+  // 四个严重度色统一取自 lib/severity.ts。
   const statCards = [
     { label: t("stat.total"), value: stats.total, icon: BugIcon },
     { label: t("stat.pending"), value: stats.pending, tone: "text-amber-500", icon: ClockIcon },
-    { label: t("severity.critical"), value: stats.critical, tone: "text-rose-600", icon: ShieldAlertIcon },
-    { label: t("severity.high"), value: stats.high, tone: "text-red-500", icon: TriangleAlertIcon },
-    { label: t("severity.medium"), value: stats.medium, tone: "text-amber-500", icon: TriangleAlertIcon },
-    { label: t("severity.low"), value: stats.low, tone: "text-slate-500", icon: InfoIcon },
+    { label: t("severity.critical"), value: stats.critical, tone: severityTextClass("critical"), icon: ShieldAlertIcon },
+    { label: t("severity.high"), value: stats.high, tone: severityTextClass("high"), icon: TriangleAlertIcon },
+    { label: t("severity.medium"), value: stats.medium, tone: severityTextClass("medium"), icon: TriangleAlertIcon },
+    { label: t("severity.low"), value: stats.low, tone: severityTextClass("low"), icon: InfoIcon },
   ];
 
   // 导出弹窗里「当前筛选」的条数:两个视图的筛选一致,只是统计口径来源不同。
@@ -769,6 +780,17 @@ export default function FindingsPage() {
     () => (view === "asset" ? assetPathOf(assetTree.nodes, assetScope) : []),
     [assetScope, assetTree.nodes, view],
   );
+
+  // ── 发现战报接线(主题重塑第 8 项,第 4 条)────────────────────────────────
+  // 与仪表盘(单一数据批次)不同,这里的列表会被翻页/筛选/资产范围整批替换,所以
+  // ready 还要对齐"数据批次":当前 items 必须来自与当前请求参数一致的批次
+  // (requestKey 相等),否则轮询间隙或翻页途中都可能把新页数据误判成新增发现。
+  // 首载与换批时 hook 只重建 id 基线、不弹卡;同批轮询出现新 id 才生成战报。
+  const flatRequestKey = `${filterFingerprint}|${flatPage}|${flatPageSize}|${activeAssetScope ?? ""}`;
+  useNewFindingsAlert(flat.items, flat.loaded && flat.requestKey === flatRequestKey);
+
+  // 行进场窗口:仅首批数据就绪后的 1.2s 内给前 10 行挂 stagger;翻页/筛选不重播。
+  const listIntro = useStaggerOnce(flat.loaded);
 
   const rowProps = {
     selectedIds,
@@ -798,7 +820,7 @@ export default function FindingsPage() {
           </div>
         ) : (
           <>
-            <FindingsTable items={flat.items} selectAllLabel={t("selectAllPage")} {...rowProps} />
+            <FindingsTable items={flat.items} selectAllLabel={t("selectAllPage")} stagger={listIntro} {...rowProps} />
             <TablePagination
               page={flatPage}
               pageSize={flatPageSize}
@@ -833,10 +855,14 @@ export default function FindingsPage() {
       </div>
       <div className="flex flex-1 flex-col gap-4 md:gap-6">
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-          {statCards.map((stat) => {
+          {statCards.map((stat, index) => {
             const StatIcon = stat.icon;
             return (
-              <Card key={stat.label} className="gap-1 py-4">
+              <Card
+                key={stat.label}
+                className="animate-fade-up gap-1 py-4"
+                style={{ animationDelay: `${index * 50}ms` }}
+              >
                 <CardHeader className="px-4">
                   <CardDescription>{stat.label}</CardDescription>
                   <CardTitle className={cn("flex items-center gap-2 text-2xl tabular-nums", stat.tone)}>
@@ -880,7 +906,12 @@ export default function FindingsPage() {
                 ["low", t("severity.low")],
               ] as const
             ).map(([val, label]) => (
-              <ToggleGroupItem key={val} value={val} aria-label={t("severity.ariaFilter", { label })}>
+              <ToggleGroupItem
+                key={val}
+                value={val}
+                aria-label={t("severity.ariaFilter", { label })}
+                className={val === "all" ? undefined : severityFilterChipClass(val)}
+              >
                 {label}
               </ToggleGroupItem>
             ))}
@@ -1116,7 +1147,9 @@ export default function FindingsPage() {
             })}
             {groups.length === 0 && (
               <Card>
-                <CardContent className="py-12 text-center text-sm text-muted-foreground">{t("empty")}</CardContent>
+                <CardContent className="p-0">
+                  <EmptyState illustration="radar" title={t("empty")} />
+                </CardContent>
               </Card>
             )}
             <TablePagination

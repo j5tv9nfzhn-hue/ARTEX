@@ -18,8 +18,10 @@ import {
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { HttpCodeBlock } from "@/components/http-code-block";
 import { LinkTrafficDialog } from "@/components/link-traffic-dialog";
+import { LiveDot } from "@/components/live-dot";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,7 +50,7 @@ import type { TrafficDetail, TrafficExchange, TrafficHost, TrafficResp } from "@
 import { cn } from "@/lib/utils";
 
 function fmtTime(ts: string) {
-  return new Date(ts).toLocaleString("ko-KR", {
+  return new Date(ts).toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -359,6 +361,7 @@ export default function TrafficPage() {
             )}
           >
             <RadioTowerIcon className="size-3.5" />
+            {traffic?.enabled && <LiveDot className="size-1 bg-emerald-500" />}
             {traffic?.enabled ? t("recording") : t("stopped")}
           </span>
           {traffic?.proxy && <span className="font-mono text-xs text-muted-foreground">{traffic.proxy}</span>}
@@ -422,7 +425,7 @@ export default function TrafficPage() {
             </div>
             <div className="max-h-64 overflow-y-auto">
               {hosts.length === 0 ? (
-                <div className="px-3 py-6 text-center text-xs text-muted-foreground">{t("picker.empty")}</div>
+                <EmptyState compact illustration="radar" className="py-4" title={t("picker.empty")} />
               ) : (
                 sortedHosts.map((h, index) => (
                   <label
@@ -720,8 +723,13 @@ export default function TrafficPage() {
                 ))}
                 {exchanges.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-12 text-center text-sm text-muted-foreground">
-                      {traffic === null ? t("table.loading") : t("table.empty")}
+                    <TableCell colSpan={8} className="p-0">
+                      {/* 加载态与空态拆开:加载中不给插画,加载完成为空才展示空态 */}
+                      {traffic === null ? (
+                        <div className="text-muted-foreground py-12 text-center text-sm">{t("table.loading")}</div>
+                      ) : (
+                        <EmptyState illustration="radar" title={t("table.empty")} />
+                      )}
                     </TableCell>
                   </TableRow>
                 )}

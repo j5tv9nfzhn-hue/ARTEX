@@ -140,6 +140,8 @@ export type ChannelForm = {
   taskIDsText: string;
   assetIDsText: string;
   onStatusChange: boolean;
+  onTaskStatus: boolean;
+  onApproval: boolean;
 };
 
 export const emptyForm = (kind: string): ChannelForm => ({
@@ -155,6 +157,11 @@ export const emptyForm = (kind: string): ChannelForm => ({
   taskIDsText: "",
   assetIDsText: "",
   onStatusChange: false,
+  // 新建渠道默认接收两类任务级事件：任务结束与待审批都是「人必须知道」的
+  // 事项（任务会一直卡着等处理），默认勾选符合直觉；老渠道编辑时按后端
+  // 回显值 ?? false 处理，不会被这次默认值迁移。
+  onTaskStatus: true,
+  onApproval: true,
 });
 
 // parseKV 解析「每行 KEY=VALUE」的文本域。

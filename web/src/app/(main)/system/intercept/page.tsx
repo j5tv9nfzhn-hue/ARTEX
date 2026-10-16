@@ -6,6 +6,7 @@ import { BotIcon, ListFilterIcon, PencilIcon, PlusIcon, ShieldAlertIcon, Trash2I
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -592,14 +593,16 @@ export default function InterceptPage() {
               {loading ? (
                 <p className="p-6 text-sm text-muted-foreground">{t("rules.loading")}</p>
               ) : rules.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-                  <ShieldAlertIcon className="h-8 w-8 text-muted-foreground/40" />
-                  <p className="text-sm text-muted-foreground">{t("rules.empty")}</p>
-                  <Button size="sm" variant="outline" onClick={openNew}>
-                    <PlusIcon className="h-4 w-4" />
-                    {t("rules.addFirst")}
-                  </Button>
-                </div>
+                <EmptyState
+                  illustration="shield"
+                  title={t("rules.empty")}
+                  actions={
+                    <Button size="sm" variant="outline" onClick={openNew}>
+                      <PlusIcon className="h-4 w-4" />
+                      {t("rules.addFirst")}
+                    </Button>
+                  }
+                />
               ) : (
                 <Table>
                   <TableHeader>

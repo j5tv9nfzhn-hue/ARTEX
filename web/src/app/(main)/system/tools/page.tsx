@@ -6,6 +6,7 @@ import { PlayIcon, PlusIcon, RotateCcwIcon, SaveIcon, SearchIcon, Trash2Icon } f
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -429,9 +430,10 @@ export default function ToolsPage() {
             </CardHeader>
             <CardContent>
               {systemTools.length === 0 ? (
-                <p className="text-muted-foreground py-6 text-center text-sm">
-                  {query.trim() ? t("systemNoMatch") : t("systemEmpty")}
-                </p>
+                <EmptyState
+                  illustration="terminal"
+                  title={query.trim() ? t("systemNoMatch") : t("systemEmpty")}
+                />
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {systemTools.map((tool) => (
@@ -462,9 +464,10 @@ export default function ToolsPage() {
             </CardHeader>
             <CardContent>
               {customTools.length === 0 ? (
-                <p className="text-muted-foreground py-6 text-center text-sm">
-                  {query.trim() ? t("customNoMatch") : t("customEmpty")}
-                </p>
+                <EmptyState
+                  illustration="terminal"
+                  title={query.trim() ? t("customNoMatch") : t("customEmpty")}
+                />
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {customTools.map((tool) => (
@@ -542,7 +545,7 @@ function CustomToolDialog({
   const [key, setKey] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [kind, setKind] = React.useState<"shell" | "command" | "script" | "http">("shell");
-  const [ex, setEx] = React.useState<ExecState>({
+  const [execForm, setExecForm] = React.useState<ExecState>({
     command: "",
     code: "",
     method: "GET",
@@ -571,7 +574,7 @@ function CustomToolDialog({
       setKey("");
       setDescription("");
       setKind("shell");
-      setEx({
+      setExecForm({
         command: "",
         code: "",
         method: "GET",
@@ -593,7 +596,7 @@ function CustomToolDialog({
     setKey(t.key);
     setDescription(t.description);
     setKind((t.kind as "shell" | "command" | "script" | "http") ?? "shell");
-    setEx({
+    setExecForm({
       command: String(e.command ?? ""),
       code: String(e.code ?? ""),
       method: String(e.method ?? "GET"),
@@ -614,25 +617,25 @@ function CustomToolDialog({
 
   function buildExec(): Record<string, unknown> {
     if (kind === "shell") return {};
-    const t = ex.timeout_ms ? Number(ex.timeout_ms) : undefined;
-    if (kind === "command") return { command: ex.command, timeout_ms: t };
-    if (kind === "script") return { code: ex.code, timeout_ms: t };
+    const t = execForm.timeout_ms ? Number(execForm.timeout_ms) : undefined;
+    if (kind === "command") return { command: execForm.command, timeout_ms: t };
+    if (kind === "script") return { code: execForm.code, timeout_ms: t };
     let headers: Record<string, string> = {};
-    if (ex.headers.trim()) {
+    if (execForm.headers.trim()) {
       try {
-        headers = JSON.parse(ex.headers);
+        headers = JSON.parse(execForm.headers);
       } catch {
         /* validated on save */
       }
     }
     return {
-      method: ex.method,
-      url: ex.url,
+      method: execForm.method,
+      url: execForm.url,
       headers,
-      body: ex.body,
+      body: execForm.body,
       timeout_ms: t,
-      proxy: ex.proxy,
-      use_recording_proxy: ex.use_recording_proxy,
+      proxy: execForm.proxy,
+      use_recording_proxy: execForm.use_recording_proxy,
     };
   }
 
@@ -650,9 +653,9 @@ function CustomToolDialog({
         return;
       }
     }
-    if (kind === "http" && ex.headers.trim()) {
+    if (kind === "http" && execForm.headers.trim()) {
       try {
-        JSON.parse(ex.headers);
+        JSON.parse(execForm.headers);
       } catch {
         toast.error(t("headersError"));
         return;
@@ -708,9 +711,9 @@ function CustomToolDialog({
         return;
       }
     }
-    if (kind === "http" && ex.headers.trim()) {
+    if (kind === "http" && execForm.headers.trim()) {
       try {
-        JSON.parse(ex.headers);
+        JSON.parse(execForm.headers);
       } catch {
         toast.error(t("headersError"));
         return;
@@ -744,7 +747,7 @@ function CustomToolDialog({
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
           <div className="grid gap-1.5">
-            <Label className="text-xs">Key</Label>
+            <Label className="text-xs">{t("keyLabel")}</Label>
             <Input
               className="font-mono"
               placeholder={t("keyPlaceholder")}
@@ -780,8 +783,8 @@ function CustomToolDialog({
               <Textarea
                 className="font-mono text-xs"
                 rows={2}
-                value={ex.command}
-                onChange={(e) => setEx({ ...ex, command: e.target.value })}
+                value={execForm.command}
+                onChange={(e) => setExecForm({ ...execForm, command: e.target.value })}
               />
             </div>
           )}
@@ -791,9 +794,9 @@ function CustomToolDialog({
               <Textarea
                 className="font-mono text-xs"
                 rows={10}
-                value={ex.code}
+                value={execForm.code}
                 placeholder={"import json,sys\nargs=json.load(sys.stdin)\nprint(...)"}
-                onChange={(e) => setEx({ ...ex, code: e.target.value })}
+                onChange={(e) => setExecForm({ ...execForm, code: e.target.value })}
               />
             </div>
           )}
@@ -801,19 +804,19 @@ function CustomToolDialog({
             <div className="grid gap-2">
               <div className="flex gap-2">
                 <div className="grid gap-1.5">
-                  <Label className="text-xs">Method</Label>
+                  <Label className="text-xs">{t("methodLabel")}</Label>
                   <Input
                     className="w-24"
-                    value={ex.method}
-                    onChange={(e) => setEx({ ...ex, method: e.target.value })}
+                    value={execForm.method}
+                    onChange={(e) => setExecForm({ ...execForm, method: e.target.value })}
                   />
                 </div>
                 <div className="grid flex-1 gap-1.5">
                   <Label className="text-xs">{t("httpUrlLabel")}</Label>
                   <Input
                     className="font-mono text-xs"
-                    value={ex.url}
-                    onChange={(e) => setEx({ ...ex, url: e.target.value })}
+                    value={execForm.url}
+                    onChange={(e) => setExecForm({ ...execForm, url: e.target.value })}
                   />
                 </div>
               </div>
@@ -822,9 +825,9 @@ function CustomToolDialog({
                 <Textarea
                   className="font-mono text-xs"
                   rows={2}
-                  value={ex.headers}
+                  value={execForm.headers}
                   placeholder={'{"Authorization": "Bearer {token}"}'}
-                  onChange={(e) => setEx({ ...ex, headers: e.target.value })}
+                  onChange={(e) => setExecForm({ ...execForm, headers: e.target.value })}
                 />
               </div>
               <div className="grid gap-1.5">
@@ -832,8 +835,8 @@ function CustomToolDialog({
                 <Textarea
                   className="font-mono text-xs"
                   rows={2}
-                  value={ex.body}
-                  onChange={(e) => setEx({ ...ex, body: e.target.value })}
+                  value={execForm.body}
+                  onChange={(e) => setExecForm({ ...execForm, body: e.target.value })}
                 />
               </div>
               <div className="flex items-center gap-4">
@@ -841,14 +844,14 @@ function CustomToolDialog({
                   <Label className="text-xs">{t("proxyLabel")}</Label>
                   <Input
                     className="font-mono text-xs w-56"
-                    value={ex.proxy}
-                    onChange={(e) => setEx({ ...ex, proxy: e.target.value })}
+                    value={execForm.proxy}
+                    onChange={(e) => setExecForm({ ...execForm, proxy: e.target.value })}
                   />
                 </div>
                 <label className="mt-4 flex items-center gap-2 text-sm">
                   <Checkbox
-                    checked={ex.use_recording_proxy}
-                    onCheckedChange={(v) => setEx({ ...ex, use_recording_proxy: !!v })}
+                    checked={execForm.use_recording_proxy}
+                    onCheckedChange={(v) => setExecForm({ ...execForm, use_recording_proxy: !!v })}
                   />
                   {t("useRecordingProxy")}
                 </label>
@@ -863,8 +866,8 @@ function CustomToolDialog({
                 <Input
                   type="number"
                   className="w-32"
-                  value={ex.timeout_ms}
-                  onChange={(e) => setEx({ ...ex, timeout_ms: e.target.value })}
+                  value={execForm.timeout_ms}
+                  onChange={(e) => setExecForm({ ...execForm, timeout_ms: e.target.value })}
                 />
               </div>
             </div>

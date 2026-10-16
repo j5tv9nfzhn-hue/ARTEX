@@ -5,13 +5,14 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { ArchiveIcon, ArrowLeftIcon, BrainIcon, CheckIcon, CircleAlertIcon, PauseIcon, PlayIcon } from "lucide-react";
+import { ArchiveIcon, ArrowLeftIcon, BrainIcon, CheckIcon, CircleAlertIcon, PauseIcon, PlayIcon, ShieldAlertIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { StatusBadge } from "@/components/status-badge";
 import { TaskLLMProfileChain } from "@/components/task-llm-profile-chain";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +51,7 @@ import { OverviewTab } from "./_tabs/overview-tab";
 import { ReportTab } from "./_tabs/report-tab";
 import { RetestsTab } from "./_tabs/retests-tab";
 import { SessionsTab } from "./_tabs/sessions-tab";
+import { TimelineTab } from "./_tabs/timeline-tab";
 
 const TAB_VALUES = [
   "sessions",
@@ -61,6 +63,7 @@ const TAB_VALUES = [
   "assets",
   "coverage",
   "intercept",
+  "timeline",
   "report",
 ] as const;
 
@@ -370,6 +373,25 @@ function TaskDetailInner() {
           <Separator orientation="vertical" className="mx-1 hidden h-4 sm:block" />
           <TaskLLMControl task={task} profiles={profiles} onUpdated={load} />
           <StatusBadge domain={terminal ? "task" : "engine"} value={terminal ? task.status : engineMode} dot />
+          {interceptPendingCount > 0 && (
+            // 等待审批的显式提示：批次 C 的通知只覆盖"事件发生"那一刻，这里补一条
+            // 常驻状态，点击跳到与通知同一落点的审批记录页。
+            <Link
+              href="/system/intercept/approvals"
+              className="focus-visible:ring-ring shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2"
+              title={t("header.pendingApprovalsTitle", { n: interceptPendingCount })}
+            >
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              >
+                <ShieldAlertIcon className="size-3.5" />
+                {/* 窄屏只留计数，避免头行横向溢出；完整文案在 sm 起展示。 */}
+                <span className="hidden sm:inline">{t("header.pendingApprovals", { n: interceptPendingCount })}</span>
+                <span className="sm:hidden">×{interceptPendingCount}</span>
+              </Badge>
+            </Link>
+          )}
           {canArchive ? (
             <AlertDialog>
               <AlertDialogTrigger asChild>{archiveTrigger}</AlertDialogTrigger>
@@ -443,6 +465,9 @@ function TaskDetailInner() {
         </TabsContent>
         <TabsContent value="intercept" className="mt-0">
           <InterceptTab taskId={id} />
+        </TabsContent>
+        <TabsContent value="timeline" className="mt-0">
+          <TimelineTab taskId={id} onReverted={load} />
         </TabsContent>
         <TabsContent value="report" className="mt-0">
           <ReportTab taskId={id} />

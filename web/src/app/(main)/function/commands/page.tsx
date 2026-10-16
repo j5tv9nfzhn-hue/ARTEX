@@ -5,6 +5,7 @@ import * as React from "react";
 import { BarChart3Icon, ChevronLeftIcon, ChevronRightIcon, Loader2Icon, SearchIcon, TerminalIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -18,7 +19,7 @@ import type { CommandRecord, ToolStat } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function fmtTime(ts: string) {
-  return new Date(ts).toLocaleString("ko-KR", {
+  return new Date(ts).toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -211,7 +212,7 @@ export default function CommandsPage() {
                 <TableRow>
                   <TableHead className="w-[130px]">{t("colTime")}</TableHead>
                   <TableHead className="w-[60px]">{t("colTask")}</TableHead>
-                  <TableHead className="w-[90px]">Worker</TableHead>
+                  <TableHead className="w-[90px]">{t("colWorker")}</TableHead>
                   <TableHead className="w-[110px]">{t("colTool")}</TableHead>
                   <TableHead>{t("colInput")}</TableHead>
                   <TableHead className="w-[60px]">{t("colStatus")}</TableHead>
@@ -226,8 +227,8 @@ export default function CommandsPage() {
                   </TableRow>
                 ) : commands.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
-                      {t("empty")}
+                    <TableCell colSpan={6} className="p-0">
+                      <EmptyState illustration="terminal" title={t("empty")} />
                     </TableCell>
                   </TableRow>
                 ) : (

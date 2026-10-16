@@ -6,6 +6,7 @@ import { ArrowDownIcon, ArrowUpIcon, PlusIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { TrafficEvidenceViewer } from "@/components/traffic-evidence-viewer";
 import { TrafficPickerDialog } from "@/components/traffic-picker-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -20,7 +21,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -125,12 +125,7 @@ export function FindingTrafficPanel({
           {!data ? (
             <Skeleton className="h-28 w-full" />
           ) : data.bindings.length === 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>{t("traffic.empty")}</EmptyTitle>
-                <EmptyDescription>{t("traffic.emptyHint")}</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
+            <EmptyState compact illustration="radar" title={t("traffic.empty")} description={t("traffic.emptyHint")} />
           ) : (
             data.bindings.map((b, index) => (
               <div key={b.id} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
@@ -153,7 +148,7 @@ export function FindingTrafficPanel({
                 {b.note ? <p className="text-sm whitespace-pre-wrap">{b.note}</p> : null}
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">
-                    {new Date(b.snapshot.captured_at * 1000).toLocaleString("ko-KR")}
+                    {new Date(b.snapshot.captured_at * 1000).toLocaleString("zh-CN")}
                   </span>
                   <div className="flex flex-wrap gap-1">
                     <Button variant="outline" size="sm" onClick={() => setPreview(b.id)}>

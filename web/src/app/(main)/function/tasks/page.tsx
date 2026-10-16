@@ -35,6 +35,7 @@ import {
   PlusIcon,
   SaveIcon,
   SearchIcon,
+  ShieldAlertIcon,
   SlidersHorizontalIcon,
   StarIcon,
   TagsIcon,
@@ -46,6 +47,8 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { AssetInterceptRulesEditor } from "@/components/asset-intercept-rules-editor";
+import { EmptyState } from "@/components/empty-state";
+import { useStaggerOnce } from "@/components/motion";
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
 import { TaskLLMProfileChain } from "@/components/task-llm-profile-chain";
@@ -87,7 +90,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import {
   Field,
   FieldContent,
@@ -121,6 +123,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ApiError, api } from "@/lib/api";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
+import { severityTextClass } from "@/lib/severity";
 import { type SortDirection, useStoredSortPreference } from "@/lib/sort-preference";
 import type {
   AssetInterceptRuleInput,
@@ -182,6 +185,23 @@ function fmtDuration(sec: number): string {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+// fmtFirstFindingMS renders 「首发现」耗时（毫秒差）为紧凑字符串（4m / 1h20m）。
+// 0 = 尚未产出 finding，调用方在渲染前已判零。
+function fmtFirstFindingMS(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h${String(m % 60).padStart(2, "0")}m`;
+}
+
+// fmtPerHour renders the backend's one-decimal findings-per-hour float without a
+// trailing ".0"（12.0 → 12，0.5 → 0.5）。
+function fmtPerHour(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
 
 // taskDuration is the task's run duration in seconds: created → now while running,
@@ -399,6 +419,10 @@ export default function TasksPage() {
     () => ordered.slice((page - 1) * pageSize, page * pageSize),
     [ordered, page, pageSize],
   );
+
+  // 表格行进场:任务列表没有独立的 loaded 标记,首批非空数据即"就绪";
+  // useStaggerOnce 只在首个 1.2s 窗口内返回 true,翻页/筛选(重排)不再重播。
+  const listIntro = useStaggerOnce(tasks.length > 0);
 
   // 多选删除:选择跨翻页/筛选保留,只在任务真的消失(被删或后端不再返回)时收敛。
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
@@ -925,12 +949,12 @@ export default function TasksPage() {
             </div>
 
             {tasks.length === 0 ? (
-              <div className="text-muted-foreground mx-4 flex items-center justify-center rounded-lg border border-dashed py-20 text-sm lg:mx-6">
-                {t("empty.noTasks")}
+              <div className="mx-4 rounded-lg border border-dashed lg:mx-6">
+                <EmptyState illustration="flag" title={t("empty.noTasks")} />
               </div>
             ) : filtered.length === 0 ? (
-              <div className="text-muted-foreground mx-4 flex items-center justify-center rounded-lg border border-dashed py-20 text-sm lg:mx-6">
-                {t("empty.noMatch")}
+              <div className="mx-4 rounded-lg border border-dashed lg:mx-6">
+                <EmptyState illustration="flag" title={t("empty.noMatch")} description={t("empty.noMatchHint")} />
               </div>
             ) : (
               <Table className="**:data-[slot='table-cell']:px-4 **:data-[slot='table-head']:px-4">
@@ -966,6 +990,9 @@ export default function TasksPage() {
                       {t("table.findings")}{" "}
                       <span className="text-muted-foreground font-normal">{t("table.findingsSub")}</span>
                     </TableHead>
+                    <TableHead className="text-center" title={t("table.outputTitle")}>
+                      {t("table.output")}
+                    </TableHead>
                     <TableHead className="text-center">{t("table.runningWorker")}</TableHead>
                     <SortableTaskHead
                       field="created"
@@ -990,10 +1017,12 @@ export default function TasksPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {paginated.map((task) => (
+                  {paginated.map((task, index) => (
                     <TaskRow
                       key={task.id}
                       task={task}
+                      // 首批进场:前 10 行 50ms 递增、封顶 450ms;窗口关闭后不再下发延迟。
+                      introDelay={listIntro && index < 10 ? Math.min(index * 50, 450) : undefined}
                       // running 任务才吃 nowSec;其余行传 0 —— props 不变,memo 就能拦下每秒 tick
                       // 带来的整表重渲染,只让在跑的那几行走时长。
                       nowSec={task.status === "running" ? nowSec : 0}
@@ -1179,6 +1208,7 @@ const TaskRow = React.memo(function TaskRow({
   onArchive,
   selected,
   onSelectedChange,
+  introDelay,
 }: {
   task: Task;
   nowSec: number;
@@ -1189,10 +1219,19 @@ const TaskRow = React.memo(function TaskRow({
   onArchive: (task: Task) => Promise<void>;
   selected: boolean;
   onSelectedChange: (id: string, checked: boolean) => void;
+  /**
+   * 首批进场延迟(ms):由父层 useStaggerOnce 的窗口下发,窗口关闭即 undefined。
+   * <tr> 不能包 div,动画类与延迟直接挂在行上;翻页/筛选换批不下发,不重播。
+   */
+  introDelay?: number;
 }) {
   const t = useTranslations("tasksPage");
   return (
-    <TableRow className="group border-border/60" data-state={selected ? "selected" : undefined}>
+    <TableRow
+      className={cn("group border-border/60", introDelay !== undefined && "animate-fade-up")}
+      style={introDelay !== undefined ? { animationDelay: `${introDelay}ms` } : undefined}
+      data-state={selected ? "selected" : undefined}
+    >
       <TableCell>
         <Checkbox
           checked={selected}
@@ -1208,6 +1247,21 @@ const TaskRow = React.memo(function TaskRow({
           <TaskNameEditor task={task} onRename={onRename} />
           {task.active && <StarIcon className="size-4 shrink-0 fill-amber-400 text-amber-400" />}
           {taskIsPinned(task) && <PinIcon className="text-primary size-4 shrink-0" aria-label={t("row.pinnedBadge")} />}
+          {task.pending_approvals && task.pending_approvals > 0 ? (
+            <Link
+              href="/system/intercept/approvals"
+              className="focus-visible:ring-ring shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2"
+              title={t("row.pendingApprovalsTitle", { n: task.pending_approvals })}
+            >
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              >
+                <ShieldAlertIcon className="size-3" />
+                {t("row.pendingApprovals", { n: task.pending_approvals })}
+              </Badge>
+            </Link>
+          ) : null}
         </div>
       </TableCell>
       <TableCell className="text-muted-foreground max-w-40">
@@ -1240,14 +1294,39 @@ const TaskRow = React.memo(function TaskRow({
           const seg = (n: number, cls: string) => <span className={n > 0 ? cls : "text-muted-foreground"}>{n}</span>;
           return (
             <span className="font-medium whitespace-nowrap" title={t("table.findingsTitle")}>
-              {seg(f.critical, "text-rose-600 dark:text-rose-400")}
+              {seg(f.critical, severityTextClass("critical"))}
               <span className="text-muted-foreground">/</span>
-              {seg(f.high, "text-red-600 dark:text-red-400")}
+              {seg(f.high, severityTextClass("high"))}
               <span className="text-muted-foreground">/</span>
-              {seg(f.medium, "text-amber-600 dark:text-amber-400")}
+              {seg(f.medium, severityTextClass("medium"))}
               <span className="text-muted-foreground">/</span>
-              {seg(f.low, "text-slate-600 dark:text-slate-400")}
+              {seg(f.low, severityTextClass("low"))}
             </span>
+          );
+        })()}
+      </TableCell>
+      <TableCell className="text-center text-xs tabular-nums">
+        {(() => {
+          // 价值指标：产出速率（条/时）+ 首发现耗时。两者都为 0 时给一个占位破折号，
+          // 避免没有产出的任务在新增列上显示成"空单元格"。
+          const perHour = task.findings_per_hour ?? 0;
+          const firstMs = task.first_finding_ms ?? 0;
+          if (perHour <= 0 && firstMs <= 0) return <span className="text-muted-foreground">—</span>;
+          return (
+            <div className="flex flex-col items-center gap-0.5" title={t("row.outputTitle")}>
+              {perHour > 0 ? (
+                <span className="font-medium whitespace-nowrap">
+                  {fmtPerHour(perHour)} {t("row.perHourUnit")}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+              {firstMs > 0 && (
+                <span className="text-muted-foreground text-[10px] whitespace-nowrap">
+                  {t("row.firstFinding", { time: fmtFirstFindingMS(firstMs) })}
+                </span>
+              )}
+            </div>
           );
         })()}
       </TableCell>
@@ -1871,12 +1950,9 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
             <Spinner />
           </div>
         ) : archives.length === 0 ? (
-          <Empty className="mx-4 border border-dashed lg:mx-6">
-            <EmptyHeader>
-              <EmptyTitle>{t("archive.emptyTitle")}</EmptyTitle>
-              <EmptyDescription>{t("archive.emptyDescription")}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <div className="mx-4 rounded-lg border border-dashed lg:mx-6">
+            <EmptyState illustration="flag" title={t("archive.emptyTitle")} description={t("archive.emptyDescription")} />
+          </div>
         ) : (
           <Table className="**:data-[slot='table-cell']:px-4 **:data-[slot='table-head']:px-4">
             <TableHeader className="[&_tr]:border-t">
@@ -3036,16 +3112,18 @@ function CategoryManagementSheet({
                         </div>
                       </div>
                       {visibleTasks.length === 0 ? (
-                        <Empty className="min-h-36 border">
-                          <EmptyHeader>
-                            <EmptyTitle>
-                              {selectedCategory
+                        <div className="min-h-36 rounded-lg border border-dashed">
+                          <EmptyState
+                            compact
+                            illustration="flag"
+                            title={
+                              selectedCategory
                                 ? t("categoryManage.emptyCategoryTitle")
-                                : t("categoryManage.emptyUncategorizedTitle")}
-                            </EmptyTitle>
-                            <EmptyDescription>{t("categoryManage.emptyDescription")}</EmptyDescription>
-                          </EmptyHeader>
-                        </Empty>
+                                : t("categoryManage.emptyUncategorizedTitle")
+                            }
+                            description={t("categoryManage.emptyDescription")}
+                          />
+                        </div>
                       ) : (
                         <ItemGroup className="gap-2">
                           {visibleTasks.map((task) => (
@@ -3152,6 +3230,7 @@ function CreateTaskSheet({
   const [creating, setCreating] = React.useState(false);
   const [timeoutMin, setTimeoutMin] = React.useState(""); // 任务级超时(分钟);空/0 = 不限时
   const [heartbeatMin, setHeartbeatMin] = React.useState("10"); // planner 心跳(分钟);默认10,下限10(与后端一致)
+  const [tokenBudgetK, setTokenBudgetK] = React.useState(""); // 任务级 token 预算(千 token);空 = 跟随系统默认(default_task_token_budget),0 = 显式不限
   const [seedFirstIntent, setSeedFirstIntent] = React.useState(false); // 创建时下发种子意图,worker 免等首轮 planner 直接开跑;默认关闭,走标准先规划再执行
   const [coverageEnabled, setCoverageEnabled] = React.useState(true); // 资产覆盖度功能;默认开。关闭=不计算/展示覆盖度、不累积范围、隐藏范围类工具(company 关联不受影响)
   const [interceptRules, setInterceptRules] = React.useState<AssetInterceptRuleInput[]>([]); // 任务级资产拦截规则(仅本任务生效,不进全局表)
@@ -3205,6 +3284,14 @@ function CreateTaskSheet({
       toast.error(t("create.validateSourceLimit", { max: MAX_SOURCE_TASKS }));
       return;
     }
+    // Token 预算(千 token):空 = 不下发字段,由服务端取全局默认;0 = 显式不限;
+    // 只在显式给值时校验,避免空白输入误报。
+    const budgetTrim = tokenBudgetK.trim();
+    const budgetProvided = budgetTrim !== "";
+    if (budgetProvided && (!Number.isFinite(Number(budgetTrim)) || Number(budgetTrim) < 0)) {
+      toast.error(t("create.budgetInvalid"));
+      return;
+    }
     setCreating(true);
     try {
       const timeoutSec = Math.max(0, Math.floor(Number(timeoutMin) || 0)) * 60;
@@ -3221,6 +3308,7 @@ function CreateTaskSheet({
         seedFirstIntent,
         planHeartbeatSeconds: heartbeatSec,
         coverageEnabled,
+        tokenBudget: budgetProvided ? Math.floor(Number(budgetTrim) * 1000) : undefined,
         interceptRules: interceptRules
           .map((r) => ({ ...r, pattern: r.pattern.trim() }))
           .filter((r) => r.pattern !== ""),
@@ -3236,6 +3324,7 @@ function CreateTaskSheet({
       setLLMProfileIDs([]);
       setTimeoutMin("");
       setHeartbeatMin("10");
+      setTokenBudgetK("");
       setSeedFirstIntent(false);
       setCoverageEnabled(true);
       setInterceptRules([]);
@@ -3420,6 +3509,19 @@ function CreateTaskSheet({
                     onChange={(e) => setHeartbeatMin(e.target.value)}
                   />
                   <p className="text-muted-foreground text-xs">{t("create.heartbeatHint")}</p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="token-budget-k">{t("create.budgetLabel")}</Label>
+                  <Input
+                    id="token-budget-k"
+                    type="number"
+                    min={0}
+                    className="w-40"
+                    placeholder={t("create.budgetPlaceholder")}
+                    value={tokenBudgetK}
+                    onChange={(e) => setTokenBudgetK(e.target.value)}
+                  />
+                  <p className="text-muted-foreground text-xs">{t("create.budgetHint")}</p>
                 </div>
                 <div className="grid gap-2">
                   <label htmlFor="seed-first-intent" className="flex items-center gap-2 text-sm">

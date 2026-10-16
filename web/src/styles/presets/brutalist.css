@@ -1,5 +1,5 @@
 /* 
-label: Brutalist
+label: 粗野主义
 value: brutalist 
 */
 
@@ -21,10 +21,11 @@ value: brutalist
   --border: oklch(0 0 0);
   --input: oklch(0 0 0);
   --ring: oklch(0.6489 0.237 26.9728);
-  --chart-1: oklch(0.6489 0.237 26.9728);
-  --chart-2: oklch(0.968 0.211 109.7692);
-  --chart-3: oklch(0.5635 0.2408 260.8178);
-  --chart-4: oklch(0.7323 0.2492 142.4953);
+  /* 图表槽位统一角色:1 蓝/青 · 2 紫/靛 · 3 翠/绿 · 4 琥珀 · 5 玫瑰(粗野主义保持高饱和) */
+  --chart-1: oklch(0.5635 0.2408 260.8178);
+  --chart-2: oklch(0.55 0.25 295);
+  --chart-3: oklch(0.7323 0.2492 142.4953);
+  --chart-4: oklch(0.82 0.19 109.77);
   --chart-5: oklch(0.5931 0.2726 328.3634);
   --sidebar: oklch(0.9551 0 0);
   --sidebar-foreground: oklch(0 0 0);
@@ -65,10 +66,11 @@ value: brutalist
   --border: oklch(1 0 0);
   --input: oklch(1 0 0);
   --ring: oklch(0.7044 0.1872 23.1858);
-  --chart-1: oklch(0.7044 0.1872 23.1858);
-  --chart-2: oklch(0.9691 0.2005 109.6228);
-  --chart-3: oklch(0.6755 0.1765 252.2592);
-  --chart-4: oklch(0.7395 0.2268 142.8504);
+  /* 暗色:与亮色同槽位(黄在纯黑底上可读,保留原亮黄;琥珀位沿用 0.9691) */
+  --chart-1: oklch(0.6755 0.1765 252.2592);
+  --chart-2: oklch(0.69 0.23 295);
+  --chart-3: oklch(0.7395 0.2268 142.8504);
+  --chart-4: oklch(0.9691 0.2005 109.6228);
   --chart-5: oklch(0.6131 0.2458 328.0714);
   --sidebar: oklch(0 0 0);
   --sidebar-foreground: oklch(1 0 0);

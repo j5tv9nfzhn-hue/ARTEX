@@ -18,6 +18,7 @@ import {
   ComboboxList,
   ComboboxValue,
 } from "@/components/ui/combobox";
+import { ChainCapabilityAdvice, ProfileCapabilityBadges } from "@/components/llm-profile-badges";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { LLMProfile } from "@/lib/types";
 
@@ -129,7 +130,12 @@ export function TaskLLMProfileChain({
                         {profile?.is_default ? t("activeSuffix") : ""}
                       </span>
                     </span>
-                    {profile && <span className="truncate text-muted-foreground text-xs">{profile.model}</span>}
+                    {profile && (
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-muted-foreground text-xs">{profile.model}</span>
+                        <ProfileCapabilityBadges profile={profile} />
+                      </span>
+                    )}
                   </div>
                 </ComboboxItem>
               );
@@ -154,6 +160,7 @@ export function TaskLLMProfileChain({
                   <p className="truncate font-medium text-sm">{profile?.name ?? t("profileRef", { id })}</p>
                   <div className="flex min-w-0 items-center gap-2">
                     <p className="truncate text-muted-foreground text-xs">{profile?.model ?? t("unavailable")}</p>
+                    <ProfileCapabilityBadges profile={profile} />
                   </div>
                 </div>
                 <ProfileRoleBadge index={index} currentIndex={currentIndex} />
@@ -193,6 +200,13 @@ export function TaskLLMProfileChain({
             );
           })}
         </div>
+      )}
+
+      {value.length > 0 && (
+        <ChainCapabilityAdvice
+          head={profilesByID.get(currentProfileID)}
+          members={value.map((id) => profilesByID.get(id))}
+        />
       )}
 
       {onActiveProfileChange && value.length > 0 && (

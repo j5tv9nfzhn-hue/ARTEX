@@ -16,6 +16,7 @@ import {
 import { useTranslations } from "next-intl";
 
 import { CopyButton } from "@/components/copy-button";
+import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { StatusBadge } from "@/components/status-badge";
 import {
@@ -37,10 +38,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { SEVERITIES } from "@/lib/severity";
 import type { ActiveFindingRetest, Finding, FindingStatus, Severity } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
 
 export const FINDING_STATUSES: FindingStatus[] = [
   "pending",
@@ -78,7 +78,7 @@ export function isSameFinding(left: Finding, right: Finding): boolean {
 }
 
 export function fmtTime(ts: string) {
-  return new Date(ts).toLocaleString("ko-KR", {
+  return new Date(ts).toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -108,6 +108,12 @@ interface FindingsTableProps {
   onDelete: (finding: Finding) => void;
   /** 全选框的无障碍标签,平铺视图与分组视图措辞不同。 */
   selectAllLabel?: string;
+  /**
+   * 首批数据进场:给前 10 行挂 50ms 递增的 .animate-fade-up(封顶见下),
+   * 由父层 useStaggerOnce 控制只在首次就绪后的窗口内为 true;翻页/筛选不重播。
+   * <tr> 不能插包装 div,动画类与延迟直接挂在行上;展开行不参与。
+   */
+  stagger?: boolean;
 }
 
 // FindingsTable 是发现列表的表格主体,平铺视图与按任务分组视图共用同一份行渲染
@@ -130,6 +136,7 @@ export function FindingsTable({
   onDeepen,
   onDelete,
   selectAllLabel,
+  stagger = false,
 }: FindingsTableProps) {
   const t = useTranslations("findings");
   const tStatus = useTranslations("status");
@@ -166,14 +173,16 @@ export function FindingsTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {items.map((f) => {
+        {items.map((f, index) => {
           const rowKey = findingRowKey(f);
           const open = expandedKey === rowKey;
           const retest = f.finding_id ? activeRetests[f.finding_id] : undefined;
+          const introDelay = stagger && index < 10 ? Math.min(index * 50, 450) : null;
           return (
             <React.Fragment key={rowKey}>
               <TableRow
-                className="cursor-pointer"
+                className={cn("cursor-pointer", introDelay !== null && "animate-fade-up")}
+                style={introDelay !== null ? { animationDelay: `${introDelay}ms` } : undefined}
                 role="button"
                 tabIndex={0}
                 aria-expanded={open}
@@ -446,8 +455,8 @@ export function FindingsTable({
         })}
         {items.length === 0 && (
           <TableRow>
-            <TableCell colSpan={COLUMN_COUNT} className="py-12 text-center text-sm text-muted-foreground">
-              {t("empty")}
+            <TableCell colSpan={COLUMN_COUNT} className="p-0">
+              <EmptyState compact illustration="radar" className="py-4" title={t("empty")} />
             </TableCell>
           </TableRow>
         )}

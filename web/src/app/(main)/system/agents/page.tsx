@@ -7,6 +7,8 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { AgentEditor } from "@/components/agent-editor";
+import { EmptyState } from "@/components/empty-state";
+import { useStaggerOnce } from "@/components/motion";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,10 +38,22 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import type { Agent } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 // AgentGridCard is one clickable tile opening the agent's editor drawer. Custom
 // (non-builtin) agents get a delete button.
-function AgentGridCard({ agent, onOpen, onDeleted }: { agent: Agent; onOpen: () => void; onDeleted: () => void }) {
+function AgentGridCard({
+  agent,
+  onOpen,
+  onDeleted,
+  delay,
+}: {
+  agent: Agent;
+  onOpen: () => void;
+  onDeleted: () => void;
+  /** 首批进场延迟(ms),由父层 useStaggerOnce 的窗口下发;其余时刻 undefined(不挂动画)。 */
+  delay?: number;
+}) {
   const t = useTranslations("agentsPage");
   async function del() {
     try {
@@ -51,7 +65,13 @@ function AgentGridCard({ agent, onOpen, onDeleted }: { agent: Agent; onOpen: () 
     }
   }
   return (
-    <div className="hover:border-primary/50 group relative flex flex-col gap-2 rounded-lg border p-4 transition-colors">
+    <div
+      className={cn(
+        "hover:border-primary/50 group relative flex flex-col gap-2 rounded-lg border p-4 transition-colors",
+        delay !== undefined && "animate-fade-up",
+      )}
+      style={delay !== undefined ? { animationDelay: `${delay}ms` } : undefined}
+    >
       <button type="button" onClick={onOpen} className="flex flex-col gap-2 text-left">
         <div className="flex flex-wrap items-center gap-2">
           <Bot className="text-muted-foreground size-4" />
@@ -151,7 +171,7 @@ function CreateAgentDialog({ onCreated }: { onCreated: (key: string) => void }) 
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid gap-1.5">
-            <Label htmlFor="agent-key">Key</Label>
+            <Label htmlFor="agent-key">{t("keyLabel")}</Label>
             <Input
               id="agent-key"
               placeholder={t("keyPlaceholder")}
@@ -208,6 +228,9 @@ export default function AgentsPage() {
 
   const editing = agents.find((a) => a.key === editKey) ?? null;
 
+  // 卡片进场:首批数据就绪后的 1.2s 窗口内 50ms 递增(封顶 450ms),之后新增/刷新保持静态。
+  const listIntro = useStaggerOnce(agents.length > 0);
+
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
       <div className="flex items-start justify-between gap-3">
@@ -230,11 +253,17 @@ export default function AgentsPage() {
         </CardHeader>
         <CardContent>
           {agents.length === 0 ? (
-            <p className="text-muted-foreground py-6 text-center text-sm">{t("empty")}</p>
+            <EmptyState illustration="nodes" title={t("empty")} />
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {agents.map((a) => (
-                <AgentGridCard key={a.key} agent={a} onOpen={() => setEditKey(a.key)} onDeleted={reload} />
+              {agents.map((a, index) => (
+                <AgentGridCard
+                  key={a.key}
+                  agent={a}
+                  delay={listIntro ? Math.min(index * 50, 450) : undefined}
+                  onOpen={() => setEditKey(a.key)}
+                  onDeleted={reload}
+                />
               ))}
             </div>
           )}

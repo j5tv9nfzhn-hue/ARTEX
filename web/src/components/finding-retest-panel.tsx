@@ -7,13 +7,13 @@ import Link from "next/link";
 import { RotateCcwIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { EmptyState } from "@/components/empty-state";
 import { FindingRetestDialog } from "@/components/finding-retest-dialog";
 import { Markdown } from "@/components/markdown";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api";
@@ -108,12 +108,7 @@ export function FindingRetestPanel({
         ) : null}
         {!error && items === null ? <Skeleton className="h-16 w-full" /> : null}
         {!error && items?.length === 0 ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>{t("emptyTitle")}</EmptyTitle>
-              <EmptyDescription>{t("emptyDesc")}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <EmptyState compact illustration="flag" title={t("emptyTitle")} description={t("emptyDesc")} />
         ) : null}
         {!error && items
           ? items.map((item) => (
@@ -127,7 +122,7 @@ export function FindingRetestPanel({
                       : t(`status.${item.status}`)}
                   </Badge>
                   <span className="text-muted-foreground text-xs">
-                    #{item.id} · {new Date(item.created_at).toLocaleString("ko-KR")}
+                    #{item.id} · {new Date(item.created_at).toLocaleString("zh-CN")}
                   </span>
                   {item.conversation_id != null ? (
                     <Button asChild variant="ghost" size="sm" className="ml-auto">

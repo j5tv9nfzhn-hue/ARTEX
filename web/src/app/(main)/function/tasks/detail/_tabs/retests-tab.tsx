@@ -7,12 +7,12 @@ import Link from "next/link";
 import { ArrowUpRightIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { EmptyState } from "@/components/empty-state";
 import { FindingRetestPanel } from "@/components/finding-retest-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
@@ -112,12 +112,7 @@ export function RetestsTab({ taskId }: { taskId: string }) {
               </React.Fragment>
             ))}
             {loaded && findings.length === 0 ? (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>{t("retests.emptyTitle")}</EmptyTitle>
-                  <EmptyDescription>{t("retests.emptyDesc")}</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
+              <EmptyState compact illustration="flag" title={t("retests.emptyTitle")} description={t("retests.emptyDesc")} />
             ) : null}
           </CardContent>
           {data && data.total > PAGE_SIZE ? (

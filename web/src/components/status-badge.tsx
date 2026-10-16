@@ -23,15 +23,17 @@ export function StatusBadge({
   const t = useTranslations("status");
   const key = `${domain}.${value}`;
   const label = t.has(key) ? t(key) : value;
+  // severity 域由 lib/status.ts 直接携带完整 class(badgeClass/dotClass,源自
+  // lib/severity.ts 唯一事实源);其余域按 tone 推导。
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-        toneClasses[meta.tone],
+        meta.badgeClass ?? toneClasses[meta.tone],
         className,
       )}
     >
-      {dot && <span className={cn("size-1.5 rounded-full", toneDot[meta.tone])} />}
+      {dot && <span className={cn("size-1.5 rounded-full", meta.dotClass ?? toneDot[meta.tone])} />}
       {label}
     </span>
   );

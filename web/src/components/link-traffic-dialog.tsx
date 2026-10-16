@@ -5,6 +5,7 @@ import * as React from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -127,7 +128,12 @@ export function LinkTrafficDialog({
             </Button>
           ))}
           {!data?.items.length ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">{loading ? t("loading") : t("empty")}</p>
+            // 加载态保留一行文案,加载完成为空才展示空态插画
+            loading ? (
+              <p className="text-muted-foreground py-6 text-center text-sm">{t("loading")}</p>
+            ) : (
+              <EmptyState compact illustration="radar" title={t("empty")} />
+            )
           ) : null}
         </div>
         <div className="flex items-center justify-between gap-2">

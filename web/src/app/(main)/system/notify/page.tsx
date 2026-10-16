@@ -107,6 +107,10 @@ export default function NotifyPage() {
       taskIDsText: (f.task_ids ?? []).join(","),
       assetIDsText: (f.asset_ids ?? []).join(","),
       onStatusChange: f.on_status_change ?? false,
+      // 存量渠道缺这两个字段时回显为 false（不迁移）：只有显式勾选过的新渠道
+      // 才会收到任务级事件，「编辑一次旧渠道」不会意外改变它的推送范围。
+      onTaskStatus: f.on_task_status ?? false,
+      onApproval: f.on_approval ?? false,
     });
     setOpen(true);
   }
@@ -164,6 +168,8 @@ export default function NotifyPage() {
       task_ids: parseIDs(form.taskIDsText),
       asset_ids: parseIDs(form.assetIDsText),
       on_status_change: form.onStatusChange,
+      on_task_status: form.onTaskStatus,
+      on_approval: form.onApproval,
     };
   }
 
@@ -575,6 +581,22 @@ export default function NotifyPage() {
                       aria-label={t("aria.statusChange")}
                     />
                     {t("filter.onStatusChange")}
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <Switch
+                      checked={form.onTaskStatus}
+                      onCheckedChange={(v) => setF({ onTaskStatus: v })}
+                      aria-label={t("aria.taskStatus")}
+                    />
+                    {t("filter.onTaskStatus")}
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <Switch
+                      checked={form.onApproval}
+                      onCheckedChange={(v) => setF({ onApproval: v })}
+                      aria-label={t("aria.approval")}
+                    />
+                    {t("filter.onApproval")}
                   </div>
                 </div>
               </div>

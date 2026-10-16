@@ -9,12 +9,15 @@ import {
   PencilIcon,
   RotateCcwIcon,
   SaveIcon,
+  SearchIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { AgentLLMFallbackChain } from "@/components/agent-llm-fallback-chain";
+import { profileSupportsImage } from "@/components/llm-profile-badges";
 import { Markdown } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -64,6 +67,8 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
   const [mcp, setMcp] = React.useState<MCPServer[]>([]);
   const [skills, setSkills] = React.useState<SkillItem[]>([]);
   const [tools, setTools] = React.useState<Tool[]>([]);
+  // Tools 绑定页的搜索词（#178/#179/#182：默认工具列表很长，支持过滤与分组）。
+  const [toolQuery, setToolQuery] = React.useState("");
   const [loaded, setLoaded] = React.useState(false);
   const [viewVer, setViewVer] = React.useState<PromptVersion | null>(null);
   const [diffVer, setDiffVer] = React.useState<PromptVersion | null>(null);
@@ -77,6 +82,8 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
   // "" = 跟随(未绑定)；否则为 profile id 字符串
   const [llmProfileId, setLlmProfileId] = React.useState("");
   const [llmProfiles, setLlmProfiles] = React.useState<NonNullable<AgentDetail["llm_profiles"]>>([]);
+  // 备用模型链尾(#139/#144):按顺序的 profile id 字符串;链首=上面的「默认模型」绑定。
+  const [llmFallbacks, setLlmFallbacks] = React.useState<string[]>([]);
   const [webSearch, setWebSearch] = React.useState(false);
   const [interactiveShell, setInteractiveShell] = React.useState(false);
   const [wrapup, setWrapup] = React.useState("");
@@ -121,6 +128,55 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
   const captureOn = !!settings?.traffic_capture;
   const webSearchGlobalOn = !!settings?.web_search_enabled;
 
+  // Tools 绑定页（#178/#179/#182）：默认工具列表很长，按「已绑定优先」分组展示，
+  // 并支持按 key/描述过滤；两组合并用同一行渲染，避免两份标记漂移。
+  const toolQueryNorm = toolQuery.trim().toLowerCase();
+  const filteredTools = tools.filter(
+    (t) =>
+      toolQueryNorm === "" ||
+      t.key.toLowerCase().includes(toolQueryNorm) ||
+      (t.description ?? "").toLowerCase().includes(toolQueryNorm),
+  );
+  const boundTools = filteredTools.filter((t) => t.agents.includes(agentKey));
+  const unboundTools = filteredTools.filter((t) => !t.agents.includes(agentKey));
+  const boundToolTotal = tools.filter((t) => t.agents.includes(agentKey)).length;
+  const renderToolRow = (t: Tool) => {
+    const isTraffic = TRAFFIC_TOOL_KEYS.has(t.key);
+    const gated = isTraffic && !captureOn; // traffic tools need 流量捕获 on
+    return (
+      <label
+        key={t.key}
+        className={cn("flex items-center gap-2 rounded-md border p-2 text-sm", gated && "opacity-60")}
+      >
+        <Checkbox
+          checked={t.agents.includes(agentKey)}
+          disabled={gated}
+          onCheckedChange={() => toggleTool(t)}
+        />
+        <span className="font-mono text-xs">{t.key}</span>
+        {isTraffic && (
+          <Badge variant="secondary" className="px-1 py-0 text-[9px]">
+            {tr("tools.trafficBadge")}
+          </Badge>
+        )}
+        {!t.enabled && (
+          <Badge variant="outline" className="text-destructive px-1 py-0 text-[9px]">
+            {tr("tools.disabledBadge")}
+          </Badge>
+        )}
+        {gated ? (
+          <span className="text-muted-foreground ml-auto text-xs">{tr("tools.needCapture")}</span>
+        ) : (
+          t.description && (
+            <span className="text-muted-foreground ml-auto line-clamp-1 max-w-[55%] text-xs">
+              {t.description}
+            </span>
+          )
+        )}
+      </label>
+    );
+  };
+
   const reload = React.useCallback(() => {
     api
       .getAgent(agentKey)
@@ -135,6 +191,7 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
         setRunSecs(String(d.agent?.run_seconds ?? 600));
         setLlmProfileId(d.agent?.llm_profile_id != null ? String(d.agent.llm_profile_id) : "");
         setLlmProfiles(d.llm_profiles ?? []);
+        setLlmFallbacks((d.llm_chain_fallbacks ?? []).map(String));
         setWebSearch(!!d.agent?.web_search);
         setInteractiveShell(!!d.agent?.interactive_shell);
         setWrapup(d.wrapup_prompt ?? "");
@@ -232,6 +289,10 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
       if (showWebSearch) patch.web_search = webSearch;
       if (showInteractiveShell) patch.interactive_shell = interactiveShell;
       await api.saveAgentConfig(agentKey, patch);
+      // 备用链与主绑定同一次保存(#139/#144):链首=「默认模型」,尾部按顺序整体替换;
+      // 与链首相同的 id 由后端再剔除一次(双保险)。
+      const head = llmProfileId === "" ? null : Number(llmProfileId);
+      await api.saveAgentLLMChain(agentKey, [...new Set(llmFallbacks.map(Number))].filter((id) => id !== head));
       toast.success(tr("toast.configSaved"));
       reload();
     } catch (e) {
@@ -311,6 +372,10 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
   const showInteractiveShell = agentKey !== "goals";
   // 每个 agent(含 goals/mainagent)都跑在某个 LLM 上,故「默认模型」绑定对所有 agent 开放。
   const showLLM = true;
+  // 可能直接收到图片的角色(主 Agent / 自定义对话 Agent):只对它们做「模型能否收图」建议。
+  const roleReceivesImages = agentKey === "mainagent" || detail?.agent?.role === "assistant";
+  // 链首(「默认模型」)的候选元数据;未绑定时 undefined。
+  const headProfile = llmProfileId === "" ? undefined : llmProfiles.find((p) => String(p.id) === llmProfileId);
   // triggers (P3) only attach to custom agents.
   const isCustom = !!detail && !detail.agent?.builtin;
 
@@ -321,7 +386,7 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
         <TabsTrigger value="wrapup">{tr("tab.wrapup")}</TabsTrigger>
         <TabsTrigger value="mcp">MCP</TabsTrigger>
         <TabsTrigger value="skill">Skill</TabsTrigger>
-        <TabsTrigger value="tools">Tools</TabsTrigger>
+        <TabsTrigger value="tools">{tr("tab.tools")}</TabsTrigger>
         {isCustom && <TabsTrigger value="triggers">{tr("tab.triggers")}</TabsTrigger>}
       </TabsList>
 
@@ -338,7 +403,12 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
                   <div className="flex flex-wrap items-center gap-3">
                     <Select
                       value={llmProfileId || "__follow__"}
-                      onValueChange={(v) => setLlmProfileId(v === "__follow__" ? "" : v)}
+                      onValueChange={(v) => {
+                        const next = v === "__follow__" ? "" : v;
+                        setLlmProfileId(next);
+                        // 链首不能同时出现在备用链里:换主模型时把新链首从尾部剔除。
+                        setLlmFallbacks((prev) => prev.filter((id) => id !== next));
+                      }}
                     >
                       <SelectTrigger id="llm-profile" className="h-8 w-72">
                         <SelectValue />
@@ -353,6 +423,22 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
                       </SelectContent>
                     </Select>
                     <span className="text-muted-foreground max-w-md text-xs">{tr("llm.hint")}</span>
+                  </div>
+                  {roleReceivesImages && headProfile && !profileSupportsImage(headProfile) && (
+                    <p className="text-muted-foreground text-xs">{tr("llm.imageAdvice")}</p>
+                  )}
+                  <div className="mt-1 grid gap-1.5 border-t pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Label className="text-xs">{tr("llm.chainLabel")}</Label>
+                      <span className="text-muted-foreground text-xs">{tr("llm.chainSaveHint")}</span>
+                    </div>
+                    <AgentLLMFallbackChain
+                      profiles={llmProfiles}
+                      value={llmFallbacks}
+                      onValueChange={setLlmFallbacks}
+                      headProfileId={llmProfileId}
+                      inputId="llm-fallback-chain"
+                    />
                   </div>
                 </div>
               )}
@@ -503,7 +589,7 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
                   <span className="text-muted-foreground truncate flex-1">{ver.note}</span>
                   {ver.ts && (
                     <span className="text-muted-foreground/60 shrink-0 tabular-nums">
-                      {new Date(ver.ts).toLocaleDateString("ko-KR", {
+                      {new Date(ver.ts).toLocaleDateString("zh-CN", {
                         month: "2-digit",
                         day: "2-digit",
                         hour: "2-digit",
@@ -546,7 +632,7 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
                   {viewVer?.note || tr("version.noNote")}
                   {viewVer?.ts && (
                     <span className="ml-2 text-muted-foreground/60">
-                      {new Date(viewVer.ts).toLocaleString("ko-KR")}
+                      {new Date(viewVer.ts).toLocaleString("zh-CN")}
                     </span>
                   )}
                 </DialogDescription>
@@ -764,45 +850,38 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
       {/* Tools 绑定 */}
       <TabsContent value="tools" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         <p className="text-muted-foreground mb-3 text-xs">{tr("tools.desc")}</p>
-        <div className="grid gap-2">
-          {tools.map((t) => {
-            const isTraffic = TRAFFIC_TOOL_KEYS.has(t.key);
-            const gated = isTraffic && !captureOn; // traffic tools need 流量捕获 on
-            return (
-              <label
-                key={t.key}
-                className={cn("flex items-center gap-2 rounded-md border p-2 text-sm", gated && "opacity-60")}
-              >
-                <Checkbox
-                  checked={t.agents.includes(agentKey)}
-                  disabled={gated}
-                  onCheckedChange={() => toggleTool(t)}
-                />
-                <span className="font-mono text-xs">{t.key}</span>
-                {isTraffic && (
-                  <Badge variant="secondary" className="px-1 py-0 text-[9px]">
-                    {tr("tools.trafficBadge")}
-                  </Badge>
-                )}
-                {!t.enabled && (
-                  <Badge variant="outline" className="text-destructive px-1 py-0 text-[9px]">
-                    {tr("tools.disabledBadge")}
-                  </Badge>
-                )}
-                {gated ? (
-                  <span className="text-muted-foreground ml-auto text-xs">{tr("tools.needCapture")}</span>
-                ) : (
-                  t.description && (
-                    <span className="text-muted-foreground ml-auto line-clamp-1 max-w-[55%] text-xs">
-                      {t.description}
-                    </span>
-                  )
-                )}
-              </label>
-            );
-          })}
-          {tools.length === 0 && <span className="text-muted-foreground text-xs">{tr("tools.none")}</span>}
+        <div className="relative mb-3">
+          <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2" />
+          <Input
+            value={toolQuery}
+            onChange={(e) => setToolQuery(e.target.value)}
+            placeholder={tr("tools.searchPlaceholder")}
+            className="h-8 pl-7 text-xs"
+          />
         </div>
+        {tools.length === 0 ? (
+          <span className="text-muted-foreground text-xs">{tr("tools.none")}</span>
+        ) : filteredTools.length === 0 ? (
+          <span className="text-muted-foreground text-xs">{tr("tools.noMatch")}</span>
+        ) : (
+          <div className="grid gap-3">
+            <div className="text-muted-foreground text-xs">
+              {tr("tools.boundCount", { bound: boundToolTotal, total: tools.length })}
+            </div>
+            {boundTools.length > 0 && (
+              <div className="grid gap-2">
+                <div className="text-muted-foreground text-xs font-medium">{tr("tools.bound")}</div>
+                {boundTools.map(renderToolRow)}
+              </div>
+            )}
+            {unboundTools.length > 0 && (
+              <div className="grid gap-2">
+                <div className="text-muted-foreground text-xs font-medium">{tr("tools.unbound")}</div>
+                {unboundTools.map(renderToolRow)}
+              </div>
+            )}
+          </div>
+        )}
       </TabsContent>
 
       {/* 触发(P3, 仅自定义 agent) */}
@@ -975,7 +1054,9 @@ function AgentTriggersTab({ agentKey, agent }: { agentKey: string; agent?: Agent
 
   // submit 依 editingId 走「新增」或「保存修改」;编辑时保留该触发器的启用状态。
   async function submit() {
-    const n = onInterval ? Math.max(1, Math.floor(Number(intervalSec) || 0)) : 0;
+    // 定时间隔下限 60 秒,与服务端校验(triggerIntervalMinSec)一致:每次触发都会新起
+    // 一整轮会话运行,更短的间隔会在每个调度 tick 烧掉一整轮 LLM + 工具调用。
+    const n = onInterval ? Math.max(60, Math.floor(Number(intervalSec) || 0)) : 0;
     if (n === 0 && !onFinding && !onGoalMet && !onTaskTimeout && !onToolCall && !onTaskCreate) {
       toast.error(tr("triggers.errNoCondition"));
       return;
@@ -1166,13 +1247,14 @@ function AgentTriggersTab({ agentKey, agent }: { agentKey: string; agent?: Agent
                 <Input
                   id="tr-interval"
                   type="number"
-                  min={1}
+                  min={60}
                   className="h-8 w-24"
                   value={intervalSec}
                   onChange={(e) => setIntervalSec(e.target.value)}
                 />
                 <span className="text-muted-foreground text-xs">{tr("triggers.seconds")}</span>
               </div>
+              <p className="text-muted-foreground text-xs">{tr("triggers.intervalMinHint")}</p>
               <Textarea
                 className="text-xs"
                 rows={2}

@@ -17,6 +17,7 @@ import {
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,7 +44,7 @@ import { cn } from "@/lib/utils";
 
 function fmtTime(ts: string | undefined, never: string) {
   if (!ts) return never;
-  return new Date(ts).toLocaleString("ko-KR", {
+  return new Date(ts).toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -172,7 +173,7 @@ function SkillsOverview({
   if (skills.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">{t("emptyOverview")}</p>
+        <EmptyState illustration="terminal" title={t("emptyOverview")} />
       </div>
     );
   }
@@ -995,7 +996,9 @@ export default function SkillsPage() {
                 );
               })}
 
-              {skills.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t("emptySidebar")}</p>}
+              {skills.length === 0 && (
+                <EmptyState compact illustration="terminal" className="p-3" title={t("emptySidebar")} />
+              )}
             </div>
           </ScrollArea>
         </div>
@@ -1265,7 +1268,7 @@ export default function SkillsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1.5">
-                  <Label className="text-muted-foreground text-xs">license</Label>
+                  <Label className="text-muted-foreground text-xs">{t("licenseLabel")}</Label>
                   <Input
                     placeholder="MIT / Proprietary"
                     value={newLicense}
@@ -1273,7 +1276,7 @@ export default function SkillsPage() {
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label className="text-muted-foreground text-xs">compatibility</Label>
+                  <Label className="text-muted-foreground text-xs">{t("compatibilityLabel")}</Label>
                   <Input
                     placeholder={t("compatPlaceholder")}
                     value={newCompat}

@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import {
+  KeyRoundIcon,
   Loader2Icon,
   PlugZapIcon,
   PlusIcon,
@@ -16,9 +17,11 @@ import {
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -28,7 +31,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
-import type { LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
+import type { LLMCredential, LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { ProfileRetryFields, RetryPolicyPanel, ZERO_OVERRIDE } from "./_components/retry";
@@ -40,6 +43,21 @@ import { ProfileRetryFields, RetryPolicyPanel, ZERO_OVERRIDE } from "./_componen
 const NONE = "none";
 const fromStore = (v?: string) => (v ? v : NONE);
 const toStore = (v: string) => (v === NONE ? "" : v);
+
+// 凭据选择器的「内联 Key」哨兵：Radix Select 不接受空字符串 value，与 NONE 同理；
+// 存取时与 ""（= 未绑定，用本配置自己的 api_key）互转。
+const INLINE_CRED = "__inline__";
+
+// 输入模态复选框与存储串互转。存储格式是逗号分隔的 text/image/audio/pdf（后端
+// 保存时归一）；"" = 未声明，后端按模型名保守推断。text 由后端始终隐含，界面上
+// 固定勾选且禁用，因此这里只处理三种「扩展模态」。
+const EXTRA_MODALITIES = ["image", "audio", "pdf"] as const;
+type ExtraModality = (typeof EXTRA_MODALITIES)[number];
+const extraModalities = (v?: string): ExtraModality[] =>
+  (v ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((m): m is ExtraModality => (EXTRA_MODALITIES as readonly string[]).includes(m));
 
 function cooldownText(secs: number) {
   if (secs <= 0) return "";
@@ -225,8 +243,8 @@ function PoolSheet({
                   );
                 })}
                 {chain.length === 0 && (
-                  <div className="rounded-lg border border-dashed p-4 text-center text-muted-foreground text-sm">
-                    {t("pool.empty")}
+                  <div className="rounded-lg border border-dashed">
+                    <EmptyState compact illustration="nodes" title={t("pool.empty")} />
                   </div>
                 )}
               </div>
@@ -251,11 +269,13 @@ function ProfileSheet({
   open,
   onOpenChange,
   onSaved,
+  credentials,
 }: {
   profile: LLMProfile | null; // null = 新建
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onSaved: (id: string) => void;
+  credentials: LLMCredential[]; // 可选的独立凭据（计划 46–47）
 }) {
   const t = useTranslations("llmPage");
   const isNew = !profile;
@@ -266,6 +286,8 @@ function ProfileSheet({
   const [proxy, setProxy] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [keyHint, setKeyHint] = React.useState("");
+  // 绑定的凭据 id（""=内联 Key，用本配置自己的 api_key）。见 INLINE_CRED。
+  const [credId, setCredId] = React.useState("");
   const [rps, setRps] = React.useState("0");
   const [rpm, setRpm] = React.useState("0");
   const [cw, setCw] = React.useState("0"); // 上下文窗口(K tokens);0=默认200K
@@ -278,6 +300,8 @@ function ProfileSheet({
   const [maxTokensField, setMaxTokensField] = React.useState(NONE); // 上限用哪个字段名;NONE=max_tokens
   const [sessionHeaderKey, setSessionHeaderKey] = React.useState(""); // 自定义会话头名;空=不发送
   const [retry, setRetry] = React.useState<LLMRetryOverride>(ZERO_OVERRIDE); // 本配置的重试覆盖;全 0=跟随全局
+  // 声明的扩展输入模态(image/audio/pdf);空数组 = 未声明,后端按模型名保守推断。
+  const [modalities, setModalities] = React.useState<ExtraModality[]>([]);
   const [testing, setTesting] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [models, setModels] = React.useState<string[]>([]);
@@ -324,13 +348,17 @@ function ProfileSheet({
     setMaxTokensField(fromStore(profile?.max_tokens_field));
     setSessionHeaderKey(profile?.session_header_key ?? "");
     setRetry(profile?.retry ?? ZERO_OVERRIDE);
+    setModalities(extraModalities(profile?.input_modalities));
     setApiKey("");
     setKeyHint(profile?.api_key_hint ?? "");
+    setCredId(profile?.credential_id ?? "");
     setModels([]);
     setModelsOpen(false);
   }, [open, profile]);
 
   const profileId = profile ? Number(profile.id) : undefined;
+  // 绑定的凭据对象（仅用于显示名称；hint 已在 profile.api_key_hint 里）。
+  const boundCred = credId ? credentials.find((c) => c.id === credId) : undefined;
 
   async function loadModels() {
     if (loadingModels) return;
@@ -358,6 +386,7 @@ function ProfileSheet({
     try {
       // 用配置实际会跑的思考参数来测，这样不支持该字段的模型在这里就失败，
       // 而不是等到跑任务时才炸。传 profile id：Key 输入框留空时用已存的 Key。
+      // 独立轻量探测固定非流式（不发送 stream），与配置的流式开关无关。
       const r = await api.testLLM(
         format,
         model,
@@ -367,7 +396,6 @@ function ProfileSheet({
         toStore(thinkingType),
         toStore(effort),
         profileId,
-        streaming,
         sessionHeaderKey.trim(),
       );
       // 回复内容一并展示：看得见模型确实说了话，才算和会话里跑通是一回事。
@@ -413,6 +441,14 @@ function ProfileSheet({
         max_tokens_field: format === "openai" ? toStore(maxTokensField) : "",
         session_header_key: sessionHeaderKey.trim(),
         retry,
+        // 三种扩展模态全不勾 = 未声明（"" 交给后端按模型名保守推断）；勾选即显式
+        // 声明。text 始终隐含，由后端归一补上，这里一并写出规范顺序。
+        input_modalities: modalities.length
+          ? ["text", ...EXTRA_MODALITIES.filter((m) => modalities.includes(m))].join(",")
+          : "",
+        // 凭据绑定（计划 46–47）：选中凭据 = 以凭据行为准（本配置的 api_key 被清空）；
+        // 内联 = 显式解绑（0）。总能表态，不会出现「改了选择却没生效」。
+        credential_id: credId ? Number(credId) : 0,
       });
       if (isNew) toast.success(t("profile.toast.created", { name: name.trim() }));
       else toast.success(profile?.is_default ? t("profile.toast.savedActive") : t("profile.toast.saved"));
@@ -554,15 +590,75 @@ function ProfileSheet({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="p-api-key">API Key</Label>
-            <Input
-              id="p-api-key"
-              type="password"
-              placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
+            <Label>{t("profile.modalities.label")}</Label>
+            <div className="grid gap-2 rounded-lg border p-3">
+              {/* text 由后端始终隐含（任何能读消息的模型都能读文本），固定勾选、
+                  禁用，不参与编辑，避免出现「不支持文本」这种无意义的声明。 */}
+              <div className="flex items-center gap-2">
+                <Checkbox id="p-mod-text" checked disabled />
+                <Label htmlFor="p-mod-text" className="text-sm">
+                  {t("profile.modalities.opt.text")}
+                </Label>
+                <span className="text-muted-foreground text-xs">{t("profile.modalities.textAlways")}</span>
+              </div>
+              {EXTRA_MODALITIES.map((m) => (
+                <div key={m} className="flex items-center gap-2">
+                  <Checkbox
+                    id={`p-mod-${m}`}
+                    checked={modalities.includes(m)}
+                    onCheckedChange={(v) =>
+                      setModalities((prev) => (v === true ? [...prev, m] : prev.filter((x) => x !== m)))
+                    }
+                  />
+                  <Label htmlFor={`p-mod-${m}`} className="text-sm">
+                    {t(`profile.modalities.opt.${m}`)}
+                  </Label>
+                </div>
+              ))}
+            </div>
+            <p className="text-muted-foreground text-xs">{t("profile.modalities.hint")}</p>
           </div>
+
+          {/* 凭据选择器（计划 46–47）：Key 的来源是独立实体。选中凭据时本配置的
+              API Key 输入被隐藏——绑定态只认凭据行的 Key，留一个同样能填的输入框
+              只会造成「这边改了、那边没变」的错觉。 */}
+          <div className="grid gap-2">
+            <Label>{t("profile.credential.label")}</Label>
+            <Select value={credId || INLINE_CRED} onValueChange={(v) => setCredId(v === INLINE_CRED ? "" : v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INLINE_CRED}>{t("profile.credential.inline")}</SelectItem>
+                {credentials.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                    {c.api_key_hint ? ` ${c.api_key_hint}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-muted-foreground text-xs">
+              {credId
+                ? t("profile.credential.boundHint", {
+                    name: boundCred?.name ?? profile?.credential_name ?? "",
+                  })
+                : t("profile.credential.hint")}
+            </p>
+          </div>
+
+          {!credId && (
+            <div className="grid gap-2">
+              <Label htmlFor="p-api-key">API Key</Label>
+              <Input
+                id="p-api-key"
+                type="password"
+                placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+            </div>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="grid gap-2">
@@ -721,10 +817,189 @@ function ProfileSheet({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 凭据管理（计划 46–47）：独立于模型配置的 Key 实体，可被多个配置引用
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CredentialSheet({
+  cred,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  cred: LLMCredential | null; // null = 新建
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSaved: () => void;
+}) {
+  const t = useTranslations("llmPage");
+  const isNew = !cred;
+  const [name, setName] = React.useState("");
+  const [apiKey, setApiKey] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  // 明文 Key 永不回显：编辑时输入框一律从空开始，留空 = 保持原值。
+  React.useEffect(() => {
+    if (!open) return;
+    setName(cred?.name ?? "");
+    setApiKey("");
+  }, [open, cred]);
+
+  async function save() {
+    if (!name.trim()) {
+      toast.error(t("credentials.toast.nameRequired"));
+      return;
+    }
+    if (isNew && !apiKey.trim()) {
+      toast.error(t("credentials.toast.keyRequired"));
+      return;
+    }
+    if (saving) return;
+    setSaving(true);
+    try {
+      await api.saveLLMCredential({
+        ...(cred ? { id: Number(cred.id) } : {}),
+        name: name.trim(),
+        api_key: apiKey.trim(),
+      });
+      toast.success(isNew ? t("credentials.toast.created", { name: name.trim() }) : t("credentials.toast.saved"));
+      onSaved();
+      onOpenChange(false);
+    } catch (e) {
+      toast.error(t("credentials.toast.saveFailed", { msg: (e as Error).message }));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="flex flex-col gap-0 p-0 data-[side=right]:sm:max-w-md">
+        <SheetHeader className="px-4">
+          <SheetTitle>
+            {isNew ? t("credentials.titleNew") : t("credentials.titleEdit", { name: cred?.name ?? "" })}
+          </SheetTitle>
+          <SheetDescription>{t("credentials.desc")}</SheetDescription>
+        </SheetHeader>
+
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
+          <div className="grid gap-2">
+            <Label htmlFor="c-name">{t("credentials.name.label")}</Label>
+            <Input
+              id="c-name"
+              placeholder={t("credentials.name.placeholder")}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="c-key">API Key</Label>
+            <Input
+              id="c-key"
+              type="password"
+              placeholder={cred?.api_key_hint ? t("profile.apiKey.placeholderSet", { hint: cred.api_key_hint }) : "sk-…"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">{t("credentials.keyHint")}</p>
+          </div>
+        </div>
+
+        <div className="flex gap-2 border-t px-4 py-3">
+          <Button onClick={save} disabled={saving} className="flex-1">
+            {saving && <Loader2Icon className="animate-spin" />}
+            {!saving && (isNew ? <PlusIcon /> : <SaveIcon />)}
+            {isNew ? t("profile.create") : t("profile.save")}
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function CredentialsPanel({ creds, onChanged }: { creds: LLMCredential[]; onChanged: () => Promise<void> }) {
+  const t = useTranslations("llmPage");
+  const [open, setOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<LLMCredential | null>(null);
+
+  const openEditor = React.useCallback((c: LLMCredential | null) => {
+    setEditing(c);
+    setOpen(true);
+  }, []);
+
+  async function remove(c: LLMCredential) {
+    try {
+      const r = await api.deleteLLMCredential(c.id);
+      toast.success(
+        r.unbound_profiles > 0
+          ? t("credentials.toast.deletedUnbound", { name: c.name, n: r.unbound_profiles })
+          : t("credentials.toast.deleted", { name: c.name }),
+      );
+      await onChanged();
+    } catch (e) {
+      toast.error(t("credentials.toast.deleteFailed", { msg: (e as Error).message }));
+    }
+  }
+
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-muted-foreground text-sm">{t("credentials.intro")}</p>
+        <Button size="sm" variant="outline" onClick={() => openEditor(null)}>
+          <PlusIcon /> {t("credentials.new")}
+        </Button>
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {creds.map((c) => (
+          <Card key={c.id} className="gap-0 py-4">
+            <CardContent className="grid gap-2 px-4">
+              <div className="flex items-start gap-2">
+                <KeyRoundIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-sm">{c.name}</span>
+                  {c.api_key_hint && (
+                    <code className="mt-1 block font-mono text-muted-foreground text-xs">{c.api_key_hint}</code>
+                  )}
+                </div>
+              </div>
+              {/* 引用关系来自后端（profile_names）：删除前就能看清会解绑谁 */}
+              <div className="min-h-4 pl-6 text-muted-foreground text-xs">
+                {c.profile_names && c.profile_names.length > 0
+                  ? t("credentials.usedBy", { names: c.profile_names.join("、") })
+                  : t("credentials.unused")}
+              </div>
+              <div className="mt-1 flex gap-2">
+                <Button size="sm" variant="outline" className="flex-1" onClick={() => openEditor(c)}>
+                  <SaveIcon /> {t("credentials.edit")}
+                </Button>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  aria-label={t("credentials.deleteAria")}
+                  onClick={() => void remove(c)}
+                >
+                  <Trash2Icon className="text-destructive" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+        {creds.length === 0 && (
+          <div className="col-span-full rounded-lg border border-dashed">
+            <EmptyState illustration="shield" title={t("credentials.empty")} />
+          </div>
+        )}
+      </div>
+      <CredentialSheet cred={editing} open={open} onOpenChange={setOpen} onSaved={() => void onChanged()} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function LLMPage() {
   const t = useTranslations("llmPage");
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
+  const [creds, setCreds] = React.useState<LLMCredential[]>([]);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
   // 抽屉的开关和内容分开存：关闭时 editing 保持不变，否则关闭动画期间标题会从
@@ -776,14 +1051,22 @@ export default function LLMPage() {
     }
   }, []);
 
+  const loadCreds = React.useCallback(async () => {
+    try {
+      setCreds(await api.llmCredentials());
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const load = React.useCallback(async () => {
     try {
       setProfiles(await api.llmProfiles());
     } catch {
       /* ignore */
     }
-    await loadPool();
-  }, [loadPool]);
+    await Promise.all([loadPool(), loadCreds()]);
+  }, [loadPool, loadCreds]);
 
   React.useEffect(() => {
     void load();
@@ -847,6 +1130,7 @@ export default function LLMPage() {
       <Tabs defaultValue="profiles" className="flex-1">
         <TabsList>
           <TabsTrigger value="profiles">{t("page.tab.profiles")}</TabsTrigger>
+          <TabsTrigger value="credentials">{t("page.tab.credentials")}</TabsTrigger>
           <TabsTrigger value="retry">{t("page.tab.retry")}</TabsTrigger>
         </TabsList>
 
@@ -895,6 +1179,7 @@ export default function LLMPage() {
                     </div>
 
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-muted-foreground text-xs">
+                      {p.credential_name && <span>{t("card.credential", { name: p.credential_name })}</span>}
                       {p.api_key_hint && <span>{p.api_key_hint}</span>}
                       <span>
                         {p.rate_per_second}/s · {p.rate_per_minute}/min
@@ -904,6 +1189,17 @@ export default function LLMPage() {
                         <span>
                           {t("card.thinking", {
                             effort: p.reasoning_effort === "off" ? t("card.thinkingOff") : p.reasoning_effort,
+                          })}
+                        </span>
+                      )}
+                      {/* 实际生效的扩展输入模态（声明优先、否则按模型名推断）；text
+                          始终隐含，不占版面。空 = 纯文本配置。 */}
+                      {extraModalities(p.effective_input_modalities).length > 0 && (
+                        <span>
+                          {t("card.modalities", {
+                            modalities: extraModalities(p.effective_input_modalities)
+                              .map((m) => t(`profile.modalities.opt.${m}`))
+                              .join("·"),
                           })}
                         </span>
                       )}
@@ -947,11 +1243,15 @@ export default function LLMPage() {
               );
             })}
             {profiles.length === 0 && (
-              <div className="col-span-full rounded-lg border border-dashed p-10 text-center text-muted-foreground text-sm">
-                {t("page.empty")}
+              <div className="col-span-full rounded-lg border border-dashed">
+                <EmptyState illustration="nodes" title={t("page.empty")} />
               </div>
             )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="credentials" className="mt-4">
+          <CredentialsPanel creds={creds} onChanged={loadCreds} />
         </TabsContent>
 
         <TabsContent value="retry" className="mt-4">
@@ -959,7 +1259,13 @@ export default function LLMPage() {
         </TabsContent>
       </Tabs>
 
-      <ProfileSheet profile={editing} open={editOpen} onOpenChange={setEditOpen} onSaved={() => void load()} />
+      <ProfileSheet
+        profile={editing}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        onSaved={() => void load()}
+        credentials={creds}
+      />
       <PoolSheet open={poolOpen} onOpenChange={setPoolOpen} pool={pool} onReload={loadPool} />
     </div>
   );

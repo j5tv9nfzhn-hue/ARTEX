@@ -6,6 +6,7 @@ import { BanIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -201,14 +202,16 @@ export default function AssetInterceptPage() {
           {loading ? (
             <p className="p-6 text-sm text-muted-foreground">{t("loading")}</p>
           ) : rules.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-              <BanIcon className="h-8 w-8 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">{t("empty")}</p>
-              <Button size="sm" variant="outline" onClick={openNew}>
-                <PlusIcon className="h-4 w-4" />
-                {t("addFirst")}
-              </Button>
-            </div>
+            <EmptyState
+              illustration="shield"
+              title={t("empty")}
+              actions={
+                <Button size="sm" variant="outline" onClick={openNew}>
+                  <PlusIcon className="h-4 w-4" />
+                  {t("addFirst")}
+                </Button>
+              }
+            />
           ) : (
             <Table>
               <TableHeader>

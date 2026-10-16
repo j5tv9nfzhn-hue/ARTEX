@@ -61,6 +61,15 @@ export interface NavGroup {
   items: NavMainItem[];
 }
 
+// 组编号对应 nav.group.* 消息键；标签由渲染方经 useTranslations 翻译，
+// 不在 sidebar-items.ts 数据中保存。未映射的组回退到 group.<id> 键，
+// 渲染方用 t.has 判断后再回退到原始 label。
+export const GROUP_MESSAGE_KEY: Record<number, string> = { 1: "function", 2: "system" };
+
+export function navGroupMessageKey(groupId: number): string {
+  return GROUP_MESSAGE_KEY[groupId] ? `group.${GROUP_MESSAGE_KEY[groupId]}` : `group.${groupId}`;
+}
+
 export const sidebarItems: NavGroup[] = [
   {
     id: 1,

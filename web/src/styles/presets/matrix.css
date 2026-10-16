@@ -1,0 +1,95 @@
+/* 
+label: 矩阵绿
+value: matrix
+*/
+
+/* 矩阵绿：暗色为主打气质（近黑绿倾向底 + 磷光绿强调 + 绿色微光边框）；
+   正文用冷白保证可读性，磷光绿只做主色/焦点/图表点缀。
+   亮色是同一品牌的白昼版（近白底 + 深绿主色）。 */
+
+:root[data-theme-preset="matrix"] {
+  --radius: 0.625rem;
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.02 165);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.02 165);
+  --primary: oklch(0.52 0.15 152);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0.015 160);
+  --secondary-foreground: oklch(0.3 0.04 160);
+  --muted: oklch(0.96 0.01 160);
+  --muted-foreground: oklch(0.5 0.03 165);
+  --accent: oklch(0.93 0.03 158);
+  --accent-foreground: oklch(0.38 0.09 156);
+  --destructive: oklch(0.58 0.21 27);
+  --border: oklch(0.9 0.015 165);
+  --input: oklch(0.95 0.015 160);
+  --ring: oklch(0.52 0.15 152);
+  --chart-1: oklch(0.62 0.15 168);
+  --chart-2: oklch(0.72 0.2 150);
+  --chart-3: oklch(0.74 0.15 75);
+  --chart-4: oklch(0.6 0.2 27);
+  --chart-5: oklch(0.6 0.12 215);
+  --sidebar: oklch(0.95 0.015 160);
+  --sidebar-foreground: oklch(0.22 0.02 165);
+  --sidebar-primary: oklch(0.52 0.15 152);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.92 0.03 158);
+  --sidebar-accent-foreground: oklch(0.38 0.09 156);
+  --sidebar-border: oklch(0.9 0.015 165);
+  --sidebar-ring: oklch(0.52 0.15 152);
+  --background: oklch(0.985 0.005 160);
+  --foreground: oklch(0.22 0.02 165);
+  --shadow-2xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 2px 4px -1px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 4px 6px -1px hsl(0 0% 0% / 0.1);
+  --shadow-xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 8px 10px -1px hsl(0 0% 0% / 0.1);
+  --shadow-2xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.25);
+}
+
+.dark:root[data-theme-preset="matrix"] {
+  --background: oklch(0.15 0.015 165);
+  --foreground: oklch(0.93 0.01 195);
+  --card: oklch(0.19 0.02 165);
+  --card-foreground: oklch(0.93 0.01 195);
+  --popover: oklch(0.18 0.02 165);
+  --popover-foreground: oklch(0.93 0.01 195);
+  --primary: oklch(0.84 0.25 148);
+  --primary-foreground: oklch(0.15 0.02 165);
+  --secondary: oklch(0.22 0.025 165);
+  --secondary-foreground: oklch(0.93 0.01 195);
+  --muted: oklch(0.21 0.02 165);
+  --muted-foreground: oklch(0.72 0.03 170);
+  --accent: oklch(0.26 0.04 160);
+  --accent-foreground: oklch(0.9 0.1 152);
+  --destructive: oklch(0.64 0.21 25.33);
+  --border: oklch(0.32 0.05 160);
+  --input: oklch(0.32 0.05 160);
+  --ring: oklch(0.84 0.25 148);
+  /* 暗色校准复核:五个色暗底可读(≥0.6L);仅把 chart-1 青翠从 163 微调到 170,
+     与 chart-2 磷光绿(148)拉开色相差,保证在同为绿系时仍可区分 */
+  --chart-1: oklch(0.72 0.17 170);
+  --chart-2: oklch(0.84 0.25 148);
+  --chart-3: oklch(0.79 0.17 74);
+  --chart-4: oklch(0.64 0.21 25);
+  --chart-5: oklch(0.74 0.13 210);
+  --sidebar: oklch(0.18 0.02 165);
+  --sidebar-foreground: oklch(0.93 0.01 195);
+  --sidebar-primary: oklch(0.84 0.25 148);
+  --sidebar-primary-foreground: oklch(0.15 0.02 165);
+  --sidebar-accent: oklch(0.26 0.04 160);
+  --sidebar-accent-foreground: oklch(0.9 0.1 152);
+  --sidebar-border: oklch(0.32 0.05 160);
+  --sidebar-ring: oklch(0.84 0.25 148);
+  --shadow-2xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 2px 4px -1px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 4px 6px -1px hsl(0 0% 0% / 0.1);
+  --shadow-xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.1), 0px 8px 10px -1px hsl(0 0% 0% / 0.1);
+  --shadow-2xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.25);
+}

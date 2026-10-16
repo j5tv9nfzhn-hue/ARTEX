@@ -8,6 +8,7 @@ import { ArrowDownIcon, ArrowUpIcon, ArrowUpRightIcon, ChevronRightIcon } from "
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -110,7 +111,7 @@ function Row({
           <StatusBadge domain="finding" value={f.status} dot />
         )}
         <span className="hidden shrink-0 text-xs text-muted-foreground md:block">
-          {new Date(f.ts).toLocaleString("ko-KR")}
+          {new Date(f.ts).toLocaleString("zh-CN")}
         </span>
         {f.finding_id && (
           <Link
@@ -223,7 +224,7 @@ export function FindingsTab({ taskId }: { taskId: string }) {
         {items.map((f) => (
           <Row key={f.id} f={f} contextTaskId={taskId} onStatus={onStatus} />
         ))}
-        {items.length === 0 && <p className="px-4 py-8 text-center text-sm text-muted-foreground">{t("empty")}</p>}
+        {items.length === 0 && <EmptyState illustration="radar" title={t("empty")} />}
       </CardContent>
     </Card>
   );

@@ -5,6 +5,7 @@ import * as React from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { CapturedTrafficViewer } from "@/components/traffic-evidence-viewer";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -217,7 +218,7 @@ export function TrafficPickerDialog({
                       {alreadyBound.has(e.id) ? <Badge variant="secondary">{t("picker.bound")}</Badge> : null}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {new Date(e.ts).toLocaleString("ko-KR")}
+                      {new Date(e.ts).toLocaleString("zh-CN")}
                     </TableCell>
                     <TableCell>{e.status}</TableCell>
                     <TableCell>
@@ -229,8 +230,13 @@ export function TrafficPickerDialog({
                 ))}
                 {!rows.length ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-8 text-center">
-                      {loading ? t("picker.loading") : t("picker.noMatch")}
+                    <TableCell colSpan={5} className="p-0">
+                      {/* 加载态保留一行文案,加载完成为空才展示空态插画 */}
+                      {loading ? (
+                        <div className="py-8 text-center">{t("picker.loading")}</div>
+                      ) : (
+                        <EmptyState compact illustration="radar" title={t("picker.noMatch")} />
+                      )}
                     </TableCell>
                   </TableRow>
                 ) : null}

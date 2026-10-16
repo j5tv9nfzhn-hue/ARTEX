@@ -6,6 +6,7 @@ import { AlertCircleIcon, CheckCircle2Icon, DownloadIcon, PlugZapIcon, RefreshCw
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -295,8 +296,8 @@ function SyncWorkbench() {
     if (rows.length === 0) {
       return (
         <TableRow>
-          <TableCell colSpan={4} className="py-8 text-center text-muted-foreground text-sm">
-            {t("noData")}
+          <TableCell colSpan={4} className="p-0">
+            <EmptyState compact illustration="nodes" title={t("noData")} />
           </TableCell>
         </TableRow>
       );

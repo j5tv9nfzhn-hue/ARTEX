@@ -16,6 +16,7 @@ import {
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -34,7 +35,7 @@ function fmtSize(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleString("ko-KR", {
+  return new Date(ms).toLocaleString("zh-CN", {
     year: "2-digit",
     month: "2-digit",
     day: "2-digit",
@@ -203,8 +204,13 @@ export default function WorkspacePage() {
             <TableBody>
               {entries.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground py-10 text-center text-sm">
-                    {loading ? t("loading") : t("empty")}
+                  <TableCell colSpan={4} className="p-0">
+                    {/* 加载态与空态拆开:加载中显示文案,加载完成仍为空才给空态插画 */}
+                    {loading ? (
+                      <div className="text-muted-foreground py-10 text-center text-sm">{t("loading")}</div>
+                    ) : (
+                      <EmptyState illustration="terminal" title={t("empty")} />
+                    )}
                   </TableCell>
                 </TableRow>
               )}

@@ -6,6 +6,7 @@ import { CheckIcon, CopyIcon, FileTextIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -65,9 +66,8 @@ export function ReportTab({ taskId }: { taskId: string }) {
     );
   } else {
     content = (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed py-16 text-muted-foreground text-sm">
-        <FileTextIcon className="size-8 opacity-40" />
-        {t("empty")}
+      <div className="rounded-md border border-dashed">
+        <EmptyState illustration="flag" title={t("empty")} />
       </div>
     );
   }

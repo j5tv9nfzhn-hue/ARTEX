@@ -3,6 +3,8 @@
 import * as React from "react";
 
 import {
+  CircleDollarSignIcon,
+  CoinsIcon,
   CpuIcon,
   FlaskConicalIcon,
   KeyboardIcon,
@@ -20,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { LOCALE_LABELS } from "@/i18n/config";
 import { api } from "@/lib/api";
 import { type ChatSendMode, setChatSendMode, useChatSendMode, useChatSendModeOptions } from "@/lib/chat-send-mode";
@@ -54,6 +57,12 @@ export default function SystemSettingsPage() {
   const [pyInterp, setPyInterp] = React.useState("");
   const [workers, setWorkers] = React.useState("3");
   const [savingWorkers, setSavingWorkers] = React.useState(false);
+  // 新建任务的默认 token 预算；输入单位=千 token(k)，存库为原始 token 数。
+  const [tokenBudgetK, setTokenBudgetK] = React.useState("0");
+  const [savingTokenBudget, setSavingTokenBudget] = React.useState(false);
+  // 模型价目 JSON(USD/百万 token)；读取接口按它读时现算费用，空=不算钱。
+  const [priceTable, setPriceTable] = React.useState("");
+  const [savingPriceTable, setSavingPriceTable] = React.useState(false);
   // 操作约束注入范围(默认都开)。
   const [injectPlanner, setInjectPlanner] = React.useState(true);
   const [injectWorker, setInjectWorker] = React.useState(true);
@@ -74,6 +83,9 @@ export default function SystemSettingsPage() {
     setGlobalProxyInput(s.global_proxy ?? "");
     setPyInterp(s.python_interpreter ?? "");
     setWorkers(String(s.workers ?? 3));
+    // 原始 token 数 → 千 token;非整千的外部改动四舍五入到 k。
+    setTokenBudgetK(String(Math.round((s.default_task_token_budget ?? 0) / 1000)));
+    setPriceTable(s.price_table ?? "");
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
     setNoaCompaction(!!s.noa_compaction);
@@ -94,6 +106,38 @@ export default function SystemSettingsPage() {
       })
       .catch((e) => toast.error(t("toast.saveFailed", { error: (e as Error).message })))
       .finally(() => setSavingWorkers(false));
+  };
+
+  const saveTokenBudget = () => {
+    // 单位=千 token；0=不限。必须为非负整数，避免出现 0.5k 这类模糊语义。
+    const k = Number(tokenBudgetK);
+    if (!Number.isInteger(k) || k < 0) {
+      toast.error(t("toast.budgetInvalid"));
+      return;
+    }
+    setSavingTokenBudget(true);
+    api
+      .setSettings({ default_task_token_budget: k * 1000 })
+      .then((s) => {
+        apply(s);
+        toast.success(t("toast.budgetSaved"));
+      })
+      .catch((e) => toast.error(t("toast.saveFailed", { error: (e as Error).message })))
+      .finally(() => setSavingTokenBudget(false));
+  };
+
+  const savePriceTable = () => {
+    // JSON 合法性/负价格由后端校验并返回中文 400 错误；这里只裁掉首尾空白,
+    // 空串=清除价格表(回到"不算钱")。
+    setSavingPriceTable(true);
+    api
+      .setSettings({ price_table: priceTable.trim() })
+      .then((s) => {
+        apply(s);
+        toast.success(t("toast.priceTableSaved"));
+      })
+      .catch((e) => toast.error(t("toast.saveFailed", { error: (e as Error).message })))
+      .finally(() => setSavingPriceTable(false));
   };
 
   const savePython = () => {
@@ -632,6 +676,60 @@ export default function SystemSettingsPage() {
                 onChange={(e) => setWorkers(e.target.value)}
               />
               <Button onClick={saveWorkers} disabled={!loaded || savingWorkers}>
+                {t("save")}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <CoinsIcon className="size-4" />
+              {t("budget.title")}
+            </CardTitle>
+            <CardDescription>{t.rich("budget.desc", richTags)}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                step={1}
+                className="w-32 font-mono text-sm"
+                placeholder="0"
+                value={tokenBudgetK}
+                disabled={!loaded || savingTokenBudget}
+                onChange={(e) => setTokenBudgetK(e.target.value)}
+              />
+              <span className="text-sm text-muted-foreground">k</span>
+              <Button onClick={saveTokenBudget} disabled={!loaded || savingTokenBudget}>
+                {t("save")}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <CircleDollarSignIcon className="size-4" />
+              {t("pricing.title")}
+            </CardTitle>
+            <CardDescription>{t.rich("pricing.desc", richTags)}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {/* 等宽多行文本框；示例 JSON 用 t.raw 取原文，避免 ICU 把大括号当占位符解析。 */}
+            <Textarea
+              className="min-h-28 font-mono text-xs"
+              placeholder={t.raw("pricing.placeholder")}
+              value={priceTable}
+              spellCheck={false}
+              disabled={!loaded || savingPriceTable}
+              onChange={(e) => setPriceTable(e.target.value)}
+            />
+            <div className="flex items-center gap-2">
+              <Button onClick={savePriceTable} disabled={!loaded || savingPriceTable}>
                 {t("save")}
               </Button>
             </div>

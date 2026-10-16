@@ -6,6 +6,7 @@ import { PlusIcon, RefreshCwIcon, ServerIcon, Trash2Icon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -337,7 +338,7 @@ export default function MCPPage() {
         {toolsLoading ? (
           <p className="text-muted-foreground text-sm">{t("loading")}</p>
         ) : tools.length === 0 ? (
-          <p className="text-muted-foreground text-sm">{t("toolsEmpty")}</p>
+          <EmptyState compact illustration="nodes" title={t("toolsEmpty")} />
         ) : (
           <div className="flex flex-col divide-y">
             {tools.map((t) => (

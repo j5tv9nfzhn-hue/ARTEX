@@ -1,5 +1,5 @@
 /* 
-label: Tangerine
+label: 柑橘
 value: tangerine  
 */
 
@@ -21,11 +21,13 @@ value: tangerine
   --border: oklch(0.9 0.01 247.88);
   --input: oklch(0.97 0 264.54);
   --ring: oklch(0.64 0.17 36.44);
-  --chart-1: oklch(0.72 0.06 248.68);
-  --chart-2: oklch(0.79 0.09 35.96);
-  --chart-3: oklch(0.58 0.08 254.16);
-  --chart-4: oklch(0.5 0.08 259.49);
-  --chart-5: oklch(0.42 0.1 264.03);
+  /* 图表槽位统一角色:1 蓝/青 · 2 紫/靛 · 3 翠/绿 · 4 琥珀(橙,贴柑橘主色) · 5 玫瑰。
+     原表是 3 个低彩度蓝 + 近似的亮暗值:亮底对比弱、暗底几乎不可读,这里重建为成对色板 */
+  --chart-1: oklch(0.55 0.14 248);
+  --chart-2: oklch(0.55 0.16 285);
+  --chart-3: oklch(0.6 0.13 165);
+  --chart-4: oklch(0.68 0.16 45);
+  --chart-5: oklch(0.6 0.18 15);
   --sidebar: oklch(0.9 0 258.33);
   --sidebar-foreground: oklch(0.32 0 0);
   --sidebar-primary: oklch(0.64 0.17 36.44);
@@ -65,11 +67,11 @@ value: tangerine
   --border: oklch(0.38 0.03 269.73);
   --input: oklch(0.38 0.03 269.73);
   --ring: oklch(0.64 0.17 36.44);
-  --chart-1: oklch(0.72 0.06 248.68);
-  --chart-2: oklch(0.77 0.09 34.19);
-  --chart-3: oklch(0.58 0.08 254.16);
-  --chart-4: oklch(0.5 0.08 259.49);
-  --chart-5: oklch(0.42 0.1 264.03);
+  --chart-1: oklch(0.72 0.13 248);
+  --chart-2: oklch(0.72 0.15 288);
+  --chart-3: oklch(0.75 0.14 165);
+  --chart-4: oklch(0.78 0.15 50);
+  --chart-5: oklch(0.72 0.16 12);
   --sidebar: oklch(0.31 0.03 267.74);
   --sidebar-foreground: oklch(0.92 0 0);
   --sidebar-primary: oklch(0.64 0.17 36.44);

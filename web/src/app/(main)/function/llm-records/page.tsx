@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { EmptyState } from "@/components/empty-state";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,7 +38,7 @@ import type { LLMRecordDetail, LLMRecordItem, LLMTask } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function fmtTime(ts: string) {
-  return new Date(ts).toLocaleString("ko-KR", {
+  return new Date(ts).toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -54,6 +55,14 @@ function fmtLatency(ms: number) {
 function fmtTokens(n: number) {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
+}
+
+// 费用估算(USD)的自适应精度：金额越大保留越少小数位，避免展示一堆尾零；
+// 小额最多 4 位，保证 $0.0012 这类分币消耗不显示成 $0.00。
+function fmtCost(n: number): string {
+  if (n >= 1) return `$${n.toFixed(2)}`;
+  if (n >= 0.01) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(4)}`;
 }
 
 function tryFormatJSON(s: string): string {
@@ -129,6 +138,8 @@ export default function LLMRecordsPage() {
 
   const [records, setRecords] = React.useState<LLMRecordItem[]>([]);
   const [total, setTotal] = React.useState(0);
+  // 过滤全集的费用估算(USD)；接口返回 cost_total 才显示，未配价格表时后端省略本字段。
+  const [costTotal, setCostTotal] = React.useState<number | null>(null);
   const [loading, setLoading] = React.useState(false);
 
   // Recording on/off toggle (settings.llm_record; default off). When off the
@@ -219,6 +230,7 @@ export default function LLMRecordsPage() {
         if (!alive) return;
         setRecords(r.records ?? []);
         setTotal(r.total ?? 0);
+        setCostTotal(typeof r.cost_total === "number" ? r.cost_total : null);
       })
       .catch(() => {
         /* 查询失败忽略，finally 中解除加载状态。 */
@@ -284,6 +296,9 @@ export default function LLMRecordsPage() {
   const totalPages = Math.max(1, Math.ceil(total / size));
   const rangeStart = total === 0 ? 0 : page * size + 1;
   const rangeEnd = page * size + records.length;
+  // 仅在接口返回了费用(价格表已配置且命中模型)时才显示费用列/合计，避免空白噪音。
+  const showCost = records.some((rec) => (rec.cost ?? 0) > 0);
+  const colCount = showCost ? 9 : 8;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -307,7 +322,7 @@ export default function LLMRecordsPage() {
             className="h-8 pl-8"
           />
         </div>
-        <Input placeholder="Model" className="h-8 w-48" value={model} onChange={(e) => setModel(e.target.value)} />
+        <Input placeholder={t("modelPlaceholder")} className="h-8 w-48" value={model} onChange={(e) => setModel(e.target.value)} />
         <Select value={pickedTask} onValueChange={setPickedTask}>
           <SelectTrigger size="sm" className="w-56">
             <SelectValue placeholder={t("taskPlaceholder")} />
@@ -322,6 +337,9 @@ export default function LLMRecordsPage() {
                 <SelectItem key={task.task_id} value={task.task_id}>
                   <span className="font-mono">#{task.task_id}</span>
                   <span className="ml-2 text-muted-foreground">({task.count})</span>
+                  {typeof task.cost === "number" && task.cost > 0 && (
+                    <span className="ml-2 text-amber-600 tabular-nums">{fmtCost(task.cost)}</span>
+                  )}
                 </SelectItem>
               ))
             )}
@@ -373,6 +391,12 @@ export default function LLMRecordsPage() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          {/* totals 区：当前过滤条件的费用估算(USD)，由价格表读时计算。 */}
+          {costTotal !== null && costTotal > 0 && (
+            <span className="tabular-nums text-amber-600" title={t("costTooltip")}>
+              {t("costEstimate", { cost: fmtCost(costTotal) })}
+            </span>
+          )}
           <span className="tabular-nums">
             {rangeStart}–{rangeEnd} / {total}
           </span>
@@ -409,25 +433,26 @@ export default function LLMRecordsPage() {
                 <TableRow>
                   <TableHead className="w-[130px]">{t("colTime")}</TableHead>
                   <TableHead className="w-[60px]">{t("colTask")}</TableHead>
-                  <TableHead className="w-[90px]">Worker</TableHead>
-                  <TableHead className="w-[100px]">Profile</TableHead>
-                  <TableHead className="w-[140px]">Model</TableHead>
+                  <TableHead className="w-[90px]">{t("colWorker")}</TableHead>
+                  <TableHead className="w-[100px]">{t("colProfile")}</TableHead>
+                  <TableHead className="w-[140px]">{t("colModel")}</TableHead>
                   <TableHead className="w-[70px]">{t("colLatency")}</TableHead>
-                  <TableHead className="w-[90px]">Tokens</TableHead>
+                  <TableHead className="w-[90px]">{t("colTokens")}</TableHead>
+                  {showCost && <TableHead className="w-[80px] text-right">{t("colCost")}</TableHead>}
                   <TableHead className="w-[60px]">{t("colStatus")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading && records.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-12 text-center">
+                    <TableCell colSpan={colCount} className="py-12 text-center">
                       <Loader2Icon className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
                     </TableCell>
                   </TableRow>
                 ) : records.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-12 text-center text-sm text-muted-foreground">
-                      {t("empty")}
+                    <TableCell colSpan={colCount} className="p-0">
+                      <EmptyState illustration="terminal" title={t("empty")} />
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -462,14 +487,21 @@ export default function LLMRecordsPage() {
                           {fmtTokens(rec.input_tokens)} / {fmtTokens(rec.output_tokens)}
                         </span>
                       </TableCell>
+                      {showCost && (
+                        <TableCell className="text-right">
+                          <span className="text-xs tabular-nums">
+                            {typeof rec.cost === "number" && rec.cost > 0 ? fmtCost(rec.cost) : "-"}
+                          </span>
+                        </TableCell>
+                      )}
                       <TableCell>
                         {rec.status === "ok" ? (
                           <Badge variant="secondary" className="text-xs text-emerald-600">
-                            OK
+                            {t("statusOk")}
                           </Badge>
                         ) : (
                           <Badge variant="destructive" className="text-xs">
-                            Error
+                            {t("statusError")}
                           </Badge>
                         )}
                       </TableCell>
@@ -506,11 +538,11 @@ export default function LLMRecordsPage() {
               </span>
               {selected.status === "ok" ? (
                 <Badge variant="secondary" className="text-xs text-emerald-600">
-                  OK
+                  {t("statusOk")}
                 </Badge>
               ) : (
                 <Badge variant="destructive" className="text-xs">
-                  Error
+                  {t("statusError")}
                 </Badge>
               )}
               {/**

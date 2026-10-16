@@ -24,12 +24,17 @@ export interface Task {
   active?: boolean;
   in_flight?: number;
   findings?: { critical: number; high: number; medium: number; low: number }; // 已登记漏洞数(按严重度分档)
+  // 价值指标(仅展示,不参与引擎判定):
+  first_finding_ms?: number; // 首个 finding 相对任务开始的毫秒差;0/缺省=尚未产出
+  findings_per_hour?: number; // 产出速率 = findings 总数 ÷ 已运行小时(保留一位小数)
+  pending_approvals?: number; // 等待人工决定的拦截审批条数;>0 时显示「等待审批」徽章
   last_activity?: string;
   stalled?: boolean;
   goals_total?: number;
   goals_met?: number;
   engine_mode?: EngineMode;
   tokens?: TokenTotal; // whole-task token consumption
+  token_budget?: number; // 任务级 token 预算(0=不限)；用尽自动暂停，调高后可恢复
   llm_profile_id?: number; // LLM profile used; absent = default profile
   llm_profile_ids?: number[]; // ordered task-level failover chain
   active_llm_profile_id?: number; // profile used by the next LLM call
@@ -696,7 +701,7 @@ export interface AgentTrigger {
   id: number;
   agent_key: string;
   enabled: boolean;
-  interval_sec: number; // 定时:每 N 秒(0=不定时)
+  interval_sec: number; // 定时:每 N 秒(0=不定时;>0 时服务端要求最小 60)
   on_finding: boolean; // 任意任务发现 finding 时触发
   on_goal_met: boolean; // 任意任务达成目标时触发
   on_task_timeout: boolean; // 任意任务超时时触发
@@ -745,6 +750,47 @@ export interface Conversation {
   pinned_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ---- Checkpoints (批次 6：时间线检查点与回滚) ----
+// 快照只存边界引用（活动 id / transcript 大小 / 图计数），不复制消息。
+export interface CheckpointSnapshot {
+  activity_id: number; // 快照包含的最大活动 id；回滚隐藏 id 大于它的步骤
+  transcript_size?: number;
+  transcript_path?: string;
+  node_id?: number;
+  counts?: Record<string, number>;
+  intents?: Record<string, number[]>;
+  compaction?: Record<string, unknown>;
+}
+
+export interface Checkpoint {
+  id: number;
+  scope: string; // "conv-<id>" | "task-<id>"
+  seq: number; // scope 内单调时间线地址
+  reason:
+    | "user_message"
+    | "turn_complete"
+    | "admit"
+    | "intent_settled"
+    | "interrupt"
+    | "compaction_recover"
+    | "revert"
+    | "manual"
+    | (string & {});
+  status: "active" | "superseded" | (string & {});
+  summary: string;
+  snapshot: CheckpointSnapshot;
+  created_at: string;
+}
+
+export interface CheckpointRevertResult {
+  status: string;
+  hidden: number; // 被隐藏的步骤数
+  superseded: number; // 作废的后续检查点数
+  transcript_truncated: boolean;
+  checkpoint?: Checkpoint | null; // 回滚标记检查点
+  reopened?: number[]; // 任务回滚重排为待执行的意图 id
 }
 
 // ---- Backend logs (/logs page) ----
@@ -818,6 +864,8 @@ export interface ProfileUsage {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+  // 费用估算(USD)：后端按 settings.price_table 读时计算；未配价格表或模型未命中时省略。
+  cost_usd?: number;
 }
 
 // One (profile, UTC day) token bucket for the dashboard's daily chart (new source).
@@ -827,6 +875,8 @@ export interface ProfileDayUsage {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
+  // 费用估算(USD)，与 ProfileUsage.cost_usd 同源同口径；未配价格表时省略。
+  cost_usd?: number;
 }
 
 // Response of GET /api/tokens/usage — the dashboard's "new" (llm_usage) token view.
@@ -839,6 +889,22 @@ export interface UsageStats {
 // always-on llm_usage metering ledger. calls = number of LLM calls on this model.
 export interface ModelTokenStat {
   model: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  // 费用估算(USD)：后端按 settings.price_table(模型名子串、最长匹配)读时计算。
+  // 未配价格表或模型未命中时省略；同一响应的 cost_total 是全任务合计。
+  cost?: number;
+}
+
+// Per-role (agent 泳道) token usage for one task (GET /api/llm/records/by-worker),
+// same always-on llm_usage ledger as ModelTokenStat. worker is the raw lane
+// identifier llmrec resolves from the session prefix: worker / planner / main /
+// goals / compactor / btw / (unknown).
+export interface WorkerTokenStat {
+  worker: string;
   calls: number;
   input_tokens: number;
   output_tokens: number;
@@ -862,6 +928,7 @@ export interface Session {
 // ---- Security ----
 export interface AuditEntry {
   ts: string;
+  call_id?: string; // intercept trace 的 ToolUseID；空 = 无法配对
   tool: string;
   action: "allow" | "block";
   reason?: string;
@@ -928,6 +995,13 @@ export interface Settings {
   global_proxy?: string;
   python_interpreter?: string; // 自定义脚本工具的 python 解释器路径(空=运行时检测)
   workers?: number; // 并发工作 agent 数(默认3)；对之后启动的任务生效
+  // 新建任务的默认 token 预算(input+output,0=不限)；仅在创建任务未显式给预算时取它。
+  // 预算闸在每次 run 收尾按 llm_usage 累计 input+output 检查，用尽自动暂停任务。
+  default_task_token_budget?: number;
+  // 模型价目 JSON(USD/百万 token)：{"claude-opus":{"input":15,"output":75,
+  // "cache_read":1.5,"cache_write":18.75}, ...}。key 是模型名子串(最长匹配优先)，
+  // 空串=清除(不算钱)。读取接口据此在读时现算费用(历史数据即刻生效)。
+  price_table?: string;
   // 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
   task_concurrency_enabled?: boolean; // 默认 false
   task_concurrency_limit?: number; // 开启后默认 5
@@ -963,6 +1037,8 @@ export interface NotificationFilter {
   vulnclass_include?: string[]; // 空=全收；非空则要求漏洞类型命中任一关键词（大小写不敏感子串）
   vulnclass_exclude?: string[]; // 命中任一关键词即排除（排除优先于包含）
   on_status_change?: boolean; // 是否也接收漏洞处置状态变更事件
+  on_task_status?: boolean; // 是否接收任务状态变化（完成/失败/超时/暂停）
+  on_approval?: boolean; // 是否接收「等待人工审批」事件
 }
 
 // NotificationChannel 是一个渠道实例。config 的字段随 kind 而异，
@@ -1026,6 +1102,18 @@ export interface NotificationDelivery {
 }
 
 // ---- LLM config ----
+// 凭据实体（计划 46–47）：独立于模型配置，可被多个配置引用。只回显尾 4 位提示
+// （api_key_hint），明文 key 永不进响应。
+export interface LLMCredential {
+  id: string;
+  name: string;
+  api_key_hint?: string;
+  // 当前引用该凭据的模型配置名（删除确认提示「将解绑 N 个配置」）。
+  profile_names?: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface LLMProfile {
   id: string;
   name: string;
@@ -1059,6 +1147,16 @@ export interface LLMProfile {
   session_header_key?: string;
   // 本配置对重试的覆盖（建连/空响应/同 provider 安全窗口）。留空/全 0 = 跟随全局策略。
   retry?: LLMRetryOverride;
+  // 输入模态声明：逗号分隔的 text/image/audio/pdf。""（或省略）= 未声明，后端按
+  // 模型名保守推断。text 始终隐含；保存时后端统一归一（补 text、规范顺序）。
+  input_modalities?: string;
+  // 运行时实际生效的模态（声明优先，否则按模型名推断）。文本始终包含，卡片上只
+  // 展示图片/音频/PDF 这些扩展模态。
+  effective_input_modalities?: string;
+  // 绑定的凭据（计划 46–47）：非空 = Key 以该凭据为准（本配置的 api_key 不参与）。
+  // 只读字段，保存请求里用数字 credential_id（0 = 解绑回内联 Key）。
+  credential_id?: string;
+  credential_name?: string;
 }
 
 // ---- LLM 重试策略 ----
@@ -1150,14 +1248,26 @@ export interface PromptVersion {
   template_text: string;
 }
 
+export interface AgentLLMProfileOption {
+  id: number;
+  name: string;
+  model: string;
+  is_default: boolean;
+  // 能力元数据（随批次 3）：备用链编辑器据此显示能力徽章与匹配建议，缺省=未知。
+  context_window_k?: number;
+  effective_input_modalities?: string;
+}
+
 export interface AgentDetail {
   agent: Agent;
   prompt: string;
   variables: PromptVar[];
   versions: PromptVersion[];
   visibility: { mcp: number[]; skill: string[] };
-  // 可绑定的 LLM 配置候选(供「默认模型」下拉)；当前绑定见 agent.llm_profile_id
-  llm_profiles?: { id: number; name: string; model: string; is_default: boolean }[];
+  // 可绑定的 LLM 配置候选(供「默认模型」下拉与备用链编辑器)；当前绑定见 agent.llm_profile_id
+  llm_profiles?: AgentLLMProfileOption[];
+  // 备用模型链尾(#139/#144)：按顺序的配置 id；链首 = agent.llm_profile_id（主绑定）。
+  llm_chain_fallbacks?: number[];
   wrapup_prompt?: string; // 已保存的收尾提示词(空=用内置默认)
   wrapup_default?: string; // 内置默认收尾提示词(占位/恢复默认)
   wrapup_max_turns?: number; // 已保存的收尾轮数(0=用内置默认)
@@ -1250,6 +1360,53 @@ export interface Stats {
   roe_enabled: boolean;
   findings_confirmed: number;
   active_task?: Partial<Task>;
+}
+
+// ---- 平台 shell 探测（/api/health.shell；SDK Bash 工具的实际执行器与语法引导） ----
+export interface ShellCapability {
+  os: string;
+  executor: string;
+  available?: string[]; // PATH 上探测到的 shell
+  guidance?: string; // 中文引导（仅非 bash 平台非空）
+}
+
+// ---- Reliability metrics (/api/metrics；本次进程启动以来的健康度，非历史账本) ----
+export interface ReliabilityToolStat {
+  tool: string;
+  calls: number;
+  errors: number;
+  stages?: Record<string, number>; // 按错误阶段细分（hook/parse/validate/exec/timeout）
+}
+
+export interface ReliabilityToolMetrics {
+  calls: number;
+  errors: number;
+  error_rate: number; // 错误/调用；无调用时为 0
+  by_stage: Record<string, number>;
+  top_tools: ReliabilityToolStat[];
+}
+
+// 崩溃重放与中断恢复共用的形状：attempts=尝试数，pending=尚未到达终态。
+export interface ReliabilityRecovery {
+  attempts: number;
+  succeeded: number;
+  failed: number;
+  pending: number;
+  success_rate: number; // 成功/(成功+失败)；无结算时为 0
+}
+
+export interface ReliabilityProtocol {
+  unpaired_results: number; // 无调用 ID、已丢弃的结果
+  unknown_results: number; // 有 ID 但无对应 tool_use 的结果
+  missing_results: number; // 执行结束未收到结果的调用
+}
+
+export interface ReliabilityMetrics {
+  since: number; // unix 秒；计数起始时刻（进程启动）
+  tools: ReliabilityToolMetrics;
+  replay: ReliabilityRecovery;
+  interrupts: ReliabilityRecovery;
+  protocol: ReliabilityProtocol;
 }
 
 // ---- Intercept Rules ----
@@ -1411,6 +1568,8 @@ export interface LLMRecordItem {
   cache_write: number;
   status: string;
   error?: string;
+  // 费用估算(USD)：后端按 settings.price_table 读时计算；未配价格表或模型未命中时省略。
+  cost?: number;
 }
 
 export interface LLMRecordDetail extends LLMRecordItem {
@@ -1427,6 +1586,8 @@ export interface LLMRecordDetail extends LLMRecordItem {
 export interface LLMTask {
   task_id: string;
   count: number;
+  // 该任务已记录调用的费用估算(USD)；未配价格表或模型未命中时省略。
+  cost?: number;
 }
 
 // The exact JSON sent to the review model, retained for all model verdicts.

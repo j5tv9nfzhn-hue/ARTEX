@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
@@ -30,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { severityDotClass, severitySoftChipClass } from "@/lib/severity";
 import { type Tone, toneClasses, toneDot } from "@/lib/status";
 import type { Edge, ExploreKind, FindingAsset, TaskNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -70,8 +72,10 @@ const KIND_META: Record<string, KindMeta> = {
   },
   finding: {
     icon: BugIcon,
-    dot: "bg-rose-500",
-    chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+    // 漏洞类型签与探索图「漏洞」节点同源:统一取 severity 契约的 critical 红,
+    // 不再各处写 rose(见 lib/severity.ts)。
+    dot: severityDotClass("critical"),
+    chip: severitySoftChipClass("critical"),
   },
   hint: {
     icon: LightbulbIcon,
@@ -156,8 +160,8 @@ function prettyPayload(raw: string | undefined, emptyLabel: string): string {
   }
 }
 
-const dayFmt = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "short" });
-const clockFmt = new Intl.DateTimeFormat("ko-KR", {
+const dayFmt = new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "short" });
+const clockFmt = new Intl.DateTimeFormat("zh-CN", {
   hour: "2-digit",
   minute: "2-digit",
   second: "2-digit",
@@ -244,7 +248,7 @@ function RelatedNodeCard({ node, assets }: { node: TaskNode; assets: FindingAsse
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
         <span>{t("fieldType", { label: t(`kind.${kindKeyOf(kind)}`) })}</span>
         <span>{t("fieldSource", { origin: node.origin || "system" })}</span>
-        <span>{Number.isNaN(ts) ? node.ts : new Date(ts).toLocaleString("ko-KR")}</span>
+        <span>{Number.isNaN(ts) ? node.ts : new Date(ts).toLocaleString("zh-CN")}</span>
       </div>
       <p className="line-clamp-4 text-xs break-words">{summary || t("noSummary")}</p>
       <AssetList assets={assets} dense />
@@ -399,7 +403,7 @@ function BroadcastRow({
               </span>
               <span>{t("fieldType", { label: t(`kind.${kindKeyOf(kind)}`) })}</span>
               <span>{t("fieldSource", { origin: node.origin || "system" })}</span>
-              <span>{Number.isNaN(ts) ? node.ts : new Date(ts).toLocaleString("ko-KR")}</span>
+              <span>{Number.isNaN(ts) ? node.ts : new Date(ts).toLocaleString("zh-CN")}</span>
             </div>
             {node.state === "deleted" && node.delete_reason && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
@@ -656,9 +660,7 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
             ))}
           </div>
         ) : items.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">
-            {query || kinds.length > 0 ? t("emptyFiltered") : t("emptyNoNodes")}
-          </p>
+          <EmptyState illustration="radar" title={query || kinds.length > 0 ? t("emptyFiltered") : t("emptyNoNodes")} />
         ) : (
           groups.map((group) => (
             <div key={group.day}>

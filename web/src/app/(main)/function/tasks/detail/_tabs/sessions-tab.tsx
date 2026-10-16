@@ -12,6 +12,7 @@ import {
   ClockIcon,
   HistoryIcon,
   Loader2Icon,
+  NavigationIcon,
   PaperclipIcon,
   PauseIcon,
   PlusIcon,
@@ -29,6 +30,8 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/components/approval-execution-focus";
+import { EmptyState } from "@/components/empty-state";
+import { LiveDot } from "@/components/live-dot";
 import { MentionTextarea } from "@/components/mention-textarea";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
@@ -45,6 +48,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { InputGroup, InputGroupAddon, InputGroupButton } from "@/components/ui/input-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
@@ -421,7 +432,7 @@ function SessionItem({
         ) : null}
         {s.live && (
           <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
-            <span className="size-1 animate-pulse rounded-full bg-blue-500" />
+            <LiveDot className="size-1" />
             {t("item.live")}
           </span>
         )}
@@ -553,6 +564,12 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const [workerMessage, setWorkerMessage] = React.useState("");
   const [workerMessageRequestId, setWorkerMessageRequestId] = React.useState("");
   const [workerMessageSending, setWorkerMessageSending] = React.useState(false);
+  // 引导（steer）运行中的意图：对话框里的目标会话 + 文本 + 提交中标记。
+  // 只在 running 的 Worker 上开放：后端会把文本投进引擎 steer 队列，
+  // 下一步工具调用前注入，不暂停、不重跑。
+  const [steerTarget, setSteerTarget] = React.useState<Session | null>(null);
+  const [steerText, setSteerText] = React.useState("");
+  const [steerSending, setSteerSending] = React.useState(false);
   // 方式1 文件上传:选好的附件(已落到任务工作目录 uploads/),随下条消息一起发。
   const [attachments, setAttachments] = React.useState<ChatAttachment[]>([]);
   const [uploading, setUploading] = React.useState(false);
@@ -1604,6 +1621,29 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       .finally(() => setWorkerMessageSending(false));
   }
 
+  // 引导运行中的 Worker：走 /intents/{id}/steer，不改变意图状态。成功只是"已递达
+  // 到引擎队列"——若 Worker 恰在收尾或尚未注册内存 work，后端会回 409 原样透出。
+  async function sendSteer() {
+    const intentId = steerTarget?.intent_id;
+    const text = steerText.trim();
+    if (!intentId || !text || steerSending) return;
+    if (workerMessageCharCount(text) > MAX_WORKER_MESSAGE_CHARS) {
+      toast.error(t("toast.messageTooLong", { max: MAX_WORKER_MESSAGE_CHARS }));
+      return;
+    }
+    setSteerSending(true);
+    try {
+      await api.steerIntent(taskId, intentId, text);
+      toast.success(t("toast.steerSent"));
+      setSteerTarget(null);
+      setSteerText("");
+    } catch (error) {
+      toast.error(t("toast.steerFailed", { msg: (error as Error).message || t("toast.retryLater") }));
+    } finally {
+      setSteerSending(false);
+    }
+  }
+
   const mainLoaded = !!store[currentMainKey]?.loaded;
   // 发送键位由系统设置决定（localStorage），默认 Enter 发送。
   const sendMode = useChatSendMode();
@@ -1669,7 +1709,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                 >
                   {sseLive ? (
                     <>
-                      <span className="size-1 animate-pulse rounded-full bg-emerald-500" />
+                      <LiveDot className="size-1 bg-emerald-500" />
                       {t("sse.live")}
                     </>
                   ) : (
@@ -1853,7 +1893,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               )}
               {active.live && (
                 <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
-                  <span className="size-1 animate-pulse rounded-full bg-blue-500" />
+                  <LiveDot className="size-1" />
                   {t("sse.live")}
                 </span>
               )}
@@ -1971,9 +2011,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                     focusedSeq={focusHistory.ready ? approvalFocus.state?.source?.seq : undefined}
                   />
                 ) : (
-                  <div className="pl-9 text-xs text-muted-foreground">
-                    {isMain ? t("transcript.emptyMain") : t("transcript.emptyWorker")}
-                  </div>
+                  <EmptyState compact illustration="chat" title={isMain ? t("transcript.emptyMain") : t("transcript.emptyWorker")} />
                 )}
               </div>
             </ScrollArea>
@@ -2108,21 +2146,37 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                       </InputGroupButton>
                     )}
                     {active.status === "running" ? (
-                      <InputGroupButton
-                        className="ml-auto"
-                        size="icon-xs"
-                        variant="destructive"
-                        onClick={() => void controlWorker(active, "pause")}
-                        disabled={controllingIntent === active.intent_id}
-                        title={t("composer.pauseTitle")}
-                        aria-label={t("composer.pauseTitle")}
-                      >
-                        {controllingIntent === active.intent_id ? (
-                          <Loader2Icon className="animate-spin" />
-                        ) : (
-                          <SquareIcon />
-                        )}
-                      </InputGroupButton>
+                      <>
+                        <InputGroupButton
+                          className="ml-auto"
+                          size="xs"
+                          variant="outline"
+                          onClick={() => {
+                            setSteerTarget(active);
+                            setSteerText("");
+                          }}
+                          disabled={controllingIntent === active.intent_id || steerSending}
+                          title={t("steer.buttonTitle")}
+                          aria-label={t("steer.buttonAria", { id: active.intent_id ?? "" })}
+                        >
+                          <NavigationIcon data-icon="inline-start" />
+                          {t("steer.button")}
+                        </InputGroupButton>
+                        <InputGroupButton
+                          size="icon-xs"
+                          variant="destructive"
+                          onClick={() => void controlWorker(active, "pause")}
+                          disabled={controllingIntent === active.intent_id}
+                          title={t("composer.pauseTitle")}
+                          aria-label={t("composer.pauseTitle")}
+                        >
+                          {controllingIntent === active.intent_id ? (
+                            <Loader2Icon className="animate-spin" />
+                          ) : (
+                            <SquareIcon />
+                          )}
+                        </InputGroupButton>
+                      </>
                     ) : (
                       <>
                         <InputGroupButton
@@ -2169,6 +2223,65 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             )}
           </div>
         </SideQuestionWorkspace>
+        {/* 引导（steer）对话框：只对运行中的 Worker 开放。 */}
+        <Dialog
+          open={steerTarget !== null}
+          onOpenChange={(open) => {
+            if (!open && !steerSending) {
+              setSteerTarget(null);
+              setSteerText("");
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{t("steer.title", { id: steerTarget?.intent_id ?? "" })}</DialogTitle>
+              <DialogDescription className="break-words whitespace-normal">{t("steer.desc")}</DialogDescription>
+            </DialogHeader>
+            <Textarea
+              value={steerText}
+              onChange={(event) => setSteerText(event.target.value)}
+              placeholder={t("steer.placeholder")}
+              rows={3}
+              autoFocus
+              disabled={steerSending}
+              aria-invalid={workerMessageCharCount(steerText) > MAX_WORKER_MESSAGE_CHARS}
+            />
+            <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
+              <span>{t("steer.hint")}</span>
+              <span
+                className={cn(
+                  "shrink-0 tabular-nums",
+                  workerMessageCharCount(steerText) > MAX_WORKER_MESSAGE_CHARS && "text-destructive",
+                )}
+              >
+                {workerMessageCharCount(steerText)}/{MAX_WORKER_MESSAGE_CHARS}
+              </span>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={steerSending}
+                onClick={() => {
+                  setSteerTarget(null);
+                  setSteerText("");
+                }}
+              >
+                {t("steer.cancel")}
+              </Button>
+              <Button
+                onClick={() => void sendSteer()}
+                disabled={
+                  steerSending || !steerText.trim() || workerMessageCharCount(steerText) > MAX_WORKER_MESSAGE_CHARS
+                }
+              >
+                {steerSending && <Spinner data-icon="inline-start" />}
+                {t("steer.submit")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <AlertDialog
           open={cancelIntent !== null}
           onOpenChange={(open) => {

@@ -3,7 +3,9 @@
 // User-facing labels live in the "status" message namespace (ko/zh); the maps
 // here only carry the color tone, keyed by the same status value.
 
-export type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "rose" | "violet" | "slate";
+import { severityBadgeClass, severityDotClass } from "@/lib/severity";
+
+export type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "violet" | "slate";
 
 export const toneClasses: Record<Tone, string> = {
   neutral: "bg-muted text-muted-foreground border-transparent",
@@ -11,8 +13,6 @@ export const toneClasses: Record<Tone, string> = {
   green: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
   amber: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
   red: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
-  // rose 用作「严重」——实心高强调,视觉上明显高于「高危」的软红描边。
-  rose: "bg-rose-600 text-white border-rose-600 dark:bg-rose-600 dark:text-white",
   violet: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/20",
   slate: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20",
 };
@@ -23,13 +23,16 @@ export const toneDot: Record<Tone, string> = {
   green: "bg-emerald-500",
   amber: "bg-amber-500",
   red: "bg-red-500",
-  rose: "bg-white",
   violet: "bg-violet-500",
   slate: "bg-slate-500",
 };
 
 interface StatusMeta {
   tone: Tone;
+  // severity 域用完整 class 覆盖 tone 推导(唯一事实源见 lib/severity.ts);
+  // 其余域不设置,继续走 toneClasses/toneDot。
+  badgeClass?: string;
+  dotClass?: string;
 }
 
 const intent: Record<string, StatusMeta> = {
@@ -57,11 +60,30 @@ const task: Record<string, StatusMeta> = {
   timeout: { tone: "amber" },
 };
 
+// severity:色板与药丸样式来自 lib/severity.ts(全站唯一事实源,修正旧版
+// critical=rose / high=red 的亮度倒挂);tone 仅为兜底参考值,StatusBadge
+// 渲染实际使用 badgeClass/dotClass。
 const severity: Record<string, StatusMeta> = {
-  critical: { tone: "rose" },
-  high: { tone: "red" },
-  medium: { tone: "amber" },
-  low: { tone: "slate" },
+  critical: {
+    tone: "red",
+    badgeClass: severityBadgeClass("critical"),
+    dotClass: severityDotClass("critical"),
+  },
+  high: {
+    tone: "amber",
+    badgeClass: severityBadgeClass("high"),
+    dotClass: severityDotClass("high"),
+  },
+  medium: {
+    tone: "amber",
+    badgeClass: severityBadgeClass("medium"),
+    dotClass: severityDotClass("medium"),
+  },
+  low: {
+    tone: "slate",
+    badgeClass: severityBadgeClass("low"),
+    dotClass: severityDotClass("low"),
+  },
 };
 
 const finding: Record<string, StatusMeta> = {

@@ -6,9 +6,14 @@
  * Runs early in <head> to apply the correct data attributes before hydration,
  * preventing layout or theme flicker and keeping RootLayout fully static.
  */
+import { fontRegistry } from "@/lib/fonts/registry";
 import { PREFERENCE_DEFAULTS, PREFERENCE_PERSISTENCE } from "@/lib/preferences/preferences-config";
 
 export function ThemeBootScript() {
+  // 字体键白名单:旧 cookie 可能残留已下线的字体键(如 inter/lora),
+  // 启动时拦截并回退到默认字体,避免 data-font 指向不存在的字体导致选择器状态失效。
+  const fontKeys = JSON.stringify(Object.keys(fontRegistry));
+
   const persistence = JSON.stringify({
     theme_mode: PREFERENCE_PERSISTENCE.theme_mode,
     theme_preset: PREFERENCE_PERSISTENCE.theme_preset,
@@ -35,6 +40,7 @@ export function ThemeBootScript() {
         var root = document.documentElement;
         var PERSISTENCE = ${persistence};
         var DEFAULTS = ${defaults};
+        var FONT_KEYS = ${fontKeys};
 
         function readCookie(name) {
           var match = document.cookie.split("; ").find(function(c) {
@@ -85,7 +91,8 @@ export function ThemeBootScript() {
             ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
             : mode;
         var preset = rawPreset || DEFAULTS.theme_preset;
-        var font = rawFont || DEFAULTS.font;
+        // rawFont 可能来自旧 cookie,不在白名单内时回退到默认字体
+        var font = FONT_KEYS.indexOf(rawFont) !== -1 ? rawFont : DEFAULTS.font;
         var contentLayout = rawContentLayout || DEFAULTS.content_layout;
         var navbarStyle = rawNavbarStyle || DEFAULTS.navbar_style;
         var sidebarVariant = rawSidebarVariant || DEFAULTS.sidebar_variant;

@@ -6,6 +6,7 @@ import { RefreshCwIcon, RotateCcwIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import type { NotificationChannel, NotificationDelivery } from "@/lib/types";
+
+// 事件类型徽标文案键（notifyPage 命名空间）。只有非「新建漏洞」的事件需要
+// 额外标注——新建是默认语义，标注它只会变成噪音。
+const EVENT_KIND_LABEL_KEYS: Record<string, string> = {
+  finding_status_changed: "delivery.statusChanged",
+  task_status_changed: "delivery.taskStatusChanged",
+  approval_pending: "delivery.approvalPending",
+};
 
 // DeliveryList 是投递记录表：可按渠道与状态筛选，失败项可手动重发。
 export function DeliveryList({ channels }: { channels: NotificationChannel[] }) {
@@ -121,8 +130,13 @@ export function DeliveryList({ channels }: { channels: NotificationChannel[] }) 
           <TableBody>
             {rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
-                  {loading ? t("delivery.loading") : t("delivery.empty")}
+                <TableCell colSpan={7} className="p-0">
+                  {/* 加载态与空态拆开:加载中一行文案,加载完成为空才展示空态 */}
+                  {loading ? (
+                    <div className="text-muted-foreground py-8 text-center">{t("delivery.loading")}</div>
+                  ) : (
+                    <EmptyState illustration="chat" title={t("delivery.empty")} />
+                  )}
                 </TableCell>
               </TableRow>
             ) : (
@@ -133,11 +147,13 @@ export function DeliveryList({ channels }: { channels: NotificationChannel[] }) 
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <StatusBadge domain="severity" value={d.severity} />
+                      {/* 任务级事件没有严重等级（severity 为空），跳过级别徽标，
+                          否则会渲染出一个空标签。 */}
+                      {d.severity && <StatusBadge domain="severity" value={d.severity} />}
                       <span className="truncate text-sm">{d.title || t("delivery.noTitle")}</span>
-                      {d.event_kind === "finding_status_changed" && (
+                      {EVENT_KIND_LABEL_KEYS[d.event_kind] && (
                         <Badge variant="outline" className="shrink-0">
-                          {t("delivery.statusChanged")}
+                          {t(EVENT_KIND_LABEL_KEYS[d.event_kind])}
                         </Badge>
                       )}
                     </div>
@@ -183,5 +199,5 @@ export function DeliveryList({ channels }: { channels: NotificationChannel[] }) 
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("ko-KR", { hour12: false });
+  return d.toLocaleString("zh-CN", { hour12: false });
 }

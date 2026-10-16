@@ -21,9 +21,13 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
+import Link from "next/link";
 import { toast } from "sonner";
 
 import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/components/approval-execution-focus";
+import { CheckpointTimelineButton } from "@/components/checkpoint-timeline";
+import { EmptyState } from "@/components/empty-state";
+import { LiveDot } from "@/components/live-dot";
 import { MentionTextarea } from "@/components/mention-textarea";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
@@ -137,7 +141,7 @@ function LiveBadge() {
   const t = useTranslations("chat");
   return (
     <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
-      <span className="size-1 animate-pulse rounded-full bg-blue-500" />
+      <LiveDot className="size-1" />
       {t("live")}
     </span>
   );
@@ -463,14 +467,25 @@ function DraftChat({
 
   return (
     <>
-      {/* empty / landing state fills the panel */}
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
-        <div className="bg-primary/10 flex size-12 items-center justify-center rounded-full">
-          <Bot className="text-primary size-6" />
-        </div>
-        <div className="text-sm font-medium">{t("emptyStart", { agent: agent?.name ?? "Agent" })}</div>
-        {agent?.description && <p className="text-muted-foreground max-w-md text-xs">{agent.description}</p>}
-      </div>
+      {/* 空态 / 落地页:插画 + 引导语 + 可点击建议 chips(点一下把句子填入输入框),让空态自己"教书" */}
+      <EmptyState
+        illustration="chat"
+        className="min-h-0 flex-1"
+        title={t("emptyStart", { agent: agent?.name ?? "Agent" })}
+        description={agent?.description || t("emptyStartHint")}
+        suggestions={[
+          { label: t("suggestions.recon"), onClick: () => setInput(t("suggestions.recon")) },
+          { label: t("suggestions.traffic"), onClick: () => setInput(t("suggestions.traffic")) },
+          { label: t("suggestions.findings"), onClick: () => setInput(t("suggestions.findings")) },
+        ]}
+        actions={
+          profiles.length === 0 ? (
+            <Button asChild size="sm" variant="outline">
+              <Link href="/system/llm">{t("llmProfile.configure")}</Link>
+            </Button>
+          ) : undefined
+        }
+      />
 
       <Composer
         value={input}
@@ -528,6 +543,8 @@ function ChatView({
   const loadingMoreRef = React.useRef(false); // guard: one scroll-up load at a time
   const [historyLoaded, setHistoryLoaded] = React.useState(false);
   const [hasMore, setHasMore] = React.useState(false); // drives the "load earlier" hint
+  // 检查点回滚后强制重载时间线（隐藏的步骤从列表消失）。
+  const [reloadToken, setReloadToken] = React.useState(0);
   const agent = agents.find((a) => a.key === conv.agent_key);
   const currentProfileId = conv.llm_profile_id ?? null;
   const side = useSideQuestions(`/api/conversations/${conv.id}`);
@@ -587,7 +604,7 @@ function ChatView({
     return () => {
       live = false;
     };
-  }, [conv.id]);
+  }, [conv.id, reloadToken]);
 
   // A trigger or another tab may start a turn while this conversation is open.
   // A false list snapshot must not stop the tail before its final messages load.
@@ -804,6 +821,11 @@ function ChatView({
         )}
         {running && <LiveBadge />}
         <SideQuestionButton side={side} />
+        <CheckpointTimelineButton
+          scope="conversation"
+          id={String(conv.id)}
+          onReverted={() => setReloadToken((token) => token + 1)}
+        />
         <div className="text-muted-foreground ml-auto flex min-w-0 max-w-full items-center justify-end gap-x-3 gap-y-1 text-xs max-sm:w-full max-sm:flex-wrap">
           {tokenTotal.turns > 0 && (
             <span title={t("turnsTooltip")} className="tabular-nums">
@@ -811,8 +833,12 @@ function ChatView({
             </span>
           )}
           {tokenTotal.any && (
-            <span title="input / cache(read) / output tokens" className="min-w-0 truncate tabular-nums">
-              input {fmtTokens(tokenTotal.i)} · cache {fmtTokens(tokenTotal.cr)} · output {fmtTokens(tokenTotal.o)}
+            <span title={t("tokensTooltip")} className="min-w-0 truncate tabular-nums">
+              {t("tokensLine", {
+                input: fmtTokens(tokenTotal.i),
+                cache: fmtTokens(tokenTotal.cr),
+                output: fmtTokens(tokenTotal.o),
+              })}
             </span>
           )}
         </div>
@@ -824,9 +850,7 @@ function ChatView({
       <ScrollArea type="auto" className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!">
         <div className="min-w-0 max-w-full px-4 py-3" ref={contentRef}>
           {messages.length === 0 && !running ? (
-            <div className="text-muted-foreground py-10 text-center text-sm">
-              {t("emptyStart", { agent: agent?.name ?? conv.agent_key })}
-            </div>
+            <EmptyState illustration="chat" title={t("emptyStart", { agent: agent?.name ?? conv.agent_key })} />
           ) : (
             <>
               {hasMore && (
@@ -981,7 +1005,7 @@ const ConversationItem = React.memo(function ConversationItem({
               </>
             )}
             <span className="shrink-0">
-              {new Date(conv.created_at).toLocaleDateString("ko-KR", {
+              {new Date(conv.created_at).toLocaleDateString("zh-CN", {
                 month: "numeric",
                 day: "numeric",
                 hour: "2-digit",
@@ -1478,9 +1502,12 @@ export default function ChatPage() {
           >
             <div className="flex min-w-0 flex-col gap-0.5 p-2">
               {filteredConversations.length === 0 && (
-                <p className="text-muted-foreground px-2 py-6 text-center text-xs">
-                  {agentFilter === null ? t("emptyAll") : t("emptyForAgent")}
-                </p>
+                <EmptyState
+                  compact
+                  illustration="chat"
+                  className="py-6"
+                  title={agentFilter === null ? t("emptyAll") : t("emptyForAgent")}
+                />
               )}
               {pinnedConversations.map((c) => (
                 <ConversationItem

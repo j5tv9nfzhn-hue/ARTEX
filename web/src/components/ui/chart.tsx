@@ -81,6 +81,11 @@ function ChartContainer({
   )
 }
 
+// sanitizeStyleToken 把拼进 <style> 的片段限制为安全字符，
+// 防止不受信任的 id / 变量名 / 颜色值破坏 CSS 甚至注入 HTML（XSS 审计见 docs/xss-audit.md）。
+const sanitizeStyleToken = (value: string) =>
+  value.replace(/[^A-Za-z0-9#%(),.\s_-]/g, "")
+
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
     ([, config]) => config.theme ?? config.color
@@ -96,13 +101,15 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
         __html: Object.entries(THEMES)
           .map(
             ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
+${prefix} [data-chart=${sanitizeStyleToken(id)}] {
 ${colorConfig
   .map(([key, itemConfig]) => {
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ??
       itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
+    return color
+      ? `  --color-${sanitizeStyleToken(key)}: ${sanitizeStyleToken(color)};`
+      : null
   })
   .join("\n")}
 }

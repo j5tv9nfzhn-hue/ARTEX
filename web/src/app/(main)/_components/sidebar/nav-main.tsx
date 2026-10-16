@@ -31,6 +31,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { api } from "@/lib/api";
+import { toggleSidebarGroupCollapsed, useSidebarPrefs } from "@/lib/sidebar-prefs";
 import { cn } from "@/lib/utils";
 import type {
   NavBadge,
@@ -39,6 +40,7 @@ import type {
   NavMainLinkItem,
   NavMainParentItem,
 } from "@/navigation/sidebar/sidebar-items";
+import { navGroupMessageKey } from "@/navigation/sidebar/sidebar-items";
 
 interface NavMainProps {
   readonly items: readonly NavGroup[];
@@ -75,6 +77,17 @@ interface NavCollapsibleItemProps {
   readonly isSubItemActive: (url: string) => boolean;
 }
 
+interface NavGroupSectionProps {
+  readonly label: string;
+  readonly items: readonly NavMainItem[];
+  readonly collapsible: boolean;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly isItemActive: (item: NavMainItem) => boolean;
+  readonly isSubItemActive: (url: string) => boolean;
+  readonly isSubmenuOpen: (item: NavMainParentItem) => boolean;
+}
+
 function CollapsedIconFallback({ title }: { title: string }) {
   return (
     <span className="flex size-4 shrink-0 items-center justify-center rounded-xs font-medium text-[10px] outline">
@@ -87,13 +100,14 @@ function hasSubItems(item: NavMainItem): item is NavMainParentItem {
   return Boolean(item.subItems?.length);
 }
 
-// 组编号对应 nav.group.* 消息键。标签在渲染时通过 useTranslations 翻译，
-// 不在 sidebar-items.ts 数据中保存；未映射的组回退到原 label。
-const GROUP_MESSAGE_KEY: Record<number, string> = { 1: "function", 2: "system" };
+// 收藏分组使用保留 id 0，用于折叠状态的持久化键。
+const PINNED_GROUP_ID = 0;
 
 export function NavMain({ items }: NavMainProps) {
   const t = useTranslations("nav");
   const rawPath = usePathname();
+  const { state, isMobile } = useSidebar();
+  const prefs = useSidebarPrefs();
   // 路由段含中文，pathname 可能是百分号编码，解码后再与导航 url 比较，保证高亮命中。
   const path = (() => {
     try {
@@ -119,31 +133,119 @@ export function NavMain({ items }: NavMainProps) {
     return item.subItems.some((sub) => path.startsWith(sub.url));
   };
 
+  // 图标折叠模式下分组标签被 CSS 隐藏（opacity-0/-mt-8），若再折叠内容会完全不可达；
+  // 因此该模式始终展开分组（保持改造前行为），只有非图标模式允许折叠。
+  const groupsCollapsible = !(state === "collapsed" && !isMobile);
+
+  const hiddenSet = new Set(prefs.hidden);
+  const pinnedSet = new Set(prefs.pinned);
+
+  // 收藏区按置顶顺序跨分组取条目；置顶条目同时从原分组移除（pinnedSet 过滤），
+  // 避免同一入口在侧边栏出现两次。
+  const itemById = new Map<string, NavMainItem>();
+  for (const group of items) {
+    for (const item of group.items) itemById.set(item.id, item);
+  }
+  const pinnedItems = prefs.pinned
+    .map((id) => itemById.get(id))
+    .filter((item): item is NavMainItem => item !== undefined && !hiddenSet.has(item.id));
+
+  // 隐藏的条目不再参与任何分组；分组因此清空时整组隐藏（含分组标签）。
+  const visibleGroups = items
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => !hiddenSet.has(item.id) && !pinnedSet.has(item.id)),
+    }))
+    .filter((group) => group.items.length > 0);
+
+  const groupLabel = (group: NavGroup) => {
+    const key = navGroupMessageKey(group.id);
+    return t.has(key) ? t(key) : (group.label ?? "");
+  };
+
   return (
     <>
-      {items.map((group) => (
-        <SidebarGroup key={group.id}>
-          {group.label && (
-            <SidebarGroupLabel className="group-data-[collapsible=icon]:pointer-events-none">
-              {GROUP_MESSAGE_KEY[group.id] ? t(`group.${GROUP_MESSAGE_KEY[group.id]}`) : group.label}
-            </SidebarGroupLabel>
-          )}
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {group.items.map((item) => (
-                <NavItem
-                  key={item.id}
-                  item={item}
-                  isItemActive={isItemActive}
-                  isSubItemActive={isSubItemActive}
-                  isSubmenuOpen={isSubmenuOpen}
-                />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+      {pinnedItems.length > 0 && (
+        <NavGroupSection
+          label={t("group.pinned")}
+          items={pinnedItems}
+          collapsible={groupsCollapsible}
+          open={!prefs.collapsedGroups.includes(PINNED_GROUP_ID)}
+          onOpenChange={(open) => toggleSidebarGroupCollapsed(PINNED_GROUP_ID, !open)}
+          isItemActive={isItemActive}
+          isSubItemActive={isSubItemActive}
+          isSubmenuOpen={isSubmenuOpen}
+        />
+      )}
+      {visibleGroups.map((group) => (
+        <NavGroupSection
+          key={group.id}
+          label={groupLabel(group)}
+          items={group.items}
+          collapsible={groupsCollapsible && groupLabel(group) !== ""}
+          open={!prefs.collapsedGroups.includes(group.id)}
+          onOpenChange={(open) => toggleSidebarGroupCollapsed(group.id, !open)}
+          isItemActive={isItemActive}
+          isSubItemActive={isSubItemActive}
+          isSubmenuOpen={isSubmenuOpen}
+        />
       ))}
     </>
+  );
+}
+
+// NavGroupSection renders one sidebar group. When collapsible, the group label is a
+// trigger and the open state is controlled by the caller so it can be persisted
+// (sidebar-prefs); when not, the label is static like the original rendering.
+function NavGroupSection({
+  label,
+  items,
+  collapsible,
+  open,
+  onOpenChange,
+  isItemActive,
+  isSubItemActive,
+  isSubmenuOpen,
+}: NavGroupSectionProps) {
+  const content = (
+    <SidebarGroupContent>
+      <SidebarMenu>
+        {items.map((item) => (
+          <NavItem
+            key={item.id}
+            item={item}
+            isItemActive={isItemActive}
+            isSubItemActive={isSubItemActive}
+            isSubmenuOpen={isSubmenuOpen}
+          />
+        ))}
+      </SidebarMenu>
+    </SidebarGroupContent>
+  );
+
+  if (!collapsible) {
+    return (
+      <SidebarGroup>
+        {label !== "" && (
+          <SidebarGroupLabel className="group-data-[collapsible=icon]:pointer-events-none">{label}</SidebarGroupLabel>
+        )}
+        {content}
+      </SidebarGroup>
+    );
+  }
+
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange} asChild className="group/collapsible">
+      <SidebarGroup>
+        <SidebarGroupLabel asChild className="cursor-pointer select-none hover:bg-sidebar-accent">
+          <CollapsibleTrigger>
+            {label}
+            <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+          </CollapsibleTrigger>
+        </SidebarGroupLabel>
+        <CollapsibleContent>{content}</CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
   );
 }
 

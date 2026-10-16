@@ -1,97 +1,33 @@
-// TEMPORARY: offline build fallback — uses local Geist fonts instead of Google Fonts.
-// Restore registry.ts.bak after build.
+// 自托管字体(离线构建可用):全部通过 next/font/local 引用本地文件,不依赖构建期联网。
+// 用途分层:
+// - geist:UI 主字体(沿用 node_modules/geist 依赖内的可变字体文件)。
+// - spaceGrotesk:展示/标题位(Google Fonts 官方仓库 OFL 许可,可变字重 300-700)。
+// - jetBrainsMono:数据/终端/代码位(JetBrains 官方 OFL 许可,可变字重 100-800)。
 import localFont from "next/font/local";
-
-import { GeistPixelSquare } from "geist/font/pixel";
 
 const geist = localFont({
   src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
   variable: "--font-geist",
 });
-const inter = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-inter",
+
+// wght 轴范围已通过脚本解析 fvar 表确认:300-700。
+const spaceGrotesk = localFont({
+  src: "./files/space-grotesk-var.ttf",
+  variable: "--font-space-grotesk",
+  weight: "300 700",
 });
-const notoSans = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-noto-sans",
-});
-const roboto = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-roboto",
-});
-const outfit = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-outfit",
-});
-const dmSans = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-dm-sans",
-});
-const nunitoSans = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-nunito-sans",
-});
-const figtree = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-figtree",
-});
-const raleway = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-raleway",
-});
-const publicSans = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-public-sans",
-});
-const notoSerif = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-noto-serif",
-});
-const robotoSlab = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-roboto-slab",
-});
-const merriweather = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-merriweather",
-});
-const lora = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-lora",
-});
-const playfairDisplay = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2",
-  variable: "--font-playfair-display",
-});
-const geistMono = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2",
-  variable: "--font-geist-mono",
-});
+
+// wght 轴范围已通过脚本解析 fvar 表确认:100-800。
 const jetBrainsMono = localFont({
-  src: "../../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2",
+  src: "./files/jetbrains-mono-var.ttf",
   variable: "--font-jetbrains-mono",
+  weight: "100 800",
 });
 
 export const fontRegistry = {
   geist: { label: "Geist", font: geist },
-  inter: { label: "Inter", font: inter },
-  notoSans: { label: "Noto Sans", font: notoSans },
-  nunitoSans: { label: "Nunito Sans", font: nunitoSans },
-  figtree: { label: "Figtree", font: figtree },
-  roboto: { label: "Roboto", font: roboto },
-  raleway: { label: "Raleway", font: raleway },
-  dmSans: { label: "DM Sans", font: dmSans },
-  publicSans: { label: "Public Sans", font: publicSans },
-  outfit: { label: "Outfit", font: outfit },
-  geistMono: { label: "Geist Mono", font: geistMono },
-  geistPixelSquare: { label: "Geist Pixel Square", font: GeistPixelSquare },
+  spaceGrotesk: { label: "Space Grotesk", font: spaceGrotesk },
   jetBrainsMono: { label: "JetBrains Mono", font: jetBrainsMono },
-  notoSerif: { label: "Noto Serif", font: notoSerif },
-  robotoSlab: { label: "Roboto Slab", font: robotoSlab },
-  merriweather: { label: "Merriweather", font: merriweather },
-  lora: { label: "Lora", font: lora },
-  playfairDisplay: { label: "Playfair Display", font: playfairDisplay },
 } as const;
 
 export type FontKey = keyof typeof fontRegistry;

@@ -20,6 +20,8 @@ import type {
   BatchCategoryItem,
   BatchControlItem,
   ChatAttachment,
+  Checkpoint,
+  CheckpointRevertResult,
   CommandRecord,
   Company,
   CompanyScopeMutation,
@@ -53,6 +55,7 @@ import type {
   InterceptPending,
   InterceptRule,
   JudgeConfig,
+  LLMCredential,
   LLMPoolStatus,
   LLMProfile,
   LLMRecordDetail,
@@ -70,9 +73,11 @@ import type {
   NotificationMeta,
   PromptVar,
   PromptVersion,
+  ReliabilityMetrics,
   SessionTokenUsage,
   Settings,
   Severity,
+  ShellCapability,
   SkillCall,
   SkillItem,
   SSProject,
@@ -103,6 +108,7 @@ import type {
   UsageStats,
   WorkspaceFile,
   WorkspaceListing,
+  WorkerTokenStat,
 } from "@/lib/types";
 
 // ApiError 携带 HTTP 状态码；服务端消息随语言变化，
@@ -245,7 +251,7 @@ function interceptPageQuery(page: number, size: number, filter: InterceptApprova
 
 export const api = {
   // 后端应用版本号（release 时由 ldflags 注入，默认 "dev"）。
-  health: () => get<{ ok: boolean; service: string; version: string }>("/health"),
+  health: () => get<{ ok: boolean; service: string; version: string; shell?: ShellCapability }>("/health"),
 
   // ---- auth ----
   authStatus: () => get<{ initialized: boolean; setup_token_required?: boolean }>("/auth/status"),
@@ -276,6 +282,9 @@ export const api = {
     seedFirstIntent?: boolean;
     planHeartbeatSeconds?: number;
     coverageEnabled?: boolean;
+    // tokenBudget:任务级 token 预算(input+output,0=不限)。undefined=字段不下发,
+    // 由服务端取全局默认(default_task_token_budget);显式 0=显式不限。
+    tokenBudget?: number;
     interceptRules?: AssetInterceptRuleInput[];
   }) =>
     post<Task>("/tasks", {
@@ -290,10 +299,13 @@ export const api = {
       seed_first_intent: input.seedFirstIntent ?? false,
       plan_heartbeat_seconds: input.planHeartbeatSeconds ?? 0, // 0 = 后端归一到默认 600(10min)
       coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能
+      token_budget: input.tokenBudget, // undefined=整个字段被 JSON.stringify 丢弃→服务端用全局默认;0=显式不限
       intercept_rules: input.interceptRules ?? [], // 任务级资产拦截规则
     }),
   taskCategories: () => get<{ categories: TaskCategory[] }>("/task-categories").then((r) => arr(r.categories)),
-  updateTask: (id: string, input: { name?: string; pinned?: boolean }) => patch<Task>(`/tasks/${id}`, input),
+  // token_budget:任务级 token 预算(0=不限);预算用尽自动暂停的任务可调高后恢复。
+  updateTask: (id: string, input: { name?: string; pinned?: boolean; token_budget?: number }) =>
+    patch<Task>(`/tasks/${id}`, input),
   renameTask: (id: string, name: string) => patch<Task>(`/tasks/${id}`, { name }),
   pinTask: (id: string, pinned: boolean) => patch<Task>(`/tasks/${id}`, { pinned }),
   createTaskCategory: (name: string) => post<TaskCategory>("/task-categories", { name }),
@@ -346,6 +358,11 @@ export const api = {
   },
   taskArchive: (id: number) => get<TaskArchive>(`/task-archives/${id}`),
   archiveTask: (id: string) => post<TaskArchive>(`/tasks/${id}/archive`),
+  // 检查点时间线（批次 6）：列出 / 回滚到某一检查点。回滚要求任务已暂停。
+  taskCheckpoints: (id: string) =>
+    get<{ checkpoints: Checkpoint[] }>(`/tasks/${id}/checkpoints`).then((r) => arr(r.checkpoints)),
+  revertTaskCheckpoint: (id: string, checkpointId: number) =>
+    post<CheckpointRevertResult>(`/tasks/${id}/checkpoints/${checkpointId}/revert`, {}),
   archiveTasks: (taskIds: string[]) =>
     post<{ items: ArchiveBatchItem[] }>("/tasks/archive/batch", { task_ids: taskIds }),
   restoreTaskArchive: (id: number) => post<TaskArchive>(`/task-archives/${id}/restore`),
@@ -374,6 +391,10 @@ export const api = {
       accepted: true;
       request_id: string;
     }>(`/tasks/${taskId}/intents/${intentId}/messages`, { message, request_id: requestId }),
+  // 引导运行中的 Worker：不暂停、不重跑，文本进入引擎 steer 队列，
+  // Worker 在下一步工具调用前收到并据此重新规划（只在意图 running 时可用）。
+  steerIntent: (taskId: string, intentId: string, text: string) =>
+    post<{ id: number; state: "running"; accepted: true }>(`/tasks/${taskId}/intents/${intentId}/steer`, { text }),
   taskLLMResolution: (id: string) => get<TaskLLMResolutions>(`/tasks/${id}/llm/resolution`),
   // 重跑一条没跑成功的意图(blocked/exhausted/stopped)：置回 open，worker 会重新认领、从头再跑。
   rerunIntent: (taskId: string, intentId: string) =>
@@ -383,6 +404,8 @@ export const api = {
   setActive: (id: string) => post<{ active: string }>("/active", { id }),
   // ---- stats ----
   stats: (task?: string) => get<Stats>(`/stats${tq(task)}`),
+  // 进程内可靠性度量（本次启动以来的工具调用/重放/中断/协议计数），仪表盘「可靠性」卡片使用。
+  metrics: () => get<ReliabilityMetrics>("/metrics"),
   // 资产测试覆盖度(粗估，供参考)：范围内资产被 fact 碰过的占比 + 按类型的 总数/已测。
   taskCoverage: (id: string) =>
     get<{
@@ -955,10 +978,9 @@ export const api = {
     thinking_type = "",
     reasoning_effort = "",
     profile_id?: number,
-    streaming = true, // 用该配置真实的收发模式来测，别让"流式能通、非流式不通"漏到会话里
     session_header_key = "", // 非空=测试请求也带该自定义会话头（值为一次性 session id）
   ) =>
-    // reply = 模型实际回复(已截断);一个字都不回的配置后端直接判失败
+    // 独立轻量探测固定非流式（不发送 stream）；reply = 模型实际回复(已截断);一个字都不回的配置后端直接判失败
     post<{ ok: boolean; error?: string; latency_ms?: number; model?: string; reply?: string }>("/llm/test", {
       provider,
       model,
@@ -968,10 +990,16 @@ export const api = {
       thinking_type,
       reasoning_effort,
       profile_id,
-      streaming,
       session_header_key,
     }),
   llmProfiles: () => get<{ profiles: LLMProfile[] }>("/llm/profiles").then((r) => arr(r.profiles)),
+  // 凭据实体（计划 46–47）：独立资源，"Key 来自哪"与"配置怎么用"解耦。
+  // 响应只含 api_key_hint；保存时 api_key 留空 = 保持原值，掩码值等同留空。
+  llmCredentials: () => get<{ credentials: LLMCredential[] }>("/llm/credentials").then((r) => arr(r.credentials)),
+  saveLLMCredential: (c: { id?: number; name: string; api_key?: string }) =>
+    post<{ id: string }>("/llm/credentials", c),
+  deleteLLMCredential: (id: string) =>
+    del<{ deleted: string; unbound_profiles: number }>(`/llm/credentials/${id}`),
   saveLLMProfile: (p: {
     id?: number; // omit/0 = create; set = update that profile
     name: string;
@@ -992,6 +1020,8 @@ export const api = {
     max_tokens_field?: string; // ""=max_tokens(默认) | "max_completion_tokens"（仅 openai 格式）
     session_header_key?: string; // 非空=每次请求带该 HTTP 头，头值=当前会话 session id；""=不发送
     retry?: LLMRetryOverride; // 本配置的重试覆盖；各项留 0 = 跟随全局重试策略
+    input_modalities?: string; // 逗号分隔的 text/image/audio/pdf；""=未声明（后端按模型名保守推断）
+    credential_id?: number; // 绑定的凭据 id；0=解绑回内联 Key（缺省=不改绑定，旧客户端不传即旧行为）
   }) => post<{ id: number }>("/llm/profiles", p),
   deleteLLMProfile: (id: string) => del<{ deleted: number }>(`/llm/profiles/${id}`),
   activateLLMProfile: (id: string) => post<{ ok: boolean }>("/llm/profiles/active", { id: Number(id) }),
@@ -1051,6 +1081,11 @@ export const api = {
   sendConversationMessage: (id: number, message: string, attachments?: ChatAttachment[]) =>
     post<{ status: string }>(`/conversations/${id}/messages`, { message, attachments }),
   stopConversation: (id: number) => post<{ status: string }>(`/conversations/${id}/stop`, {}),
+  // 检查点时间线（批次 6）：列出 / 回滚到某一检查点。回滚要求会话不在运行中。
+  conversationCheckpoints: (id: number) =>
+    get<{ checkpoints: Checkpoint[] }>(`/conversations/${id}/checkpoints`).then((r) => arr(r.checkpoints)),
+  revertConversationCheckpoint: (id: number, checkpointId: number) =>
+    post<CheckpointRevertResult>(`/conversations/${id}/checkpoints/${checkpointId}/revert`, {}),
   saveAgentPrompt: (key: string, template: string, note = "") =>
     put<{ version: number }>(`/agents/${key}/prompt`, { template, note }),
   resetAgentPrompt: (key: string) => post<{ version: number }>(`/agents/${key}/prompt/reset`, {}),
@@ -1089,6 +1124,12 @@ export const api = {
       trigger_max_parallel?: number;
     },
   ) => put<{ ok: boolean }>(`/agents/${key}/config`, patch),
+  // 备用模型链(#139/#144):链首是「默认模型」绑定(agents.llm_profile_id),这里只
+  // 整体读写其后的顺序。空数组=清空,角色回落到「绑定独占/跟随」的原有行为。
+  agentLLMChain: (key: string) =>
+    get<{ fallback_profile_ids: number[] }>(`/agents/${key}/llm-chain`).then((r) => r.fallback_profile_ids ?? []),
+  saveAgentLLMChain: (key: string, profileIds: number[]) =>
+    put<{ fallback_profile_ids: number[] }>(`/agents/${key}/llm-chain`, { profile_ids: profileIds }),
   agentPromptVersions: (key: string) =>
     get<{ versions: PromptVersion[] }>(`/agents/${key}/prompts`).then((r) => arr(r.versions)),
   agentVariables: (key: string) =>
@@ -1308,15 +1349,19 @@ export const api = {
     if (params?.task) sp.set("task", params.task);
     if (params?.page !== undefined) sp.set("page", String(params.page));
     sp.set("size", String(params?.size ?? 50));
-    return get<{ records: LLMRecordItem[]; total: number }>(`/llm/records?${sp}`);
+    return get<{ records: LLMRecordItem[]; total: number; cost_total?: number }>(`/llm/records?${sp}`);
   },
   llmRecordDetail: (id: number) => get<LLMRecordDetail>(`/llm/records/${id}`),
   llmTasks: () => get<{ tasks: LLMTask[] }>(`/llm/records/tasks`),
   llmRecordsDeleteTask: (task: string) => del<{ deleted: number }>(`/llm/records?task=${encodeURIComponent(task)}`),
   // 按模型聚合本任务的 token 用量（来自常开的 llm_usage 计量账本，逐次调用精确，
-  // per-agent 绑定 / 轮询 / 中断消耗都覆盖）。
+  // per-agent 绑定 / 轮询 / 中断消耗都覆盖）。配置价格表后附 cost/cost_total(USD)。
   tokensByModel: (task: string) =>
-    get<{ models: ModelTokenStat[] }>(`/llm/records/by-model?task=${encodeURIComponent(task)}`),
+    get<{ models: ModelTokenStat[]; cost_total?: number }>(`/llm/records/by-model?task=${encodeURIComponent(task)}`),
+  // 按角色（agent 泳道）聚合本任务的 token 用量，与按模型同源（常开的 llm_usage 账本）。
+  // worker 为 llmrec 解析出的泳道标识：worker / planner / main / goals / compactor / btw。
+  tokensByWorker: (task: string) =>
+    get<{ workers: WorkerTokenStat[] }>(`/llm/records/by-worker?task=${encodeURIComponent(task)}`),
 
   // ---- 一键更新 ----
   // 检查以后端为准：下载是后端做的，浏览器能连 GitHub 而服务器连不上的情况很常见

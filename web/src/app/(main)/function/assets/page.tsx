@@ -20,6 +20,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { AssetDslSearch } from "@/components/asset-dsl-search";
+import { EmptyState } from "@/components/empty-state";
 import { ScopeTextEditor } from "@/components/scope-text-editor";
 import {
   AlertDialog,
@@ -893,8 +894,13 @@ function AssetCard({
               childRows
             ) : (
               <TableRow>
-                <TableCell colSpan={cols.length} className="py-12 text-center text-sm text-muted-foreground">
-                  {loaded ? t("emptyData") : t("loading")}
+                <TableCell colSpan={cols.length} className="p-0">
+                  {/* 首次加载显示加载文案,加载完成仍为空才给空态插画 */}
+                  {loaded ? (
+                    <EmptyState illustration="nodes" title={t("emptyData")} />
+                  ) : (
+                    <div className="text-muted-foreground py-12 text-center text-sm">{t("loading")}</div>
+                  )}
                 </TableCell>
               </TableRow>
             )}

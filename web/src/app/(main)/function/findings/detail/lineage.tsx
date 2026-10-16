@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { useTranslations } from "next-intl";
 
+import { EmptyState } from "@/components/empty-state";
 import { ExplorationGraph } from "@/components/exploration-graph";
 import { api } from "@/lib/api";
 import type { Edge, TaskNode } from "@/lib/types";
@@ -38,7 +39,7 @@ export function FindingLineageView({ findingId }: { findingId: string }) {
   }, [findingId]);
 
   if (loaded && nodes.length === 0) {
-    return <p className="text-muted-foreground p-6 text-sm">{t("lineage.empty")}</p>;
+    return <EmptyState compact illustration="radar" className="p-6" title={t("lineage.empty")} />;
   }
 
   return (

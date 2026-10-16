@@ -153,6 +153,8 @@ export function FilterSummary({ filter }: { filter: NotificationFilter }) {
   if (filter.task_ids?.length) parts.push(t("summary.taskCount", { n: filter.task_ids.length }));
   if (filter.asset_ids?.length) parts.push(t("summary.assetCount", { n: filter.asset_ids.length }));
   if (filter.on_status_change) parts.push(t("summary.statusChange"));
+  if (filter.on_task_status) parts.push(t("summary.taskStatus"));
+  if (filter.on_approval) parts.push(t("summary.approval"));
   if (parts.length === 0) {
     return <p className="text-muted-foreground text-sm">{t("summary.all")}</p>;
   }

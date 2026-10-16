@@ -20,7 +20,9 @@ import {
   XIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,6 +42,7 @@ import type {
   TaskGoal,
   TaskNode,
   TaskScopeRow,
+  WorkerTokenStat,
 } from "@/lib/types";
 
 // 紧凑 token 数量：12345 → 12.3k，2000000 → 2M。
@@ -47,6 +50,29 @@ function fmtTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + "M";
   if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
   return String(n);
+}
+
+// fmtFirstFindingMS 把「首发现」毫秒差渲染成紧凑字符串（45s / 4m / 1h20m）。0=未产出。
+function fmtFirstFindingMS(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h${String(m % 60).padStart(2, "0")}m`;
+}
+
+// fmtPerHour 渲染一位小数的产出速率，去掉多余的 ".0"（12.0 → 12）。
+function fmtPerHour(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+// 费用估算(USD)的自适应精度：金额越大保留越少小数位；小额最多 4 位，
+// 保证 $0.0012 这类分币消耗不显示成 $0.00。
+function fmtCost(n: number): string {
+  if (n >= 1) return `$${n.toFixed(2)}`;
+  if (n >= 0.01) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(4)}`;
 }
 
 // 缓存命中率 = 缓存读取 / 输入；InputTokens 已包含 cache_read 子集，比例为 0~100%。
@@ -112,6 +138,13 @@ export function OverviewTab({ taskId }: { taskId: string }) {
   const [scopeErr, setScopeErr] = React.useState("");
   // 按模型统计 token，数据来自始终开启的 llm_usage 计量账本，每次调用均准确记录。
   const [modelTokens, setModelTokens] = React.useState<ModelTokenStat[]>([]);
+  // 按角色(agent 泳道)统计 token,与按模型同源:角色可以被单独绑定模型,这一维回答
+  // 「哪个角色烧的 token」(llmrec 从 session 前缀解析:worker/planner/main/goals/…)。
+  const [workerTokens, setWorkerTokens] = React.useState<WorkerTokenStat[]>([]);
+  // 任务级 Token 预算的行内编辑(0=不限)；预算用尽后调高预算再恢复任务即可继续。
+  const [budgetEditing, setBudgetEditing] = React.useState(false);
+  const [budgetInput, setBudgetInput] = React.useState("");
+  const [budgetSaving, setBudgetSaving] = React.useState(false);
   // 目标管理：列表、添加表单、行内编辑状态。
   const [goals, setGoals] = React.useState<TaskGoal[]>([]);
   const [goalText, setGoalText] = React.useState("");
@@ -133,8 +166,10 @@ export function OverviewTab({ taskId }: { taskId: string }) {
 
   const loadTokens = React.useCallback(async () => {
     try {
-      const resp = await api.tokensByModel(taskId);
-      setModelTokens(resp.models);
+      // 两张表同源(常开的 llm_usage 账本),并行取回,避免先后到达造成的闪动。
+      const [byModel, byWorker] = await Promise.all([api.tokensByModel(taskId), api.tokensByWorker(taskId)]);
+      setModelTokens(byModel.models);
+      setWorkerTokens(byWorker.workers);
     } catch {
       // 没有 PostgreSQL 时 API 返回错误，忽略并保持卡片为空。
     }
@@ -334,6 +369,32 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     }
   };
 
+  // ---- Token 预算行内编辑 ----
+  const startBudgetEdit = () => {
+    setBudgetInput(String(Math.round((task?.token_budget ?? 0) / 1000)));
+    setBudgetEditing(true);
+  };
+
+  const saveBudget = async () => {
+    // 单位千 token(k)；0=不限。必须为非负整数,避免 0.5k 这类模糊语义。
+    const k = Number(budgetInput);
+    if (!Number.isInteger(k) || k < 0) {
+      toast.error(t("tokens.budgetInvalid"));
+      return;
+    }
+    setBudgetSaving(true);
+    try {
+      const updated = await api.updateTask(taskId, { token_budget: k * 1000 });
+      setTask((prev) => (prev ? { ...prev, token_budget: updated.token_budget } : updated));
+      setBudgetEditing(false);
+      toast.success(t("tokens.budgetSaved"));
+    } catch (e) {
+      toast.error(t("tokens.budgetSaveFailed", { error: (e as Error).message }));
+    } finally {
+      setBudgetSaving(false);
+    }
+  };
+
   React.useEffect(() => {
     let cancelled = false;
     let loading = false;
@@ -416,6 +477,14 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     },
     { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 },
   );
+  // 预算行显示值：预算(0=不限)、已用(input+output,与后端预算闸同口径)、百分比。
+  const budget = task?.token_budget ?? 0;
+  const budgetUsed = tokenTotals.input + tokenTotals.output;
+  const budgetPct = budget > 0 ? Math.round((budgetUsed / budget) * 100) : 0;
+  // 费用估算(USD)：接口按价格表逐模型返回 cost，总计=各行之和；只有配置了价格表
+  // 且确实命中模型(>0)时才展示列与合计，避免未配置时的一片 "-"。
+  const modelCostTotal = modelTokens.reduce((sum, m) => sum + (m.cost ?? 0), 0);
+  const showModelCost = modelTokens.some((m) => (m.cost ?? 0) > 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -733,60 +802,175 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {modelTokens.length > 0 ? (
-            <>
-              {/* 总计概览。 */}
-              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-                <span className="tabular-nums">
-                  <span className="text-muted-foreground">{t("tokens.input")} </span>
-                  <span className="font-semibold">{fmtTokens(tokenTotals.input)}</span>
+          {/* 任务级 Token 预算:按 llm_usage 累计 input+output 计量,与后端预算闸同口径;
+              达到预算时后端自动暂停任务。这里的编辑是「调高预算后恢复」的回环入口,0=不限。 */}
+          <div className="bg-muted/40 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border px-3 py-2">
+            <span className="text-muted-foreground text-sm">{t("tokens.budgetLabel")}</span>
+            {budgetEditing ? (
+              <>
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  autoFocus
+                  className="h-7 w-28 text-sm"
+                  value={budgetInput}
+                  disabled={budgetSaving}
+                  onChange={(e) => setBudgetInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveBudget();
+                    if (e.key === "Escape") setBudgetEditing(false);
+                  }}
+                />
+                <span className="text-muted-foreground text-xs">k</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7"
+                  disabled={budgetSaving}
+                  onClick={() => void saveBudget()}
+                >
+                  <CheckIcon className="size-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7"
+                  disabled={budgetSaving}
+                  onClick={() => setBudgetEditing(false)}
+                >
+                  <XIcon className="size-3.5" />
+                </Button>
+              </>
+            ) : (
+              <>
+                <span className="text-sm font-semibold tabular-nums">
+                  {budget > 0 ? fmtTokens(budget) : t("tokens.budgetUnlimited")}
                 </span>
-                <span className="tabular-nums">
-                  <span className="text-muted-foreground">{t("tokens.output")} </span>
-                  <span className="font-semibold">{fmtTokens(tokenTotals.output)}</span>
-                </span>
-                <span className="tabular-nums">
-                  <span className="text-muted-foreground">{t("tokens.cacheRead")} </span>
-                  <span className="font-semibold">{fmtTokens(tokenTotals.cacheRead)}</span>
-                </span>
-                <span className="tabular-nums">
-                  <span className="text-muted-foreground">{t("tokens.cacheHitRate")} </span>
-                  <span className="font-semibold text-emerald-500">
-                    {cacheHitRate(tokenTotals.cacheRead, tokenTotals.input)}
+                {budget > 0 && (
+                  <span
+                    className={
+                      budgetPct >= 100 ? "text-destructive text-xs tabular-nums" : "text-muted-foreground text-xs tabular-nums"
+                    }
+                  >
+                    {t("tokens.budgetUsage", { used: fmtTokens(budgetUsed), pct: budgetPct })}
                   </span>
-                </span>
-              </div>
-              {/* 按模型明细。 */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-muted-foreground border-b text-left text-xs">
-                      <th className="py-1.5 pr-3 font-medium">{t("tokens.colModel")}</th>
-                      <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colCalls")}</th>
-                      <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.input")}</th>
-                      <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.output")}</th>
-                      <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.cacheRead")}</th>
-                      <th className="py-1.5 text-right font-medium">{t("tokens.colHitRate")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {modelTokens.map((m) => (
-                      <tr key={m.model} className="border-b last:border-0">
-                        <td className="max-w-[16rem] truncate py-1.5 pr-3 font-mono text-xs" title={m.model}>
-                          {m.model}
-                        </td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{m.calls}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.input_tokens)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.output_tokens)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.cache_read_tokens)}</td>
-                        <td className="py-1.5 text-right tabular-nums text-emerald-500">
-                          {cacheHitRate(m.cache_read_tokens, m.input_tokens)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                )}
+                <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={startBudgetEdit}>
+                  <PencilIcon className="size-3.5" /> {t("tokens.budgetEdit")}
+                </Button>
+              </>
+            )}
+          </div>
+          {modelTokens.length > 0 || workerTokens.length > 0 ? (
+            <>
+              {modelTokens.length > 0 && (
+                <>
+                  {/* 总计概览。 */}
+                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+                    <span className="tabular-nums">
+                      <span className="text-muted-foreground">{t("tokens.input")} </span>
+                      <span className="font-semibold">{fmtTokens(tokenTotals.input)}</span>
+                    </span>
+                    <span className="tabular-nums">
+                      <span className="text-muted-foreground">{t("tokens.output")} </span>
+                      <span className="font-semibold">{fmtTokens(tokenTotals.output)}</span>
+                    </span>
+                    <span className="tabular-nums">
+                      <span className="text-muted-foreground">{t("tokens.cacheRead")} </span>
+                      <span className="font-semibold">{fmtTokens(tokenTotals.cacheRead)}</span>
+                    </span>
+                    <span className="tabular-nums">
+                      <span className="text-muted-foreground">{t("tokens.cacheHitRate")} </span>
+                      <span className="font-semibold text-emerald-500">
+                        {cacheHitRate(tokenTotals.cacheRead, tokenTotals.input)}
+                      </span>
+                    </span>
+                    {/* 费用(估算)：读时按模型价格表计算，未配价格表/未命中时不显示。 */}
+                    {modelCostTotal > 0 && (
+                      <span className="tabular-nums">
+                        <span className="text-muted-foreground">{t("tokens.costEstimate")} </span>
+                        <span className="font-semibold text-amber-600">{fmtCost(modelCostTotal)}</span>
+                      </span>
+                    )}
+                  </div>
+                  {/* 按模型明细。 */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-muted-foreground border-b text-left text-xs">
+                          <th className="py-1.5 pr-3 font-medium">{t("tokens.colModel")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colCalls")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.input")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.output")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.cacheRead")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colHitRate")}</th>
+                          {showModelCost && (
+                            <th className="py-1.5 text-right font-medium">{t("tokens.colCost")}</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {modelTokens.map((m) => (
+                          <tr key={m.model} className="border-b last:border-0">
+                            <td className="max-w-[16rem] truncate py-1.5 pr-3 font-mono text-xs" title={m.model}>
+                              {m.model}
+                            </td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{m.calls}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.input_tokens)}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.output_tokens)}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.cache_read_tokens)}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums text-emerald-500">
+                              {cacheHitRate(m.cache_read_tokens, m.input_tokens)}
+                            </td>
+                            {showModelCost && (
+                              <td className="py-1.5 text-right tabular-nums">
+                                {typeof m.cost === "number" && m.cost > 0 ? fmtCost(m.cost) : "-"}
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              {/* 按角色(agent 泳道)明细:角色可被单独绑定模型,这一维回答「谁在消耗」。 */}
+              {workerTokens.length > 0 && (
+                <div className="grid gap-2">
+                  <p className="text-muted-foreground text-xs">
+                    {t("tokens.byWorkerTitle")} <span className="opacity-70">{t("tokens.byWorkerHint")}</span>
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-muted-foreground border-b text-left text-xs">
+                          <th className="py-1.5 pr-3 font-medium">{t("tokens.colWorker")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colCalls")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.input")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.output")}</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.cacheRead")}</th>
+                          <th className="py-1.5 text-right font-medium">{t("tokens.colHitRate")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {workerTokens.map((w) => (
+                          <tr key={w.worker} className="border-b last:border-0">
+                            <td className="py-1.5 pr-3 font-mono text-xs">{w.worker}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{w.calls}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(w.input_tokens)}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(w.output_tokens)}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(w.cache_read_tokens)}</td>
+                            <td className="py-1.5 text-right tabular-nums text-emerald-500">
+                              {cacheHitRate(w.cache_read_tokens, w.input_tokens)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <p className="text-muted-foreground text-sm">{t("tokens.empty")}</p>
@@ -906,7 +1090,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
             <div className="text-xs text-muted-foreground">{t("heartbeat.lastActivity")}</div>
             <div className="mt-1 inline-flex items-center gap-1 text-sm">
               <ClockIcon className="size-3.5" />
-              {task?.last_activity ? new Date(task.last_activity).toLocaleTimeString("ko-KR") : "—"}
+              {task?.last_activity ? new Date(task.last_activity).toLocaleTimeString("zh-CN") : "—"}
             </div>
           </div>
           <div>
@@ -920,7 +1104,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
               <div className="text-xs text-muted-foreground">{t("heartbeat.completedAt")}</div>
               <div className="mt-1 inline-flex items-center gap-1 text-sm">
                 <ClockIcon className="size-3.5" />
-                {new Date(task.completed_unix * 1000).toLocaleString("ko-KR")}
+                {new Date(task.completed_unix * 1000).toLocaleString("zh-CN")}
               </div>
             </div>
           ) : null}
@@ -942,7 +1126,9 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                 <span className="min-w-0 flex-1 truncate">{i.payload}</span>
               </div>
             ))}
-            {running.length === 0 && <p className="text-sm text-muted-foreground">{t("running.empty")}</p>}
+            {running.length === 0 && (
+              <EmptyState compact illustration="flag" className="py-4" title={t("running.empty")} />
+            )}
           </CardContent>
         </Card>
 
@@ -985,7 +1171,9 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                 <span className="min-w-0 flex-1 truncate">{f.summary}</span>
               </div>
             ))}
-            {taskFindings.length === 0 && <p className="text-sm text-muted-foreground">{t("recent.empty")}</p>}
+            {taskFindings.length === 0 && (
+              <EmptyState compact illustration="radar" className="py-4" title={t("recent.empty")} />
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1038,6 +1226,30 @@ export function OverviewTab({ taskId }: { taskId: string }) {
         <StatCard label={t("stat.pending")} value={open.length} icon={ShieldCheckIcon} sub={t("stat.pendingSub")} />
         <StatCard label={t("stat.confirmed")} value={taskFindings.length} icon={BugIcon} sub={t("stat.confirmedSub")} />
         <StatCard label={t("stat.total")} value={intents.length} icon={AlertTriangleIcon} sub={t("stat.totalSub")} />
+        {/* 价值指标：从任务开始到首个漏洞登记的耗时 + 产出速率（漏洞数 ÷ 已运行小时）。 */}
+        <StatCard
+          label={t("stat.firstFinding")}
+          value={
+            task?.first_finding_ms && task.first_finding_ms > 0 ? fmtFirstFindingMS(task.first_finding_ms) : "—"
+          }
+          icon={ClockIcon}
+          sub={t("stat.firstFindingSub")}
+        />
+        <StatCard
+          label={t("stat.perHour")}
+          value={
+            task?.findings_per_hour && task.findings_per_hour > 0 ? (
+              <>
+                {fmtPerHour(task.findings_per_hour)}
+                <span className="text-muted-foreground ml-1 text-sm font-normal">{t("stat.perHourUnit")}</span>
+              </>
+            ) : (
+              "—"
+            )
+          }
+          icon={ActivityIcon}
+          sub={t("stat.perHourSub")}
+        />
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { useTranslations } from "next-intl";
 
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { sseUrl } from "@/lib/api";
@@ -246,7 +247,7 @@ export default function LogsPage() {
             </div>
           )}
           {filtered.length === 0 ? (
-            <p className="py-10 text-center text-muted-foreground">{t("empty")}</p>
+            <EmptyState compact illustration="terminal" title={t("empty")} />
           ) : (
             filtered.map((l) => {
               const body =

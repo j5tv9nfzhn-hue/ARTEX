@@ -11,9 +11,12 @@
       "title": "版本对比：v{from} → v{to}（当前）"
     },
     "llm": {
+      "chainLabel": "备用模型链（故障转移顺序）",
+      "chainSaveHint": "与上方绑定同一次保存（点「保存配置」生效）",
       "defaultSuffix": " · 默认",
       "follow": "跟随任务 / 全局激活配置",
       "hint": "为该 Agent 绑定固定 LLM 配置（点「保存配置」生效）。优先级：Agent 绑定 > 任务/会话指定 > 全局激活。",
+      "imageAdvice": "该角色可能直接收到图片（截图 / 聊天上传）；当前主模型未声明图片输入，带图片的请求会被明确拒绝。建议绑定支持图片的配置，或把支持图片的配置加入备用链。",
       "label": "默认模型（LLM 配置）"
     },
     "mcp": {
@@ -47,6 +50,7 @@
     },
     "tab": {
       "prompt": "配置与提示词",
+      "tools": "工具",
       "triggers": "触发",
       "wrapup": "收尾提示词"
     },
@@ -76,11 +80,16 @@
       "wrapupSaved": "收尾配置已保存（下次运行生效）"
     },
     "tools": {
-      "desc": "勾选绑定给此 Agent 的内置工具。",
+      "bound": "已绑定",
+      "boundCount": "已绑定 {bound} / 共 {total}",
+      "desc": "勾选绑定给此 Agent 的内置工具。可搜索过滤；已绑定的工具排在最前。",
       "disabledBadge": "已停用",
       "needCapture": "需开启流量捕获",
+      "noMatch": "没有匹配的工具",
       "none": "（暂无工具）",
-      "trafficBadge": "流量"
+      "searchPlaceholder": "搜索工具（名称 / 描述）",
+      "trafficBadge": "流量",
+      "unbound": "未绑定"
     },
     "triggers": {
       "add": "添加触发器",
@@ -119,6 +128,7 @@
       "existingNone": "（暂无）",
       "findingPlaceholder": "发现 finding 时发给 agent 的话（系统会附带任务与 finding 详情）",
       "goalPlaceholder": "目标达成时发给 agent 的话（系统会附带任务与达成的目标）",
+      "intervalMinHint": "最小 60 秒：定时触发每次都新起一整轮会话运行，间隔过短会持续消耗额度",
       "intervalPlaceholder": "定时触发时发给 agent 的话，如：巡检所有任务",
       "maxParallel": "最大并发（0=不限）",
       "mergeAll": "全部合并成一条",
@@ -197,6 +207,7 @@
     "editorDescFallback": "提示词、配置、可见资源与工具绑定",
     "empty": "（暂无 Agent）",
     "keyError": "小写字母开头，仅含小写字母/数字/下划线",
+    "keyLabel": "标识",
     "keyPlaceholder": "如 research_helper",
     "listTitle": "Agent 清单",
     "nameLabel": "名称",
@@ -769,6 +780,7 @@
     "emptyAll": "暂无对话",
     "emptyForAgent": "该 Agent 暂无对话",
     "emptyStart": "开始和「{agent}」对话",
+    "emptyStartHint": "选择 Agent，描述你的目标或问题开始对话；也可以点选下方建议快速起步。",
     "filterByAgentAria": "按 Agent 筛选对话",
     "filteredCount": "{shown} / {total} 个",
     "group": {
@@ -794,6 +806,7 @@
     "live": "实时",
     "llmProfile": {
       "change": "更换",
+      "configure": "配置 LLM",
       "default": "默认",
       "defaultNamed": "默认（{name}）",
       "select": "选择 LLM 配置"
@@ -806,6 +819,11 @@
     "running": "运行中",
     "selectAllAria": "选择当前筛选的全部对话",
     "selectedCount": "已选 {count} 个",
+    "suggestions": {
+      "findings": "总结已有发现，给出下一步测试建议",
+      "recon": "对目标做一次信息收集，梳理暴露面",
+      "traffic": "分析最近的流量，找出可疑请求"
+    },
     "toast": {
       "deleteFailed": "删除失败：{msg}",
       "pinFailed": "置顶失败：{msg}",
@@ -816,6 +834,8 @@
       "unpinFailed": "取消置顶失败：{msg}",
       "uploadFailed": "上传失败：{msg}"
     },
+    "tokensLine": "输入 {input} · 缓存 {cache} · 输出 {output}",
+    "tokensTooltip": "输入 / 缓存读取 / 输出 Token 数",
     "totalCount": "共 {count} 个",
     "turnsCount": "{turns} 轮",
     "turnsTooltip": "agent 循环轮次（模型调用次数）",
@@ -827,12 +847,50 @@
       "enter": "Enter 发送，Shift+Enter 换行"
     }
   },
+  "checkpoints": {
+    "boundary": "边界：活动 #{id}",
+    "boundaryHint": "时间线按新 → 旧排列；回滚只隐藏步骤，不回滚工具副作用。",
+    "button": "时间线",
+    "buttonTitle": "查看检查点时间线，可回滚到任一时间点",
+    "cancel": "取消",
+    "compactionBoundary": "含压缩边界",
+    "confirmRevert": "确认回滚",
+    "description": "平台在关键节点（用户消息、回合结束、任务准入、意图结束、中断）自动落检查点。回滚会隐藏该点之后的步骤并作废更新的检查点；工具副作用不会撤销。",
+    "empty": "新一轮消息或任务运行后，时间线检查点会出现在这里。",
+    "emptyTitle": "暂无检查点",
+    "graphCount": "图：{nodes} 节点 / {edges} 边",
+    "loadError": "加载失败：{msg}",
+    "loading": "加载中…",
+    "reasonAdmit": "任务准入",
+    "reasonCompactionRecover": "压缩恢复",
+    "reasonInterrupt": "中断",
+    "reasonIntentSettled": "意图结束",
+    "reasonManual": "手动",
+    "reasonRevert": "回滚标记",
+    "reasonTurnComplete": "回合结束",
+    "reasonUserMessage": "用户消息",
+    "refresh": "刷新",
+    "reopened": "，重排 {count} 条未完成意图",
+    "retry": "重试",
+    "revert": "回滚",
+    "revertDescConversation": "将隐藏该检查点之后的消息步骤（不删除，仍可审计），截断会话记录，并作废更新的检查点。",
+    "revertDescTask": "将隐藏该检查点之后的活动步骤（不删除，仍可审计），截断规划记录，把执行中/已暂停的意图重新排回待执行，并作废更新的检查点。",
+    "revertFailed": "回滚失败：{msg}",
+    "revertTo": "回滚到检查点 #{seq}？",
+    "reverted": "已回滚：隐藏 {hidden} 个步骤，作废 {superseded} 个检查点{reopened}。",
+    "reverting": "回滚中…",
+    "sideEffects": "注意：回滚只恢复平台侧记录（隐藏后续步骤、截断规划记录、重排未完成意图），不会撤销已在目标系统产生的副作用——已提交的数据、已执行的命令、已发送的流量、写入的文件与图产物都保留。",
+    "superseded": "已作废",
+    "supersededHint": "该检查点被一次更早的回滚作废，不可再选。",
+    "title": "时间线检查点"
+  },
   "commands": {
     "colInput": "输入",
     "colStatus": "状态",
     "colTask": "任务",
     "colTime": "时间",
     "colTool": "工具",
+    "colWorker": "Worker",
     "detailTitle": "工具执行详情",
     "empty": "暂无工具执行记录",
     "emptyOutput": "（空）",
@@ -903,6 +961,8 @@
     "eventCount": "{count} 条事件",
     "findings": "发现",
     "inputUncached": "输入(未命中)",
+    "interruptDetail": "中断 {attempts} · 成功 {succeeded} · 失败 {failed}",
+    "interruptRecoveryRate": "中断恢复率",
     "llmConfig": "LLM 配置",
     "morePending": "还有 {count} 条…",
     "noActivity": "暂无活动记录",
@@ -910,6 +970,7 @@
     "noData": "暂无数据",
     "noFindings": "暂无发现",
     "noPendingIntercepts": "无待审批拦截",
+    "noReliabilityData": "本次启动以来暂无工具调用",
     "noTasks": "暂无任务",
     "noTrafficData": "暂无流量数据",
     "notConfigured": "未配置",
@@ -917,6 +978,7 @@
     "on": "开启",
     "output": "输出",
     "pendingApprovals": "待审批 ({count})",
+    "protocolDetail": "协议异常：未配对 {unpaired} · 未知结果 {unknown} · 缺失结果 {missing}",
     "range180": "6月",
     "range30": "30天",
     "range365": "一年",
@@ -924,9 +986,20 @@
     "range90": "3月",
     "recentRequests": "最近请求",
     "recording": "录制中",
+    "reliability": "可靠性",
+    "replayDetail": "尝试 {attempts} · 成功 {succeeded} · 失败 {failed}",
+    "replaySuccessRate": "崩溃重放成功率",
     "requestCount": "{count} 次请求",
+    "sinceStart": "本次启动以来",
     "srcNew": "计量账本",
     "srcOld": "活动统计",
+    "stage": {
+      "exec": "执行",
+      "hook": "拦截",
+      "parse": "解析",
+      "timeout": "超时",
+      "validate": "校验"
+    },
     "statDone": "完成",
     "statExplore": "探索",
     "statPaused": "暂停",
@@ -938,8 +1011,11 @@
     "title": "总览",
     "tokenConsumption": "LLM Token 消耗",
     "tokenUsage": "Token 用量",
+    "toolCallsDetail": "调用 {calls} · 错误 {errors}",
+    "toolErrorRate": "工具错误率",
     "tooltipNew": "新版：来自 llm_usage 计量账本，逐次调用精确、含中断消耗；仅覆盖启用后的数据",
     "tooltipOld": "旧版：来自 activity 统计（含历史任务），中断消耗不计、无法精确到模型",
+    "topErrorTools": "错误最多的工具",
     "totalInOut": "合计 (输入+输出)",
     "totalNodes": "共 {count} 节点",
     "trafficCapture": "流量捕获",
@@ -991,6 +1067,13 @@
       "spawns": "派生",
       "yields": "产出"
     }
+  },
+  "findingAlert": {
+    "moreCount": "另有 {count} 条",
+    "titleMany": "又发现 {count} 个新漏洞",
+    "titleSingle": "发现新漏洞",
+    "view": "查看",
+    "viewAll": "查看全部"
   },
   "findings": {
     "asset": {
@@ -1831,31 +1914,73 @@
   },
   "llmChain": {
     "activeSuffix": "（激活）",
+    "advice": {
+      "noImage": "建议：「{head}」未声明图片输入，链上的「{other}」支持图片——需要看图的任务把支持图片的配置调前更不容易断。",
+      "smallWindow": "建议：「{head}」的上下文窗口约 {k}K，小于链上「{other}」的 {otherK}K，长上下文任务会更早触发压缩。"
+    },
     "backup": "备用 {n}",
     "current": "当前",
     "currentProfile": "当前配置",
     "emptyHint": "未指定配置时，任务跟随 Agent 或全局激活配置。",
+    "fallbackEmpty": "备用链为空：主模型失败时该角色会直接报错，不会自动故障转移。",
+    "headRequired": "尚未绑定主模型：备用链在绑定后生效，可先把顺序配好。",
+    "modality": {
+      "audio": "音频",
+      "image": "图片",
+      "pdf": "PDF"
+    },
     "moveDown": "下移配置",
     "moveUp": "上移配置",
     "noMatch": "没有匹配的 LLM 配置",
     "noProfiles": "暂无可用 LLM 配置",
     "profileRef": "配置 #{id}",
     "remove": "移除配置",
+    "roleScopeHint": "备用链仅作用于该角色：某个角色的链失败不会影响其他角色的模型与熔断。",
     "searchPlaceholder": "搜索并添加 LLM 配置",
     "skipped": "已跳过",
     "skippedTitle": "当前游标之前的配置不会被自动故障转移选中",
-    "unavailable": "配置已不可用"
+    "unavailable": "配置已不可用",
+    "windowK": "窗口 {k}K"
   },
   "llmPage": {
     "card": {
       "activate": "设为激活",
       "active": "已激活",
+      "credential": "凭据：{name}",
       "deleteAria": "删除配置",
       "excluded": "不参与轮询",
+      "modalities": "支持 {modalities}",
       "priority": "优先级 {priority}",
       "proxy": "代理 {proxy}",
       "thinking": "思考 {effort}",
       "thinkingOff": "关"
+    },
+    "credentials": {
+      "deleteAria": "删除凭据",
+      "desc": "Key 加密存储在独立实体里，可被多个模型配置引用；更新时留空输入框表示保持原值。",
+      "edit": "编辑",
+      "empty": "还没有凭据。新建一个后，在模型配置里选择它即可复用同一把 Key。",
+      "intro": "凭据是独立的 API Key 实体，可被多个模型配置引用；界面只显示尾 4 位，明文永不回显。",
+      "keyHint": "保存后只回显尾 4 位；更新时留空 = 保持不变。",
+      "name": {
+        "label": "名称",
+        "placeholder": "例如：OpenAI 生产"
+      },
+      "new": "新建凭据",
+      "titleEdit": "编辑凭据：{name}",
+      "titleNew": "新建凭据",
+      "toast": {
+        "created": "已新建凭据：{name}（在模型配置的「API Key 来源」里选择它即可使用）",
+        "deleteFailed": "删除失败：{msg}",
+        "deleted": "已删除凭据：{name}",
+        "deletedUnbound": "已删除凭据：{name}，{n} 个配置已解绑（需重新选择 Key 来源）",
+        "keyRequired": "请填写 API Key",
+        "nameRequired": "请填写凭据名称",
+        "saveFailed": "保存失败：{msg}",
+        "saved": "已保存"
+      },
+      "unused": "未被任何配置使用",
+      "usedBy": "被 {names} 使用"
     },
     "health": {
       "degraded": "异常 · 失败 {fails} 次",
@@ -1874,6 +1999,7 @@
       "poolConfig": "轮询配置",
       "subtitle": "全 Agent 共享的格式 / 模型 / 限速配置。点击卡片编辑，星标为当前激活配置。",
       "tab": {
+        "credentials": "凭据",
         "profiles": "模型配置",
         "retry": "重试与退避"
       },
@@ -1935,6 +2061,12 @@
         "label": "Base URL（可选）"
       },
       "create": "新建",
+      "credential": {
+        "boundHint": "Key 由凭据「{name}」提供，在「凭据」标签页统一管理；绑定期间本配置的内联 Key 会被清空。",
+        "hint": "Key 只属于本配置。多个配置共用同一把 Key 时，改用「凭据」只需维护一处。",
+        "inline": "内联 Key（本配置自带）",
+        "label": "API Key 来源"
+      },
       "cw": "上下文窗口(K)",
       "descEdit": "修改后点击保存；激活配置保存后对全部 Agent 立即生效。",
       "descNew": "新建后不会自动激活，请在卡片上「设为激活」以启用。",
@@ -1968,6 +2100,17 @@
         "anthropic": "仅 openai 格式可选。Anthropic 的字段名固定为 max_tokens。",
         "openai": "上限发哪个键。max_tokens 是默认，绝大多数兼容网关只认它；OpenAI 官方推理模型（o 系列 / GPT-5）反过来只认 max_completion_tokens，收到 max_tokens 会直接报 unsupported_parameter。",
         "openai-responses": "仅 openai 格式可选。Responses API 的字段名固定为 max_output_tokens。"
+      },
+      "modalities": {
+        "hint": "声明该配置能接收哪些输入模态。三种扩展模态都不勾选 = 未声明，系统按模型名保守推断（仅已知的多模态模型会推断出图片）；勾选任意一项 = 显式声明，文本始终包含。运行时带图片/音频/PDF 附件、而目标配置未声明支持该模态时会被明确拦截报错，不会静默丢弃附件。",
+        "label": "输入模态 · input_modalities",
+        "opt": {
+          "audio": "音频 (audio)",
+          "image": "图片 (image)",
+          "pdf": "PDF",
+          "text": "文本 (text)"
+        },
+        "textAlways": "始终支持，无需勾选"
       },
       "model": {
         "label": "模型",
@@ -2106,13 +2249,20 @@
   },
   "llmRecords": {
     "cancel": "取消",
+    "colCost": "费用",
     "colLatency": "延迟",
+    "colModel": "模型",
+    "colProfile": "配置",
     "colStatus": "状态",
     "colTask": "任务",
     "colTime": "时间",
+    "colTokens": "Token",
+    "colWorker": "Worker",
     "confirmDelete": "确认删除",
     "copyCopied": "已复制",
     "copyTooltip": "复制内容",
+    "costEstimate": "费用(估算) {cost}",
+    "costTooltip": "按系统配置的模型价格表估算(USD)；未配置价格表或模型未命中时不计费",
     "deleteDesc": "将永久删除该任务的所有 LLM 调用记录（含请求/响应原文），此操作不可撤销。",
     "deleteTaskConversations": "删除任务对话",
     "deleteTitle": "删除任务「{taskId}」的全部 LLM 对话？",
@@ -2120,6 +2270,7 @@
     "empty": "暂无 LLM 调用记录",
     "emptyContent": "（空）",
     "loading": "加载…",
+    "modelPlaceholder": "模型名…",
     "raw": "原文",
     "rawTooltipHas": "查看与 provider 实际收发的 HTTP 原文",
     "rawTooltipNone": "该记录录制于此功能上线前，无原文",
@@ -2127,6 +2278,8 @@
     "recordingOff": "已关闭",
     "searchPlaceholder": "搜索 Session ID...",
     "selectTaskFirst": "先在上方选择任务",
+    "statusError": "失败",
+    "statusOk": "成功",
     "taskBadge": "任务 #{id}",
     "taskEmpty": "暂无任务记录",
     "taskPlaceholder": "选择任务…",
@@ -2220,8 +2373,20 @@
     "showingMore": "已显示 {count} 条，向下滚动加载更多"
   },
   "nav": {
+    "customize": {
+      "close": "完成",
+      "description": "置顶的条目会出现在侧边栏顶部的「收藏」分组；隐藏的条目不再显示。偏好只保存在当前浏览器。",
+      "hide": "隐藏",
+      "pin": "置顶",
+      "reset": "恢复默认",
+      "title": "自定义侧边栏",
+      "trigger": "自定义侧边栏",
+      "unhide": "取消隐藏",
+      "unpin": "取消置顶"
+    },
     "group": {
       "function": "功能",
+      "pinned": "收藏",
       "system": "系统"
     },
     "item": {
@@ -2274,21 +2439,24 @@
     }
   },
   "notFound": {
-    "back": "Go back home",
-    "description": "The page you are looking for could not be found.",
-    "title": "Page not found."
+    "back": "返回首页",
+    "description": "你访问的页面不存在，或已被移动。",
+    "title": "页面未找到"
   },
   "notifyPage": {
     "addChannel": "添加渠道",
     "aria": {
+      "approval": "接收待审批通知",
       "delete": "删除",
       "enable": "启用",
       "globalSwitch": "推送总开关",
-      "statusChange": "接收状态变更"
+      "statusChange": "接收状态变更",
+      "taskStatus": "接收任务状态变化"
     },
     "delivery": {
       "allChannels": "全部渠道",
       "allStates": "全部状态",
+      "approvalPending": "待审批",
       "colAttempts": "尝试",
       "colChannel": "渠道",
       "colError": "错误",
@@ -2304,6 +2472,7 @@
       "resend": "重发",
       "resendFailed": "重发失败：{msg}",
       "statusChanged": "状态变更",
+      "taskStatusChanged": "任务状态",
       "totalCount": "共 {total} 条"
     },
     "disabled": "已停用",
@@ -2358,15 +2527,15 @@
           "label": "API 地址"
         },
         "bot_token": {
-          "label": "Bot Token"
+          "label": "机器人 Token"
         },
         "chat_id": {
-          "label": "Chat ID"
+          "label": "聊天 ID"
         }
       },
       "webhook": {
         "body_template": {
-          "help": "留空用内置默认模板。变量：'{{.Title}} {{.Batch}} {{.Count}} {{.HomeURL}} {{.SentAt}}'，以及 range .Items 下的 .Name/.VulnClass/.Severity/.Summary/.Assets/.DetailURL/.StatusLabel。插入字符串请用 '{{json .Xxx}}' 而不是 '{{.Xxx}}'，否则标题里的引号会破坏 JSON。",
+          "help": "留空用内置默认模板。变量：'{{.Title}} {{.Batch}} {{.Count}} {{.HomeURL}} {{.SentAt}}'，以及 range .Items 下的 .Name/.VulnClass/.Severity/.Summary/.Assets/.DetailURL/.StatusLabel；任务事件（任务状态变化 / 待审批）另有 .Kind/.TaskID/.TaskTitle/.TaskStatus/.TaskStatusLabel/.StatusReason/.ApprovalID/.ToolName/.ConversationID。插入字符串请用 '{{json .Xxx}}' 而不是 '{{.Xxx}}'，否则标题里的引号会破坏 JSON。",
           "label": "请求体模板"
         },
         "headers": {
@@ -2402,7 +2571,9 @@
       "includeLabel": "只推这些漏洞类型",
       "includePlaceholder": "SQL注入\n命令执行",
       "minSeverity": "最低级别",
+      "onApproval": "等待人工审批时推送（工具调用被拦截、需要人工放行）",
       "onStatusChange": "漏洞处置状态变更时也推送（仅实时模式）",
+      "onTaskStatus": "任务状态变化时推送（完成 / 失败 / 超时 / 暂停）",
       "taskIds": "限定任务 ID",
       "title": "过滤规则（留空即不过滤）"
     },
@@ -2471,11 +2642,13 @@
     "subtitle": "发现漏洞时推送到钉钉 / 飞书 / 企业微信等渠道 · 每个渠道可独立设推送时机与过滤规则",
     "summary": {
       "all": "全部漏洞",
+      "approval": "含待审批",
       "assetCount": "{n} 个资产",
       "excludeCount": "排除 {n} 词",
       "includeCount": "类型含 {n} 词",
       "statusChange": "含状态变更",
-      "taskCount": "{n} 个任务"
+      "taskCount": "{n} 个任务",
+      "taskStatus": "含任务状态变化"
     },
     "tab": {
       "channels": "渠道",
@@ -2577,9 +2750,18 @@
     "recognized": "已识别 {count} 条"
   },
   "search": {
-    "button": "Search",
-    "empty": "No results found.",
-    "placeholder": "Search dashboards, users, and more…"
+    "action": {
+      "newConversation": "新建对话",
+      "newTask": "新建任务"
+    },
+    "button": "搜索",
+    "empty": "未找到匹配结果。",
+    "group": {
+      "actions": "操作",
+      "jump": "跳转",
+      "results": "搜索"
+    },
+    "placeholder": "搜索命令、页面与设置…"
   },
   "sessions": {
     "asset": {
@@ -2677,13 +2859,24 @@
       "mainagent": "主 Agent",
       "planner": "规划 Planner",
       "system": "系统审计",
-      "worker": "Workers"
+      "worker": "Worker"
     },
     "sse": {
       "live": "实时",
       "reconnecting": "重连中",
       "titleDown": "实时连接中断，正在自动重连（历史仍可见）",
       "titleLive": "实时连接正常"
+    },
+    "steer": {
+      "button": "引导",
+      "buttonAria": "引导运行中的 Worker #{id}",
+      "buttonTitle": "不打断当前运行，给该 Worker 递交纠偏指令（下一步工具调用前生效）",
+      "cancel": "取消",
+      "desc": "纠偏指令不会暂停或重跑该意图：文本进入引擎的 steer 队列，Worker 在下一次工具调用前收到并据此重新规划；若你正打算让它停下，用旁边的暂停按钮。",
+      "hint": "已递达的指令在下一步生效；Worker 若恰好正在收尾，可能未被消费",
+      "placeholder": "例如：先完成登录接口测试再处理目录扫描；不要再对当前主机做爆破…",
+      "submit": "递交指令",
+      "title": "引导 Worker #{id}"
     },
     "taskTotal": "任务总计",
     "title": {
@@ -2699,6 +2892,8 @@
       "reasonRequired": "请填写删除原因",
       "retryLater": "请稍后重试",
       "sendFailed": "发送失败：{msg}",
+      "steerFailed": "引导失败：{msg}",
+      "steerSent": "已递达，将在下一步生效",
       "uploadFailed": "上传失败：{msg}",
       "workerActionFailed": "Worker 操作失败：{msg}",
       "workerHardDeleted": "Worker #{id} 及其独占下游已彻底删除{extra}",
@@ -2739,6 +2934,10 @@
       "on": "已开启 · 会增加 Token 消耗",
       "title": "Agent 自动绑定流量"
     },
+    "budget": {
+      "desc": "新建任务的默认 Token 预算，单位：<b>千 token（k）</b>，例如 2000 = 200 万 token。按任务累计的<b>输入 + 输出 token</b> 计量（不含缓存读/写）；达到上限时任务自动暂停并在活动流留痕，调高预算后恢复即可继续。<br></br>0 = 不限（预算闸不生效）。仅在创建任务未单独指定预算时生效，对已有任务不追溯；单个任务的预算可在任务总览的 Token 卡片里随时调整。",
+      "title": "默认 Token 预算"
+    },
     "configured": "已配置",
     "constraints": {
       "desc": "开启后，把每个任务的<b>操作约束</b>（在任务总览「操作约束」里维护的 allow/deny 条目）拼进对应 Agent 的系统提示，用来框定探索边界（如「仅测当前端口」「禁止爆破」）。<br></br>可分别控制注入到 <b>规划者（planner）</b>与 <b>执行者（worker）</b> ；默认都开。切换即时生效（下一轮读取），无需重建 Agent。关闭后该 Agent 不再看到约束。",
@@ -2766,6 +2965,11 @@
     },
     "offSuffix": " · 已关闭",
     "onSuffix": " · 已开启",
+    "pricing": {
+      "desc": "把各家模型的价格填成 JSON，用量视图即可显示<b>费用估算</b>（USD / 百万 token）。key 是<b>模型名子串</b>（如 <code>claude-opus</code>、<code>deepseek</code>），匹配时<b>取最长匹配</b>：claude-opus-4 同时命中 claude-opus 与 opus 时按更具体的那条计价。每条价目的 input / output / cache_read / cache_write 四档都可省略，缺省按 0 计（缓存两档不填 = 不计缓存费用）。<br></br>费用在<b>读取时计算</b>，修改价格后历史用量立即按新价重算，无需迁移数据；留空 = 不计算费用。",
+      "placeholder": "{\"claude-opus\":{\"input\":15,\"output\":75,\"cache_read\":1.5,\"cache_write\":18.75},\"deepseek\":{\"input\":0.27,\"output\":1.1}}",
+      "title": "模型价格表"
+    },
     "python": {
       "desc": "自定义 <b>script</b> 类型工具用它跑 Python。开机会自动检测（python3 优先）；此处可手填 venv / 特定版本的绝对路径，留空则运行时自动检测。",
       "detect": "重新检测",
@@ -2784,10 +2988,13 @@
       "bindingOff": "已关闭 Agent 自动绑定流量",
       "bindingOn": "已开启 Agent 自动绑定流量",
       "braveKeySaved": "已保存 Brave API Key",
+      "budgetInvalid": "默认 Token 预算必须是不小于 0 的整数（单位：千 token）",
+      "budgetSaved": "已保存默认 Token 预算（对之后创建且未单独指定预算的任务生效）",
       "globalProxyCleared": "已清除全局代理（改为直连）",
       "globalProxySaved": "已保存全局代理",
       "noaOff": "已关闭 noa 上下文压缩（恢复内置压缩）",
       "noaOn": "已开启 noa 上下文压缩（对之后启动的运行生效）",
+      "priceTableSaved": "已保存模型价格表（费用估算立即按新价生效，历史用量也随之重算）",
       "proxyCleared": "已清除出口代理（改为直连）",
       "proxySaved": "已保存出口代理",
       "pythonSaved": "已保存 Python 解释器配置",
@@ -2847,7 +3054,7 @@
       "willDownloadSuffix": "，校验 SHA256 并冒烟测试后才会替换，失败自动保留当前版本。"
     },
     "webSearch": {
-      "braveKeyLabel": "Brave Search API Key",
+      "braveKeyLabel": "Brave 搜索 API Key",
       "braveKeyPlaceholderSet": "已配置（留空则不变）",
       "braveKeyPlaceholderUnset": "输入 Brave API Key",
       "braveNeedsKey": "已选择 Brave 但尚未配置 Key —— 在保存 Key 之前，搜索工具不会启用。",
@@ -2869,7 +3076,7 @@
       "sourcePlaceholder": "选择来源",
       "sourceTavily": "Tavily（需 Key）",
       "tavilyGetKey": "前往 https://tavily.com 注册并获取 API Key。",
-      "tavilyKeyLabel": "Tavily Search API Key",
+      "tavilyKeyLabel": "Tavily 搜索 API Key",
       "tavilyKeyPlaceholderSet": "已配置（留空则不变）",
       "tavilyKeyPlaceholderUnset": "输入 Tavily API Key（tvly-…）",
       "tavilyNeedsKey": "已选择 Tavily 但尚未配置 Key —— 在保存 Key 之前，搜索工具不会启用。",
@@ -2936,6 +3143,7 @@
     "callsCount": "{count} 次",
     "cancel": "取消",
     "compatPlaceholder": "需要 sqlmap、python3",
+    "compatibilityLabel": "兼容性 compatibility",
     "coveredTasks": "覆盖任务数",
     "create": "创建",
     "createFailed": "创建失败：{msg}",
@@ -2962,6 +3170,7 @@
     "irreversible": "此操作不可撤销。",
     "linkedMcp": "关联 MCP",
     "linkedMcpHint": "（加载 Skill 时才披露/解锁其工具）",
+    "licenseLabel": "许可证 license",
     "loading": "加载中…",
     "loadingCalls": "加载调用明细…",
     "mcpLinked": "关联「{name}」",
@@ -3334,7 +3543,9 @@
     "header": {
       "backToList": "返回任务列表",
       "loading": "加载中…",
-      "notFound": "任务 {id} 已被删除、归档或不存在"
+      "notFound": "任务 {id} 已被删除、归档或不存在",
+      "pendingApprovals": "等待审批 ×{n}",
+      "pendingApprovalsTitle": "有 {n} 条拦截审批在等待人工决定，点击查看审批记录"
     },
     "llm": {
       "backupCount": "{count} 个备用",
@@ -3462,19 +3673,36 @@
       "stat": {
         "confirmed": "确认发现",
         "confirmedSub": "本任务",
+        "firstFinding": "首发现",
+        "firstFindingSub": "任务开始 → 首个漏洞登记",
         "pending": "待领意图",
         "pendingSub": "frontier 开放",
+        "perHour": "产出速率",
+        "perHourSub": "漏洞数 ÷ 已运行小时",
+        "perHourUnit": "条/时",
         "total": "意图总数",
         "totalSub": "本任务全部意图"
       },
       "tokens": {
+        "budgetEdit": "调整",
+        "budgetInvalid": "预算必须是不小于 0 的整数（单位：千 token）",
+        "budgetLabel": "Token 预算",
+        "budgetSaveFailed": "保存预算失败：{error}",
+        "budgetSaved": "已保存 Token 预算",
+        "budgetUnlimited": "不限",
+        "budgetUsage": "已用 {used}（{pct}%）",
+        "byWorkerHint": "（角色可单独绑定模型；这一维回答「谁在消耗」）",
+        "byWorkerTitle": "按角色",
         "cacheHitRate": "缓存命中率",
         "cacheRead": "缓存读",
         "colCalls": "调用",
+        "colCost": "费用",
         "colHitRate": "命中率",
         "colModel": "模型",
+        "colWorker": "角色",
+        "costEstimate": "费用(估算)",
         "empty": "暂无 LLM 用量（任务尚未产生调用，或记录仍在写入）。",
-        "hint": "（按模型统计{calls, plural, =0 {} other {，共 #次调用}}）",
+        "hint": "（按模型与角色统计{calls, plural, =0 {} other {，共 #次调用}}）",
         "input": "输入",
         "output": "输出",
         "title": "LLM Token 用量"
@@ -3511,7 +3739,12 @@
       "overview": "总览",
       "report": "报告",
       "retests": "复测",
-      "sessions": "会话"
+      "sessions": "会话",
+      "timeline": "时间线"
+    },
+    "timeline": {
+      "description": "任务在准入、意图结束、暂停与压缩恢复时自动落检查点。回滚需先暂停任务；工具副作用与已落库的图产物不会回滚。",
+      "title": "检查点时间线"
     }
   },
   "taskTemplate": {
@@ -3746,7 +3979,11 @@
     "count": "{shown}/{total} 条",
     "create": {
       "advanced": "高级设置",
-      "advancedSub": "超时 · 心跳 · 首个意图",
+      "advancedSub": "超时 · 心跳 · Token 预算 · 首个意图",
+      "budgetHint": "按任务累计的输入 + 输出 token 计量（不含缓存读/写）；达到上限时任务自动暂停并在活动流留痕，调高预算后恢复即可继续。0 = 不限。",
+      "budgetInvalid": "Token 预算必须是不小于 0 的数字（单位：千 token）",
+      "budgetLabel": "Token 预算（千 token，可选）",
+      "budgetPlaceholder": "留空 = 跟随系统默认",
       "cancel": "取消",
       "categoryHint": "可选，单个分类；用于任务列表筛选和归档，不影响 Agent 执行。",
       "categoryLabel": "任务分类",
@@ -3822,6 +4059,7 @@
     },
     "empty": {
       "noMatch": "没有匹配的任务。",
+      "noMatchHint": "试试调整搜索关键词或筛选条件。",
       "noTasks": "暂无任务，点击右上角「新建任务」开始。"
     },
     "filter": {
@@ -3847,8 +4085,13 @@
     "row": {
       "archiveAria": "归档任务 #{id}",
       "controlDisabled": "该状态不可暂停或继续",
+      "firstFinding": "首发现 {time}",
       "nameAria": "任务 #{id} 名称",
+      "outputTitle": "首发现：任务开始 → 首个漏洞登记的耗时；速率：漏洞数 ÷ 已运行小时",
       "pauseTask": "暂停任务",
+      "pendingApprovals": "等待审批 ×{n}",
+      "pendingApprovalsTitle": "有 {n} 条拦截审批在等待人工决定，点击查看审批记录",
+      "perHourUnit": "条/时",
       "pinAria": "置顶任务 #{id}",
       "pinTitle": "置顶",
       "pinnedBadge": "已置顶",
@@ -3890,6 +4133,8 @@
       "findingsTitle": "严重 / 高 / 中 / 低",
       "goalProgress": "目标进度",
       "name": "名称",
+      "output": "产出",
+      "outputTitle": "产出速率 = 漏洞数 ÷ 已运行小时；首发现 = 任务开始到首个漏洞登记的耗时",
       "runningWorker": "运行中 Worker",
       "selectAllAria": "选择本页全部任务",
       "status": "状态",
@@ -3957,12 +4202,14 @@
     "httpUrlLabel": "URL（可含 '{param}'）",
     "itemsSubfield": "items 子字段",
     "keyError": "key 需小写字母开头，仅含小写字母/数字/下划线",
+    "keyLabel": "标识",
     "keyPlaceholder": "如 nmap_scan",
     "kindCommand": "command（shell 命令模板）",
     "kindHttp": "http（API 请求）",
     "kindLabel": "类型",
     "kindScript": "script（Python 脚本）",
     "kindShell": "shell（bash 环境声明）",
+    "methodLabel": "方法",
     "newCustom": "新建自定义工具",
     "noAgents": "（无 Agent）",
     "noBoundAgents": "（未绑定 Agent）",

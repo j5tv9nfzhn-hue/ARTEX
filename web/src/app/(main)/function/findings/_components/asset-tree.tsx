@@ -17,8 +17,10 @@ import {
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { severityTextClass } from "@/lib/severity";
 import type { FindingAssetKind, FindingAssetNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -293,7 +295,13 @@ export function AssetTree({
       <div className="max-h-[24rem] min-h-0 flex-1 overflow-y-auto pr-2 lg:max-h-[calc(100vh-16rem)]">
         <div className="flex flex-col">
           {rows}
-          {rows.length === 0 && <p className="px-2 py-8 text-center text-xs text-muted-foreground">{emptyHint}</p>}
+          {/* 加载态与空态分开:加载时仍显示一行提示,加载完才用插画空态(树侧栏用 compact) */}
+          {rows.length === 0 &&
+            (loading ? (
+              <p className="px-2 py-8 text-center text-xs text-muted-foreground">{emptyHint}</p>
+            ) : (
+              <EmptyState compact illustration="nodes" title={emptyHint} />
+            ))}
         </div>
       </div>
 
@@ -357,12 +365,12 @@ function AssetTreeRow({
       </button>
       <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums">
         {node.critical > 0 && (
-          <span className="text-rose-600" title={t("assetTree.criticalCount", { count: node.critical })}>
+          <span className={severityTextClass("critical")} title={t("assetTree.criticalCount", { count: node.critical })}>
             {node.critical}
           </span>
         )}
         {node.high > 0 && (
-          <span className="text-red-500" title={t("assetTree.highCount", { count: node.high })}>
+          <span className={severityTextClass("high")} title={t("assetTree.highCount", { count: node.high })}>
             {node.high}
           </span>
         )}

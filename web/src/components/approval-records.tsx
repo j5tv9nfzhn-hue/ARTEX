@@ -16,12 +16,12 @@ import {
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { TablePagination } from "@/components/table-pagination";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,7 +40,7 @@ type Translator = ReturnType<typeof useTranslations>;
 
 function fmtTime(value?: string) {
   if (!value) return "—";
-  return new Date(value).toLocaleString("ko-KR", {
+  return new Date(value).toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -909,15 +909,11 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
           </div>
         ) : null}
         {!loading && !rows.length && !error ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <ClipboardListIcon />
-              </EmptyMedia>
-              <EmptyTitle>{filtered ? t("emptyFiltered") : t("emptyTitle")}</EmptyTitle>
-              <EmptyDescription>{filtered ? t("emptyFilteredDesc") : t("emptyDesc")}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <EmptyState
+            illustration="shield"
+            title={filtered ? t("emptyFiltered") : t("emptyTitle")}
+            description={filtered ? t("emptyFilteredDesc") : t("emptyDesc")}
+          />
         ) : null}
         {rows.length ? (
           <ApprovalTable
