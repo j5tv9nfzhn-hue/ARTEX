@@ -70,27 +70,6 @@ Autumn-27/ARTEX（国内原作者，中文原创）
 
 详细边界见[贡献指南](CONTRIBUTING.md#本地化原则)，上游同步见[维护手册](MAINTAINING.md)。
 
-## 截图预览
-
-以下为仓库已有的**中文历史演示截图**，使用虚构的 `acme.com` 等示例数据，不代表本次真实目标扫描或生产验证。当前界面可能比截图增加了计量、审批等功能。
-
-<p align="center">
-  <img src="screenshots/dashboard.png" width="900" alt="中文仪表盘：任务、发现、资产与 Token 消耗"><br>
-  <sub><b>仪表盘</b>：任务、发现、资产、Token 消耗和活动流。</sub>
-</p>
-
-<p align="center">
-  <img src="screenshots/findings.png" width="900" alt="中文发现列表"><br>
-  <sub><b>发现</b>：按严重程度、状态、资产与任务汇总，支持 CSV 导出。模型生成的技术标题可能包含英文。</sub>
-</p>
-
-<p align="center">
-  <img src="screenshots/chat.png" width="900" alt="中文人工介入对话"><br>
-  <sub><b>对话</b>：向运行中的 Agent 提供提示，查看执行过程摘要。</sub>
-</p>
-
-更多截图见 [README.zh.md](README.zh.md#截图预览)，来源说明见 [screenshots/README.md](screenshots/README.md)。
-
 ## 快速开始（Windows 二进制）
 
 本项目只构建并发布 **Windows** 可执行程序（amd64 与 arm64），不提供 Linux/macOS 二进制，也不发布 Docker 镜像。
@@ -182,164 +161,253 @@ Web、API、SSE 共用后端端口。生产环境可只公开 443，将 8787 留
 
 ## 系统架构
 
-Go 单后端、Next.js 静态前端、SQLite（单文件）与 [norma SDK](https://github.com/Autumn-27/norma) 构成核心系统。原分支曾记录 SDK 上游无法公开访问，构建前应确认依赖可获取。关键设计是**双图结构、过程级信息共享、Planner 跨轮次 todolist**。
+系统 = **Go 单二进制后端（内嵌 Next.js 静态前端）+ SQLite 单文件 + [norma SDK](https://github.com/Autumn-27/norma) 多智能体内核**。关键设计：**双图数据底座**（探索图 + 资产图，经锚点互连）、**事件驱动闭环**（图变化唤醒 Planner）与**成本与可靠性控制面**（缓存 / 预算 / 通知 / 记账）。以下用六个视角完整展开，可直接按序阅读。
 
-### 总体分层
+### ① 全景架构：一图纵览（六层 + 外部依赖）
 
 ```mermaid
 flowchart TB
-  subgraph FE["前端 Next.js（go:embed 内嵌单二进制）"]
-    UI["仪表盘 · 任务 · 资产 · 覆盖率图 · 流量 · 工作区 · 系统设置"]
+  subgraph L1["① 访问与界面层"]
+    direction LR
+    BR["浏览器 · 作战台单页"]
+    FED["Next.js 静态产物（go:embed 内嵌）<br/>仪表盘 / 任务 / 发现 / 资产覆盖图<br/>探索图谱 / 流量 / 审批 / 设置 · ⌘K"]
   end
-  subgraph SRV["server（Go net/http）"]
-    API["REST /api/* · JWT 认证 · SSE"]
-    ENG["engine 调度循环"]
-    MGR["Manager · 任务/引擎/store 生命周期"]
+  subgraph L2["② 服务接入层 · server"]
+    direction LR
+    API["REST /api + SSE 事件流"]
+    AUTH["JWT 鉴权 · 审计事件（CallID）"]
   end
-  subgraph AG["agent（norma SDK）"]
-    GO["goals · 目标分解与范围提取"]
-    PL["planner · 唯一意图创建者"]
-    WK["worker · 执行者 ×N"]
-    MA["mainagent · 人工介入"]
+  subgraph L3["③ 编排核心层 · server"]
+    direction LR
+    MGR["Manager<br/>任务生命周期"]
+    ENG["Engine<br/>规划循环 + N 执行器"]
+    SCH["Scheduler<br/>触发器 · 心跳"]
+    INV["Intercept<br/>审批门"]
+    NOT["Notify<br/>六渠道通知"]
   end
-  subgraph DB["SQLite 数据库"]
-    AGRAPH["资产图 · assets / companies / task_scope"]
-    EGRAPH["探索图 · exploration_nodes / anchors / activity"]
+  subgraph L4["④ 智能体层 · agent"]
+    direction LR
+    GOALS["goals<br/>目标分解"]
+    PLAN["Planner<br/>唯一意图创建者"]
+    WORK["Worker ×N<br/>单意图执行"]
+    OTHER["Reporter · Retester · SideQuestion<br/>报告 · 复测 · 旁路问答"]
   end
-  subgraph SUB["支持子系统"]
-    PROXY["记录型代理 · MITM + CA"]
-    GUARD["guard / intercept · 工具审批"]
-    ENR["enrich · DNS / HTTP 异步补全"]
-    EXT["MCP · skills · memory · report"]
+  subgraph L5["⑤ 内核层 · norma SDK"]
+    direction LR
+    HK["harness 会话循环<br/>提示缓存断点 · 重试策略"]
+    CP["压缩面<br/>micro / auto / 冷摘要"]
+    TL["工具调度<br/>域工具 + 默认工具 + MCP + Skills"]
   end
-  UI -->|HTTP| API
-  API --> MGR --> ENG
-  ENG --> PL
-  ENG --> WK
-  API --> MA
-  API --> GO
-  PL --> DB
-  WK --> DB
-  MA --> DB
-  GO --> DB
-  WK -->|"Bash / HTTP 全过程记录"| PROXY
-  WK --> GUARD
-  WK --> ENR
-  PL -.-> EXT
-  WK -.-> EXT
-  MA -.-> EXT
+  subgraph L6["⑥ 数据与存储层"]
+    direction LR
+    SQL["SQLite 单文件<br/>双图 · 台账 · 配置 · 检查点"]
+    DISK["磁盘产物<br/>blobs · runs · 快照"]
+  end
+  subgraph L7["⑦ 外部依赖"]
+    direction LR
+    LLM["LLM 供应商<br/>多配置 · 角色回退链"]
+    MCPE["MCP 服务器 · 技能包"]
+    TGT["授权目标环境"]
+  end
+  BR -->|"① HTTPS / SSE"| API
+  API --> MGR
+  MGR -->|"② 起停任务"| ENG
+  SCH -->|"③ 触发"| ENG
+  ENG -->|"④ 派意图"| PLAN
+  PLAN -->|"⑤ frontier 队列"| WORK
+  WORK -->|"⑥ 调用工具"| TL
+  WORK -->|"高风险工具"| INV
+  INV -.->|"批准后继续"| WORK
+  PLAN --> HK
+  WORK --> HK
+  OTHER --> HK
+  HK -->|"⑦ 模型调用"| LLM
+  TL -->|"⑧ 实际动作"| TGT
+  TL -.-> MCPE
+  PLAN --> SQL
+  WORK --> SQL
+  ENG --> SQL
+  NOT --> SQL
+  ENG -->|"发现 / 终态"| NOT
+  TL -.->|"产物落盘"| DISK
+  classDef c1 fill:#E8F4FD,stroke:#2F80ED,color:#1F2937
+  classDef c2 fill:#EAF7EF,stroke:#27AE60,color:#1F2937
+  classDef c3 fill:#FFF4E5,stroke:#F2994A,color:#1F2937
+  classDef c4 fill:#F3E8FF,stroke:#9B51E0,color:#1F2937
+  classDef c5 fill:#E6F6F6,stroke:#00A3A3,color:#1F2937
+  classDef c6 fill:#F3F4F6,stroke:#6B7280,color:#1F2937
+  classDef c7 fill:#FDECEC,stroke:#D35454,color:#1F2937
+  class BR,FED c1
+  class API,AUTH c2
+  class MGR,ENG,SCH,INV,NOT c3
+  class GOALS,PLAN,WORK,OTHER c4
+  class HK,CP,TL c5
+  class SQL,DISK c6
+  class LLM,MCPE,TGT c7
 ```
 
-- **前端：** 静态产物通过 `go:embed` 内嵌，展示任务、资产、探索链、覆盖率和人工对话。
-- **server：** `net/http` 路由、JWT、SSE，Manager 管理任务、引擎与 DB store。
-- **engine：** 每任务一个 `plannerLoop` 与 N 个 Worker goroutine，管理意图分配、超时、暂停和 drain。
-- **agent：** goals、planner、worker、mainagent 各司其职，ToolSet 将双图暴露为 LLM 工具。
-- **db：** modernc SQLite 驱动（纯 Go、无 CGO），内嵌 `db/schema_sqlite.sql` 每次启动幂等迁移（含列增量与索引）。
-- **支持系统：** 流量代理、审批、补全、MCP、Skill、记忆和报告。
+| 层 | 职责 | 代码入口 |
+| --- | --- | --- |
+| **界面** | 作战台单页 + 7 套主题预设 + ⌘K 命令面板 | `web/src/app/`、`web/src/styles/presets/` |
+| **接入** | REST + SSE + JWT；审计事件以 `CallID` 贯穿 | `server/server.go` |
+| **编排** | 任务生命周期、规划循环、触发器/心跳、审批门、通知引擎 | `server/manager.go`、`server/engine.go`、`server/scheduler.go` |
+| **智能体** | 目标分解、意图规划（唯一创建者）、执行器、报告/复测/旁路问答 | `agent/planner.go`、`agent/worker.go`、`server/orchestration.go` |
+| **内核** | 会话循环、提示缓存、上下文压缩、工具调度；MCP 与技能接入 | norma SDK（`agent/assembly.go` 接线） |
+| **数据** | 双图、台账、配置、检查点；SQLite 单文件（modernc 纯 Go 驱动，无 CGO） | `db/schema_sqlite.sql`、`db/` |
+| **观测与出口** | Token 台账与计价、进度指标、审计指标、六渠道通知 | `llmrec/`、`server/pricing.go`、`metrics/`、`notify/` |
 
-### 双图结构：探索图与资产图
+支持子系统作为横切能力接入以上各层：记录型 MITM 流量代理与 DNS/HTTP 富化、证据存储（blobs）、工具审批门（guard / intercept）、通知路由（Markdown · HTML · Telegram · 飞书 · 钉钉 · Webhook）、检查点/回滚，以及内核侧的技能（Skills）、MCP 与记忆/报告能力。
 
-“目标是什么”和“已测试到哪里”分别存储，通过锚点关联。
+### ② 任务运行闭环：从触发到收尾
 
-- **资产图（全局共享）：** `root_domain / subdomain / ip / service / app / endpoint` 属于公司；父子关系和去重键由程序计算，Agent 只提交原始信息。
-- **探索图（每任务独立）：** `goal / intent / fact / finding / hint` 由 `spawns / derived_from / yields / proves` 连接，记录推理与进度。
-- **锚点：** `exploration_anchors(node_id, asset_id)` 将意图、事实和发现绑定到实际资产，支持双向追溯。
-
-```mermaid
-flowchart LR
-  subgraph EG["探索图（任务独立 · 进度链）"]
-    direction TB
-    G["goal 目标"]
-    I1["intent 意图 A"]
-    F1["fact 事实"]
-    I2["intent 意图 B"]
-    FD["finding 发现"]
-    G -->|spawns| I1
-    I1 -->|yields| F1
-    F1 -->|derived_from| I2
-    I2 -->|proves| FD
-  end
-  subgraph AG["资产图（全局共享 · 事实库）"]
-    direction TB
-    RD["root_domain"]
-    SD["subdomain"]
-    SV["service"]
-    EP["endpoint"]
-    RD --> SD --> SV --> EP
-  end
-  I1 -. anchor .-> SD
-  F1 -. anchor .-> SV
-  I2 -. anchor .-> EP
-  FD -. anchor .-> EP
-```
-
-Planner 读取探索态势、判断目标，仅在有未覆盖方向时创建意图。Worker 每次只承接**一个意图**，调用工具，把新资产、事实和发现写回双图后结束。
-
-### 引擎与意图生命周期（探索闭环）
-
-图改变唤醒 Planner，Planner 产生意图，Worker 执行并写回，写回再次触发下一轮，直到 `prove_goal` 证明目标。
+引擎是事件驱动的闭环：图一变就唤醒 Planner，Planner 派意图，Worker 领意图执行并写回，写回又触发下一轮——直到目标被证明（`prove_goal`）。预算闸、审批门与收尾通知都挂在这条闭环上。
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant EV as 图变化 debounce
-  participant P as planner
-  participant FR as frontier 意图队列
-  participant W as worker
-  participant PX as 记录代理
-  participant DB as 双图与 activity
-  EV-->>P: 唤醒
-  P->>DB: 读取 graph_overview、coverage、scope
-  P->>FR: 分配 0..N 个意图，附 asset_ids
-  Note over P,FR: 没有新方向时分配 0 个并结束
-  W->>FR: claimNext 领取一个意图
-  W->>DB: 获取原始资产作为初始信息
-  W->>PX: 执行实际工具
-  PX-->>W: 返回响应，记录全过程并校验 CA
-  W->>DB: 写 fact / asset / finding 和阶段 activity
-  DB-->>EV: 图变化
-  EV-->>P: 再次唤醒
+  participant TR as 触发源（人工 / 调度器 / 心跳 / 图变化）
+  participant EN as Engine（任务循环）
+  participant PL as Planner
+  participant QU as frontier 意图队列
+  participant WK as Worker
+  participant GT as 审批门 Intercept
+  participant DB as 双图 + activity + 台账
+  participant NT as 通知引擎
+  TR->>EN: 唤醒（去抖动合并）
+  EN->>EN: 预算核算 / 心跳空转跳过判定
+  EN->>PL: 启动一轮规划（新会话 + 共享 todolist）
+  PL->>DB: 读态势（紧凑注入，工具按需查全量）
+  PL->>QU: 派 0..N 个意图（带资产锚点）
+  Note over PL,QU: 无新方向时派 0 个并结束本轮
+  WK->>QU: 领取一条意图
+  WK->>DB: 取初始资产与过程线索
+  WK->>GT: 调用高风险工具
+  GT-->>NT: 等待人工审批（推送审批事件）
+  GT-->>WK: 批准 / 拒绝后继续
+  WK->>DB: 写回 fact / asset / finding + 每步 activity
+  DB-->>EN: 图变化（再次唤醒，闭环）
+  EN->>NT: 发现 / 任务终态（完成 / 失败 / 超时 / 暂停）
+  Note over EN,PL: 超预算 → 自动暂停；证明目标 → 收尾 settle
+  Note over WK: 运行中可接收人工引导（steer）与终止（kill）
 ```
 
-### Worker 之间的过程级信息共享
+### ③ 数据底座：双图 + 存储拓扑
 
-有价值的观察可能只存在于某个 Worker 的执行步骤，而未形成正式 fact。其他 Worker 可检索并复用这些观察，避免重复工作：
-
-- `search_all_worker_traces(q)` 检索同任务其他意图的过程，自动排除自己，结果包含 `intent_id`。
-- `list_worker_traces` 查看已有过程，`get_worker_trace(intent_id, step_ids=[…])` 获取指定步骤完整内容。
+“目标是什么”和“测到了什么程度”分别存储，经**锚点**双向追溯。Planner 只读态势、只在有未覆盖方向时派意图；Worker 只领一条意图、把新资产/事实/发现写回两图后结束。
 
 ```mermaid
 flowchart LR
-  WA["Worker A（意图 #12）"] -->|"阶段 activity"| ACT[("探索图 · 执行过程库")]
-  WB["Worker B（意图 #34）"] -->|"阶段 activity"| ACT
-  WC["Worker C（意图 #56）"] ==>|"① search_all_worker_traces(q)"| ACT
-  ACT ==>|"② 返回 A/B 命中，排除自己"| WC
-  WC ==>|"③ get_worker_trace(intent_id, step_ids)"| ACT
-  ACT ==>|"④ 返回完整步骤"| WC
+  subgraph DOM["领域模型"]
+    direction TB
+    subgraph EG["探索图 · 每任务独立（推进链）"]
+      direction TB
+      G["goal 目标"] -->|spawns| I1["intent 意图"]
+      I1 -->|yields| F1["fact 事实"]
+      F1 -->|derived_from| I2["intent 下一步"]
+      I2 -->|proves| FD["finding 发现"]
+      H["hint 提示"]
+    end
+    subgraph AG["资产图 · 全局共享（真值库）"]
+      direction TB
+      RD["root_domain"] --> SD["subdomain"]
+      SD --> SV["service"]
+      SV --> EP["endpoint"]
+    end
+    AN["锚点 exploration_anchors<br/>意图/事实/发现 ↔ 资产 双向追溯"]
+  end
+  subgraph STO["SQLite 单文件（modernc · 无 CGO · 启动幂等迁移）"]
+    direction TB
+    S1["运行态：tasks · intents · activity<br/>checkpoints · compaction_state"]
+    S2["双图：exploration_nodes / edges / anchors<br/>assets / companies / task_scope"]
+    S3["账本与配置：llm_usage / llm_records · settings<br/>llm_profiles · credentials / mcp_env"]
+  end
+  subgraph FSG["磁盘产物"]
+    direction TB
+    D1["blobs：流量与证据"]
+    D2["runs：会话工作目录"]
+  end
+  I1 -. 锚定 .-> AN
+  FD -. 锚定 .-> AN
+  AN -. 绑定 .-> SD
+  AN -. 绑定 .-> EP
+  EG ==> S2
+  AG ==> S2
+  STO -.-> FSG
 ```
 
-共享的是过程信息，不改变 Worker 仅执行自己意图的边界。
+锚点机制同时支撑**资产测试覆盖度**与**资产覆盖图**（范围内资产 + 已测高亮）。
 
-### Planner 跨轮次共享 todolist，维护有序链路
+### ④ 协作机制：过程共享 + 跨轮 todolist
 
-多阶段链路存在前置依赖，不能一次全部并行分配。Planner 每次唤醒是新会话，但任务级 todolist 持久保留，只给“前置已完成且依赖 fact 已存在”的下一步分配意图，并更新完成状态。
+两条自主性机制让多 Worker、跨轮次的探索保持连贯：
+
+- **过程级信息共享**：有价值的观察未必写成正式 fact。`search_all_worker_traces(q)` / `list_worker_traces` / `get_worker_trace(intent_id, step_ids)` 让 Worker 能检索同任务其他意图的执行过程（自动排除自己），信息以“执行过程”为粒度流动，边界不变。
+- **跨轮共享 todolist**：串行利用链（发现注入点 → 取凭据 → 横向 → 提权）存在前置依赖，不能一次并行派发。todolist 按任务持久化，每轮只对“前置已完成、依赖 fact 已存在”的下一步派意图，并随进展更新状态——事件驱动 + 无状态会话下依然稳定推进、不重复、不错序。
 
 ```mermaid
 flowchart TB
-  subgraph TODO["共享 todolist（任务持久化 · 跨轮次）"]
+  subgraph SHARE["过程级信息共享（同一任务的 worker 之间）"]
     direction LR
-    T1["1 发现注入点 [完成]"]
-    T2["2 获取凭据 [进行中]"]
-    T3["3 横向移动 [等待前置]"]
-    T4["4 权限提升 [等待前置]"]
-    T1 -. 前置满足 .-> T2 -.-> T3 -.-> T4
+    WA["worker A · 意图 #12"] -->|"每步 activity"| ACT[("activity 过程库")]
+    WB["worker B · 意图 #34"] -->|"每步 activity"| ACT
+    ACT -->|"1) search_all_worker_traces(q)"| WC["worker C · 意图 #56"]
+    WC -->|"2) get_worker_trace(intent_id, step_ids)"| ACT
+    ACT -.->|"返回命中步骤（排除自己）"| WC
   end
-  R1["第 1 轮 · 意图①"] --> T1
-  R2["第 2 轮 · ①产生 fact，分配②"] --> T2
-  R3["第 3 轮 · ②产生 fact，分配③"] --> T3
+  subgraph TODO["跨轮共享 todolist（按任务持久化）"]
+    direction LR
+    T1["1 注入点 [完成]"] --> T2["2 取凭据 [进行中]"]
+    T2 --> T3["3 横向 [待前置]"]
+    T3 --> T4["4 提权 [待前置]"]
+  end
+  R1["第 1 轮唤醒 · 派意图①"] --> T1
+  R2["第 2 轮（①产出 fact）· 派意图②"] --> T2
 ```
 
-这一机制在事件驱动、无状态会话环境中保持顺序、减少重复，仅应在明确授权范围内使用。
+### ⑤ 成本与可靠性控制面
+
+每一层都刻意收敛“重复计费”的可能性：输入侧瘦身、过程侧守门、统一观测与出口。
+
+```mermaid
+flowchart LR
+  subgraph IN["输入侧瘦身（每轮重复计费部分）"]
+    direction TB
+    C1["提示缓存断点<br/>system 整段 ephemeral 缓存"]
+    C2["工具输出上限 12k 字符<br/>超限落盘 + 指针"]
+    C3["注入瘦身<br/>planner ≤16KB · worker ≤12KB<br/>资产 30 条紧凑视图"]
+    C4["心跳空转跳过<br/>有在跑意图且无新变动不启轮"]
+  end
+  subgraph RUN["过程侧守门"]
+    direction TB
+    R1["意图重试 ≤4 次<br/>指数退避 3→24s · 硬失败 2 次"]
+    R2["触发器间隔 ≥60s"]
+    R3["任务 Token 预算闸<br/>每轮收尾核算 → 超限自动暂停"]
+    R4["上下文压缩<br/>micro / auto / 冷摘要 800tok"]
+  end
+  subgraph OBSV["观测与出口"]
+    direction TB
+    O1["Token 台账 + 价格表<br/>按任务 / 模型 / 角色计价"]
+    O2["进度指标<br/>首发现耗时 · 产出速率 · 等待审批"]
+    O3["通知六渠道<br/>发现 / 任务终态 / 等待审批"]
+    O4["审计与指标<br/>AuditEntry.CallID · /api/metrics"]
+  end
+  IN --> RUN --> OBSV
+```
+
+对应落点：提示缓存 `agent/deferred.go`；预算闸 `server/engine.go` + `tasks.token_budget`；计价 `server/pricing.go`（设置 `price_table`）；通知 `notify/`；配置项与完整清单见[成本效率优化实施记录](docs/成本效率优化-实施记录.md)。
+
+### ⑥ 单二进制部署与交付
+
+```mermaid
+flowchart LR
+  PKG["发布包<br/>artex.exe · start.bat · skills/ · config.example.json"] --> BIN["单进程<br/>内嵌前端 + REST/SSE + 引擎 + 记录代理"]
+  BIN --> DATA["数据目录<br/>SQLite 单文件 · blobs/ · runs/ · 日志"]
+  USER["浏览器"] -->|"http://127.0.0.1:8787（或反向代理 HTTPS）"| BIN
+  BIN -->|"模型调用"| PLLM["LLM 供应商（Anthropic / OpenAI 形态）"]
+  BIN -->|"授权范围内"| PTGT["测试目标"]
+```
+
+发布产物、编译标志与运行时文件落点详见[构建与产物](docs/构建与产物.md)。
 
 ## 防御与检测资料
 
