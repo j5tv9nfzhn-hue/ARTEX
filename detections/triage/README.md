@@ -12,7 +12,7 @@
 - **监听端口：** :8787 管理 UI 与 127.0.0.1:8788 记录代理，来自 [main.go](../../cmd/artex/main.go)的 --addr/--proxy 默认值。解析 ss/netstat/lsof，或读取 --ports-from 文件。
 - **记录代理产物：** 首次运行生成 `<数据目录>/traffic/_ca/mitmproxy-ca-cert.pem`，以及 `_index/index.sqlite`、`_blobs/`，来源 [traffic.go](../../traffic/traffic.go)。数据默认在可执行文件旁 data/；该 MITM CA 是 HTTP(S) 解密记录器的信任锚（T1557）。
 - **日志标记：** 查找 [补全 UA](../../enrich/enrich.go) artex-enrich/1.0、[更新 UA](../../selfupdate/github.go) artex-selfupdate、[guard 审计标记](../../guard/guard.go)，保留非 ASCII framing 以真实匹配。支持 .gz/.bz2/.xz 历史日志；标准库无编解码器的 .zst/.lz4 明确报告跳过，不当作干净，需解压或手工检查。
-- **PostgreSQL 探索结构：** 检查 [schema.sql](../../db/schema.sql)的 exploration_nodes/_edges/_anchors、assets/companies/activity 与 agent_prompts 种子。提供 DSN 时用 psql 查询，缺少 psql 则打印可手工执行的只读 SQL。
+- **PostgreSQL 探索结构：** 检查 [schema_sqlite.sql](../../db/schema_sqlite.sql)中的 exploration_nodes/_edges/_anchors、assets/companies/activity 与 agent_prompts 种子（上游 PostgreSQL 版定义在 `db/schema.sql`）。提供 DSN 时用 psql 查询，缺少 psql 则打印可手工执行的只读 SQL。
 - **进程环境注入：** 同时带 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 和指向 mitmproxy-ca-cert.pem 的 SSL_CERT_FILE/CURL_CA_BUNDLE/REQUESTS_CA_BUNDLE/GIT_SSL_CAINFO/NODE_EXTRA_CA_CERTS，源于 [worker.go](../../agent/worker.go) proxyEnv 与[断言](../../agent/proxyenv_test.go)。名字固定，仅值可改，较端口更特异，改名/改端口仍可能保留。Linux 读取 /proc，离线读 --proc-from。代理与 CA 同在为高严重度；单独 mitmproxy CA 或默认 127.0.0.1:8788 为中等；无该 CA 的公司代理不作为线索。
 
 **发现是研判线索，不是定论；无发现也不代表安全。** 运营者可改二进制名、数据目录或端口。
