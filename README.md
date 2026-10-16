@@ -70,6 +70,26 @@ Autumn-27/ARTEX（国内原作者，中文原创）
 
 详细边界见[贡献指南](CONTRIBUTING.md#本地化原则)，上游同步见[维护手册](MAINTAINING.md)。
 
+## ARTEX 60 秒动态展示
+
+<p align="center">
+  <a href="showreel/ARTEX-Showreel-60s.mp4">
+    <img src="showreel/poster.jpg" width="960" alt="点击封面查看或下载 ARTEX 60 秒动态展示视频">
+  </a><br>
+  <a href="showreel/ARTEX-Showreel-60s.mp4">查看 / 下载完整 60 秒 MP4</a> ·
+  <a href="showreel/README.md">交互播放器、内容简介与制作说明</a>
+</p>
+
+这是一支 60 秒、1920 × 1080、60 fps 的无缝循环动态设计短片：一条分析线从纸面铅笔线演化为蓝图几何，再成为黑色全息空间中的光束，串起 ARTEX 的授权安全测试流程。影片含 120 BPM 原创配乐与自动同步音效；交互式播放器、完整分镜和可复现导出步骤见 [`showreel/`](showreel/)。
+
+> **Artex modified open-source reel, full motion graphic + original score included.**
+>
+> It coded every frame (HyperFrames + GSAP), wrote the background music in Python and synced all sound effects automatically.
+>
+> The audit panel and visualization art in “Creating” scene is real generated output: Artex exported assessment logs rendered inside DaVinci Resolve on the same day.
+>
+> Details ⤵️
+
 ## 快速开始（Windows 二进制）
 
 本项目只构建并发布 **Windows** 可执行程序（amd64 与 arm64），不提供 Linux/macOS 二进制，也不发布 Docker 镜像。

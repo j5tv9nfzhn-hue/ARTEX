@@ -1,0 +1,3 @@
+# generated audio artifacts (rebuild with: python3 score.py)
+*.wav
+sfx_sync.json
