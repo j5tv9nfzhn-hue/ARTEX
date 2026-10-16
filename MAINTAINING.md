@@ -199,10 +199,10 @@ python3 -I scripts/check-external-links.py --strict # 需要相应网络访问�
 ### 9.2 各 job 的职责
 
 - **frontend：** 一次静态导出 `web/out`，上传 web-dist，各目标复用。
-- **binaries：** Windows amd64/arm64 交叉编译和 zip；Linux runner 无法执行 PE，改用 PE 结构校验（MZ 头、PE 签名、机器类型）。
+- **binaries：** linux/darwin/windows × amd64/arm64 交叉编译和 zip；runner 不执行非宿主平台二进制，改用文件头结构校验（PE/ELF/Mach-O 魔数与机器类型）。
 - **release：** 汇总 zip、生成 SHA256SUMS，创建 GitHub Release。
 
-GitHub Release 只发布 Windows 可执行程序，不再发布 Docker 镜像；三端（Linux/macOS/Windows）打包由 `build.sh` 提供，本地可用 `./build.sh --release` 产出（见 §9.3）。
+GitHub Release 发布三端（Linux/macOS/Windows）zip 包（amd64/arm64），不再发布 Docker 镜像；本地同样可用 `./build.sh --release` 产出（见 §9.3）。
 
 ### 9.3 构建路径与前置条件
 

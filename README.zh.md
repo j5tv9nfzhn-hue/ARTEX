@@ -13,7 +13,7 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 > ⚠️ **安全与合规提示**：本分支基于 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)，当前默认简体中文。仅可在自有或明确授权的环境中进行学习、研究和防御验证。原分支保留了 2026 年 10 月韩国金融机构事件的媒体报道警告，本次语言重构不代表独立核实。完整授权限制、法律告知和免责声明见 [README.md](README.md#使用范围与法律告知) 与 [README.md](README.md)。
 
-> ℹ️ **本文件的定位**：本文是上游项目的简体中文技术原稿。下方「安装 / 更新升级」章节描述上游产物（install.sh、Docker 镜像、多平台发布包等），本分支只发布 Windows 二进制，请以 [README.md](README.md) 的说明为准；存储已由 PostgreSQL 迁移为 SQLite 单文件，相关描述按此理解。
+> ℹ️ **本文件的定位**：本文是上游项目的简体中文技术原稿。下方「安装 / 更新升级」章节描述上游产物（install.sh、Docker 镜像、多平台发布包等），本分支只发布自构建的三端（Linux/macOS/Windows）Go 单二进制，请以 [README.md](README.md) 的说明为准；存储已由 PostgreSQL 迁移为 SQLite 单文件，相关描述按此理解。
 
 ---
 
@@ -95,7 +95,7 @@ CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
 
 ### 方式五：构建 Release 压缩包
 
-`build.sh` 会先构建并嵌入前端，再使用 Go linker 去除调试信息，并将发布文件压缩为 zip。Release 模式默认构建三端（Linux/macOS/Windows）amd64/arm64 目标并产出 zip（三端打包能力已按 Git 历史恢复；GitHub Release 工作流当前仍只发布 Windows 包）：
+`build.sh` 会先构建并嵌入前端，再使用 Go linker 去除调试信息，并将发布文件压缩为 zip。Release 模式默认构建三端（Linux/macOS/Windows）amd64/arm64 目标并产出 zip（三端打包能力已按 Git 历史恢复；GitHub Release 工作流随 `v*` tag 发布三端包）：
 
 ```bash
 ./build.sh --release

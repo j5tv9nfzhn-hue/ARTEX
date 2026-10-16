@@ -90,17 +90,19 @@ Autumn-27/ARTEX（国内原作者，中文原创）
 >
 > Details ⤵️
 
-## 快速开始（Windows 二进制）
+## 快速开始（三端二进制）
 
-本项目只构建并发布 **Windows** 可执行程序（amd64 与 arm64），不提供 Linux/macOS 二进制，也不发布 Docker 镜像。
+本项目构建并发布 **Linux / macOS / Windows** 三端 Go 单二进制（amd64 与 arm64），不发布 Docker 镜像。
 
 ### 方式一：下载发布包
 
-到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载 `artex-<版本>-windows-<架构>.zip`，解压后得到：
+到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载对应平台的 `artex-<版本>-<平台>-<架构>.zip`（`linux` / `darwin` / `windows`），解压后得到：
 
-- `artex.exe` —— 程序本体（前端已内嵌）
-- `start.bat` —— 启动监护脚本（页面一键更新依赖它重启进程）
+- `artex` / `artex.exe` —— 程序本体（前端已内嵌）
+- `start.bat`（Windows）/ `start.sh`（Linux、macOS）—— 启动监护脚本（页面一键更新依赖它重启进程）
 - `skills/`、`config.example.json`、`README.md`
+
+以下启动示例以 Windows 为例（Linux/macOS 为 `artex` 本体与 `start.sh`）：
 
 ```bat
 copy config.example.json config.json   & rem 可选：指定数据库文件位置，留空自动创建 artex.db
@@ -420,7 +422,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  PKG["发布包<br/>artex.exe · start.bat · skills/ · config.example.json"] --> BIN["单进程<br/>内嵌前端 + REST/SSE + 引擎 + 记录代理"]
+  PKG["发布包<br/>artex(.exe) · start.sh/start.bat · skills/ · config.example.json"] --> BIN["单进程<br/>内嵌前端 + REST/SSE + 引擎 + 记录代理"]
   BIN --> DATA["数据目录<br/>SQLite 单文件 · blobs/ · runs/ · 日志"]
   USER["浏览器"] -->|"http://127.0.0.1:8787（或反向代理 HTTPS）"| BIN
   BIN -->|"模型调用"| PLLM["LLM 供应商（Anthropic / OpenAI 形态）"]

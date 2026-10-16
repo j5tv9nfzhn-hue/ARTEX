@@ -68,6 +68,7 @@
 - **保留英文文档层。** README、变更历史、安全政策、行为准则、贡献/维护指南、防御指南、流量证据设计与检测规则均有英文入口；历史 `*-ko.md` 路径继续有效，但内容现为简体中文。
 - **移除历史截图预览并重写架构章节。** 删除 `screenshots/` 目录与 `web/media/dashboard.png`；两个 README 不再展示截图，「系统架构」以六视图全面重建（全景分层 · 任务运行闭环 · 数据底座 · 协作机制 · 成本与可靠性控制面 · 单二进制部署）。
 - **恢复三端打包脚本（Linux/macOS/Windows）。** 按 Git 历史还原 2026-10-11 裁剪（`3492c39`）对 [build.sh](build.sh) 的收窄：恢复 linux/darwin 目标、三端 Release 默认清单（保留裁剪期新增的 `windows/arm64`）、非 Windows 包附 `start.sh` 与 macOS UPX 参数；[README](README.md)、[构建与产物](docs/构建与产物.md) 与 [维护手册](MAINTAINING.md) 同步。
+- **Release 工作流恢复三端打包。** [release.yml](.github/workflows/release.yml) 的发布矩阵由 Windows 双架构扩展为 Linux/macOS/Windows × amd64/arm64：随 `v*` tag 交叉编译、按平台校验收件头（PE/ELF/Mach-O）与目标架构后发布三端 zip 与 SHA256SUMS；[README](README.md)、[README.zh.md](README.zh.md)、[CONTRIBUTING](CONTRIBUTING.md)、[维护手册](MAINTAINING.md) 与[构建与产物](docs/构建与产物.md) 同步。
 
 ---
 

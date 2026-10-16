@@ -7,7 +7,7 @@ permissions:
   contents: write # 创建 Release 所需权限
 
 jobs:
-  # ① 前端静态导出仅执行一次，供各 Windows 目标复用。
+  # ① 前端静态导出仅执行一次，供各平台目标复用。
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -35,12 +35,11 @@ jobs:
           name: web-dist
           path: web/out
 
-  # ② Windows 交叉编译，内嵌前端并打包 zip。
-  # 本项目只发布 Windows 可执行程序，不再构建 linux/darwin 目标，
-  # 也不再发布 Docker 镜像。
+  # ② 三端交叉编译（linux/darwin/windows × amd64/arm64），内嵌前端并打包 zip。
+  # 发布三端 zip 包，不发布 Docker 镜像。
   #
-  # 缓存策略：模块缓存与平台无关，两个 matrix 分支共用一份；
-  # 编译缓存按 goarch 区分，避免 amd64/arm64 产物互相污染。
+  # 缓存策略：模块缓存与平台无关，各 matrix 分支共用一份；
+  # 编译缓存按 goos+goarch 区分，避免不同目标的产物互相污染。
   # cache-mode: read —— 该 job 持有构建产物，限定只读缓存，防止低信任来源写入的
   # 缓存条目污染发布构建（2026-06 起 GitHub 对高权限 job 的缓存隔离机制）。
   binaries:
@@ -50,8 +49,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - { goarch: amd64 }
-          - { goarch: arm64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -64,9 +67,9 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: gobuild-windows-${{ matrix.goarch }}-release-${{ hashFiles('go.sum') }}
+          key: gobuild-${{ matrix.goos }}-${{ matrix.goarch }}-release-${{ hashFiles('go.sum') }}
           restore-keys: |
-            gobuild-windows-${{ matrix.goarch }}-release-
+            gobuild-${{ matrix.goos }}-${{ matrix.goarch }}-release-
             gomod-${{ runner.os }}-
       - uses: actions/download-artifact@v8
         with:
@@ -74,7 +77,7 @@ jobs:
           path: server/webui/dist
       - name: Build and package with build.sh
         env:
-          ARTEX_TARGET_OS: windows
+          ARTEX_TARGET_OS: ${{ matrix.goos }}
           ARTEX_TARGET_ARCH: ${{ matrix.goarch }}
           ARTEX_BUILD_VERSION: ${{ github.ref_name }}
           ARTEX_SKIP_FRONTEND: "1"
@@ -84,29 +87,43 @@ jobs:
           ARTEX_PACKAGE: "1"
           ARTEX_PACKAGE_DIR: dist
         run: |
-          ./build.sh --target "windows/${ARTEX_TARGET_ARCH}"
-      # Linux runner 无法执行 Windows PE，改用结构校验代替冒烟测试：
-      # 确认 MZ 头、PE 签名与目标机器类型（0x8664=AMD64，0xAA64=ARM64）。
-      - name: 校验 PE 结构与目标架构
+          ./build.sh --target "${ARTEX_TARGET_OS}/${ARTEX_TARGET_ARCH}"
+      # runner 不执行非宿主平台的二进制；统一用文件头结构校验代替冒烟测试：
+      # windows → PE：MZ 头、PE 签名、机器类型（0x8664=AMD64，0xAA64=ARM64）；
+      # linux → ELF：魔数、64 位、e_machine（0x3E=x86-64，0xB7=AArch64）；
+      # darwin → Mach-O：64 位 thin 魔数、cputype（0x01000007 / 0x0100000C）。
+      - name: 校验可执行文件头与目标架构
         run: |
-          python3 - "$PWD/dist/artex-windows-${{ matrix.goarch }}/artex.exe" "${{ matrix.goarch }}" <<'PY'
+          python3 - "${{ matrix.goos }}" "${{ matrix.goarch }}" <<'PY'
           import struct, sys
-          path, arch = sys.argv[1], sys.argv[2]
-          data = open(path, "rb").read()
-          if data[:2] != b"MZ":
-              sys.exit("不是 Windows PE（缺少 MZ 头）")
-          pe = struct.unpack_from("<I", data, 0x3C)[0]
-          if data[pe:pe + 4] != b"PE\0\0":
-              sys.exit("缺少 PE\\0\\0 签名")
-          machine = struct.unpack_from("<H", data, pe + 4)[0]
-          want = {"amd64": 0x8664, "arm64": 0xAA64}[arch]
+          goos, arch = sys.argv[1], sys.argv[2]
+          binary = f"dist/artex-{goos}-{arch}/artex" + (".exe" if goos == "windows" else "")
+          data = open(binary, "rb").read(4096)
+          if goos == "windows":
+              if data[:2] != b"MZ":
+                  sys.exit(f"{binary}: 不是 Windows PE（缺少 MZ 头）")
+              pe = struct.unpack_from("<I", data, 0x3C)[0]
+              if data[pe:pe + 4] != b"PE\0\0":
+                  sys.exit(f"{binary}: 缺少 PE\\0\\0 签名")
+              machine = struct.unpack_from("<H", data, pe + 4)[0]
+              want = {"amd64": 0x8664, "arm64": 0xAA64}[arch]
+          elif goos == "linux":
+              if data[:4] != b"\x7fELF" or data[4] != 2:
+                  sys.exit(f"{binary}: 不是 64 位 ELF")
+              machine = struct.unpack_from("<H", data, 18)[0]
+              want = {"amd64": 0x3E, "arm64": 0xB7}[arch]
+          else:
+              if data[:4] != b"\xcf\xfa\xed\xfe":
+                  sys.exit(f"{binary}: 不是 64 位 thin Mach-O")
+              machine = struct.unpack_from("<I", data, 4)[0]
+              want = {"amd64": 0x01000007, "arm64": 0x0100000C}[arch]
           if machine != want:
-              sys.exit(f"机器类型 0x{machine:X} 与目标 {arch} (0x{want:X}) 不符")
-          print(f"PE 校验通过：{path} machine=0x{machine:X} ({arch})")
+              sys.exit(f"{binary}: 机器类型 0x{machine:X} 与目标 {goos}/{arch} (0x{want:X}) 不符")
+          print(f"结构校验通过：{binary} machine=0x{machine:X} ({goos}/{arch})")
           PY
       - uses: actions/upload-artifact@v7
         with:
-          name: pkg-windows-${{ matrix.goarch }}
+          name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
           path: "dist/*.zip"
 
   # ③ 汇总 zip 并创建 GitHub Release。
