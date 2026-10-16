@@ -308,6 +308,12 @@ func newHTTPClient(proxy string) (*http.Client, error) {
 		transport.Proxy = nil
 		return &http.Client{Transport: transport}, nil
 	}
+	// "host:port" 这类缺协议的地址会被 url.Parse 先按 path 解析失败
+	// （first path segment in URL cannot contain colon），按最常见的缺协议
+	// 输入归类，给出可操作的提示而不是笼统的解析错误。
+	if !strings.Contains(proxy, "://") {
+		return nil, errors.New("代理地址缺少协议（请使用 http://、https:// 或 socks5://）")
+	}
 	u, err := url.Parse(proxy)
 	if err != nil {
 		return nil, fmt.Errorf("代理地址无法解析：%v", err)

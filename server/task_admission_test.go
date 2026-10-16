@@ -26,7 +26,10 @@ func newAdmissionTestServer(m *Manager, available func(*Task) bool) *Server {
 		}
 		return nil, nil
 	})
-	return &Server{m: m, engine: e, ctx: ctx, chatBusy: map[string]bool{}, chatCancel: map[string]context.CancelCauseFunc{}}
+	// 与 server.New 保持一致：agentsForTask 会写入 taskAgents，provider 解析会
+	// 写入 provByProfile；缺 map 时首次写入即 panic（暂停/恢复路径会触发）。
+	return &Server{m: m, engine: e, ctx: ctx, chatBusy: map[string]bool{}, chatCancel: map[string]context.CancelCauseFunc{},
+		taskAgents: map[string]*taskAgentBundle{}, provByProfile: map[int64]*provEntry{}}
 }
 
 func restoreConcurrencySetting(t *testing.T, m *Manager) func() {

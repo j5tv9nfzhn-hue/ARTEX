@@ -57,12 +57,14 @@ func TestWireTools(t *testing.T) {
 		t.Error("worker lost record_fact")
 	}
 	// SDK generic tools aren't seeded → ToolResolve passes them through unchanged
-	// (same object, original description — not decorated). No startup prune touches
-	// non-catalog rows, so future user-defined custom tools survive too.
+	// (same object, original description — not decorated), except the by-design
+	// platform note (#9) appended on non-bash platforms (Windows → PowerShell).
+	// No startup prune touches non-catalog rows, so future user-defined custom
+	// tools survive too.
 	if bash, ok := worker["Bash"]; !ok {
 		t.Error("worker lost Bash (should pass through)")
-	} else if bash.Description() != actool.NewBash().Description() {
-		t.Error("Bash should pass through undecorated, but description changed")
+	} else if want := actool.NewBash().Description() + platformShellNote(); bash.Description() != want {
+		t.Errorf("Bash should pass through undecorated (plus platform note #9), got %q want %q", bash.Description(), want)
 	}
 	// planner is not bound to record_fact → resolving a base that contains it drops it.
 	planner := names(agent.ToolResolve(ctx, "planner", base))

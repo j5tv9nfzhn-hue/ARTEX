@@ -1649,15 +1649,6 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if req.TimeoutSeconds < 0 {
 		req.TimeoutSeconds = 0
 	}
-	// Token 预算语义:省略(null)= 取 settings 默认(default_task_token_budget);显式给值
-	// (含 0=显式不限)以请求为准;负值归一为 0(不限),与超时/心跳的容错口径一致。
-	tokenBudget := s.m.DefaultTaskTokenBudget()
-	if req.TokenBudget != nil {
-		tokenBudget = *req.TokenBudget
-	}
-	if tokenBudget < 0 {
-		tokenBudget = 0
-	}
 	if len(req.SourceTaskIDs) > db.MaxTaskSourceCount {
 		writeErr(w, 400, fmt.Sprintf(trMsg(errCreateTaskSourceLimit), db.MaxTaskSourceCount))
 		return
@@ -1687,6 +1678,17 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 400, errCreateTaskInterceptRules+err.Error())
 		return
+	}
+	// Token 预算语义:省略(null)= 取 settings 默认(default_task_token_budget);显式给值
+	// (含 0=显式不限)以请求为准;负值归一为 0(不限),与超时/心跳的容错口径一致。
+	// 先完成纯输入校验再读设置:被校验拒绝的请求不触发 settings 存取,无数据库的
+	// 夹具(server_localized_test.go 的 liveServer)也能覆盖这些校验分支。
+	tokenBudget := s.m.DefaultTaskTokenBudget()
+	if req.TokenBudget != nil {
+		tokenBudget = *req.TokenBudget
+	}
+	if tokenBudget < 0 {
+		tokenBudget = 0
 	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,

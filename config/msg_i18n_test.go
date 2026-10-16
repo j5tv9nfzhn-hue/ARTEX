@@ -34,7 +34,7 @@ func TestStartupLogsKeepIdentifiersVerbatim(t *testing.T) {
 		"[db] 数据库配置来源：%s",
 		"[config] skill 目录: %s",
 	} {
-		if got := T(want); !strings.Contains(got, "config") && !strings.Contains(got, "pg") {
+		if got := T(want); !strings.Contains(got, "config") && !strings.Contains(got, "db") {
 			t.Errorf("启动消息丢失技术标识：%q", got)
 		}
 	}
