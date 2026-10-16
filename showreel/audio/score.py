@@ -221,16 +221,18 @@ def render():
 
 
 def main():
+    import os
+    out_dir = os.path.dirname(os.path.abspath(__file__))
     data, sfx = render()
-    with wave.open('score.wav', 'wb') as w:
+    with wave.open(os.path.join(out_dir, 'score.wav'), 'wb') as w:
         w.setnchannels(2)
         w.setsampwidth(2)
         w.setframerate(SR)
         w.writeframes(data)
-    with open('sfx_sync.json', 'w') as f:
+    with open(os.path.join(out_dir, 'sfx_sync.json'), 'w') as f:
         json.dump({"bpm": BPM, "beats": 120, "bars": BARS,
                    "duration": DURATION, "sfx": sfx}, f, indent=2)
-    print(f'wrote score.wav ({DURATION:.0f}s loop) + sfx_sync.json ({len(sfx)} sfx)')
+    print(f'wrote {out_dir}/score.wav ({DURATION:.0f}s loop) + sfx_sync.json ({len(sfx)} sfx)')
 
 
 if __name__ == '__main__':

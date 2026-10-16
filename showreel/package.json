@@ -1,0 +1,13 @@
+{
+  "name": "artex-showreel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ARTEX — 60 s looping motion design showreel (HyperFrames + GSAP). Optional: @napi-rs/canvas powers tools/render_frames.js (offline PNG export).",
+  "scripts": {
+    "frames": "node tools/render_frames.js",
+    "test": "node test/smoke.js"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.11"
+  }
+}

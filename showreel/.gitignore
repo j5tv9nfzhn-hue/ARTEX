@@ -1,0 +1,7 @@
+# npm artifacts for the optional offline frame exporter
+node_modules/
+out/
+
+# stray audio renders at repo root (audio/ keeps its own copy via audio/.gitignore)
+/score.wav
+/sfx_sync.json
