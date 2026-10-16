@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/intercept"
+	"github.com/Autumn-27/artex/metrics"
 	"github.com/Autumn-27/norma/hook"
 )
 
 // AuditEntry records one gated tool call.
 type AuditEntry struct {
 	TS      int64  `json:"ts"`
+	CallID  string `json:"call_id,omitempty"` // intercept trace 的 ToolUseID；空 = 无法配对（trace 未启用/关联不唯一）
 	Tool    string `json:"tool"`
 	Action  string `json:"action"` // allow|block
 	Reason  string `json:"reason,omitempty"`
@@ -65,29 +67,43 @@ func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 		var in struct {
 			Command string `json:"command"`
 		}
-		_ = json.Unmarshal(ev.Input, &in)
+		if len(ev.Input) > 0 {
+			// 尽力抽取命令供审计；入参解析错误不在钩子层计数（执行包装层
+			// guardedTool.Call 会对同一次调用计数，避免一次失败记两笔）。
+			_ = json.Unmarshal(ev.Input, &in)
+		}
 		cmd = in.Command
 	case "shell_send":
 		var in struct {
 			Text string `json:"text"`
 		}
-		_ = json.Unmarshal(ev.Input, &in)
+		if len(ev.Input) > 0 {
+			_ = json.Unmarshal(ev.Input, &in)
+		}
 		cmd = in.Text
 	}
-	g.record(ev.ToolName, "allow", "", cmd)
-	return g.applyIntercept(ctx, ev)
+	// Claim the intercept trace call exactly ONCE, up front, so this audit row and
+	// the intercept record share the same call ID (trace 的 ToolUseID，#15/#17)。
+	// 只对进入拦截规则体系的工具 claim：未启用的工具不占用 trace 上下文快照。
+	var callID string
+	if g.interceptor != nil && g.interceptor.IsToolEnabled(ev.ToolName) {
+		ctx, callID = intercept.ClaimCall(ctx, ev.ToolName, ev.Input)
+	}
+	g.record(callID, ev.ToolName, "allow", "", cmd)
+	return g.applyIntercept(ctx, ev, callID)
 }
 
 // applyIntercept evaluates user-configured intercept rules against the tool call.
-// Both rules and the fallback judge receive the complete tool input.
-func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
+// Both rules and the fallback judge receive the complete tool input. The caller
+// (preToolUse) has already claimed the trace call for enabled tools — re-claiming
+// here would find the call taken and blank the correlation, so don't.
+func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event, callID string) hook.Result {
 	if g.interceptor == nil {
 		return hook.Result{}
 	}
 	if !g.interceptor.IsToolEnabled(ev.ToolName) {
 		return hook.Result{}
 	}
-	ctx = intercept.WithCall(ctx, ev.ToolName, ev.Input)
 	dec, matched := g.interceptor.Match(ev.ToolName, ev.Input)
 	if !matched {
 		// No rule matched. Ask the LLM fallback judge (if enabled); when it is off
@@ -102,7 +118,7 @@ func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
 	case "deny":
 		// 观测:deny 命中不阻塞审批,直接记一条 denied（历史/任务拦截页可见）。
 		g.interceptor.Log(ctx, intercept.ConvIDFromContext(ctx), dec, ev.ToolName, ev.Input, "denied")
-		return g.block(ev.ToolName, systemBlockMessage(dec.Message), "")
+		return g.block(callID, ev.ToolName, systemBlockMessage(dec.Message), "")
 	case "allow":
 		// Record explicit rule and model approvals so review details remain auditable.
 		g.interceptor.Log(ctx, intercept.ConvIDFromContext(ctx), dec, ev.ToolName, ev.Input, "allowed")
@@ -116,11 +132,11 @@ func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
 		// Worker 上下文已经取消时立即阻止，不创建 pending 记录，避免孤立数据库记录，
 		// 并让 execOne 快速完成，减少与 drainSynthetic 的竞争。
 		if ctx.Err() != nil {
-			return g.block(ev.ToolName, systemBlockMessage("工作已取消，平台安全管控阻止执行"), "")
+			return g.block(callID, ev.ToolName, systemBlockMessage("工作已取消，平台安全管控阻止执行"), "")
 		}
 		convID := intercept.ConvIDFromContext(ctx)
 		if !g.interceptor.HandleAsk(ctx, convID, dec, ev.ToolName, ev.Input) {
-			return g.block(ev.ToolName, systemBlockMessage("人工审批未通过（用户拒绝或审批超时）"), "")
+			return g.block(callID, ev.ToolName, systemBlockMessage("人工审批未通过（用户拒绝或审批超时）"), "")
 		}
 		return hook.Result{}
 	}
@@ -177,15 +193,18 @@ func (g *Guard) Attributions() map[string]int {
 	return out
 }
 
-func (g *Guard) block(tool, reason, cmd string) hook.Result {
-	g.record(tool, "block", reason, cmd)
+// block records a blocked call and returns the hook result. The call counts as one
+// attempt + one stage=hook error in the reliability metrics.
+func (g *Guard) block(callID, tool, reason, cmd string) hook.Result {
+	metrics.ObserveToolBlocked(tool)
+	g.record(callID, tool, "block", reason, cmd)
 	return hook.Result{Decision: "block", Message: reason}
 }
 
-func (g *Guard) record(tool, action, reason, cmd string) {
+func (g *Guard) record(callID, tool, action, reason, cmd string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.audit = append(g.audit, AuditEntry{TS: time.Now().Unix(), Tool: tool, Action: action, Reason: reason, Command: cmd})
+	g.audit = append(g.audit, AuditEntry{TS: time.Now().Unix(), CallID: callID, Tool: tool, Action: action, Reason: reason, Command: cmd})
 	if len(g.audit) > 2000 {
 		g.audit = g.audit[len(g.audit)-2000:]
 	}

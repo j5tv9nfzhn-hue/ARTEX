@@ -142,8 +142,12 @@ type LLMRecord struct {
 	CacheWrite   int       `json:"cache_write"`
 	Status       string    `json:"status"`
 	Error        string    `json:"error,omitempty"`
-	RequestBody  string    `json:"request_body,omitempty"`
-	ResponseBody string    `json:"response_body,omitempty"`
+	// Cost is the read-time USD estimate computed by the API handler from
+	// settings.price_table; db never writes it. 0 (omitempty) = 未配价格表或模型
+	// 未命中，序列化时字段直接省略，不破坏存量消费者。
+	Cost         float64 `json:"cost,omitempty"`
+	RequestBody  string  `json:"request_body,omitempty"`
+	ResponseBody string  `json:"response_body,omitempty"`
 	// RawRequest / RawResponse are the untouched HTTP bodies exchanged with the
 	// provider — the request as buildBody() sent it (full tool schemas included)
 	// and the raw SSE frames. RequestBody/ResponseBody above are the normalized
@@ -196,10 +200,7 @@ ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS raw_response TEXT;
 // 缺列"的中间状态。与 coordinateWithSchemaMigration 在 SQLite 侧短路是同一条
 // 论证。
 func llmRecordsMigrateSQL() string {
-	if isSQLiteEngine() {
-		return ""
-	}
-	return llmRecordsMigrate
+	return ""
 }
 
 // EnsureLLMRecordsTable creates the llm_records table if it does not exist.
@@ -237,19 +238,12 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 	return err
 }
 
-// ListLLMRecords returns paginated LLM records with optional filters.
-func (d *DB) ListLLMRecords(model, session, task string, page, size int) ([]LLMRecord, int, error) {
-	if size <= 0 {
-		size = 50
-	}
-	if page < 0 {
-		page = 0
-	}
-	offset := page * size
-
-	where := `WHERE true`
-	args := []any{}
-	argN := 1
+// llmRecordsFilter builds the WHERE clause shared by the record list and its
+// supplementary per-model aggregation, so 费用汇总与列表永远按同一组过滤条件
+// 计算(两个查询必须同步改动，否则"全量费用"与屏幕上翻到的记录对不上)。
+func llmRecordsFilter(model, session, task string) (where string, args []any, argN int) {
+	where = `WHERE true`
+	argN = 1
 	if model != "" {
 		where += fmt.Sprintf(` AND model = $%d`, argN)
 		args = append(args, model)
@@ -265,6 +259,20 @@ func (d *DB) ListLLMRecords(model, session, task string, page, size int) ([]LLMR
 		args = append(args, task)
 		argN++
 	}
+	return where, args, argN
+}
+
+// ListLLMRecords returns paginated LLM records with optional filters.
+func (d *DB) ListLLMRecords(model, session, task string, page, size int) ([]LLMRecord, int, error) {
+	if size <= 0 {
+		size = 50
+	}
+	if page < 0 {
+		page = 0
+	}
+	offset := page * size
+
+	where, args, argN := llmRecordsFilter(model, session, task)
 
 	var total int
 	if err := d.QueryRow(`SELECT COUNT(*) FROM llm_records `+where, args...).Scan(&total); err != nil {
@@ -295,6 +303,80 @@ func (d *DB) ListLLMRecords(model, session, task string, page, size int) ([]LLMR
 	return out, total, rows.Err()
 }
 
+// ModelTokenTotals is one model's summed token usage over a filtered llm_records
+// set — the supplementary aggregation behind the read-time cost estimate: the list
+// rows carry per-call cost, while this sums the WHOLE filtered set (not just the
+// current page) so the page can show a 全量费用. db 层不含价格概念，Cost 一律由
+// API 层按 settings.price_table 现算。
+type ModelTokenTotals struct {
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	CacheRead    int
+	CacheWrite   int
+}
+
+// LLMRecordModelTotals aggregates the filtered llm_records set per model, under
+// exactly the same filters as ListLLMRecords (shared llmRecordsFilter)。API 层仅在
+// 配置了价格表时才调用(无价格表不算钱，省掉这次查询)。
+func (d *DB) LLMRecordModelTotals(model, session, task string) ([]ModelTokenTotals, error) {
+	where, args, _ := llmRecordsFilter(model, session, task)
+	rows, err := d.Query(`SELECT COALESCE(NULLIF(model,''),'(unknown)') AS model,
+		COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0)
+	FROM llm_records `+where+`
+	GROUP BY model`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ModelTokenTotals{}
+	for rows.Next() {
+		var m ModelTokenTotals
+		if err := rows.Scan(&m.Model, &m.InputTokens, &m.OutputTokens, &m.CacheRead, &m.CacheWrite); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// TaskModelTokenTotals is one (task_id, model) bucket of the recorded ledger —
+// the supplementary dimension for the task picker's cost column (LLMTasks itself
+// only carries task_id + count, no model, so it cannot be priced directly).
+type TaskModelTokenTotals struct {
+	TaskID       string
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	CacheRead    int
+	CacheWrite   int
+}
+
+// LLMTaskModelTotals aggregates every recorded task per model. API 层仅在配置了
+// 价格表时调用；按 (task_id, model) 分组后逐组计价、在 Go 侧按 task 求和。
+func (d *DB) LLMTaskModelTotals() ([]TaskModelTokenTotals, error) {
+	rows, err := d.Query(`SELECT COALESCE(task_id,'') AS task_id, COALESCE(NULLIF(model,''),'(unknown)') AS model,
+		COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0)
+	FROM llm_records
+	WHERE COALESCE(task_id,'') <> ''
+	GROUP BY task_id, model`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TaskModelTokenTotals{}
+	for rows.Next() {
+		var t TaskModelTokenTotals
+		if err := rows.Scan(&t.TaskID, &t.Model, &t.InputTokens, &t.OutputTokens, &t.CacheRead, &t.CacheWrite); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ModelTokenStat is one model's aggregated token usage for a task, summed from the
 // llm_usage metering ledger (see db/llm_usage.go). Calls is the number of LLM calls
 // that hit this model.
@@ -305,12 +387,18 @@ type ModelTokenStat struct {
 	OutputTokens     int    `json:"output_tokens"`
 	CacheReadTokens  int    `json:"cache_read_tokens"`
 	CacheWriteTokens int    `json:"cache_write_tokens"`
+	// Cost is the read-time USD estimate (settings.price_table); 0 (omitempty) =
+	// 未配价格表或模型未命中。
+	Cost float64 `json:"cost,omitempty"`
 }
 
 // LLMTask is one distinct task with its LLM-record count.
 type LLMTask struct {
 	TaskID string `json:"task_id"`
 	Count  int    `json:"count"`
+	// Cost is the read-time USD estimate for this task's recorded calls
+	// (settings.price_table); 0 (omitempty) = 未配价格表或模型全部未命中。
+	Cost float64 `json:"cost,omitempty"`
 }
 
 // LLMTasks returns distinct non-empty task_ids with record counts, most recent

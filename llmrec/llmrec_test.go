@@ -3,7 +3,6 @@ package llmrec
 import (
 	"context"
 	"iter"
-	"os"
 	"testing"
 
 	"github.com/Autumn-27/artex/db"
@@ -83,9 +82,11 @@ func (meteredStreamProvider) Stream(context.Context, llm.CompletionRequest) iter
 }
 
 func TestSideUsageRecordedOnceOnConsumerCancellation(t *testing.T) {
-	dsn := os.Getenv("ARTEX_PG_DSN")
-	if dsn == "" {
-		t.Skip("requires isolated ARTEX_PG_DSN")
+	// TestMain points ARTEX_SQLITE_PATH at a per-run temp file, so this is an
+	// isolated database with no configuration step.
+	dsn, _, err := db.DSN()
+	if err != nil {
+		t.Fatal(err)
 	}
 	pg, err := db.Open(dsn)
 	if err != nil {

@@ -51,17 +51,12 @@ type SkillStat struct {
 	LastUsed *time.Time `json:"last_used"` // nil when never called
 }
 
-// skillAgentsAgg 是 skill_usage 聚合里「去重 agent 名单」的方言写法。
-//
-//	PostgreSQL: STRING_AGG(DISTINCT agent_key, ',')，两参数形态只有 PG 有；
-//	SQLite:     GROUP_CONCAT(DISTINCT agent_key)。SQLite 的 string_agg/group_concat
-//	            在 DISTINCT 形态下只收单参数（双参数报 "DISTINCT aggregates must
-//	            have exactly one argument"），默认连接符恰好就是 ','，与 PG 侧一致。
+// skillAgentsAgg 是 skill_usage 聚合里「去重 agent 名单」的方言写法：
+// GROUP_CONCAT(DISTINCT agent_key)。SQLite 的 string_agg/group_concat
+// 在 DISTINCT 形态下只收单参数（双参数报 "DISTINCT aggregates must
+// have exactly one argument"），默认连接符恰好就是 ','。
 func skillAgentsAgg() string {
-	if isSQLiteEngine() {
-		return "COALESCE(GROUP_CONCAT(DISTINCT agent_key), '')"
-	}
-	return "COALESCE(STRING_AGG(DISTINCT agent_key, ','), '')"
+	return "COALESCE(GROUP_CONCAT(DISTINCT agent_key), '')"
 }
 
 // SkillStats aggregates the whole ledger grouped by skill, most-used first. Skills
@@ -74,7 +69,7 @@ func (d *DB) SkillStats() ([]SkillStat, error) {
 	rows, err := d.Query(`
 SELECT skill, COUNT(*) AS calls,
        COUNT(DISTINCT task_id) AS tasks,
-       `+skillAgentsAgg()+` AS agents,
+       ` + skillAgentsAgg() + ` AS agents,
        MAX(ts) AS last_used
 FROM skill_usage
 WHERE found
@@ -124,7 +119,7 @@ func (d *DB) MissingSkillStats(limit int) ([]SkillStat, error) {
 	}
 	rows, err := d.Query(`
 SELECT skill, COUNT(*) AS calls,
-       `+skillAgentsAgg()+` AS agents,
+       ` + skillAgentsAgg() + ` AS agents,
        MAX(ts) AS last_used
 FROM skill_usage
 WHERE NOT found

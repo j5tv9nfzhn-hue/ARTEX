@@ -277,7 +277,7 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 				inList[t.Name()] = true
 			}
 			for _, row := range rows {
-				if row.Kind == "shell" || !row.Enabled || !contains(row.Agents, agentKey) || inList[row.Key] {
+				if row.Kind == toolKindShell || !row.Enabled || !contains(row.Agents, agentKey) || inList[row.Key] {
 					continue
 				}
 				inst, ok := domainReg[row.Key]
@@ -292,7 +292,7 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 		// installed. Collect the ones bound to this agent and append to Bash's description.
 		var shellHints []string
 		for _, row := range rows {
-			if row.Kind == "shell" && row.Enabled && contains(row.Agents, agentKey) {
+			if row.Kind == toolKindShell && row.Enabled && contains(row.Agents, agentKey) {
 				shellHints = append(shellHints, "- "+row.Key+": "+row.Description)
 			}
 		}
@@ -317,6 +317,16 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 						out[i] = agent.DecorateTool(t, t.Description()+bashInteractiveShellNote, t.InputSchema())
 						break
 					}
+				}
+			}
+		}
+		// 平台 shell 提示（#9）：非 bash 平台（Windows）追加执行器与语法引导，让模型
+		// 在调用前就知道 Bash 工具实际是 PowerShell，避免 Unix 命令的无谓失败。
+		if note := platformShellNote(); note != "" {
+			for i, t := range out {
+				if t.Name() == "Bash" {
+					out[i] = agent.DecorateTool(t, t.Description()+note, t.InputSchema())
+					break
 				}
 			}
 		}

@@ -17,12 +17,17 @@
 # 删除或移动被引用的图片、LICENSE 等也可能破坏链接。
 # 仅使用 Python 标准库，不访问网络。
 # 不需要 Docker，可快速完成本地检查。
+# 3) go：Go 源码变更时执行 gofmt 格式与 golangci-lint 门禁。
+# 配置见 .golangci.yml（当前仅 govet + gofmt，均为干净基线）。
+# 需要本机安装 golangci-lint v2，参考 https://golangci-lint.run/usage/install/；
+# CI（.github/workflows/ci.yml）使用固定版本 v2.14.0，配置格式一致。
 #
 # 安装：pip install pre-commit && pre-commit install
 # 手工运行：pre-commit run detections --all-files
 #              pre-commit run docs --all-files
+#              pre-commit run go --all-files
 #
-# 可按需追加 Go、Web 检查；语言残留门禁已在下方提供。
+# 可按需追加 Web 检查；语言残留门禁已在下方提供。
 repos:
   - repo: local
     hooks:
@@ -44,3 +49,9 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: go
+        name: Go 源码检查（gofmt 格式 + golangci-lint）
+        entry: golangci-lint run
+        language: system
+        pass_filenames: false
+        files: '\.go$'

@@ -411,7 +411,7 @@ func (s *AssetStore) BuildCoverageGraph(taskID, _ int64) (*CoverageGraphData, er
 	if taskID <= 0 {
 		return g, nil
 	}
-	rows, err := s.db.Query(`WITH `+contextCoverageCTE+`
+	rows, err := s.db.Query(`WITH `+contextCoverageCTE()+`
 SELECT a.id, a.type, COALESCE(a.company_id,0),
        COALESCE(a.domain,''), COALESCE(a.root_domain,''), COALESCE(a.ip,''),
        COALESCE(a.url,''), COALESCE(a.port,0), COALESCE(a.service_type,''),

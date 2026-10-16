@@ -20,15 +20,17 @@ import (
 
 func evidenceFixture(t *testing.T) (*Store, db.RecordFindingInput, string) {
 	t.Helper()
-	dsn := os.Getenv("ARTEX_PG_DSN")
-	if dsn == "" {
-		t.Skip("ARTEX_PG_DSN is required for evidence integration tests")
+	// TestMain points ARTEX_SQLITE_PATH at a per-run temp file, so this is an
+	// isolated database with no configuration step.
+	dsn, _, err := db.DSN()
+	if err != nil {
+		t.Fatal(err)
 	}
 	pg, err := db.Open(dsn)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { pg.Close() })
+	t.Cleanup(func() { _ = pg.Close() })
 	task, err := pg.CreateTask("evidence integration "+t.Name(), "local fixtures", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)

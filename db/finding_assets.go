@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/Autumn-27/artex/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -254,9 +252,7 @@ func countFinding(n *FindingAssetNode, h findingAssetHit) {
 // schema 默认值 '{}' 不是合法 JSON，归一化后交给 json.Unmarshal 的一定是数组。
 // 两边的结果都是一段能 json.Unmarshal 进 []int64 的 JSON 数组文本。
 func findingAssetIDsExpr() string {
-	if config.Engine() == config.EnginePostgres {
-		return `COALESCE(f.asset_ids::text,'[]')`
-	}
+
 	return `COALESCE(artex_json_array(f.asset_ids),'[]')`
 }
 

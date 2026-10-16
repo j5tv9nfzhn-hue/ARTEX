@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const MaxTaskCategoryNameRunes = 80
@@ -56,8 +54,7 @@ func normalizeTaskCategoryName(name string) (string, string, error) {
 }
 
 func taskCategoryUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	return isUniqueViolation(err)
 }
 
 func (d *DB) CreateTaskCategory(name string) (*TaskCategory, error) {
@@ -168,16 +165,7 @@ func (d *DB) SetTaskCategory(taskID int64, categoryID *int64) (*TaskCategory, er
 	}
 	// 0 行 = 「任务不存在且已删除」或「分类不存在」，两个引擎都收敛到这条路径，
 	// 由 taskCategoryAssignMissing 区分。
-	if isPostgresEngine() {
-		category, err := scanTaskCategory(d.QueryRow(taskCategoryAssignPG, taskID, *categoryID))
-		if err == sql.ErrNoRows {
-			return nil, d.taskCategoryAssignMissing(taskID)
-		}
-		if err != nil {
-			return nil, err
-		}
-		return &category, nil
-	}
+
 	// SQLite 的 CTE 里不能放 DML，塌成同一事务里的两条语句：先挂分类，再读回
 	// 改完之后口径的分类行。第 1 步是写语句，事务一开就拿到写锁，两步之间没有
 	// 别的连接插进来。等价性论证见 db/dialect_dml.go 的 taskCategoryAssignSQLite*。

@@ -12,7 +12,13 @@ const (
 	errTriggerNoCondition  = "请至少选择一个触发条件（定时执行/发现漏洞/达成目标/任务超时/工具调用/创建任务）"
 	errTriggerToolSetEmpty = "工具调用触发器请至少选择一个工具"
 	errTriggerCustomOnly   = "触发器仅支持自定义智能体"
+	errTriggerIntervalMin  = "定时触发间隔最小 60 秒，避免高频轮询消耗 LLM 用量"
 )
+
+// triggerIntervalMinSec 是定时触发器允许的最小间隔（秒）。1s/5s 级轮询会在每个
+// tick 都触发一整轮 LLM + 工具会话，用量会无声放大；创建/更新校验与调度兜底
+// （scheduler.go 对存量脏数据 clamp）共用此下限。0 仍表示「不定时」。
+const triggerIntervalMinSec = 60
 
 func (s *Server) pgListTriggers(w http.ResponseWriter, r *http.Request) {
 	pg, a, ok := s.agentByKey(w, r)
@@ -45,10 +51,14 @@ type triggerReq struct {
 }
 
 // validateTrigger enforces the shared trigger rules for create/update:
-// at least one condition, and on_tool_call requires a non-empty tool set.
+// at least one condition, a minimum interval for the timed condition,
+// and on_tool_call requires a non-empty tool set.
 func validateTrigger(req *triggerReq) string {
 	if req.IntervalSec == 0 && !req.OnFinding && !req.OnGoalMet && !req.OnTaskTimeout && !req.OnToolCall && !req.OnTaskCreate {
 		return errTriggerNoCondition
+	}
+	if req.IntervalSec > 0 && req.IntervalSec < triggerIntervalMinSec {
+		return errTriggerIntervalMin
 	}
 	if req.OnToolCall && len(req.ToolNames) == 0 {
 		return errTriggerToolSetEmpty

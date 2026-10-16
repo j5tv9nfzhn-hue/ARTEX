@@ -86,7 +86,55 @@ func init() {
 		})
 
 	sqlite.MustRegisterDeterministicScalarFunction("concat_ws", -1, concatWSFunc)
+	// GREATEST/LEAST 是 PG 内建：NULL 不参与比较，全部为 NULL 才返回 NULL。
+	// SQLite 的 MAX/MIN 多参版只要有一个 NULL 就返回 NULL，语义不同，故自实现。
+	sqlite.MustRegisterDeterministicScalarFunction("GREATEST", -1, extremaFunc(true))
+	sqlite.MustRegisterDeterministicScalarFunction("LEAST", -1, extremaFunc(false))
 	sqlite.MustRegisterDeterministicScalarFunction("left", 2, leftFunc)
+
+	// sqlUTCDate 回应 PG 侧同名 SQL 函数（查询文本里直接调用：TokenDailyAll 的
+	// sqlUTCDate("created_at")、UsageDaily 的 sqlUTCDate("ts")）。时间列在 SQLite
+	// 侧存的是 _time_format 文本「YYYY-MM-DD ...+00:00」，前 10 字节就是 UTC
+	// 当日日期，与 PG 函数 to_char(at time zone 'UTC') 的语义逐字节一致。
+	sqlite.MustRegisterDeterministicScalarFunction("sqlUTCDate", 1,
+		func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			s := argString(args[0])
+			if len(s) < 10 {
+				return s, nil
+			}
+			return s[:10], nil
+		})
+}
+
+// extremaFunc 实现 PG 的 GREATEST/LEAST：按数值比较，返回原参数值。
+// 参与比较的非数值类型无法排序时保守返回 NULL（本项目调用点只喂整型/浮点）。
+func extremaFunc(greatest bool) func(*sqlite.FunctionContext, []driver.Value) (driver.Value, error) {
+	return func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		var best driver.Value
+		var bestF float64
+		seen := false
+		for _, a := range args {
+			if a == nil {
+				continue
+			}
+			var f float64
+			switch v := a.(type) {
+			case int64:
+				f = float64(v)
+			case float64:
+				f = v
+			default:
+				return nil, nil
+			}
+			if !seen || (greatest && f > bestF) || (!greatest && f < bestF) {
+				best, bestF, seen = a, f, true
+			}
+		}
+		if !seen {
+			return nil, nil
+		}
+		return best, nil
+	}
 }
 
 // concatWSFunc backs PostgreSQL's concat_ws(sep, VARIADIC "any").

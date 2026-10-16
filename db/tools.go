@@ -8,7 +8,7 @@ import (
 // Tool is one row of the built-in tool catalog. key + handler live in code; this
 // row carries only the page-editable surface: description, parameter schema
 // (structure read-only, per-param description/default editable), agent binding,
-// and the on/off switch. See schema.sql §H and agent/toolcatalog.go.
+// and the on/off switch. See schema_sqlite.sql §H and agent/toolcatalog.go.
 type Tool struct {
 	Key         string          `json:"key"`
 	System      bool            `json:"system"`
@@ -23,6 +23,25 @@ type Tool struct {
 }
 
 const toolCols = `key, system, description, schema, agents, enabled, kind, exec, deferred`
+
+// toolsAddAgentSQL / toolsRemoveAgentSQL 把 agents 数组的增删收敛到一处。
+//
+//	PG:     jsonb 运算符 `|| to_jsonb(...)`（追加）、`-`（删全部同值成员）、
+//	        `?`（成员存在性）
+//	SQLite: artex_json_add / artex_json_remove UDF + json_each 存在性子查询
+//
+// 三者语义逐点对齐：追加发生在「不含该成员」时（NOT EXISTS 与 NOT(?) 同义），
+// 删除清掉所有同值成员（与 jsonb `-` 一致），存在性判断按字符串值比较。
+func toolsAddAgentSQL() string {
+	return `UPDATE tools SET agents = artex_json_add(agents, $1) WHERE key=$2 AND NOT EXISTS (SELECT 1 FROM json_each(agents) a WHERE a.value = $1)`
+}
+
+func toolsRemoveAgentSQL(withKey bool) string {
+	if withKey {
+		return `UPDATE tools SET agents = artex_json_remove(agents, $1) WHERE key=$2 AND EXISTS (SELECT 1 FROM json_each(agents) a WHERE a.value = $1)`
+	}
+	return `UPDATE tools SET agents = artex_json_remove(agents, $1) WHERE EXISTS (SELECT 1 FROM json_each(agents) a WHERE a.value = $1)`
+}
 
 // SeedTool inserts a built-in tool's code-defined defaults ONCE. ON CONFLICT DO
 // NOTHING: an existing row (possibly edited in the UI) is never overwritten on
@@ -47,7 +66,7 @@ ON CONFLICT (key) DO NOTHING`, key, desc, schema, agents)
 // default toolset on existing DBs.
 func (d *DB) AddAgentToToolBinding(agentKey string, keys []string) error {
 	for _, k := range keys {
-		if _, err := d.Exec(`UPDATE tools SET agents = agents || to_jsonb($1::text) WHERE key=$2 AND NOT (agents ? $1)`, agentKey, k); err != nil {
+		if _, err := d.Exec(toolsAddAgentSQL(), agentKey, k); err != nil {
 			return err
 		}
 	}
@@ -58,7 +77,7 @@ func (d *DB) AddAgentToToolBinding(agentKey string, keys []string) error {
 // JSONB array — called when a custom agent is deleted so no tool keeps a dangling
 // binding. Uses jsonb `-` (remove array element) guarded by `?` (membership).
 func (d *DB) RemoveAgentFromToolBindings(agentKey string) error {
-	_, err := d.Exec(`UPDATE tools SET agents = agents - $1 WHERE agents ? $1`, agentKey)
+	_, err := d.Exec(toolsRemoveAgentSQL(false), agentKey)
 	return err
 }
 
@@ -66,7 +85,7 @@ func (d *DB) RemoveAgentFromToolBindings(agentKey string) error {
 // used by one-time migrations that change a tool's default binding on existing DBs
 // (SeedTool is first-insert-only, so a changed default never reaches a seeded row).
 func (d *DB) RemoveAgentFromTool(agentKey, toolKey string) error {
-	_, err := d.Exec(`UPDATE tools SET agents = agents - $1 WHERE key=$2 AND agents ? $1`, agentKey, toolKey)
+	_, err := d.Exec(toolsRemoveAgentSQL(true), agentKey, toolKey)
 	return err
 }
 
@@ -106,11 +125,17 @@ func (d *DB) RefreshToolDefaults(key, desc string, schema json.RawMessage) error
 
 func scanTool(rows interface{ Scan(...any) error }) (*Tool, error) {
 	var t Tool
-	var agents []byte
-	if err := rows.Scan(&t.Key, &t.System, &t.Description, &t.Schema, &agents, &t.Enabled, &t.Kind, &t.Exec, &t.Deferred); err != nil {
+	// schema / agents / exec 是 JSON 列。pgx 交 []byte、SQLite TEXT 列交
+	// string、json.RawMessage 绑定写入的又是 BLOB、builtin 行的 exec 还可能是
+	// NULL——直接扫进 json.RawMessage 会在 string/nil 上命中 database/sql 的
+	// 盲区（详见 sqlite_json_scan.go），统一经 jsonValue 落点再赋回。
+	var schemaCol, agentsCol, execCol jsonValue
+	if err := rows.Scan(&t.Key, &t.System, &t.Description, &schemaCol, &agentsCol, &t.Enabled, &t.Kind, &execCol, &t.Deferred); err != nil {
 		return nil, err
 	}
-	if len(agents) > 0 {
+	t.Schema = schemaCol.RawMessage
+	t.Exec = execCol.RawMessage
+	if agents := agentsCol.RawMessage; len(agents) > 0 {
 		_ = json.Unmarshal(agents, &t.Agents)
 	}
 	if t.Agents == nil {

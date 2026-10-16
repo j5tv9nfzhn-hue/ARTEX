@@ -54,7 +54,7 @@ func nodeByKey(tree *FindingAssetTree, key string) *FindingAssetNode {
 func TestBuildFindingAssetTree(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	defer d.Close()
 
@@ -160,7 +160,7 @@ func TestBuildFindingAssetTree(t *testing.T) {
 func TestFindingAssetScopeFilter(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	defer d.Close()
 

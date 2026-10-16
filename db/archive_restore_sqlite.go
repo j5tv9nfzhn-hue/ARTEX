@@ -66,10 +66,7 @@ func isArchiveTimestampColumn(declared string) bool {
 // 是 INSERT 列顺序必须正确的依据，不能用字母序。
 func tableColumnNames(tx *sql.Tx, table string) ([]archiveColumn, error) {
 	query := `SELECT name, type FROM pragma_table_info($1) ORDER BY cid`
-	if isPostgresEngine() {
-		query = `SELECT attname, atttypid::regtype::text FROM pg_attribute
-WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
-	}
+
 	rows, err := tx.Query(query, table)
 	if err != nil {
 		return nil, err

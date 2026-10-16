@@ -242,7 +242,7 @@ func TestSideArchiveRowsWithoutNewFields(t *testing.T) {
 			fragments[i] = "'" + c + "',t." + c
 		}
 		agg := `SELECT json_group_array(json_object(` + strings.Join(fragments, ",") + `))
-FROM (SELECT * FROM ` + table + ` t WHERE session_key=$1)`
+FROM (SELECT * FROM ` + table + ` WHERE session_key=$1) t`
 		if err = tx.QueryRow(agg, s.Parent.Key()).Scan(&raw); err != nil {
 			t.Fatal(err)
 		}

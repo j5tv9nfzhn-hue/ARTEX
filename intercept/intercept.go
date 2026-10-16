@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/notify"
 )
 
 // 用户可见的拦截判断与审批消息使用中文，展示于审批 reason、活动流和 409 响应。
@@ -614,6 +616,10 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		return saved.Status == "allowed" || (saved.Audit != nil && saved.Audit.EffectiveAction == "allow")
 	}
 
+	// 审批已落库且未被提前裁决：向通知渠道推一条「等待人工审批」。位置在
+	// 阻塞等待之前——用户可能过很久才想起打开审批页，事件越早入队越有价值。
+	i.emitApprovalPending(convID, taskID, toolName, pendingID)
+
 	detail, _ := json.Marshal(map[string]any{
 		"pending_id": pendingID,
 		"tool":       toolName,
@@ -674,6 +680,34 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", reasonWorkCanceled)
 		_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", reasonWorkCanceledPreExec, false)
 		return false
+	}
+}
+
+// emitApprovalPending 写入一条 approval_pending 事件（独立事务，best-effort）。
+//
+// 绝不阻断审批等待本身：写事件失败只记日志——用户在审批页照常看得到这条
+// pending，通知渠道只是「帮他更快知道」的锦上添花。taskID 解析失败/为空
+// （独立会话里的审批）也能发，渲染端会退化为只带工具名与会话标识。
+func (i *Interceptor) emitApprovalPending(convID int64, taskID, toolName string, pendingID int64) {
+	snap := notify.Snapshot{
+		Kind:           notify.EventApprovalPending,
+		ApprovalID:     pendingID,
+		ToolName:       toolName,
+		ConversationID: convID, // 0=无会话，omitempty 自动省略
+	}
+	if n, err := strconv.ParseInt(taskID, 10, 64); err == nil && n > 0 {
+		snap.TaskID = n
+		// 标题回查失败不阻断：快照标题允许为空，渲染端退化为「任务 #N」。
+		if title, err := i.db.TaskTitle(n); err == nil {
+			snap.TaskTitle = title
+		}
+	}
+	// 与 server.Manager.recordNotificationEvent 同理：用独立超时上下文，不继承
+	// 调用方的取消——工具调用随后可能被取消/超时，事件本身仍应留存。
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := i.db.AddNotificationEvent(ctx, notify.EventApprovalPending, 0, snap); err != nil {
+		log.Printf("[notify] 写入审批事件失败 pending=%d（不影响审批流程）: %v", pendingID, err)
 	}
 }
 

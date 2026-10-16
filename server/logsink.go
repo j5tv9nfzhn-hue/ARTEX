@@ -24,8 +24,8 @@ type LogLine struct {
 
 // dbWriteReq carries a log line to the async DB writer.
 type dbWriteReq struct {
-	seq int64
-	ll  LogLine
+	seq  int64
+	line LogLine
 }
 
 // logSinkT tees the standard logger into an in-memory ring buffer and fans new
@@ -95,7 +95,7 @@ func (s *logSinkT) SetDB(ctx context.Context, pg *db.DB) {
 					if !ok {
 						return
 					}
-					id, err := pg.InsertLog(req.ll.Level, req.ll.Tag, req.ll.Text)
+					id, err := pg.InsertLog(req.line.Level, req.line.Tag, req.line.Text)
 					if err != nil {
 						_, _ = os.Stderr.Write([]byte("[logsink] db write: " + err.Error() + "\n"))
 						continue
@@ -145,7 +145,7 @@ func (s *logSinkT) add(l LogLine) {
 	// Async DB write (non-blocking; drops if channel is full under extreme load).
 	if ch != nil {
 		select {
-		case ch <- dbWriteReq{seq: l.Seq, ll: l}:
+		case ch <- dbWriteReq{seq: l.Seq, line: l}:
 		default:
 		}
 	}

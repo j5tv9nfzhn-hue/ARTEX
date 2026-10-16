@@ -23,6 +23,11 @@ type Scheduler struct {
 	s    *Server
 	pg   *db.DB
 	tick time.Duration
+
+	// clampWarned 记录已就「存量间隔低于下限、已按 60s 调度」告警过的触发器 id，
+	// 使日志只在首次遇到脏数据时打印一次，不随每个 tick 刷屏。调度循环单一
+	// goroutine 驱动，无需加锁。
+	clampWarned map[int64]bool
 }
 
 const (
@@ -137,7 +142,7 @@ func (sc *Scheduler) fireIntervals(triggers []*db.AgentTrigger) {
 		if tr.IntervalSec <= 0 {
 			continue
 		}
-		due := tr.LastFire == nil || now.Sub(*tr.LastFire) >= time.Duration(tr.IntervalSec)*time.Second
+		due := tr.LastFire == nil || now.Sub(*tr.LastFire) >= time.Duration(sc.effectiveIntervalSec(tr))*time.Second
 		if !due {
 			continue
 		}
@@ -148,6 +153,27 @@ func (sc *Scheduler) fireIntervals(triggers []*db.AgentTrigger) {
 		ctx := "\n\n【本次为定时触发】" + now.Format(" 2006-01-02 15:04:05 MST")
 		sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("定时触发 · %s", now.Format("15:04")), tr.IntervalMessage+ctx, 0, false, "", "")
 	}
+}
+
+// effectiveIntervalSec returns the interval the scheduler actually honors. The API
+// rejects anything below triggerIntervalMinSec, but a DB written before that floor
+// existed can still hold a 1s-level polling trigger — firing one full LLM + tool
+// conversation per tick. Clamp such rows to the floor and log each offender once so
+// the operator knows to fix it in the agents trigger UI; the stored value itself is
+// left untouched (correcting the row is the user's call, the scheduler only guards).
+func (sc *Scheduler) effectiveIntervalSec(tr *db.AgentTrigger) int {
+	if tr.IntervalSec >= triggerIntervalMinSec {
+		return tr.IntervalSec
+	}
+	if sc.clampWarned == nil {
+		sc.clampWarned = map[int64]bool{}
+	}
+	if !sc.clampWarned[tr.ID] {
+		sc.clampWarned[tr.ID] = true
+		log.Printf("[scheduler] 触发器 #%d（agent %s）的间隔 %d 秒低于下限 %d 秒，已按 %d 秒调度，避免高频轮询消耗；请在 agent 触发器界面调整",
+			tr.ID, tr.AgentKey, tr.IntervalSec, triggerIntervalMinSec, triggerIntervalMinSec)
+	}
+	return triggerIntervalMinSec
 }
 
 // fireFindings fires on_finding triggers for findings above the persisted

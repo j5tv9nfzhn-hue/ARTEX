@@ -2,6 +2,7 @@ package db
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Autumn-27/artex/metrics"
 )
 
 // ErrIntentStateConflict marks a failed compare-and-set transition. Callers use
@@ -150,7 +153,7 @@ func (d *DB) TokenDailyAll(days int) ([]DailyTokenBucket, error) {
 		       COALESCE(SUM(cache_read_tokens), 0)
 		FROM activity
 		WHERE kind = 'result'
-		  AND created_at >= NOW() - ($1 * INTERVAL '1 day')
+		  AND `+sqlNotBeforeExpr("created_at", sqlNowMinusDays("$1"))+`
 		GROUP BY day
 		ORDER BY day`, days)
 	if err != nil {
@@ -195,6 +198,16 @@ func (s *ExplorationStore) Root() (description, goal string, err error) {
 
 // AddNode writes a typed reasoning node with optional anchors to asset ids.
 func (s *ExplorationStore) AddNode(kind string, payload map[string]any, priority int, state, origin string, anchors []int64) (int64, error) {
+	// 批次 6 / #20：图不记录执行环境状态 → 意图/事实节点带上本任务共享环境摘要
+	// （os/执行器/可用 shell/工具版本），缺失快照时省略。只补不覆盖（payload 自带
+	// 的 env 优先），失败静默降级——环境摘要不是节点语义的一部分。
+	if payload != nil && (kind == KindIntent || kind == KindFact) {
+		if _, exists := payload["env"]; !exists {
+			if digest := s.db.ExplorationEnvDigest(context.Background(), s.expID); digest != nil {
+				payload["env"] = digest
+			}
+		}
+	}
 	raw, _ := json.Marshal(payload)
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -309,13 +322,36 @@ func (s *ExplorationStore) DeleteGoal(id int64) error {
 // is re-claimed. Called on startup: a 'running' intent with no live worker (a
 // backend restart or crashed worker goroutine left it stuck) would otherwise spin
 // forever in the UI. Workers resume from their transcript, so reopening is safe.
+// 被重置的意图同时登记为一次「崩溃重放尝试」（metrics，#36）：其后续终态决定重放
+// 成功率。
 func (s *ExplorationStore) ResetRunningIntents() (int64, error) {
+	// 先取 ID 再重置：重置本身仍是一条 UPDATE，IDs 只用于度量登记。
+	rows, err := s.db.Query(`SELECT id FROM exploration_nodes
+WHERE exploration_id=$1 AND kind='intent' AND state='running'`, s.expID)
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
 	res, err := s.db.Exec(`UPDATE exploration_nodes SET state='open', completed_at=NULL, blocked_reason=NULL
 WHERE exploration_id=$1 AND kind='intent' AND state='running'`, s.expID)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
+	metrics.MarkReplayPending(ids)
 	return n, nil
 }
 
@@ -1307,14 +1343,26 @@ type TaskListMetrics struct {
 	Goals          GoalCounts
 	RunningIntents int                   // kind='intent' 且 state='running' 的条数，即运行中 Worker 数
 	Findings       FindingSeverityCounts // findings 表里该任务的漏洞数（按严重度分档）
+	// FirstFindingMS 首个 finding 相对任务开始（COALESCE(first_run_at, created_at)）的
+	// 毫秒差；完全没有 finding 时为 0。用于「多久开始出成果」的价值展示。
+	FirstFindingMS int64
+	// FindingsTotal findings 表里该任务的总条数（不分严重度），产出速率的分子。
+	FindingsTotal int
+	// RunSeconds 已运行秒数：未结束（completed_at 为空）按 now 计、终态按结束时间计；
+	// 产出速率的分母，除零保护由应用层做（见 server.findingsPerHour）。
+	RunSeconds int64
+	// PendingApprovals 仍在等待人工决定的拦截审批条数。intercept_pending.task_id
+	// 存的是任务 id 的十进制文本，故按 CAST 文本匹配。
+	PendingApprovals int
 }
 
-// taskListMetricsSQLite 是 TaskListMetricsAll 的 SQLite 方言：SQLite 不支持
+// taskListMetricsSelect 是列表聚合的公共 SELECT 主体（末尾 WHERE 由调用方补全：
+// 列表用 deleted_at IS NULL，单任务查询再加 task.id=$1）。SQLite 不支持
 // LEFT JOIN LATERAL (...) ON true（LATERAL 会被当成表别名，随后的 (SELECT 直接
-// near "SELECT" 语法错），改写成 SELECT 列表里的相关子查询。语义与 PG 版逐项
-// 对齐：FILTER (WHERE ...) 用 COUNT(*) WHERE 等价表达，epoch 用 strftime('%s')
-// （列值是 _time_format=sqlite 的文本时间，POSIX 解析、时区换算 UTC 秒）。
-const taskListMetricsSQLite = `
+// near "SELECT" 语法错），全部改写成 SELECT 列表里的相关子查询；时间差用
+// julian day 相减再换算（同 notificationStatsQuerySQLite 的论证），毫秒/秒差都
+// CAST 成 INTEGER，避免 REAL 形态被 Scan 进 int 时 ParseInt 失败。
+const taskListMetricsSelect = `
                 SELECT task.exploration_id,
                        COALESCE((SELECT SUM(input_tokens) FROM activity
                                  WHERE exploration_id=task.exploration_id AND kind='result'),0),
@@ -1342,96 +1390,89 @@ const taskListMetricsSQLite = `
                        COALESCE((SELECT COUNT(*) FROM findings
                                  WHERE task_id=task.id AND severity='medium'),0),
                        COALESCE((SELECT COUNT(*) FROM findings
-                                 WHERE task_id=task.id AND severity='low'),0)
+                                 WHERE task_id=task.id AND severity='low'),0),
+                       COALESCE((SELECT CAST((julianday(MIN(created_at)) -
+                                              julianday(COALESCE(task.first_run_at, task.created_at))) * 86400000
+                                             AS INTEGER)
+                                 FROM findings WHERE task_id=task.id),0),
+                       COALESCE((SELECT COUNT(*) FROM findings WHERE task_id=task.id),0),
+                       CAST(COALESCE((julianday(CASE WHEN task.completed_at IS NULL THEN now()
+                                                     ELSE task.completed_at END) -
+                                      julianday(COALESCE(task.first_run_at, task.created_at))) * 86400, 0) AS INTEGER),
+                       COALESCE((SELECT COUNT(*) FROM intercept_pending
+                                 WHERE task_id=CAST(task.id AS TEXT) AND status='pending'),0)
                 FROM tasks task
-                WHERE task.deleted_at IS NULL`
+                WHERE `
+
+const taskListMetricsSQLite = taskListMetricsSelect + `task.deleted_at IS NULL`
+
+// taskListMetricsOneSQL 是单任务（详情页 3s 轮询）的版本：同样的聚合列，
+// 只加一个 task.id 过滤，避免每次轮询都扫全部任务的相关子查询。
+const taskListMetricsOneSQL = taskListMetricsSelect + `task.deleted_at IS NULL AND task.id=$1`
+
+// scanTaskListMetrics 按 taskListMetricsSelect 的列序扫描一行（All 与 One 共用，
+// 避免两处列序漂移）。
+func scanTaskListMetrics(rows *sql.Rows) (int64, TaskListMetrics, error) {
+	var explorationID int64
+	var metrics TaskListMetrics
+	err := rows.Scan(
+		&explorationID,
+		&metrics.Tokens.InputTokens,
+		&metrics.Tokens.OutputTokens,
+		&metrics.Tokens.CacheReadTokens,
+		&metrics.Tokens.CacheWriteTokens,
+		&metrics.LastActivity,
+		&metrics.Goals.Total,
+		&metrics.Goals.Met,
+		&metrics.RunningIntents,
+		&metrics.Findings.Critical,
+		&metrics.Findings.High,
+		&metrics.Findings.Medium,
+		&metrics.Findings.Low,
+		&metrics.FirstFindingMS,
+		&metrics.FindingsTotal,
+		&metrics.RunSeconds,
+		&metrics.PendingApprovals,
+	)
+	return explorationID, metrics, err
+}
 
 // TaskListMetricsAll returns list aggregates for every live task in one query.
 // The lateral lookups use the per-exploration indexes instead of grouping the
 // complete activity history on every poll.
 func (d *DB) TaskListMetricsAll() (map[int64]TaskListMetrics, error) {
-	metricsQuery := `
-		SELECT task.exploration_id,
-		       COALESCE(token_metrics.input_tokens,0),
-		       COALESCE(token_metrics.output_tokens,0),
-		       COALESCE(token_metrics.cache_read_tokens,0),
-		       COALESCE(token_metrics.cache_write_tokens,0),
-		       COALESCE(latest_activity.created_at,0),
-		       COALESCE(goal_metrics.total,0),
-		       COALESCE(goal_metrics.met,0),
-		       COALESCE(intent_metrics.running,0),
-		       COALESCE(finding_metrics.critical,0),
-		       COALESCE(finding_metrics.high,0),
-		       COALESCE(finding_metrics.medium,0),
-		       COALESCE(finding_metrics.low,0)
-		FROM tasks task
-		LEFT JOIN LATERAL (
-			SELECT SUM(input_tokens) AS input_tokens,
-			       SUM(output_tokens) AS output_tokens,
-			       SUM(cache_read_tokens) AS cache_read_tokens,
-			       SUM(cache_write_tokens) AS cache_write_tokens
-			FROM activity
-			WHERE exploration_id=task.exploration_id AND kind='result'
-		) token_metrics ON true
-		LEFT JOIN LATERAL (
-			SELECT EXTRACT(EPOCH FROM created_at)::bigint AS created_at
-			FROM activity
-			WHERE exploration_id=task.exploration_id
-			ORDER BY created_at DESC
-			LIMIT 1
-		) latest_activity ON true
-		LEFT JOIN LATERAL (
-			SELECT COUNT(*) AS total,
-			       COUNT(*) FILTER (WHERE state='met') AS met
-			FROM exploration_nodes
-			WHERE exploration_id=task.exploration_id AND kind='goal'
-		) goal_metrics ON true
-		LEFT JOIN LATERAL (
-			SELECT COUNT(*) AS running
-			FROM exploration_nodes
-			WHERE exploration_id=task.exploration_id AND kind='intent' AND state='running'
-		) intent_metrics ON true
-		LEFT JOIN LATERAL (
-			SELECT COUNT(*) FILTER (WHERE severity='critical') AS critical,
-			       COUNT(*) FILTER (WHERE severity='high')     AS high,
-			       COUNT(*) FILTER (WHERE severity='medium')   AS medium,
-			       COUNT(*) FILTER (WHERE severity='low')      AS low
-			FROM findings
-			WHERE task_id=task.id
-		) finding_metrics ON true
-		WHERE task.deleted_at IS NULL`
-	if isSQLiteEngine() {
-		metricsQuery = taskListMetricsSQLite
-	}
-	rows, err := d.Query(metricsQuery)
+	rows, err := d.Query(taskListMetricsSQLite)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[int64]TaskListMetrics{}
 	for rows.Next() {
-		var explorationID int64
-		var metrics TaskListMetrics
-		if err := rows.Scan(
-			&explorationID,
-			&metrics.Tokens.InputTokens,
-			&metrics.Tokens.OutputTokens,
-			&metrics.Tokens.CacheReadTokens,
-			&metrics.Tokens.CacheWriteTokens,
-			&metrics.LastActivity,
-			&metrics.Goals.Total,
-			&metrics.Goals.Met,
-			&metrics.RunningIntents,
-			&metrics.Findings.Critical,
-			&metrics.Findings.High,
-			&metrics.Findings.Medium,
-			&metrics.Findings.Low,
-		); err != nil {
+		explorationID, metrics, err := scanTaskListMetrics(rows)
+		if err != nil {
 			return nil, err
 		}
 		out[explorationID] = metrics
 	}
 	return out, rows.Err()
+}
+
+// TaskListMetricsOne returns the same aggregates for a single live task (task
+// detail view). nil result = task row missing or already deleted.
+func (d *DB) TaskListMetricsOne(taskID int64) (*TaskListMetrics, error) {
+	rows, err := d.Query(taskListMetricsOneSQL, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	_, metrics, err := scanTaskListMetrics(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &metrics, rows.Err()
 }
 
 // GoalCountsAll returns goal totals (total / met) per exploration id, one query
@@ -1529,10 +1570,10 @@ func (s *ExplorationStore) ActivityList(nodeID *int64, sinceID int64, limit int)
 	const cols = `id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), metadata, created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, main_seg`
 	if nodeID != nil {
 		rows, err = s.db.Query(`SELECT `+cols+`
-FROM activity WHERE exploration_id=$1 AND node_id=$2 AND id>$3 ORDER BY id LIMIT $4`, s.expID, *nodeID, sinceID, limit)
+FROM activity WHERE exploration_id=$1 AND node_id=$2 AND id>$3 AND reverted_at IS NULL ORDER BY id LIMIT $4`, s.expID, *nodeID, sinceID, limit)
 	} else {
 		rows, err = s.db.Query(`SELECT `+cols+`
-FROM activity WHERE exploration_id=$1 AND id>$2 ORDER BY id LIMIT $3`, s.expID, sinceID, limit)
+FROM activity WHERE exploration_id=$1 AND id>$2 AND reverted_at IS NULL ORDER BY id LIMIT $3`, s.expID, sinceID, limit)
 	}
 	if err != nil {
 		return nil, sinceID, err
@@ -1569,7 +1610,7 @@ func (s *ExplorationStore) ActivityListForTerminalIntent(nodeID, sinceID int64, 
 	JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
 	WHERE a.exploration_id=$1 AND a.node_id=$2 AND a.id>$3
 	  AND n.kind='intent' AND n.state IN ('done','blocked','exhausted','stopped')
-	  AND a.kind NOT IN ('thinking','usage')
+	  AND a.kind NOT IN ('thinking','usage') AND a.reverted_at IS NULL
 	ORDER BY a.id LIMIT $4`, s.expID, nodeID, sinceID, limit)
 	if err != nil {
 		return nil, sinceID, err
@@ -1645,7 +1686,7 @@ func (s *ExplorationStore) ActivityPage(f ActivitySessionFilter, before int64, l
 	limitArg := len(args) + 1
 	args = append(args, limit+1) // one extra row to detect older history
 	q := fmt.Sprintf(`SELECT `+cols+`
-FROM activity WHERE exploration_id=$1%s AND ($%d <= 0 OR id < $%d)
+FROM activity WHERE exploration_id=$1%s AND reverted_at IS NULL AND ($%d <= 0 OR id < $%d)
 ORDER BY id DESC LIMIT $%d`, cond, beforeArg, beforeArg, limitArg)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -1691,6 +1732,7 @@ func (s *ExplorationStore) ActivityPageForTerminalIntent(nodeID, before int64, l
 	WHERE a.exploration_id=$1 AND a.node_id=$2
 	  AND n.kind='intent' AND n.state IN ('done','blocked','exhausted','stopped')
 	  AND a.kind NOT IN ('thinking','usage')
+	  AND a.reverted_at IS NULL
 	  AND ($3 <= 0 OR a.id < $3)
 	ORDER BY a.id DESC LIMIT $4`, s.expID, nodeID, before, limit+1)
 	if err != nil {

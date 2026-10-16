@@ -310,6 +310,11 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 				LLMProfileIDs:        llmIDs,
 				TimeoutSeconds:       a.TimeoutSeconds,
 				PlanHeartbeatSeconds: a.PlanHeartbeatSeconds,
+				// 子任务同样吃全局默认 Token 预算(default_task_token_budget;0=不限):
+				// 否则编排 Agent 可以靠 spawn_task 绕开成本硬闸。刻意不开放工具级预算
+				// 参数——加深工具 schema 需要 bump 刷新旗标，且让模型自行放宽预算会削弱
+				// 闸的意义；预算用尽时子任务会被预算闸自动暂停并留痕，等用户处理。
+				TokenBudget: s.m.DefaultTaskTokenBudget(),
 			})
 			if err != nil {
 				return actool.Errorf(err.Error()), nil
@@ -734,7 +739,7 @@ func (s *Server) upgradeReporterTriggerMessage() {
 // OnToolCall 确定性触发使用 key=reporter，不依赖展示名称。
 // 回归测试：reporter_seed_localized_test.go。[[F35]]
 const reporterAgentName = "报告撰写"
-const reporterAgentDescription = "撰写漏洞详细报告：发现漏洞时自动触发，查询证据和执行过程后生成 Markdown 报告并写入对应漏洞。"
+const reporterAgentDescription = "撰写漏洞详细报告：查询证据和执行过程后生成 Markdown 报告并写入对应漏洞。关联 finding 触发器默认关闭（每个 finding 都会新起一个整会话，成本敏感，建议按需开启）。"
 
 // seedReporterAgent 预置“报告撰写”自定义 Agent（builtin=false，可编辑、删除）。
 // 绑定 update_finding_report 与任务查询工具，每次 report_finding 触发后编写详细报告。
@@ -773,16 +778,19 @@ func (s *Server) seedReporterAgent() {
 	}
 	// 触发器：report_finding 被调用即触发（工具返回 "finding recorded: <id>" 带上 finding_id，
 	// 任务 id 也在触发消息里）。
+	// 默认 Enabled=false：发现即写报告 = 每个 finding 都新起一个整会话，任务高峰期
+	// 用量会被无声放大。成本敏感场景由用户在 agents 触发器界面按需开启；已有安装不受
+	// 影响（本函数受 reporter_agent_seed_v1 守卫，只对全新库播种一次，不覆盖用户现状）。
 	if _, err := s.m.pg.CreateTrigger(&db.AgentTrigger{
 		AgentKey:        "reporter",
-		Enabled:         true,
+		Enabled:         false,
 		OnToolCall:      true,
 		ToolNames:       []string{"report_finding"},
 		ToolCallMessage: reporterToolCallMessage,
 	}); err != nil {
 		log.Printf("[reporter] 创建触发器失败: %v", err)
 	}
-	log.Printf(logT("[reporter] 已预配置「%s」agent + finding 触发器"), reporterAgentName)
+	log.Printf(logT("[reporter] 已预配置「%s」agent + finding 触发器（默认关闭，按需在触发器界面开启）"), reporterAgentName)
 }
 
 // seedAutoReportFindingBinding adds "auto" to report_finding's binding ONCE so

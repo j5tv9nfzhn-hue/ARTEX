@@ -386,23 +386,18 @@ func (d *DB) RecoverTaskArchiveJobs() error {
 // ClaimTaskArchiveJob claims one persistent FIFO item for the single archive
 // worker. It returns nil when the queue is empty.
 //
-// 抢占语义按引擎走两条路：
-//
-//   - PG：先 SELECT ... FOR UPDATE SKIP LOCKED 拿到队首，再单独 UPDATE 成占用态。
-//     行锁 + 跳锁保证并发领取者各拿一行。
-//   - SQLite：没有行锁也没有 SKIP LOCKED（`near "FOR"`）。改成一条
-//     UPDATE ... WHERE id = (SELECT ... ORDER BY ... LIMIT 1) RETURNING ...：
-//     UPDATE 一开始就拿写锁，子查询在同一条语句里求值，因此抢占是原子的，
-//     并发领取者会串行地各领一行或领不到，绝不会两人领到同一行。
-//     state 的映射由 CASE 就地完成，RETURNING 直接给出占用态后的整行。
+// 抢占用一条 UPDATE ... WHERE id = (SELECT ... ORDER BY ... LIMIT 1) RETURNING ...：
+// UPDATE 一开始就拿写锁，子查询在同一条语句里求值，因此抢占是原子的，
+// 并发领取者会串行地各领一行或领不到，绝不会两人领到同一行。
+// state 的映射由 CASE 就地完成，RETURNING 直接给出占用态后的整行。
+// （等价性论证见 dialect_locking.go 文件头。）
 func (d *DB) ClaimTaskArchiveJob(ctx context.Context) (*TaskArchive, error) {
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if isSQLiteEngine() {
-		item, err := scanTaskArchive(tx.QueryRowContext(ctx, `UPDATE task_archives
+	item, err := scanTaskArchive(tx.QueryRowContext(ctx, `UPDATE task_archives
 SET state=CASE state
         WHEN 'archive_queued' THEN '`+Archiving+`'
         WHEN 'restore_queued' THEN '`+Restoring+`'
@@ -412,28 +407,9 @@ WHERE id=(SELECT id FROM task_archives
           WHERE state IN ('archive_queued','restore_queued','delete_queued')
           ORDER BY requested_at,id LIMIT 1)
 RETURNING `+taskArchiveCols))
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return item, tx.Commit()
-	}
-	var id int64
-	var queuedState string
-	err = tx.QueryRowContext(ctx, `SELECT id,state FROM task_archives
-WHERE state IN ('archive_queued','restore_queued','delete_queued')
-ORDER BY requested_at,id FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&id, &queuedState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	active := map[string]string{ArchiveQueued: Archiving, RestoreQueued: Restoring, DeleteQueued: Deleting}[queuedState]
-	item, err := scanTaskArchive(tx.QueryRowContext(ctx, `UPDATE task_archives
-SET state=$2,phase='starting',progress=1,error='' WHERE id=$1 RETURNING `+taskArchiveCols, id, active))
 	if err != nil {
 		return nil, err
 	}
@@ -455,15 +431,9 @@ func (d *DB) AppendTaskArchiveWarning(id int64, warning string) error {
 	if strings.TrimSpace(warning) == "" {
 		return nil
 	}
-	// warnings 列两边都是 JSON 数组文本。PG 用 `warnings || jsonb_build_array($2::text)`
-	// 追加；SQLite 没有 jsonb_ 函数，改用 json_insert 的 '$[#]' 追加下标，
-	// 语义一致（末尾追加一个字符串元素）。占位符上的 ::text 同样必须去掉，
-	// 否则 SQLite 会去找名为 "2::text" 的命名参数。
-	query := `UPDATE task_archives SET warnings=warnings || jsonb_build_array($2) WHERE id=$1`
-	if isSQLiteEngine() {
-		query = `UPDATE task_archives SET warnings=json_insert(warnings,'$[#]',$2) WHERE id=$1`
-	}
-	_, err := d.Exec(query, id, warning)
+	// warnings 列是 JSON 数组文本。json_insert 的 '$[#]' 追加下标在末尾追加一个
+	// 字符串元素；占位符上不能带 ::text，否则 SQLite 会去找名为 "2::text" 的命名参数。
+	_, err := d.Exec(`UPDATE task_archives SET warnings=json_insert(warnings,'$[#]',$2) WHERE id=$1`, id, warning)
 	return err
 }
 
@@ -493,41 +463,29 @@ func (d *DB) FailTaskArchiveJob(id int64, activeState string, cause error) error
 func queryArchiveRows(q interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }, inner string, args ...any) (json.RawMessage, int64, error) {
-	if isSQLiteEngine() {
-		// SQLite has no row_to_json, and the `::text` that follows it is a
-		// syntax error there on its own ("unrecognized token ':'"). Read the
-		// inner query directly and assemble {"col": value} per row off
-		// rows.Columns() -- same output shape as row_to_json, and the column
-		// list follows the schema instead of being hand-listed.
-		rows, err := q.Query(inner, args...)
-		if err != nil {
-			return nil, 0, err
-		}
-		objs, err := rowJSONObjects(rows)
-		// A SQLite connection holds one active result set at a time, so Close
-		// has to happen before the caller issues its next statement.
-		if cerr := rows.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			return nil, 0, err
-		}
-		raw, err := marshalSnapshot(objs)
-		if err != nil {
-			return nil, 0, err
-		}
-		return json.RawMessage(raw), int64(len(objs)), nil
-	}
-	// Do not aggregate the result in PostgreSQL. A jsonb array has a hard limit
-	// of 256 MiB for its elements, which large LLM request/response histories can
-	// exceed even though every individual record is valid. Reading row JSON in
-	// order also avoids building a second copy of the full table in PostgreSQL.
-	rows, err := q.Query(`SELECT row_to_json(row_data)::text FROM (`+inner+`) row_data`, args...)
+	// SQLite has no row_to_json, and the `::text` that follows it is a
+	// syntax error there on its own ("unrecognized token ':'"). Read the
+	// inner query directly and assemble {"col": value} per row off
+	// rows.Columns() -- same output shape as row_to_json, and the column
+	// list follows the schema instead of being hand-listed.
+	rows, err := q.Query(inner, args...)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
-	return encodeArchiveRows(rows)
+	objs, err := rowJSONObjects(rows)
+	// A SQLite connection holds one active result set at a time, so Close
+	// has to happen before the caller issues its next statement.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	raw, err := marshalSnapshot(objs)
+	if err != nil {
+		return nil, 0, err
+	}
+	return json.RawMessage(raw), int64(len(objs)), nil
 }
 
 func encodeArchiveRows(rows interface {
@@ -588,23 +546,10 @@ func writeArchiveRows(rows interface {
 func streamArchiveRows(q interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }, writer io.Writer, inner string, args ...any) (int64, error) {
-	if isSQLiteEngine() {
-		return writeArchiveRowsFromQuery(q, writer, inner, args...)
-	}
-	rows, err := q.Query(`SELECT row_to_json(row_data)::text FROM (`+inner+`) row_data`, args...)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	return writeArchiveRows(rows, writer)
+	return writeArchiveRowsFromQuery(q, writer, inner, args...)
 }
 
-// writeArchiveRowsFromQuery 是 streamArchiveRows 在 SQLite 侧的分支。
-//
-// SQLite 既没有 row_to_json，紧跟其后的 `::text` 本身也是语法错误，所以整行
-// JSON 改由 Go 侧从 rows.Columns() 加扫描值装配。输出仍是每行一个 JSON 对象，
-// 与 llm_records 流式格式一致；jsonSafeValue 的存在保证 JSON 列仍然内联、
-// 时间列仍然是 RFC3339Nano，与导出侧的另一半（rowjson.go）同形。
+// writeArchiveRowsFromQuery 把 inner 查询的每一行写成一个 JSON 对象。
 func writeArchiveRowsFromQuery(q interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }, writer io.Writer, inner string, args ...any) (int64, error) {
@@ -658,35 +603,23 @@ func rawRowCount(raw json.RawMessage) int64 {
 }
 
 func archiveAssetIDsQuery() string {
-	if isSQLiteEngine() {
-		// SQLite has no LATERAL, but it does accept a table-valued function
-		// whose argument references a table earlier in the FROM clause -- a
-		// comma join is enough, no LATERAL keyword. Verified against SQLite
-		// 3.45: `FROM findings f, json_each(f.asset_ids) je` correlates fine.
-		//
-		// The json_valid guard is load-bearing rather than defensive: on SQLite
-		// findings.asset_ids is a plain TEXT column, and rowjson.go documents
-		// that a TEXT column cannot be told apart from a JSON column by its
-		// declared type. An archive written from a row where that column held
-		// non-JSON text would otherwise abort the whole snapshot with
-		// "malformed JSON". PG does not need it because jsonb_array_elements_text
-		// is only ever handed real jsonb there.
-		return `SELECT id FROM assets WHERE ` + taskIDsAnyExpr("$1", "task_ids") + `
+	// SQLite has no LATERAL, but it does accept a table-valued function
+	// whose argument references a table earlier in the FROM clause -- a
+	// comma join is enough, no LATERAL keyword. Verified against SQLite
+	// 3.45: `FROM findings f, json_each(f.asset_ids) je` correlates fine.
+	//
+	// The json_valid guard is load-bearing rather than defensive: findings.asset_ids
+	// is a plain TEXT column, and rowjson.go documents that a TEXT column cannot be
+	// told apart from a JSON column by its declared type. An archive written from a
+	// row where that column held non-JSON text would otherwise abort the whole
+	// snapshot with "malformed JSON".
+	return `SELECT id FROM assets WHERE ` + taskIDsAnyExpr("$1", "task_ids") + `
   UNION SELECT link.asset_id FROM task_asset_links link WHERE link.task_id=$1
   UNION SELECT anchor.asset_id FROM exploration_anchors anchor
   JOIN exploration_nodes node ON node.id=anchor.node_id WHERE node.exploration_id=$2
   UNION SELECT CAST(je.value AS INTEGER) FROM findings finding
   JOIN json_each(CASE WHEN json_valid(finding.asset_ids) THEN finding.asset_ids ELSE '[]' END) je
   WHERE finding.task_id=$1 AND regexp(je.value, '^[0-9]+$')`
-	}
-	return `SELECT id FROM assets WHERE $1=ANY(task_ids)
-UNION SELECT link.asset_id FROM task_asset_links link WHERE link.task_id=$1
-UNION SELECT anchor.asset_id FROM exploration_anchors anchor
-      JOIN exploration_nodes node ON node.id=anchor.node_id WHERE node.exploration_id=$2
-UNION SELECT value::bigint FROM findings finding
-      CROSS JOIN LATERAL jsonb_array_elements_text(
-        CASE WHEN jsonb_typeof(finding.asset_ids)='array' THEN finding.asset_ids ELSE '[]'::jsonb END
-      ) value WHERE finding.task_id=$1 AND value ~ '^[0-9]+$'`
 }
 
 // SnapshotTaskArchive reads one repeatable PostgreSQL snapshot. Task-owned Agent
@@ -877,17 +810,10 @@ FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2`, strconv.Form
 	for _, item := range []struct {
 		name  string
 		query string
-		lite  string
 		args  []any
 	}{
 		{name: "token_profiles", args: []any{strconv.FormatInt(taskID, 10), expID},
-			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
-SELECT COALESCE(profile_name,'') profile_name,count(*) calls,1 tasks,
-       COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,
-       COALESCE(sum(cache_read),0) cache_read_tokens,COALESCE(sum(cache_write),0) cache_write_tokens
-FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2
-GROUP BY profile_name ORDER BY sum(input_tokens)+sum(output_tokens) DESC) x`,
-			lite: `SELECT COALESCE(json_group_array(json_object(
+			query: `SELECT COALESCE(json_group_array(json_object(
  'profile_name',x.profile_name,'calls',x.calls,'tasks',x.tasks,
  'input_tokens',x.input_tokens,'output_tokens',x.output_tokens,
  'cache_read_tokens',x.cache_read_tokens,'cache_write_tokens',x.cache_write_tokens)),'[]') FROM (
@@ -897,16 +823,9 @@ SELECT COALESCE(profile_name,'') profile_name,count(*) calls,1 tasks,
 FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2
 GROUP BY profile_name ORDER BY sum(input_tokens)+sum(output_tokens) DESC) x`},
 		{name: "token_daily", args: []any{strconv.FormatInt(taskID, 10), expID},
-			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
-SELECT COALESCE(profile_name,'') profile_name,to_char(ts AT TIME ZONE 'UTC','YYYY-MM-DD') date,
-       COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,
-       COALESCE(sum(cache_read),0) cache_read_tokens
-FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2
-GROUP BY profile_name,date ORDER BY date) x`,
-			// substr(ts,1,10) is the same "YYYY-MM-DD" prefix to_char would produce:
-			// SQLite stores ts as "2006-01-02 15:04:05..." so the first ten bytes
-			// are exactly the UTC date.
-			lite: `SELECT COALESCE(json_group_array(json_object(
+			// substr(ts,1,10) is the "YYYY-MM-DD" date prefix: SQLite stores ts as
+			// "2006-01-02 15:04:05..." so the first ten bytes are exactly the UTC date.
+			query: `SELECT COALESCE(json_group_array(json_object(
  'profile_name',x.profile_name,'date',x.date,
  'input_tokens',x.input_tokens,'output_tokens',x.output_tokens,
  'cache_read_tokens',x.cache_read_tokens)),'[]') FROM (
@@ -916,20 +835,12 @@ SELECT COALESCE(profile_name,'') profile_name,substr(ts,1,10) date,
 FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2
 GROUP BY profile_name,date ORDER BY date) x`},
 		{name: "skills", args: []any{taskID, expID},
-			query: `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT skill name,count(*) n FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`,
-			lite:  `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT skill name,count(*) n FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`},
+			query: `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT skill name,count(*) n FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`},
 		{name: "tools", args: []any{taskID, expID},
-			query: `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT tool_key name,count(*) n FROM tool_usage WHERE task_id=$1 OR exploration_id=$2 GROUP BY tool_key) x`,
-			lite:  `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT tool_key name,count(*) n FROM tool_usage WHERE task_id=$1 OR exploration_id=$2 GROUP BY tool_key) x`},
+			query: `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT tool_key name,count(*) n FROM tool_usage WHERE task_id=$1 OR exploration_id=$2 GROUP BY tool_key) x`},
 		{name: "findings", args: []any{taskID},
-			query: `SELECT COALESCE(jsonb_object_agg(name,n),'{}'::jsonb) FROM (SELECT COALESCE(NULLIF(severity,''),'unknown') name,count(*) n FROM findings WHERE task_id=$1 GROUP BY severity) x`,
-			lite:  `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT COALESCE(NULLIF(severity,''),'unknown') name,count(*) n FROM findings WHERE task_id=$1 GROUP BY severity) x`},
+			query: `SELECT COALESCE(json_group_object(name,n),'{}') FROM (SELECT COALESCE(NULLIF(severity,''),'unknown') name,count(*) n FROM findings WHERE task_id=$1 GROUP BY severity) x`},
 		{name: "skill_stats", args: []any{taskID, expID},
-			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
-SELECT skill,count(*) calls,1 tasks,
-       COALESCE(array_agg(DISTINCT agent_key) FILTER (WHERE agent_key IS NOT NULL),ARRAY[]::text[]) agents,
-       max(ts) last_used
-FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`,
 			// The distinct agent list is a correlated subquery rather than
 			// json_group_array(DISTINCT ...): the DISTINCT-in-aggregate form is
 			// only valid for single-argument json_group_array and arrived late in
@@ -940,9 +851,9 @@ FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skil
 			// json_group_array(...) passed to json_object lands as the *string*
 			// "[\"agent-a\"]" instead of an array, and unmarshalling into []string fails.
 			// Subquery materialization drops the JSON subtype, so the outer json_object
-                        // must wrap x.agents with json() again at the argument position — that is
-                        // what keeps the value inlined as an array instead of a quoted string.
-			lite: `SELECT COALESCE(json_group_array(json_object(
+			// must wrap x.agents with json() again at the argument position — that is
+			// what keeps the value inlined as an array instead of a quoted string.
+			query: `SELECT COALESCE(json_group_array(json_object(
  'skill',x.skill,'calls',x.calls,'tasks',x.tasks,'agents',json(x.agents),'last_used',x.last_used)),'[]') FROM (
 SELECT skill,count(*) calls,1 tasks,
        json((SELECT COALESCE(json_group_array(d.a),'[]') FROM (
@@ -952,12 +863,7 @@ SELECT skill,count(*) calls,1 tasks,
        replace(max(ts),' ','T') last_used
 FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND found GROUP BY skill) x`},
 		{name: "missing_skill_stats", args: []any{taskID, expID},
-			query: `SELECT COALESCE(jsonb_agg(to_jsonb(x)),'[]'::jsonb) FROM (
-SELECT skill,count(*) calls,0 tasks,
-       COALESCE(array_agg(DISTINCT agent_key) FILTER (WHERE agent_key IS NOT NULL),ARRAY[]::text[]) agents,
-       max(ts) last_used
-FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND NOT found GROUP BY skill) x`,
-			lite: `SELECT COALESCE(json_group_array(json_object(
+			query: `SELECT COALESCE(json_group_array(json_object(
  'skill',x.skill,'calls',x.calls,'tasks',x.tasks,'agents',json(x.agents),'last_used',x.last_used)),'[]') FROM (
 SELECT skill,count(*) calls,0 tasks,
        json((SELECT COALESCE(json_group_array(d.a),'[]') FROM (
@@ -967,16 +873,10 @@ SELECT skill,count(*) calls,0 tasks,
        replace(max(ts),' ','T') last_used
 FROM skill_usage WHERE (task_id=$1 OR exploration_id=$2) AND NOT found GROUP BY skill) x`},
 		{name: "finding_stats", args: []any{taskID},
-			query: `SELECT jsonb_build_object(
- 'total',count(*),'pending',count(*) FILTER (WHERE status='pending'),
- 'critical',count(*) FILTER (WHERE severity='critical'),'high',count(*) FILTER (WHERE severity='high'),
- 'medium',count(*) FILTER (WHERE severity='medium'),'low',count(*) FILTER (WHERE severity='low'),
- 'vulnclasses',COALESCE(jsonb_agg(DISTINCT vulnclass) FILTER (WHERE vulnclass<>''),'[]'::jsonb))
-FROM findings WHERE task_id=$1`,
 			// count(*) FILTER (WHERE p) becomes SUM(CASE WHEN p THEN 1 ELSE 0 END).
 			// COALESCE matters: with no matching rows SUM yields NULL, and
-			// json_object would then emit a null where PostgreSQL emits 0.
-			lite: `SELECT json_object(
+			// json_object would then emit a null instead of 0.
+			query: `SELECT json_object(
  'total',count(*),
  'pending',COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),
  'critical',COALESCE(SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END),0),
@@ -987,17 +887,13 @@ FROM findings WHERE task_id=$1`,
     SELECT DISTINCT f2.vulnclass v FROM findings f2 WHERE f2.task_id=$1 AND f2.vulnclass<>'')),'[]')))
 FROM findings WHERE task_id=$1`},
 	} {
-		query := item.query
-		if isSQLiteEngine() {
-			query = item.lite
-		}
 		// jsonValue rather than []byte: SQLite returns the JSON column as a
 		// string, and database/sql's convertAssign only has a []byte source
 		// branch for an exact *[]byte destination. json.RawMessage is a named
 		// []byte type (jsontext.Value alias on Go 1.27), so it falls through
 		// to reflection and fails. See db/sqlite_json_scan.go.
 		var raw jsonValue
-		if err := tx.QueryRow(query, item.args...).Scan(&raw); err != nil {
+		if err := tx.QueryRow(item.query, item.args...).Scan(&raw); err != nil {
 			return nil, err
 		}
 		var value any

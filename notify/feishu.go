@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -140,7 +141,7 @@ func feishuCard(m Message) (map[string]any, int) {
 		it := m.Items[0]
 		elements = append(elements, feishuMarkdownDiv(feishuItemLines(it)))
 		if it.DetailURL != "" {
-			elements = append(elements, feishuButton("查看详情", it.DetailURL))
+			elements = append(elements, feishuButton(detailLinkLabel(it), it.DetailURL))
 		}
 	}
 
@@ -171,12 +172,22 @@ func feishuButton(label, url string) map[string]any {
 	}
 }
 
-// feishuItemLines 渲染单个漏洞的 lark_md 正文。
+// feishuItemLines 渲染单个条目的 lark_md 正文。
 //
 // lark_md 与 markdown 是同族的文本格式，同样会解析链接与强调，所以来自外部
 // 的字段一律过 markdownText（单行化 + 转义）——否则一条漏洞标题就能在
 // 飞书里变成可点击的外链。
 func feishuItemLines(it Item) string {
+	if taskEvent(it) {
+		var sb strings.Builder
+		for i, kv := range taskEventFields(it) {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			fmt.Fprintf(&sb, "**%s**：%s", kv[0], markdownText(kv[1], 0))
+		}
+		return sb.String()
+	}
 	out := fmt.Sprintf("**%s · %s**", SeverityLabel(it.Severity), markdownText(it.Title(), 0))
 	if it.IsStatusChange() {
 		out += fmt.Sprintf("\n**状态变更**：%s → %s",
@@ -198,6 +209,9 @@ func feishuItemLines(it Item) string {
 
 // feishuBatchLine 渲染汇总卡片里的一条。
 func feishuBatchLine(it Item, index int) string {
+	if taskEvent(it) {
+		return fmt.Sprintf("**%d. %s**", index, markdownText(taskEventLine(it), 0))
+	}
 	line := fmt.Sprintf("**%d. %s · %s**", index, SeverityLabel(it.Severity), markdownText(it.Title(), 0))
 	if a := assetLine(it.Assets, maxAssetsShown); a != "" {
 		line += " — " + markdownText(a, 0)

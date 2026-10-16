@@ -181,10 +181,7 @@ func (d *DB) DigestBatchDue(ctx context.Context, channelID int64, minAge time.Du
 // 与 dialect_mixed.go 的 sqlNowPlusSeconds 完全一致，理由见那里的注释
 // （与列默认值同一形状，字典序即时间序）。
 func sqlNowMinusSeconds(arg string) string {
-	if isSQLiteEngine() {
-		return "strftime('%Y-%m-%d %H:%M:%f+00:00','now','-'||" + arg + "||' seconds')"
-	}
-	return "now() - make_interval(secs => " + arg + ")"
+	return "strftime('%Y-%m-%d %H:%M:%f+00:00','now','-'||" + arg + "||' seconds')"
 }
 
 // sqlNotAfterExpr 返回「时间戳表达式 <= 某个时间表达式」的比较。
@@ -203,10 +200,7 @@ func sqlNowMinusSeconds(arg string) string {
 // 不依赖「SQLite 给非法文本加数值亲和度时会原样退回文本比较」这条内部行为：
 // 显式 CAST 才是可读且可依赖的写法。
 func sqlNotAfterExpr(col, tsExpr string) string {
-	if isSQLiteEngine() {
-		return "CAST(" + col + " AS TEXT) <= " + tsExpr
-	}
-	return col + " <= " + tsExpr
+	return "CAST(" + col + " AS TEXT) <= " + tsExpr
 }
 
 // ClaimDigestBatch 领取某渠道当前到期的待发投递，作为一个汇总批次，
@@ -294,55 +288,18 @@ func (d *DB) claimDeliveries(ctx context.Context, lease time.Duration, cq claimQ
 //     看到的 next_attempt_at 已被推到未来，于是自然地领到下一批，不会两人领到同一行。
 //     「租约到期」这条领取条件因此既防重复投递，也替代了 SKIP LOCKED 的作用。
 func claimDeliveryIDs(ctx context.Context, tx *sql.Tx, lease time.Duration, cq claimQuery) ([]int64, error) {
-	if isSQLiteEngine() {
-		// SET 子句的占位符排在候选查询之后（cq.args 的最后一个是 limit），
-		// cq.args 里的 $1..$n 一个都不用改。
-		first := len(cq.args) + 1
-		setSQL := fmt.Sprintf("state=$%d, attempts=attempts+1, next_attempt_at=%s",
-			first, sqlNowPlusSeconds(fmt.Sprintf("$%d", first+1)))
-		query, args := sqliteClaimUpdate("notification_deliveries", cq.sql, "id",
-			cq.args, setSQL, NotifyStateSending, lease.Seconds())
-		rows, err := tx.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		return claimIDs(rows)
-	}
-	query := cq.sql + forUpdateClause(true, "dd") + fmt.Sprintf("\nLIMIT $%d", len(cq.args))
-	ids, err := selectForClaim(ctx, tx, query, cq.args...)
-	if err != nil {
-		return nil, err
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	// 置 sending 并把 next_attempt_at 推到未来：这个未来时刻即租约到期时间，
-	// 「租约未到期」与「未到重试时间」因此共用同一个条件表达，不需要新增列。
-	ph, idArgs := placeholders(3, ids)
-	if _, err := tx.ExecContext(ctx, `UPDATE notification_deliveries
-SET state=$1, attempts=attempts+1, next_attempt_at=now()+make_interval(secs => $2)
-WHERE id IN (`+ph+`)`,
-		append([]any{NotifyStateSending, lease.Seconds()}, idArgs...)...); err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
-func selectForClaim(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]int64, error) {
+	// SET 子句的占位符排在候选查询之后（cq.args 的最后一个是 limit），
+	// cq.args 里的 $1..$n 一个都不用改。
+	first := len(cq.args) + 1
+	setSQL := fmt.Sprintf("state=$%d, attempts=attempts+1, next_attempt_at=%s",
+		first, sqlNowPlusSeconds(fmt.Sprintf("$%d", first+1)))
+	query, args := sqliteClaimUpdate("notification_deliveries", cq.sql, "id",
+		cq.args, setSQL, NotifyStateSending, lease.Seconds())
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return claimIDs(rows)
 }
 
 func loadDeliveriesTx(ctx context.Context, tx *sql.Tx, ids []int64) ([]*NotificationDelivery, error) {

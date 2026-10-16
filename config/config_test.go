@@ -1,42 +1,47 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestPostgresDSNPrecedence(t *testing.T) {
+// writeConfig marshals a config file so paths with Windows separators survive:
+// interpolating a raw `C:\...` path into a JSON string literal produces invalid
+// escapes and silently yields a zero Config, which would make these tests pass
+// for the wrong reason.
+func writeConfig(t *testing.T, path string, cfg Config) {
+	t.Helper()
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The startup path no longer has a "database not configured" failure mode: SQLite
+// always resolves to a file next to the config, so the only thing left to pin is
+// that the resolved location is honoured verbatim, and that a config file which
+// simply does not exist is not an error.
+func TestSQLitePathFromConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	os.WriteFile(cfgPath, []byte(`{"database":{"host":"10.1.2.3","port":6000,"user":"u","password":"p","dbname":"d","sslmode":"require"}}`), 0o644)
+	t.Setenv(envSQLitePath, "")
 	t.Setenv("ARTEX_CONFIG", cfgPath)
 
-	// no env DSN → built from config file fields
-	t.Setenv("ARTEX_PG_DSN", "")
-	got, _, err := PostgresDSN()
-	want := "postgres://u:p@10.1.2.3:6000/d?sslmode=require"
-	if err != nil || got != want {
-		t.Fatalf("from file: got %q err %v want %q", got, err, want)
+	want := filepath.Join(dir, "custom.db")
+	writeConfig(t, cfgPath, Config{Database: Database{Path: want}})
+	if got := SQLitePath(); got != want {
+		t.Fatalf("配置文件的 database.path 未生效：got %q want %q", got, want)
 	}
 
-	// env wins over config file
-	t.Setenv("ARTEX_PG_DSN", "postgres://envwins/x")
-	if got, _, err := PostgresDSN(); err != nil || got != "postgres://envwins/x" {
-		t.Fatalf("env should win, got %q err %v", got, err)
-	}
-
-	// no env, no file → error (no built-in default)
-	t.Setenv("ARTEX_PG_DSN", "")
+	// Missing config file: falls back to the built-in default beside the config
+	// path rather than erroring, so a fresh install boots with no configuration.
 	t.Setenv("ARTEX_CONFIG", filepath.Join(dir, "nope.json"))
-	if got, _, err := PostgresDSN(); err == nil {
-		t.Fatalf("missing config should error, got %q", got)
-	}
-
-	// full dsn in config file is used verbatim
-	os.WriteFile(cfgPath, []byte(`{"database":{"dsn":"postgres://full/dsn"}}`), 0o644)
-	t.Setenv("ARTEX_CONFIG", cfgPath)
-	if got, _, err := PostgresDSN(); err != nil || got != "postgres://full/dsn" {
-		t.Fatalf("file dsn verbatim, got %q err %v", got, err)
+	if got := SQLitePath(); filepath.Base(got) != sqliteFileName {
+		t.Fatalf("配置文件缺失时应回退默认库文件名：got %q", got)
 	}
 }

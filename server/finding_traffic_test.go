@@ -24,7 +24,7 @@ func trafficEvidenceServer(t *testing.T) (*Server, *db.RecordedFinding, func(str
 	t.Helper()
 	m, err := NewManager(t.TempDir(), "")
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { m.Close() })
 	m.traffic, err = traffic.Open(filepath.Join(m.dir, "traffic"), ":0")
@@ -284,7 +284,7 @@ func TestFindingTrafficArchiveV3RoundTripAndRetry(t *testing.T) {
 	if err = s.m.pg.EditFindingTraffic(ctx, f.FindingID, list.Bindings[0].ID, 1, nil, nil, true, nil); err == nil {
 		t.Fatal("write allowed after archive queued")
 	}
-	if err = s.runOneTaskArchiveJob(); err != nil {
+	if _, err = s.runOneTaskArchiveJob(); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.m.pg.GetFinding(f.FindingID); got != nil {
@@ -302,30 +302,46 @@ func TestFindingTrafficArchiveV3RoundTripAndRetry(t *testing.T) {
 	}); err != nil {
 		t.Fatal("shared body deleted", err)
 	}
+	// claim 是全局 FIFO：先领完此前用例遗留的归档任务，保证接下来排队的
+	// 这条恢复任务就是 runOneTaskArchiveJob 会领到的那一条。
+	for {
+		ran, err := s.runOneTaskArchiveJob()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ran {
+			break
+		}
+	}
 	if _, err = s.m.pg.QueueTaskArchiveRestore(job.ID); err != nil {
 		t.Fatal(err)
 	}
 	// Force a database error after validated body installation; then retry normally.
-	if _, err = s.m.pg.Exec(`CREATE FUNCTION fail_evidence_restore_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'restore fixture failure'; END $$`); err != nil {
+	// SQLite 无 plpgsql：用 BEFORE INSERT 触发器 RAISE(ABORT) 制造同样的
+	// 「绑定行写入失败」，让恢复流程走到失败重试分支。
+	//
+	// 必须用 ABORT 而不是 ROLLBACK：ROLLBACK 会把整个事务连驱动侧的状态一起回卷，
+	// 之后 tx.Commit() 落在一条已经结束的事务上，报 SQLITE_BUSY 而不是预期的写入
+	// 失败。ABORT 只回滚当前语句（与 plpgsql 的 RAISE EXCEPTION 语义一致），
+	// 事务仍由调用方的 Rollback 负责收尾。
+	if _, err = s.m.pg.Exec(`CREATE TRIGGER fail_evidence_restore_test BEFORE INSERT ON finding_traffic_bindings BEGIN SELECT RAISE(ABORT, 'restore fixture failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.m.pg.Exec(`CREATE TRIGGER fail_evidence_restore_test BEFORE INSERT ON finding_traffic_bindings FOR EACH ROW EXECUTE FUNCTION fail_evidence_restore_test()`); err != nil {
-		t.Fatal(err)
-	}
-	defer s.m.pg.Exec(`DROP FUNCTION IF EXISTS fail_evidence_restore_test() CASCADE`)
-	if err = s.runOneTaskArchiveJob(); err == nil {
+	defer s.m.pg.Exec(`DROP TRIGGER IF EXISTS fail_evidence_restore_test`)
+	if _, err = s.runOneTaskArchiveJob(); err == nil {
 		t.Fatal("expected restore failure")
 	}
 	if got, _ := s.m.pg.GetFinding(f.FindingID); got != nil {
 		t.Fatal("partial restore")
 	}
-	if _, err = s.m.pg.Exec(`DROP FUNCTION fail_evidence_restore_test() CASCADE`); err != nil {
+	dropPlant := `DROP TRIGGER IF EXISTS fail_evidence_restore_test`
+	if _, err = s.m.pg.Exec(dropPlant); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.m.pg.QueueTaskArchiveRestore(job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.runOneTaskArchiveJob(); err != nil {
+	if _, err = s.runOneTaskArchiveJob(); err != nil {
 		t.Fatal(err)
 	}
 	restored, err := s.m.pg.GetFindingTraffic(ctx, f.FindingID)

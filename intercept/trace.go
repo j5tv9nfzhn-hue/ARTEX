@@ -114,6 +114,18 @@ func WithCall(ctx context.Context, tool string, input []byte) context.Context {
 	return context.WithValue(ctx, callKey{}, a)
 }
 
+// ClaimCall claims the pending trace call for (tool, input) and returns the context
+// carrying the claimed audit snapshot plus the correlated call ID (db.InterceptAudit
+// .ToolUseID; "" when the call could not be correlated). Callers MUST invoke it at
+// most once per tool call — a second claim over the same trace finds the call
+// already taken and degrades correlation. Used by the guard to stamp its audit
+// entries with the same ID the trace binds the result to (#15/#17).
+func ClaimCall(ctx context.Context, tool string, input []byte) (context.Context, string) {
+	ctx = WithCall(ctx, tool, input)
+	a, _ := ctx.Value(callKey{}).(db.InterceptAudit)
+	return ctx, a.ToolUseID
+}
+
 func (t *Trace) bind(id string, f completion) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

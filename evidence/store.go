@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -25,6 +26,39 @@ type Store struct {
 	Traffic *traffic.Traffic
 	Dir     string
 }
+
+// restoreGate serialises evidence collection against an active archive restore.
+//
+// PostgreSQL expressed this with an advisory lock inside a transaction, and
+// WithInstalledSnapshots wrapped its callback in that transaction to hold the lock
+// for the whole restore. SQLite has no nested write transactions — the outer BEGIN
+// already owns the database write lock, so the restore's own transaction would
+// self-deadlock on SQLITE_BUSY — so the exclusion has to live in the process
+// instead. The gate gives the same guarantee the lock did: Collect() cannot reap a
+// body between installing it and referencing it from restored metadata.
+//
+// A buffered channel rather than sync.Mutex, because Collect's wait has to be
+// cancellable: the GC ticker calls it on a deadline, and a plain mutex would park
+// the goroutine behind a long restore with no way to give up. Capacity 1 makes it a
+// binary gate; the zero value is not usable, so it is initialised here.
+//
+// It is package-level rather than a Store field because Server.evidenceStore()
+// returns a fresh Store on every call, so a per-Store gate would not be shared.
+var restoreGate = make(chan struct{}, 1)
+
+// acquireRestoreGate takes the gate, or reports false if ctx ends first.
+func acquireRestoreGate(ctx context.Context) bool {
+	select {
+	case restoreGate <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// releaseRestoreGate frees the gate. Safe to call only after acquireRestoreGate
+// returned true.
+func releaseRestoreGate() { <-restoreGate }
 
 func New(pg *db.DB, tr *traffic.Traffic, dir string) *Store {
 	return &Store{DB: pg, Traffic: tr, Dir: dir}
@@ -106,6 +140,13 @@ func (s *Store) writeBody(r io.Reader, expectedLength int64, expectedHash string
 	}
 	if err = os.Rename(f.Name(), path); err != nil {
 		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		// Windows 不支持目录句柄的 fsync：os.Open(目录).Sync() 恒返回
+		// "Access is denied"。正文的 f.Sync() 已先行落盘，NTFS 元数据日志
+		// 保证 rename 的持久性，故这里仅在 POSIX 侧保留目录 fsync（提交
+		// rename 的目录项）。
+		return hash, nil
 	}
 	d, err := os.Open(filepath.Dir(path))
 	if err != nil {
@@ -311,47 +352,68 @@ func (s *Store) InstallSnapshots(ctx context.Context, snapshots []db.TrafficEvid
 	return s.WithInstalledSnapshots(ctx, snapshots, source, func() error { return nil })
 }
 
-// WithInstalledSnapshots pins installed bodies until the metadata restore finishes.
-// The callback must not acquire another evidence advisory lock.
+// restoreMu so the evidence GC cannot reap a just-installed body.
+//
+// It deliberately does NOT wrap the callback in a database transaction. Under
+// PostgreSQL it did: the surrounding transaction held an advisory lock, which both
+// pinned the bodies against the GC and was harmless to nest (MVCC). SQLite cannot
+// nest write transactions — with _txlock=immediate the outer BEGIN already owns the
+// database write lock, so the restore's own d.Begin() would block until busy_timeout
+// expired and then fail with SQLITE_BUSY. That was a hard self-deadlock, not
+// contention. The restore gate provides the same exclusion in the process instead.
 func (s *Store) WithInstalledSnapshots(ctx context.Context, snapshots []db.TrafficEvidenceSnapshot, source string, restore func() error) error {
-	return s.DB.WithEvidenceTx(ctx, func(*sql.Tx) error {
-		for _, v := range snapshots {
-			if v.ID != db.TrafficSnapshotID(v) {
-				return errors.New("归档证据快照元数据哈希不匹配")
-			}
-			for _, body := range []struct {
-				hash   string
-				length int64
-			}{{v.ReqHash, v.ReqLen}, {v.RespHash, v.RespLen}} {
-				if err := func() error {
-					path, err := hashPath(source, body.hash)
-					if err != nil {
-						return err
-					}
-					f, err := os.Open(path)
-					if err != nil {
-						return err
-					}
-					defer f.Close()
-					_, err = s.writeBody(f, body.length, body.hash)
-					return err
-				}(); err != nil {
+	if !acquireRestoreGate(ctx) {
+		return ctx.Err()
+	}
+	defer releaseRestoreGate()
+	for _, v := range snapshots {
+		if v.ID != db.TrafficSnapshotID(v) {
+			return errors.New("归档证据快照元数据哈希不匹配")
+		}
+		for _, body := range []struct {
+			hash   string
+			length int64
+		}{{v.ReqHash, v.ReqLen}, {v.RespHash, v.RespLen}} {
+			if err := func() error {
+				path, err := hashPath(source, body.hash)
+				if err != nil {
 					return err
 				}
+				f, err := os.Open(path)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				_, err = s.writeBody(f, body.length, body.hash)
+				return err
+			}(); err != nil {
+				return err
 			}
 		}
-		return restore()
-	})
+	}
+	return restore()
 }
 
+// Collect reaps evidence bodies that no finding references any more.
+//
+// It takes the restore gate so an active WithInstalledSnapshots cannot have a body
+// reaped between installing it and referencing it from restored metadata. The gate,
+// not a database lock, is what provides that exclusion; see restoreGate's comment.
+//
+// The wait is cancellable, so the GC ticker can give up rather than park behind a
+// long restore.
 func (s *Store) Collect(ctx context.Context, now time.Time) error {
+	if !acquireRestoreGate(ctx) {
+		return ctx.Err()
+	}
+	defer releaseRestoreGate()
 	return s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`UPDATE traffic_evidence_snapshots s SET unreferenced_at=$1
-WHERE unreferenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=s.id)`, now); err != nil {
+		if _, err := tx.Exec(`UPDATE traffic_evidence_snapshots SET unreferenced_at=$1
+WHERE unreferenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=traffic_evidence_snapshots.id)`, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM traffic_evidence_snapshots s WHERE unreferenced_at<$1
-AND NOT EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=s.id)`, now.Add(-24*time.Hour)); err != nil {
+		if _, err := tx.Exec(`DELETE FROM traffic_evidence_snapshots WHERE unreferenced_at<$1
+AND NOT EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=traffic_evidence_snapshots.id)`, now.Add(-24*time.Hour)); err != nil {
 			return err
 		}
 		rows, err := tx.Query(`SELECT req_hash FROM traffic_evidence_snapshots UNION SELECT resp_hash FROM traffic_evidence_snapshots`)

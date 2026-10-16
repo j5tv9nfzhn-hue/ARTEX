@@ -189,7 +189,7 @@ func Open(dir, addr string) (*Traffic, error) {
 	index := filepath.Join(dir, "_index", "index.sqlite")
 	dsn := index
 	if !strings.ContainsRune(index, '?') {
-		dsn = "file:" + index + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+		dsn = "file:" + index + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

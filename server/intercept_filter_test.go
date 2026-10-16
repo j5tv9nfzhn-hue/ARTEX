@@ -17,7 +17,7 @@ func TestInterceptFilterHTTP(t *testing.T) {
 	}
 	d, err := db.Open(dsn)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	m := &Manager{pg: d, interceptor: intercept.New(d)}

@@ -88,18 +88,10 @@ func (d *DB) ResolveIntercept(id int64, status, action, reason string) (bool, er
 	// cast 不能删，jsonb || $3 会被判成 unknown || jsonb 而不唯一），
 	// SQLite 侧的等价语句与逐条等价性论证见 dialect_intercept.go。
 	var r sql.Result
-	if isSQLiteEngine() {
-		// 补丁文本用 string 绑定：项目里 JSON 列参数的既有约定就是文本
-		// （encodeJSONBArray / side_questions 的 string(jsonbClean(...))）。
-		r, err = d.Exec(interceptResolveAuditSQLite, id, status, string(patch), action,
-			interceptPatchExecutionUnknown, interceptPatchEmptyObject)
-	} else {
-		r, err = d.Exec(`UPDATE intercept_pending SET status=$2, decided_at=NOW(),
-		audit=CASE WHEN audit IS NULL THEN NULL ELSE audit || $3::jsonb ||
-        CASE WHEN $4='allow' AND audit->>'correlation' IS DISTINCT FROM 'exact'
-        THEN '{"execution_status":"unknown"}'::jsonb ELSE '{}'::jsonb END END
-        WHERE id=$1 AND status='pending'`, id, status, patch, action)
-	}
+	// 补丁文本用 string 绑定：项目里 JSON 列参数的既有约定就是文本
+	// （encodeJSONBArray / side_questions 的 string(jsonbClean(...))）。
+	r, err = d.Exec(interceptResolveAuditSQLite, id, status, string(patch), action,
+		interceptPatchExecutionUnknown, interceptPatchEmptyObject)
 	if err != nil {
 		return false, err
 	}
@@ -120,13 +112,6 @@ func (d *DB) CompleteIntercept(id int64, runID, toolUseID, status, output string
 	// 方言分支同样只在语句级：PG 保留 audit || $4::jsonb 与四个 audit->>'k'，
 	// SQLite 用 json_patch + CAST(json_extract(...) AS TEXT)，
 	// 逐条论证见 dialect_intercept.go。四道守卫条件两边一一对应。
-	if isSQLiteEngine() {
-		_, err = d.Exec(interceptCompleteAuditSQLite, id, runID, toolUseID, string(patch))
-	} else {
-		_, err = d.Exec(`UPDATE intercept_pending SET audit=audit || $4::jsonb
-		WHERE id=$1 AND audit->>'run_id'=$2 AND audit->>'tool_use_id'=$3
-		AND audit->>'effective_action'='allow' AND audit->>'execution_status'='awaiting_result'`,
-			id, runID, toolUseID, patch)
-	}
+	_, err = d.Exec(interceptCompleteAuditSQLite, id, runID, toolUseID, string(patch))
 	return err
 }

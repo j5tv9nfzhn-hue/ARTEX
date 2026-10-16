@@ -257,20 +257,16 @@ func scanRetestSourceRow(rows *sql.Rows) (string, map[string]any, error) {
 	return title, rowJSONObject(cols[1:], vals[1:]), nil
 }
 
-// findingAssetIDsContainExpr 表达 PG 的 `f.asset_ids @> to_jsonb(ARRAY[a.id])`。
+// findingAssetIDsContainExpr 表达「这条 finding 关联了资产 a.id」。
 //
-// 调用点固定写成 `FROM assets a JOIN findings f ON f.id=$1 WHERE <本函数>`，
-// 两个引擎共用同一段语句，只换掉这里的判定表达式。
-//
-// artex_json_contains(col, x) 的语义是「col 解析出的数组里是否存在等于 x 的
-// 元素」，即 EXISTS (SELECT 1 FROM json_each(col) WHERE value = x)，与 PG 的
-// jsonb 数组包含完全对应（db/dialect_arrays.go 里有同样的对照说明）。值作为
-// 函数实参绑定，不存在拼进 SQL 文本的机会。
+// 调用点固定写成 `FROM assets a JOIN findings f ON f.id=$1 WHERE <本函数>`。
+// PostgreSQL 侧是 `f.asset_ids @> to_jsonb(ARRAY[a.id])`；artex_json_contains(col, x)
+// 的语义是「col 解析出的数组里是否存在等于 x 的元素」，即
+// EXISTS (SELECT 1 FROM json_each(col) WHERE value = x)，与 jsonb 数组包含完全对应
+// （db/dialect_arrays.go 里有同样的对照说明）。值作为函数实参绑定，不存在拼进
+// SQL 文本的机会。
 func findingAssetIDsContainExpr() string {
-	if engineIsSQLite() {
-		return "artex_json_contains(f.asset_ids, a.id)"
-	}
-	return "f.asset_ids @> to_jsonb(ARRAY[a.id])"
+	return "artex_json_contains(f.asset_ids, a.id)"
 }
 
 func (r *FindingRetest) InitialMessage() string {

@@ -88,8 +88,26 @@ jobs:
       # 带 !embedui 约束，加了 tag 等于把这个测试静默跳过。
       - name: go vet（含内嵌前端）
         run: go vet -tags embedui ./server/
-      - name: go test（无数据库，集成测试跳过）
-        run: go test ./... -count=1
+      # 格式门禁：gofmt -l 输出任何文件即失败。此前仓库没有这一道，
+      # 未格式化的提交只能靠 reviewer 肉眼发现。
+      - name: gofmt 门禁
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt（请运行 gofmt -w <文件>）："
+            echo "$unformatted"
+            exit 1
+          fi
+      # 静态检查门禁：配置见 .golangci.yml（保守基线 govet + gofmt，之后逐项收紧）。
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          args: --timeout=5m
+      # SQLite 无需服务容器，且每个包的 TestMain 都指向自己的临时库文件，
+      # 所以这一条就是完整的真实执行：不再有「因连不上数据库而静默跳过」的用例。
+      - name: go test（含数据库集成，全部真实执行）
+        run: go test ./... -count=1 -timeout 600s
 
       # 可下载产物：验证用的 Windows 单二进制（amd64 + arm64）。
       # Linux runner 无法执行 PE，用结构校验代替运行冒烟测试。
@@ -132,49 +150,6 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-  # ---------- Go：真实 PostgreSQL 集成测试 ----------
-  # 每个包独立 PostgreSQL 服务，保持空数据库起点；
-  # 隔离可避免连接 teardown、重置时的跨包 schema 依赖。
-  # 六个 matrix job 并行执行，共享同一份模块缓存；
-  # 编译缓存关闭——并行 job 写同一份 GOCACHE 会互相覆盖，纯浪费配额。
-  go-db:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        pkg: [agent, config, db, evidence, llmrec, server]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: artex
-          POSTGRES_PASSWORD: artex
-          POSTGRES_DB: artex
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U artex -d artex"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.26"
-          cache: false
-      - name: 恢复 Go 模块缓存
-        uses: actions/cache@v6
-        with:
-          path: ~/go/pkg/mod
-          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            go-${{ runner.os }}-
-      - name: go test（数据库集成 · ${{ matrix.pkg }} 独立包）
-        env:
-          ARTEX_PG_DSN: postgres://artex:artex@localhost:5432/artex?sslmode=disable
-        run: go test ./${{ matrix.pkg }}/ -count=1
 
   # ---------- 前端：类型检查、单元测试、静态导出、Biome ----------
   web:

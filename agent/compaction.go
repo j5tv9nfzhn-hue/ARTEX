@@ -40,9 +40,67 @@ type Compactor struct {
 	cooldown time.Duration // min gap between compactions per task (§7 60s)
 	maxDur   time.Duration // hard cap on one background compaction
 
+	observer func(CompactionEvent) // host hook (批次 6: 压缩状态/中断检查点); nil = off
+
 	mu      sync.Mutex
 	running map[int64]bool
 	lastRun map[int64]time.Time
+	cancels map[int64]context.CancelCauseFunc // 在跑的压缩 → 可被任务暂停打断
+}
+
+// CompactionEvent reports one background compaction lifecycle step to the host
+// (批次 6 / #27、#28、#37). The host persists it into compaction_state and, when a
+// run is interrupted, writes a timeline checkpoint so a resume can verify
+// consistency ("图要么含该 digest、要么完全不含" — AddDigest 是事务性的).
+type CompactionEvent struct {
+	ExpID int64          // exploration the compaction belongs to
+	Stage string         // "start" | "finish"
+	Phase string         // "minor" | "major"
+	Info  map[string]any // start: round / uncompressed / active_digests
+	Err   error          // finish: nil = clean end; non-nil = interrupted / timed out / internal
+}
+
+// SetObserver wires the host's compaction lifecycle observer. nil = none. Called
+// from the background goroutine, so the observer must be safe for concurrent use.
+func (c *Compactor) SetObserver(fn func(CompactionEvent)) { c.observer = fn }
+
+func (c *Compactor) notify(ev CompactionEvent) {
+	if c != nil && c.observer != nil {
+		c.observer(ev)
+	}
+}
+
+// Running reports whether a background compaction is currently in flight for the
+// exploration (进程内事实)。重启后 running 为空而 compaction_state 仍是 running,
+// 这一不一致正是恢复校验要处理的场景。
+func (c *Compactor) Running(expID int64) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.running[expID]
+}
+
+// Interrupt aborts the in-flight background compaction for one exploration (task
+// pause/stop). Compaction deliberately outlives a planner round, so 暂停任务时它
+// 不会自己停;由宿主显式打断。已提交的 digest 不受影响,未完成的分块留待下轮重做。
+// Returns whether a run was actually cancelled.
+func (c *Compactor) Interrupt(expID int64, cause error) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	cancel := c.cancels[expID]
+	c.mu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	if cause == nil {
+		cause = context.Canceled
+	}
+	cancel(cause)
+	return true
 }
 
 // NewCompactor builds a compactor. prov/model are used for the §4 body LLM call
@@ -58,6 +116,7 @@ func NewCompactor(prov llm.Provider, model string) *Compactor {
 		maxDur:   5 * time.Minute,
 		running:  map[int64]bool{},
 		lastRun:  map[int64]time.Time{},
+		cancels:  map[int64]context.CancelCauseFunc{},
 	}
 }
 
@@ -82,23 +141,38 @@ func (c *Compactor) OnPlannerRound(ctx context.Context, ts *db.ExplorationStore)
 	if !c.tryStart(ts.ID()) {
 		return // already running, or within cooldown —派生态最终一致，下轮再压
 	}
+	phase := "minor"
+	if needMajor {
+		phase = "major"
+	}
+	info := map[string]any{"round": round, "uncompressed": uncompressed, "active_digests": activeDigests}
 	go func() {
-		defer c.finish(ts.ID())
-		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.maxDur)
-		defer cancel()
+		expID := ts.ID()
+		defer c.finish(expID)
+		// cause-cancelable parent so task pause can interrupt this run distinctly
+		// from the hard timeout (批次 6 / #28).
+		parent, cancelCause := context.WithCancelCause(context.WithoutCancel(ctx))
+		defer cancelCause(nil)
+		bg, stopTimeout := context.WithTimeout(parent, c.maxDur)
+		defer stopTimeout()
+		c.setCancel(expID, cancelCause)
+		defer c.clearCancel(expID)
+		c.notify(CompactionEvent{ExpID: expID, Stage: "start", Phase: phase, Info: info})
 		// 压缩是裸 provider 调用（compress 里直接 prov.Complete），不经过 agentcore
 		// 的会话循环，所以 ctx 上没有 session id；按 session-id 头做提示缓存/粘性
 		// 路由的网关（opencode zen 缺 x-opencode-session 直接 400）就收不到该头。
 		// 这里补一个按探索稳定的 id：同一探索的所有压缩请求共享它，既能带上头，
 		// 也让 llmrec 能把这次调用的 token 归因回该探索（此前记不到）。
-		bg = transcript.WithSessionID(bg, fmt.Sprintf("exp%d-compactor", ts.ID()))
+		bg = transcript.WithSessionID(bg, fmt.Sprintf("exp%d-compactor", expID))
 		if needMajor {
 			c.major(bg, ts)
 		} else {
 			c.minor(bg, ts)
 		}
+		// context.Cause: nil = 正常结束; 非 nil = 超时(cause=DeadlineExceeded)或
+		// 被任务暂停打断(cause=宿主传入的 AbortPausedByUser 等)。
+		c.notify(CompactionEvent{ExpID: expID, Stage: "finish", Phase: phase, Info: info, Err: context.Cause(bg)})
 	}()
-	_ = round
 }
 
 // maintain bumps round_no, recomputes hot/cold over the whole graph, and applies
@@ -241,8 +315,11 @@ func (c *Compactor) major(ctx context.Context, ts *db.ExplorationStore) {
 			stale = append(stale, d.ID)
 		}
 	}
-	if err := ts.SupersedeDigests(stale); err != nil {
-		log.Printf("[compaction] supersede exp=%d: %v", ts.ID(), err)
+	// 被打断时先别作废旧 digest：保持「压缩前边界」原样，下一轮从头重压。
+	if ctx.Err() == nil {
+		if err := ts.SupersedeDigests(stale); err != nil {
+			log.Printf("[compaction] supersede exp=%d: %v", ts.ID(), err)
+		}
 	}
 	for _, b := range toCreate {
 		c.foldBlock(ctx, ts, g, b, nodeByID, cvers, c.generationFor(b, active))
@@ -254,6 +331,9 @@ func (c *Compactor) major(ctx context.Context, ts *db.ExplorationStore) {
 // changed, so any member that has since gone hot (revived) is dropped from the
 // covers set. If the block dissolves below K it is skipped.
 func (c *Compactor) foldBlock(ctx context.Context, ts *db.ExplorationStore, g *coldGraph, b block, nodeByID map[int64]*db.Node, cvers map[int64]int, generation int) {
+	if ctx.Err() != nil {
+		return // interrupted before this block: nothing committed, nothing to undo
+	}
 	body, err := c.compress(ctx, g, b, nodeByID)
 	if err != nil {
 		log.Printf("[compaction] compress exp=%d block=%v: %v", ts.ID(), b.Members, err)
@@ -326,6 +406,20 @@ func (c *Compactor) finish(expID int64) {
 	defer c.mu.Unlock()
 	c.running[expID] = false
 	c.lastRun[expID] = time.Now()
+}
+
+// setCancel registers the running compression's cause-cancel so Interrupt can
+// reach it; clearCancel removes it on completion.
+func (c *Compactor) setCancel(expID int64, cancel context.CancelCauseFunc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cancels[expID] = cancel
+}
+
+func (c *Compactor) clearCancel(expID int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.cancels, expID)
 }
 
 // --- helpers: db ↔ coldgraph ---
@@ -510,12 +604,14 @@ func buildCompressionInput(g *coldGraph, b block, nodeByID map[int64]*db.Node) s
 }
 
 // compress runs the §4 body LLM call on one block. Uses the same model the agent
-// runs on; thinking disabled (a pure summarization step).
+// runs on; thinking disabled (a pure summarization step). MaxTokens 收紧到 800
+// (批次 E):digest 正文会被 planner 每轮 + 每个 worker 首消息重复携带,生成侧
+// 先限长,注入侧另有 600 字符/条的截断兜底(agent/prompt_slim.go)。
 func (c *Compactor) compress(ctx context.Context, g *coldGraph, b block, nodeByID map[int64]*db.Node) (string, error) {
 	req := llm.CompletionRequest{
 		System:    []string{compressionSystemPrompt},
 		Messages:  []llm.Message{llm.UserText(buildCompressionInput(g, b, nodeByID))},
-		MaxTokens: 1500,
+		MaxTokens: 800,
 		Thinking:  "disabled",
 	}
 	msg, _, _, err := c.prov.Complete(ctx, req)

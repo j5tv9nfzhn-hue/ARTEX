@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/Autumn-27/artex/config"
 )
 
 // =====================================================================
@@ -39,10 +37,10 @@ import (
 // 分支"，也就是 UpsertCompany 返回的 created 标志。
 //
 // 需要特别澄清：这**不是**软删除惯用法。companies 表根本没有 deleted_at
-// 之类的墓碑列（db/schema.sql:27-34 / db/schema_sqlite.sql:66-73）；
+// 之类的墓碑列（db/schema_sqlite.sql:27-34 / db/schema_sqlite.sql:66-73）；
 // 本项目的软删除是显式业务列语义——tasks.deleted_at IS NULL
-// (db/schema.sql:536-537)、exploration_nodes.state='deleted'
-// (db/schema.sql:184-197)。xmax 只是被借来当"插入/更新"的判定位。
+// (db/schema_sqlite.sql:536-537)、exploration_nodes.state='deleted'
+// (db/schema_sqlite.sql:184-197)。xmax 只是被借来当"插入/更新"的判定位。
 //
 // ---------------------------------------------------------------------
 // SQLite 侧
@@ -113,17 +111,11 @@ WHERE nkey = $3
 RETURNING id`
 
 // upsertCompanyByNkey 按规范化名称 upsert 一家企业，并报告这次调用到底是
-// 新建（created=true）还是命中已有企业（created=false）。PostgreSQL 走单条
-// 语句的 xmax 惯用法，SQLite 走"抢占式 INSERT + UPDATE"的两语句等价写法，
-// 对外返回值完全一致。
+// 新建（created=true）还是命中已有企业（created=false）。
+//
+// PostgreSQL 用单条语句的 xmax 惯用法判断"是插入还是更新"；SQLite 没有 xmax，
+// 改用"抢占式 INSERT + UPDATE"的两语句等价写法，对外返回值完全一致。
 func upsertCompanyByNkey(d *DB, name, nkey string, logoVal any) (id int64, created bool, err error) {
-	if config.Engine() == config.EnginePostgres {
-		if err := d.QueryRow(upsertCompanyPGSQL, name, nkey, logoVal).Scan(&id, &created); err != nil {
-			return 0, false, err
-		}
-		return id, created, nil
-	}
-
 	tx, err := d.Begin()
 	if err != nil {
 		return 0, false, err

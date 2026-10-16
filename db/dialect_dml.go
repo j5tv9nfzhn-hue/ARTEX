@@ -206,10 +206,6 @@ RETURNING id`
 // 参数都与改写前逐字一致；SQLite 分支把 $1 让给 categoryID，任务 id 从 $2 开始
 // 顺序展开。
 func taskCategoryBatchMoveStmt(args *[]any, taskIDs []int64, categoryID *int64) string {
-	if isPostgresEngine() {
-		*args = append(*args, taskIDs, categoryID)
-		return taskCategoryBatchMovePG
-	}
 	*args = append(*args, categoryID)
 	return taskCategoryBatchMoveSQLiteHead + appendInPlaceholders(args, taskIDs) + taskCategoryBatchMoveSQLiteTail
 }
@@ -282,9 +278,6 @@ tested AS (
 
 // covTargetCTE 返回这段 CTE 在当前引擎上的写法。
 func covTargetCTE() string {
-	if isPostgresEngine() {
-		return covTargetCTEPG
-	}
 	return covTargetCTESQLite
 }
 

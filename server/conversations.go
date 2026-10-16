@@ -16,6 +16,7 @@ import (
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
+	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/sidequestion"
 )
 
@@ -420,6 +421,8 @@ func (s *Server) pgStopConversation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "idle"}) // nothing running
 		return
 	}
+	// 中断检查点（批次 6 / #27）：在取消之前落盘，快照即「停止前的时间线」。
+	s.captureConversationCheckpointNow(c, db.CheckpointReasonInterrupt, "用户停止本轮（中断）")
 	cancel(agent.AbortChatStoppedByUser)
 	writeJSON(w, 200, map[string]any{"status": "stopping"})
 }
@@ -457,6 +460,16 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 		writeErr(w, 503, s.chatUnavailableReason())
 		return
 	}
+	// 输入模态闸门(计划 75–96)：与 server.chat 同一条规则——目标配置未声明支持
+	// 图片/音频/PDF 附件时在这里显式拒绝，绝不静默丢弃附件，也不把附件硬塞进
+	// 纯文本请求。放在持久化用户轮次与 busy 标记之前，被拦下的消息不入档。
+	if len(req.Attachments) > 0 {
+		name, effective := s.conversationTurnModalities(c)
+		if err := checkTurnAttachments(name, effective, req.Attachments); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+	}
 
 	busyKey := s.convBusyKey(c.ID)
 	s.chatMu.Lock()
@@ -479,7 +492,8 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 	if ua.Detail == "" {
 		ua.Detail = msg
 	}
-	if _, err := pg.AppendConvActivity(c.ID, ua); err != nil {
+	userActivityID, err := pg.AppendConvActivity(c.ID, ua)
+	if err != nil {
 		log.Printf("[conv %d] append user msg failed: %v", c.ID, err)
 	}
 	if isDefaultConversationTitle(c.Title) {
@@ -490,22 +504,49 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 		_ = pg.RenameConversation(c.ID, title)
 	}
 	_ = pg.TouchConversation(c.ID)
+	// 时间线检查点（批次 6 / #29–#31）：用户消息落库后、回合开始前。回滚到它 =
+	// 把这条消息之后的回答/副作用从时间线上隐藏，transcript 截断回本回合之前——
+	// 即「重跑这一轮」。
+	s.captureConversationCheckpoint(c, db.CheckpointReasonUserMessage, "用户消息："+firstLine(msg, 60), userActivityID)
 
 	// Append the uploaded files' ABSOLUTE paths so the ChatAgent opens them with its
 	// Read/Bash tools. baseDir = the agent's per-session CWD (<workDir>/sessions/
 	// conv-<id>/), matching chatUpload's landing dir and agent/chat.go's sessionWorkDir
 	// — busyKey == convBusyKey(c.ID) == "conv-<id>" == that session id.
 	baseDir := filepath.Join(s.m.dir, "sessions", busyKey)
-	s.runConversation(c, composeAgentMessage(agentMessage, req.Attachments, baseDir), busyKey, msg)
+	s.runConversation(c, composeAgentMessage(agentMessage, req.Attachments, baseDir), busyKey, conversationAttribution{}, msg)
 	writeJSON(w, 202, map[string]any{"status": "accepted"})
+}
+
+// conversationAttribution carries the LLM-ledger attribution (任务 id + 泳道标签)
+// for sessions started outside a task run (触发器会话 reporter 等 / retester)。
+// llmrec 从 run ctx 读这两个值：task_id 让这些消耗能按任务聚合(成本归因)，
+// worker 让 by-worker 聚合能区分 reporter / retester 等泳道，而不是一律 (unknown)。
+// 零值(空串)完全保持原有行为，人工聊天与任务内会话不受影响。
+type conversationAttribution struct {
+	taskID string
+	worker string
+}
+
+// decorate 把归因挂到会话 run 的 ctx 上；空字段不挂(保持 session 推导/无归因)。
+func (a conversationAttribution) decorate(ctx context.Context) context.Context {
+	if a.worker != "" {
+		ctx = llmrec.WithWorker(ctx, a.worker)
+	}
+	if a.taskID != "" {
+		ctx = llmrec.WithTaskID(ctx, a.taskID)
+	}
+	return ctx
 }
 
 // runConversation runs ONE agent turn on a conversation in a background goroutine
 // (each conversation is independent → parallel). Steps stream to
 // conversation_activities. Shared by the chat HTTP handler and the P3 scheduler.
 // busyKey clears when the run ends (best-effort in-flight marker).
-func (s *Server) runConversation(c *db.Conversation, msg, busyKey string, userMessage ...string) {
+// attr 为任务外会话(复测/触发)提供 LLM 归因；人工聊天传零值。
+func (s *Server) runConversation(c *db.Conversation, msg, busyKey string, attr conversationAttribution, userMessage ...string) {
 	ctx, cancel := s.conversationRunContext(c.ID, busyKey)
+	ctx = attr.decorate(ctx)
 	// Only the human-message handler supplies this field, before adding the
 	// attachment manifest. Scheduler/retest prompts must not be labelled as users.
 	if len(userMessage) == 1 {
@@ -518,8 +559,10 @@ func (s *Server) runConversation(c *db.Conversation, msg, busyKey string, userMe
 // run ends (clearing busyKey). runConversation wraps it in a goroutine for the
 // fire-and-forget chat path; the P3 trigger queue calls it directly so it can wait
 // for completion before starting the next queued fire for the same agent.
-func (s *Server) runConversationSync(c *db.Conversation, msg, busyKey string) {
+// attr 携带归因(触发器会话标成对应 agent 泳道 + 任务 id)。
+func (s *Server) runConversationSync(c *db.Conversation, msg, busyKey string, attr conversationAttribution) {
 	ctx, cancel := s.conversationRunContext(c.ID, busyKey)
+	ctx = attr.decorate(ctx)
 	s.runConversationTurn(ctx, cancel, c, msg, busyKey)
 }
 
@@ -557,6 +600,13 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 	// Only the first turn executes a historical retest. Follow-up conversation
 	// turns may explain the sealed result; the result tool refuses to overwrite it.
 	finishStatus, finishReason := "failed", convRetestFailedToStart
+	// 时间线检查点（批次 6 / #29–#35）：回合结束点。回滚到它 = 丢弃此后的一切
+	// （可见时间线与 LLM 上下文同步回退）。注册在清理 defer 之后 → 先于清理执行，
+	// 此时本回合全部活动行（含错误行）都已落库。
+	defer func() {
+		s.captureConversationCheckpointNow(c, db.CheckpointReasonTurnComplete,
+			"回合结束："+convFinishLabel(finishStatus))
+	}()
 	if c.AgentKey == db.FindingRetestAgentKey {
 		// Read without the run cancellation so an immediate stop still seals pending.
 		r, err := s.m.pg.FindingRetestForConversation(context.Background(), c.ID)
@@ -837,11 +887,17 @@ func mergeAllRuns(items []triggeredRun) triggeredRun {
 			fmt.Fprintf(&b, "\n── 触发 %d（task#%d）──\n%s\n", seq, tid, it.message)
 		}
 	}
+	// 归因:账本里的 task_id 必须唯一指向一个任务,跨任务合并(且含无任务的
+	// interval 触发)时任意选一个都会把消耗记错账,故只在全体同任务时保留。
+	mergedTaskID := int64(0)
+	if len(order) == 1 && order[0] > 0 {
+		mergedTaskID = order[0]
+	}
 	return triggeredRun{
 		agentKey:  first.agentKey,
 		title:     fmt.Sprintf("合并触发 · 全部 · %d 条", len(items)),
 		message:   b.String(),
-		taskID:    first.taskID,
+		taskID:    mergedTaskID,
 		mergeable: true,
 		// taskDesc/taskGoal left empty: per-task headers already embedded above.
 	}
@@ -870,7 +926,15 @@ func (s *Server) runTriggeredRun(item triggeredRun) {
 	s.chatMu.Lock()
 	s.chatBusy[busyKey] = true
 	s.chatMu.Unlock()
-	s.runConversationSync(c, msg, busyKey)
+	// 归因补齐:触发器会话(如 reporter)此前在用量台账里 task_id/worker 双缺，
+	// 成本无法归因。这里把触发事件里的 task id(interval 触发为 0=无任务)与本
+	// agent 的泳道一起显式传播进 llmrec；跨任务合并触发的 taskID 已在
+	// mergeAllRuns 里归零,避免把消耗记到某一个任务头上。
+	taskID := ""
+	if item.taskID > 0 {
+		taskID = strconv.FormatInt(item.taskID, 10)
+	}
+	s.runConversationSync(c, msg, busyKey, conversationAttribution{taskID: taskID, worker: item.agentKey})
 }
 
 // firstLine returns a single-line, length-capped preview (shared with summaries).

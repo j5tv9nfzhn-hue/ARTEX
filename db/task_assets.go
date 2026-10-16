@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/Autumn-27/artex/config"
 )
 
 const (
@@ -357,9 +355,7 @@ RETURNING id`, taskID, assetID).Scan(&detachedID)
 
 // removeTaskIDFromTaskIDs 表达 `array_remove(task_ids, $1)`。
 func removeTaskIDFromTaskIDs(col, param string) string {
-	if config.Engine() == config.EnginePostgres {
-		return "array_remove(" + col + ", " + param + ")"
-	}
+
 	return "artex_json_remove(" + col + ", " + param + ")"
 }
 

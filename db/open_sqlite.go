@@ -13,9 +13,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//go:embed schema_sqlite.sql
-var schemaSQLiteSQL string
-
 // isSQLiteDSN distinguishes the two drivers from the DSN itself.
 //
 // Both are driver-owned DSNs rather than raw connection parameters, so the
@@ -97,6 +94,68 @@ func applySQLiteSchema(ctx context.Context, con *sql.Conn) error {
 	return nil
 }
 
+// sqliteColumnAdds 是「补旧库」列:它们已经折进 schema 的 CREATE TABLE(见
+// schema_sqlite.sql 各处注释,例如 llm_profiles.input_modalities),但老 SQLite
+// 存量文件里没有这些列——CREATE TABLE IF NOT EXISTS 对已存在的表是空操作。
+//
+// SQLite 没有 ADD COLUMN IF NOT EXISTS,而 schema 每次启动都整段重放:不加保护
+// 直接 ALTER,第二次启动就会因 duplicate column name 整体失败。故先查
+// pragma_table_info,缺了才加,等价于 PG 侧 ADD COLUMN IF NOT EXISTS 的幂等语义。
+var sqliteColumnAdds = []struct {
+	table  string
+	column string
+	alter  string
+}{
+	{
+		"llm_profiles",
+		"input_modalities",
+		`ALTER TABLE llm_profiles ADD COLUMN input_modalities TEXT NOT NULL DEFAULT ''`,
+	},
+	{
+		"activity",
+		"reverted_at",
+		`ALTER TABLE activity ADD COLUMN reverted_at TIMESTAMP`,
+	},
+	{
+		"conversation_activities",
+		"reverted_at",
+		`ALTER TABLE conversation_activities ADD COLUMN reverted_at TIMESTAMP`,
+	},
+	{
+		// 凭据实体化(计划 46–47)。可空列,ALTER 时默认 NULL 才允许带 REFERENCES
+		// (SQLite 的 ADD COLUMN 限制);指向的 credentials 表由 schema 建在前面。
+		"llm_profiles",
+		"credential_id",
+		`ALTER TABLE llm_profiles ADD COLUMN credential_id BIGINT REFERENCES credentials(id) ON DELETE SET NULL`,
+	},
+	{
+		// 任务级 token 预算(0=不限)。普通带默认值的列,直接 ADD 即可。
+		"tasks",
+		"token_budget",
+		`ALTER TABLE tasks ADD COLUMN token_budget INTEGER NOT NULL DEFAULT 0`,
+	},
+}
+
+// applySQLiteColumnAdds 逐条补齐上表缺失的列。pragma_table_info 是表值函数,表名
+// 可以作为绑定参数传入,不必拼进 SQL(与 archive_restore_sqlite.go 的用法一致)。
+func applySQLiteColumnAdds(ctx context.Context, con *sql.Conn) error {
+	for _, col := range sqliteColumnAdds {
+		var n int
+		if err := con.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM pragma_table_info($1) WHERE name=$2`,
+			col.table, col.column).Scan(&n); err != nil {
+			return fmt.Errorf("check sqlite column %s.%s: %w", col.table, col.column, err)
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := con.ExecContext(ctx, col.alter); err != nil {
+			return fmt.Errorf("add sqlite column %s.%s: %w", col.table, col.column, err)
+		}
+	}
+	return nil
+}
+
 // openSQLite opens the embedded database and initialises it.
 //
 // The SQLite side deliberately skips two things the PostgreSQL path does:
@@ -126,6 +185,12 @@ func openSQLite(dsn string) (*DB, error) {
 	defer conn.Close()
 
 	if err := applySQLiteSchema(context.Background(), conn); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+	// 补旧库列:老 SQLite 文件缺的列在这里补齐(新库的列已折进 CREATE TABLE,
+	// 此步是完整的空操作)。必须在 seedBuiltins 之前——seed 会写 llm_profiles 等表。
+	if err := applySQLiteColumnAdds(context.Background(), conn); err != nil {
 		sqlDB.Close()
 		return nil, err
 	}

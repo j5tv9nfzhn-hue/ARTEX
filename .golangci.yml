@@ -1,0 +1,31 @@
+# golangci-lint 配置（批次 7 / #156–158、#162–164 的 Go lint 门禁）。
+#
+# 基线原则：只启用「在当前代码基线上确定干净」的检查，让门禁从第一天起就是
+# 绿的；历史告警清零后再逐项收紧，避免一次性引入成百上千条噪声把门禁架空。
+#
+# 当前启用（均可本地复现）：
+#   - govet：与 CI 已通过的 `go vet ./...` 同一组分析器；
+#   - gofmt（formatters）：仓库当前 `gofmt -l` 为空（2026-10-15 实测）。
+#
+# 后续收紧路径（每加一项，先在本地 `golangci-lint run --enable-only=<name>` 清零）：
+#   ineffassign、unused、staticcheck、misspell、revive。
+#
+# 注意：本机未安装 golangci-lint，v2.14.0 的配置格式按官方 v2 文档书写；
+# CI（ci.yml 的 go job）会以固定版本运行，第一次运行即是真实校验。
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - govet
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

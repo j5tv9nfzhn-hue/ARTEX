@@ -230,7 +230,7 @@ func TestCompanyScopeLimitsAndCheckedErrors(t *testing.T) {
 func TestCompanyScopeCheckedReturnsSystemErrorSeparately(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v)", err)
+		t.Fatal(err)
 	}
 	companies := d.Companies()
 	if err := d.Close(); err != nil {

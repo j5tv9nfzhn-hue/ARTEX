@@ -1,6 +1,6 @@
 // Package llmrec implements a recording decorator for llm.Provider. It intercepts
 // every Stream call, captures the full request and accumulated response, and
-// persists them to PostgreSQL for later inspection.
+// persists them to the platform database (SQLite) for later inspection.
 package llmrec
 
 import (
@@ -37,10 +37,42 @@ func TaskIDFrom(ctx context.Context) string {
 	return strings.TrimSpace(taskID)
 }
 
+type workerContextKey struct{}
+
+// WithWorker attaches an explicit agent-lane label for calls made outside the
+// task runtime (触发会话如 reporter、漏洞复测会话 retester 等)。这些会话的
+// session id 形如 conv-*，parseSession 解析不出泳道；由启动方显式标注后，
+// by-worker 聚合才不会把它们的消耗全部归入 (unknown)。显式标签优先于
+// session 前缀推导，正常 worker/planner 会话不受影响。
+func WithWorker(ctx context.Context, worker string) context.Context {
+	worker = strings.TrimSpace(worker)
+	if worker == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, workerContextKey{}, worker)
+}
+
+// WorkerFrom returns the explicit lane label attached by WithWorker ("" when none).
+func WorkerFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	worker, _ := ctx.Value(workerContextKey{}).(string)
+	return strings.TrimSpace(worker)
+}
+
+// recordStore 是 Recorder 对持久化的唯一依赖（批次 7 / #176 接口隔离）：写一条
+// 轻量表(llm_usage)与一条重表(llm_records)。接口定义在使用方，llmrec 因此不再
+// 耦合具体 *db.DB；*db.DB 天然满足它，宿主与测试也可以注入最小实现。
+type recordStore interface {
+	InsertLLMUsage(u *db.LLMUsage) error
+	InsertLLMRecord(r *db.LLMRecord) error
+}
+
 // Recorder wraps an llm.Provider and records every completion call.
 type Recorder struct {
 	inner llm.Provider
-	pg    *db.DB
+	store recordStore
 	model string // model name (from config, not in CompletionRequest)
 	prof  string // LLM profile name (from llm_profiles)
 	// thinkingType / reasoningEffort 是配置级思考参数(思考开关 / 思考强度)。它们在
@@ -51,13 +83,18 @@ type Recorder struct {
 	enabled         func() bool // reports whether recording is currently on; nil = always record
 }
 
-// Wrap returns a Provider that records calls to pg when enabled() reports true.
+// Wrap returns a Provider that records calls to store when enabled() reports true.
 // profName is the LLM profile name (e.g. "default"); may be empty. thinkingType /
 // reasoningEffort are the config-level thinking params actually sent to the API
-// (empty = not sent). A nil enabled predicate records unconditionally.
-func Wrap(inner llm.Provider, pg *db.DB, model, profName, thinkingType, reasoningEffort string, enabled func() bool) *Recorder {
+// (empty = not sent). A nil enabled predicate records unconditionally. A nil
+// store keeps metering off (the historical behavior).
+func Wrap(inner llm.Provider, store recordStore, model, profName, thinkingType, reasoningEffort string, enabled func() bool) *Recorder {
+	// 归一化带类型的 nil（如 (*db.DB)(nil)），保持「nil 存储 = 关闭计量」的旧语义。
+	if dbStore, ok := store.(*db.DB); ok && dbStore == nil {
+		store = nil
+	}
 	return &Recorder{
-		inner: inner, pg: pg, model: model, prof: profName,
+		inner: inner, store: store, model: model, prof: profName,
 		thinkingType: thinkingType, reasoningEffort: reasoningEffort, enabled: enabled,
 	}
 }
@@ -101,6 +138,11 @@ func (r *Recorder) Stream(ctx context.Context, req llm.CompletionRequest) iter.S
 	start := time.Now()
 	session := transcript.SessionIDFrom(ctx)
 	parsedID, worker := parseSession(session)
+	// 显式泳道标签优先于 session 前缀推导：任务外会话(conv-* 等)解析不出泳道，
+	// 由启动方(触发器/reporter、retester)显式标注。
+	if explicit := WorkerFrom(ctx); explicit != "" {
+		worker = explicit
+	}
 	expID := db.ParseExpID(parsedID)
 	taskID := TaskIDFrom(ctx)
 	if taskID == "" {
@@ -198,6 +240,10 @@ func (r *Recorder) Complete(ctx context.Context, req llm.CompletionRequest) (llm
 	start := time.Now()
 	session := transcript.SessionIDFrom(ctx)
 	parsedID, worker := parseSession(session)
+	// 与 Stream 同一规则：显式泳道标签优先（见 WithWorker）。
+	if explicit := WorkerFrom(ctx); explicit != "" {
+		worker = explicit
+	}
 	expID := db.ParseExpID(parsedID)
 	taskID := TaskIDFrom(ctx)
 	if taskID == "" {
@@ -236,14 +282,14 @@ func thinkingText(msg llm.Message) string {
 // recordUsage appends one lightweight metering row to llm_usage (no bodies). Skips
 // zero-token calls with no model, which carry nothing worth metering.
 func (r *Recorder) recordUsage(taskID string, expID int64, worker string, usage llm.Usage, latencyMs int, status string) {
-	if r.pg == nil {
+	if r.store == nil {
 		return
 	}
 	if r.model == "" && usage.InputTokens == 0 && usage.OutputTokens == 0 &&
 		usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 {
 		return
 	}
-	err := r.pg.InsertLLMUsage(&db.LLMUsage{
+	err := r.store.InsertLLMUsage(&db.LLMUsage{
 		TaskID:        taskID,
 		ExplorationID: expID,
 		Worker:        worker,
@@ -261,7 +307,7 @@ func (r *Recorder) recordUsage(taskID string, expID int64, worker string, usage 
 	}
 }
 
-// record persists one LLM call to PostgreSQL before the provider stream returns.
+// record persists one LLM call to the database before the provider stream returns.
 // Keeping the write inside the owning task operation means task deletion can
 // drain calls and then remove records without a late async insert recreating one.
 func (r *Recorder) record(req llm.CompletionRequest, session, taskID, worker, reqBody string, capt *Capture, start time.Time, text, thinking string, usage llm.Usage, stopReason string, streamErr error) {
@@ -317,7 +363,7 @@ func (r *Recorder) record(req llm.CompletionRequest, session, taskID, worker, re
 		RawResponse: capt.RawResponse(),
 	}
 
-	if err := r.pg.InsertLLMRecord(rec); err != nil {
+	if err := r.store.InsertLLMRecord(rec); err != nil {
 		log.Printf("[llmrec] insert: %v", err)
 	}
 }

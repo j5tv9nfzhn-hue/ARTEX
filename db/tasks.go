@@ -43,6 +43,11 @@ type Task struct {
 	TimeoutSeconds int        `json:"timeout_seconds"`        // 0=不限时
 	FirstRunAt     *time.Time `json:"first_run_at,omitempty"` // 首次真正开始运行的时刻(非 created_at);nil=尚未运行
 	DeadlineAt     *time.Time `json:"deadline_at,omitempty"`  // = first_run_at + timeout_seconds;nil=不限或未运行
+	// TokenBudget 是任务级 token 预算(=硬上限,0=不限)。计量口径:llm_usage 账本里
+	// 本任务全部 LLM 调用的 input+output(不含缓存读/写,见 db.TaskTokenTotal)。
+	// 引擎在 worker run 结束 / planner 每轮结束时核对,达到上限即按用户暂停语义自动
+	// 暂停任务并留痕;调高预算后恢复。创建时 0 取全局默认(default_task_token_budget)。
+	TokenBudget int `json:"token_budget"`
 	// planner 心跳触发间隔(秒)：距上轮 plan 结束/任务开始满该值且期间无触发 → 触发一轮。
 	// 下限=默认=300(5min)，低于一律抬到 300(在 CreateTask 归一)。见 docs/planner-trigger-impl-plan.md
 	PlanHeartbeatSeconds int `json:"plan_heartbeat_seconds"`
@@ -152,6 +157,9 @@ type TaskCreateOptions struct {
 	LLMProfileIDs        []int64
 	TimeoutSeconds       int
 	PlanHeartbeatSeconds int
+	// TokenBudget 是任务级 token 预算(0=不限);负值在创建时归一为 0(与超时/心跳
+	// 的归一风格一致)。0 的语义是"不限",是否回退到全局默认由调用方(server)决定。
+	TokenBudget int
 	// CoverageEnabled 是「资产覆盖度功能」开关;nil=默认开(true)，让不关心该开关的创建
 	// 路径(编排 spawn、老 API)沿用原行为。仅 web 创建任务时可显式传 false 关闭。
 	CoverageEnabled *bool
@@ -197,6 +205,9 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 	if opts.TimeoutSeconds < 0 {
 		opts.TimeoutSeconds = 0
 	}
+	if opts.TokenBudget < 0 {
+		opts.TokenBudget = 0
+	}
 	opts.PlanHeartbeatSeconds = normalizeHeartbeat(opts.PlanHeartbeatSeconds)
 	coverageEnabled := opts.CoverageEnabled == nil || *opts.CoverageEnabled
 	var categoryName string
@@ -223,13 +234,14 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 		LLMProfileIDs:  append([]int64(nil), opts.LLMProfileIDs...),
 		SourceTaskIDs:  append([]int64(nil), opts.SourceTaskIDs...),
 		CompanyIDs:     append([]int64(nil), opts.CompanyIDs...),
-		TimeoutSeconds: opts.TimeoutSeconds, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
-		CoverageEnabled: coverageEnabled,
+		TimeoutSeconds: opts.TimeoutSeconds, TokenBudget: opts.TokenBudget,
+		PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
+		CoverageEnabled:      coverageEnabled,
 	}
 	if err := tx.QueryRow(`
-INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled)
-VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9)
-RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
+INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, token_budget, plan_heartbeat_seconds, coverage_enabled)
+VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10)
+RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.TokenBudget, opts.PlanHeartbeatSeconds, coverageEnabled).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	if err := insertTaskRelations(tx, t.ID, opts.SourceTaskIDs); err != nil {
@@ -272,28 +284,28 @@ func insertTaskCompanies(tx *sql.Tx, taskID int64, companyIDs []int64) error {
 	// Updating task_ids fires sync_task_asset_links, which first creates generic
 	// source rows. The provenance upsert must therefore run afterwards so the
 	// company name and creation-time reason remain visible to operators.
-	if isSQLiteEngine() {
-		// SQLite 侧的三处 PG 专有写法逐一对齐：
-		//   - company_id=ANY($2::bigint[]) → 展开成 IN 列表。ANY() 不是 SQLite
-		//     的运算符，`$2::bigint[]` 会让驱动把参数名当成 "2::bigint"，而
-		//     绑定 []int64 本身就会得到 "unsupported type []int64"。
-		//   - $1=ANY(task_ids) / array_append → sqlArrayAddIfMissing（JSON 数组）。
-		//   - $1=ANY(asset.task_ids) → taskIDsAnyExpr。
-		// 占位符编号由 sqlIDListExpr 按 args 当前长度续号，所以必须先 append
-		// 原有参数（taskID / source）再调助手。
-		var args []any
-		args = append(args, taskID)
-		companyIn := sqlIDListExpr(&args, "company_id", companyIDs)
-		if _, err := tx.Exec(`
+	//
+	// SQLite 侧的三处 PG 专有写法逐一对齐：
+	//   - company_id=ANY($2::bigint[]) → 展开成 IN 列表。ANY() 不是 SQLite
+	//     的运算符，`$2::bigint[]` 会让驱动把参数名当成 "2::bigint"，而
+	//     绑定 []int64 本身就会得到 "unsupported type []int64"。
+	//   - $1=ANY(task_ids) / array_append → sqlArrayAddIfMissing（JSON 数组）。
+	//   - $1=ANY(asset.task_ids) → taskIDsAnyExpr。
+	// 占位符编号由 sqlIDListExpr 按 args 当前长度续号，所以必须先 append
+	// 原有参数（taskID / source）再调助手。
+	var args []any
+	args = append(args, taskID)
+	companyIn := sqlIDListExpr(&args, "company_id", companyIDs)
+	if _, err := tx.Exec(`
 UPDATE assets
 SET task_ids=`+sqlArrayAddIfMissing("task_ids", "$1")+`
 WHERE `+companyIn, args...); err != nil {
-			return err
-		}
+		return err
+	}
 
-		args = []any{taskID, taskCompanyAssetSource}
-		assetCompanyIn := sqlIDListExpr(&args, "asset.company_id", companyIDs)
-		if _, err := tx.Exec(`
+	args = []any{taskID, taskCompanyAssetSource}
+	assetCompanyIn := sqlIDListExpr(&args, "asset.company_id", companyIDs)
+	if _, err := tx.Exec(`
 INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
 SELECT $1, asset.id, $2, '创建任务时关联的公司： ' || company.name
 FROM assets asset
@@ -304,30 +316,6 @@ ON CONFLICT (task_id, asset_id) DO UPDATE
 SET source=excluded.source,
     source_summary=excluded.source_summary,
     source_node_id=NULL`, args...); err != nil {
-			return err
-		}
-		return nil
-	}
-	if _, err := tx.Exec(`
-UPDATE assets
-SET task_ids=CASE
-    WHEN $1=ANY(task_ids) THEN task_ids
-    ELSE array_append(task_ids, $1)
-END
-WHERE company_id=ANY($2::bigint[])`, taskID, companyIDs); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`
-INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
-SELECT $1, asset.id, $3, '创建任务时关联的公司： ' || company.name
-FROM assets asset
-JOIN companies company ON company.id=asset.company_id
-WHERE asset.company_id=ANY($2::bigint[])
-  AND $1=ANY(asset.task_ids)
-ON CONFLICT (task_id, asset_id) DO UPDATE
-SET source=EXCLUDED.source,
-    source_summary=EXCLUDED.source_summary,
-    source_node_id=NULL`, taskID, companyIDs, taskCompanyAssetSource); err != nil {
 		return err
 	}
 	return nil
@@ -337,61 +325,40 @@ SET source=EXCLUDED.source,
 // how many rows actually landed, which the caller compares against the request
 // size to detect a missing company.
 //
-// PG keeps the original unnest(... WITH ORDINALITY) + data-modifying CTE shape.
-// SQLite has neither: there is no unnest(), and a CTE may not contain an INSERT
-// (it fails with `near "INSERT"`), so the SQLite branch keeps only the ordering
-// CTE and lets the INSERT be the statement's own top-level command with
-// RETURNING supplying the row count. The ORDER BY requested.position is what
-// makes task_scope.id follow the caller's company order, which TaskCompanyIDs
-// and the creation-result assertions both rely on.
+// SQLite has no unnest(), and a CTE may not contain an INSERT (it fails with
+// `near "INSERT"`), so the ordering CTE stands alone and the INSERT is the
+// statement's own top-level command with RETURNING supplying the row count.
+// The ORDER BY requested.position is what makes task_scope.id follow the
+// caller's company order, which TaskCompanyIDs and the creation-result
+// assertions both rely on.
 func insertTaskCompanyScopeRows(tx *sql.Tx, taskID int64, companyIDs []int64) (int, error) {
-	if isSQLiteEngine() {
-		rows := make([]string, 0, len(companyIDs))
-		args := make([]any, 0, 2*len(companyIDs)+1)
-		for position, id := range companyIDs {
-			rows = append(rows, "(?,?)")
-			args = append(args, id, position)
-		}
-		args = append(args, taskID)
-		returned, err := tx.Query(`WITH requested(company_id, position) AS (VALUES `+strings.Join(rows, ",")+`)
+	rows := make([]string, 0, len(companyIDs))
+	args := make([]any, 0, 2*len(companyIDs)+1)
+	for position, id := range companyIDs {
+		rows = append(rows, "(?,?)")
+		args = append(args, id, position)
+	}
+	args = append(args, taskID)
+	returned, err := tx.Query(`WITH requested(company_id, position) AS (VALUES `+strings.Join(rows, ",")+`)
 INSERT INTO task_scope(task_id, kind, company_id, source, reason)
 SELECT ?, 'company', companies.id, 'manual', '创建任务时关联的公司'
 FROM requested
 JOIN companies ON companies.id=requested.company_id
 ORDER BY requested.position
 RETURNING company_id`, args...)
-		if err != nil {
-			return 0, err
-		}
-		defer returned.Close()
-		inserted := 0
-		for returned.Next() {
-			var companyID int64
-			if err := returned.Scan(&companyID); err != nil {
-				return 0, err
-			}
-			inserted++
-		}
-		if err := returned.Err(); err != nil {
-			return 0, err
-		}
-		return inserted, nil
-	}
-	var inserted int
-	err := tx.QueryRow(`
-WITH requested(company_id, position) AS (
-    SELECT company_id, position
-    FROM unnest($2::bigint[]) WITH ORDINALITY AS requested(company_id, position)
-), inserted AS (
-    INSERT INTO task_scope(task_id, kind, company_id, source, reason)
-    SELECT $1, 'company', companies.id, 'manual', '创建任务时关联的公司'
-    FROM requested
-    JOIN companies ON companies.id=requested.company_id
-    ORDER BY requested.position
-    RETURNING company_id
-)
-SELECT count(*) FROM inserted`, taskID, companyIDs).Scan(&inserted)
 	if err != nil {
+		return 0, err
+	}
+	defer returned.Close()
+	inserted := 0
+	for returned.Next() {
+		var companyID int64
+		if err := returned.Scan(&companyID); err != nil {
+			return 0, err
+		}
+		inserted++
+	}
+	if err := returned.Err(); err != nil {
 		return 0, err
 	}
 	return inserted, nil
@@ -432,11 +399,11 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
-description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at`
+description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(token_budget,0)`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt); err != nil {
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.TokenBudget); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil
@@ -477,28 +444,38 @@ ORDER BY (pinned_at IS NOT NULL) DESC, pinned_at DESC NULLS LAST, id DESC`)
 }
 
 // TaskPatch updates task list metadata without changing execution state.
+// TokenBudget(可选)是任务级 token 预算的更新通路(nil=不改;0=不限),同样只写
+// 配置不碰运行态——预算闸在每次 run 结束重新读取它。
 type TaskPatch struct {
-	Name   *string
-	Pinned *bool
+	Name        *string
+	Pinned      *bool
+	TokenBudget *int
 }
 
-// UpdateTask applies a partial task name/pin mutation and returns the updated row.
-// Re-pinning an already pinned task preserves its original position.
+// UpdateTask applies a partial task name/pin/budget mutation and returns the
+// updated row. Re-pinning an already pinned task preserves its original position.
 //
 // $2/$4 后面刻意不带 ::boolean：pgx 会把 `$2::boolean` 整体当成一个名叫
 // "2::boolean" 的参数，SQLite 的位置参数找不到这个名字，直接报
 // missing named argument "2::boolean"。转换语义完全由 Go 侧绑定的 bool 承担，
 // PG 侧删掉同样不改变参数类型推断结果。
 func (d *DB) UpdateTask(id int64, patch TaskPatch) (*Task, error) {
+	// 负预算归一为 0(不限),与创建路径一致;复制指针避免改到调用方的值。
+	budget := patch.TokenBudget
+	if budget != nil && *budget < 0 {
+		zero := 0
+		budget = &zero
+	}
 	task, err := scanTask(d.QueryRow(`UPDATE tasks SET
 	name = CASE WHEN $2 THEN $3 ELSE name END,
 	pinned_at = CASE
 		WHEN $4 IS NULL THEN pinned_at
 		WHEN $4 THEN COALESCE(pinned_at, now())
 		ELSE NULL
-	END
+	END,
+	token_budget = CASE WHEN $5 IS NULL THEN token_budget ELSE $5 END
 WHERE id=$1 AND deleted_at IS NULL
-RETURNING `+taskCols, id, patch.Name != nil, patch.Name, patch.Pinned))
+RETURNING `+taskCols, id, patch.Name != nil, patch.Name, patch.Pinned, budget))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -521,6 +498,26 @@ func (d *DB) GetTask(id int64) (*Task, error) {
 		return nil, err
 	}
 	return t, nil
+}
+
+// TaskTitle 取任务的展示标题：name 优先，空则回退 description。
+//
+// 供通知渲染回填任务标题。刻意不做 GetTask 的全量 hydrate（任务/模板/分类等
+// 多张表）——推送只需要一个字符串。查无此任务（已删除）返回空串而非错误：
+// 任务被删不该让已经在队列里的状态事件永久失败，渲染端会退化为「任务 #N」。
+func (d *DB) TaskTitle(id int64) (string, error) {
+	var name, desc string
+	err := d.QueryRow(`SELECT COALESCE(name,''), description FROM tasks WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&name, &desc)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if strings.TrimSpace(name) != "" {
+		return name, nil
+	}
+	return desc, nil
 }
 
 // SetPaused persists a task's paused flag.
@@ -579,6 +576,22 @@ UPDATE tasks
 	return err
 }
 
+// SetStatusChanged 与 SetStatus 写同一组列，但只在状态**确实变化**时落库，
+// 返回是否发生了真实迁移。供通知层判定「真实状态变化」：重复写同一状态
+// （如 planner 多轮都以 met 收尾）不算变化，不应重复推送。
+func (d *DB) SetStatusChanged(id int64, status string) (bool, error) {
+	res, err := d.Exec(`
+UPDATE tasks
+   SET status = $1,
+       completed_at = CASE WHEN $1 IN ('done','failed','timeout') THEN COALESCE(completed_at, now()) ELSE NULL END
+ WHERE id = $2 AND status <> $1`, status, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // SetTerminalStatusGuarded sets a terminal status only when the task is NOT already
 // terminal, so a completed↔timeout race resolves to the first writer (won=true).
 // Returns won=false (no error) when another terminal status already stuck — the
@@ -607,7 +620,7 @@ UPDATE tasks
    SET first_run_at = COALESCE(first_run_at, now()),
        deadline_at  = CASE
            WHEN first_run_at IS NOT NULL THEN deadline_at            -- 已盖过章：不动
-           WHEN $2 > 0 THEN " + sqlNowPlusSeconds("$2") + "
+           WHEN $2 > 0 THEN `+sqlNowPlusSeconds("$2")+`
            ELSE NULL END
  WHERE id = $1
  RETURNING deadline_at`, id, timeoutSeconds).Scan(&deadline)
@@ -688,13 +701,9 @@ func (d *DB) DeleteTaskCascadePrepared(
 		// either mechanism. This covers legacy anchor-only seeds without destroying
 		// evidence anchored by another task.
 		//
-		// DELETE ... USING 是 PG 专有写法，SQLite 只认 `DELETE FROM t AS alias
-		// WHERE ...`；两边共用同一个 WITH 主体（assetContainsTaskID /
-		// assetContainsTaskIDAlias 在 PG 分支逐字产出原来的 `=ANY(...)`）。
-		deleteTail := "DELETE FROM assets a USING deletable d WHERE a.id=d.id"
-		if isSQLiteEngine() {
-			deleteTail = "DELETE FROM assets AS a WHERE a.id IN (SELECT d.id FROM deletable d)"
-		}
+		// SQLite 只认 `DELETE FROM t AS alias WHERE ...`，没有 DELETE ... USING，
+		// 因此把 USING 的连接条件折进 IN 子查询。
+		deleteTail := "DELETE FROM assets AS a WHERE a.id IN (SELECT d.id FROM deletable d)"
 		res, err := tx.Exec(`
 WITH candidate_assets AS (
   SELECT id FROM assets WHERE `+assetContainsTaskID()+`

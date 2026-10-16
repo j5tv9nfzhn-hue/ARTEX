@@ -78,6 +78,26 @@ VALUES (NULLIF($1,''),$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9,$
 	return err
 }
 
+// TaskTokenTotal returns one task's cumulative metered token spend (input+output)
+// from the always-on llm_usage ledger — the hard number behind the task-level token
+// budget gate (server/engine.go checkTokenBudget).
+//
+// 计量口径：只累加 input_tokens + output_tokens，刻意不含 cache_read/cache_write——
+// 缓存读约 0.1x 价、缓存写约 1.25x 价，把它们计入会让「预算读数」随缓存冷热漂移，
+// 而预算闸关注的是原始 token 体量。COALESCE(task_id,”)=$1 与 TokenByModel 同源：
+// 调用方必须传非空 taskID，否则空串会把 task_id 为 NULL 的 chat/env 行一起捞进来。
+// 行数按 task_id 聚合（idx_llm_usage_task 覆盖该谓词，见 llmUsageSchema）。
+// 每次 LLM 调用返回即落账（llmrec.Recorder），所以 run 结束时读到的是含本 run
+// 全部消耗的最新值；失败调用同样计账（status=error 的行也有 token）。
+func (d *DB) TaskTokenTotal(taskID string) (int64, error) {
+	var total int64
+	err := d.QueryRow(`
+SELECT COALESCE(SUM(input_tokens+output_tokens),0)
+FROM llm_usage
+WHERE COALESCE(task_id,'') = $1`, taskID).Scan(&total)
+	return total, err
+}
+
 // TokenByModel aggregates a task's LLM token usage grouped by model, most-used
 // first, from the always-on llm_usage ledger. taskID is the task registry id.
 // Accurate even with per-agent model bindings, pool rotation/failover, and
@@ -174,6 +194,10 @@ type ProfileUsage struct {
 	OutputTokens     int    `json:"output_tokens"`
 	CacheReadTokens  int    `json:"cache_read_tokens"`
 	CacheWriteTokens int    `json:"cache_write_tokens"`
+	// CostUSD is the read-time USD estimate (settings.price_table), filled by the
+	// API handler from UsageByProfileModel; 0 (omitempty) = 未配价格表。
+	// 归档任务的聚合没有模型维度,无法计价,故此费用只覆盖活动账本。
+	CostUSD float64 `json:"cost_usd,omitempty"`
 }
 
 // UsageByProfile returns global token spend grouped by profile name, most-used
@@ -248,6 +272,10 @@ type ProfileDayUsage struct {
 	InputTokens     int    `json:"input_tokens"`
 	OutputTokens    int    `json:"output_tokens"`
 	CacheReadTokens int    `json:"cache_read_tokens"`
+	// CostUSD is the read-time USD estimate (settings.price_table), filled by the
+	// API handler from UsageDailyModel; 0 (omitempty) = 未配价格表。
+	// 归档任务的聚合没有模型维度,无法计价,故此费用只覆盖活动账本。
+	CostUSD float64 `json:"cost_usd,omitempty"`
 }
 
 // UsageDaily returns per-(profile, day) token buckets for the past `days` days
@@ -261,7 +289,7 @@ SELECT COALESCE(profile_name,'') AS profile_name,
        sqlUTCDate("ts") AS day,
        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read),0)
 FROM llm_usage
-WHERE ts >= now() - ($1 * interval '1 day')
+WHERE `+sqlNotBeforeExpr("ts", sqlNowMinusDays("$1"))+`
 GROUP BY profile_name, day
 ORDER BY day`, days)
 	if err != nil {
@@ -324,4 +352,87 @@ func ParseExpID(s string) int64 {
 		return 0
 	}
 	return n
+}
+
+// ProfileModelUsage is one (profile, model) bucket of the live llm_usage ledger —
+// the model dimension UsageByProfile loses by grouping per profile only. API 层用它
+// 逐桶按 settings.price_table 计价，再把费用折回 by_profile/by-day 行(读时计算，
+// 不落列，价格改了历史即刻生效)。归档任务聚合不含模型维度，故这里只查活动账本。
+type ProfileModelUsage struct {
+	ProfileName  string
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	CacheRead    int
+	CacheWrite   int
+}
+
+// UsageByProfileModel aggregates the live ledger per (profile, model)。仅供 API 层
+// 计价：未配置价格表时不查询。
+func (d *DB) UsageByProfileModel() ([]ProfileModelUsage, error) {
+	rows, err := d.Query(`
+SELECT COALESCE(profile_name,'') AS profile_name, COALESCE(NULLIF(model,''),'(unknown)') AS model,
+       COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+       COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0)
+FROM llm_usage
+GROUP BY profile_name, model`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProfileModelUsage{}
+	for rows.Next() {
+		var p ProfileModelUsage
+		if err := rows.Scan(&p.ProfileName, &p.Model, &p.InputTokens, &p.OutputTokens,
+			&p.CacheRead, &p.CacheWrite); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ProfileDayModelUsage is one (profile, day, model) bucket of the live ledger。
+// UsageDaily 按 (profile, day) 分组、丢了模型维度；这个细分查询让 API 层能按
+// (profile, day) 现算费用后再折回原字段(见 UsageDaily 的字段契约)。
+type ProfileDayModelUsage struct {
+	ProfileName  string
+	Date         string
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	CacheRead    int
+	CacheWrite   int
+}
+
+// UsageDailyModel is UsageDaily 的模型细分版：同一时间窗口(days<=0 →365 天)，
+// 多分一维 model。仅供 API 层计价；未配置价格表时不查询。
+func (d *DB) UsageDailyModel(days int) ([]ProfileDayModelUsage, error) {
+	if days <= 0 {
+		days = 365
+	}
+	rows, err := d.Query(`
+SELECT COALESCE(profile_name,'') AS profile_name,
+       sqlUTCDate("ts") AS day,
+       COALESCE(NULLIF(model,''),'(unknown)') AS model,
+       COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+       COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0)
+FROM llm_usage
+WHERE `+sqlNotBeforeExpr("ts", sqlNowMinusDays("$1"))+`
+GROUP BY profile_name, day, model
+ORDER BY day`, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProfileDayModelUsage{}
+	for rows.Next() {
+		var p ProfileDayModelUsage
+		if err := rows.Scan(&p.ProfileName, &p.Date, &p.Model, &p.InputTokens, &p.OutputTokens,
+			&p.CacheRead, &p.CacheWrite); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -69,11 +70,11 @@ func (s *Server) pgCreateCustomTool(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, errCustomToolKeyFormat)
 		return
 	}
-	if req.Kind != "command" && req.Kind != "script" && req.Kind != "http" && req.Kind != "shell" {
+	if !toolKindKnown(req.Kind) {
 		writeErr(w, 400, errCustomToolKindInvalid)
 		return
 	}
-	if req.Kind == "http" && !hasSchemaProps(req.Schema) {
+	if req.Kind == toolKindHTTP && !hasSchemaProps(req.Schema) {
 		writeErr(w, 400, errCustomToolHTTPSchemaRequired)
 		return
 	}
@@ -111,11 +112,11 @@ func (s *Server) pgUpdateCustomTool(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if req.Kind != "command" && req.Kind != "script" && req.Kind != "http" && req.Kind != "shell" {
+	if !toolKindKnown(req.Kind) {
 		writeErr(w, 400, errCustomToolKindInvalid)
 		return
 	}
-	if req.Kind == "http" && !hasSchemaProps(req.Schema) {
+	if req.Kind == toolKindHTTP && !hasSchemaProps(req.Schema) {
 		writeErr(w, 400, errCustomToolHTTPSchemaRequired)
 		return
 	}
@@ -174,13 +175,13 @@ func (s *Server) pgTestCustomTool(w http.ResponseWriter, r *http.Request) {
 	tc := &actool.ToolContext{WorkingDir: s.m.dir} // run in the project dir, like a real call
 	var res actool.Result
 	switch req.Kind {
-	case "command":
+	case toolKindCommand:
 		res, _ = s.runCommandTool(ctx, req.Exec, params, tc)
-	case "script":
+	case toolKindScript:
 		res, _ = s.runScriptTool(ctx, "test", req.Exec, params, tc)
-	case "http":
+	case toolKindHTTP:
 		res, _ = s.runHTTPTool(ctx, req.Exec, params, tc)
-	case "shell":
+	case toolKindShell:
 		writeErr(w, 400, errCustomToolShellNoExec)
 		return
 	default:
@@ -264,7 +265,7 @@ func (s *Server) customTools() ([]actool.CoreTool, error) {
 	}
 	out := make([]actool.CoreTool, 0, len(rows))
 	for _, t := range rows {
-		if t.Kind == "shell" {
+		if t.Kind == toolKindShell {
 			continue // shell hints are handled by ToolResolve → Bash description
 		}
 		out = append(out, s.buildCustomTool(t))
@@ -286,11 +287,11 @@ func (s *Server) buildCustomTool(t *db.Tool) actool.CoreTool {
 			params = map[string]any{}
 		}
 		switch kind {
-		case "command":
+		case toolKindCommand:
 			return s.runCommandTool(ctx, execRaw, params, tc)
-		case "script":
+		case toolKindScript:
 			return s.runScriptTool(ctx, key, execRaw, params, tc)
-		case "http":
+		case toolKindHTTP:
 			return s.runHTTPTool(ctx, execRaw, params, tc)
 		default:
 			return actool.Errorf("未知自定义工具类型: " + kind), nil
@@ -347,6 +348,12 @@ func (s *Server) runCommandTool(ctx context.Context, execRaw json.RawMessage, pa
 		return actool.Errorf("command 为空"), nil
 	}
 	cmd := renderTemplate(spec.Command, params, shellQuote)
+	// Windows 上命令经 PowerShell 执行；preamble 把控制台输出编码显式设为
+	// UTF-8，避免中文输出以 GBK 字节返回后在 JSON 里变成乱码（批次 7 / #4–5）。
+	// ARTEX_CHILD_UTF8=0 可关闭（与 execPython 的环境注入共用开关）。
+	if runtime.GOOS == "windows" && !childUTF8Disabled() {
+		cmd = "$OutputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; " + cmd
+	}
 	// 复用 Bash 也在用的底层 run(经 Bash CoreTool.Call):自动继承安全 floor/超时/
 	// 代理 env/输出溢出。工具与 Bash 平级、共用底层,不经过 Bash 这个工具让模型调。
 	bashIn, _ := json.Marshal(map[string]any{"command": cmd})
@@ -409,14 +416,16 @@ func execPython(ctx context.Context, interp, key, code string, params map[string
 	defer cancel()
 	c := exec.CommandContext(runCtx, interp, tmp)
 	c.Dir = workDir
-	c.Env = append(os.Environ(), sessionEnv...) // 会话代理 env
-	for k, v := range params {                  // 标量参数镜像成 TOOL_<NAME>
+	// UTF-8 默认值放会话 env 之前：会话显式配置同名变量时后者覆盖。
+	c.Env = append(os.Environ(), childUTF8Env()...)
+	c.Env = append(c.Env, sessionEnv...) // 会话代理 env
+	for k, v := range params {           // 标量参数镜像成 TOOL_<NAME>
 		if sv, ok := scalarStr(v); ok {
 			c.Env = append(c.Env, "TOOL_"+strings.ToUpper(k)+"="+sv)
 		}
 	}
-	pj, _ := json.Marshal(params)
-	c.Stdin = bytes.NewReader(pj) // 参数 JSON 走 stdin
+	paramsJSON, _ := json.Marshal(params)
+	c.Stdin = bytes.NewReader(paramsJSON) // 参数 JSON 走 stdin
 	out, err := c.CombinedOutput()
 	body := string(out)
 	if runCtx.Err() == context.DeadlineExceeded {

@@ -115,14 +115,15 @@ func TestInterceptDetails(t *testing.T) {
 	t.Run("archive compatibility", func(t *testing.T) {
 		for _, legacy := range []bool{true, false} {
 			id := create(t, &InterceptAudit{InitialAction: "ask", ExecutionStatus: "not_started"})
-			var raw []byte
-			if err := d.QueryRow(`SELECT row_to_json(ip) FROM intercept_pending ip WHERE id=$1`, id).Scan(&raw); err != nil {
+			raw, _, err := queryArchiveRows(d, `SELECT * FROM intercept_pending WHERE id=$1`, id)
+			if err != nil {
 				t.Fatal(err)
 			}
-			var row map[string]any
-			if err := json.Unmarshal(raw, &row); err != nil {
-				t.Fatal(err)
+			var items []map[string]any
+			if err := json.Unmarshal(raw, &items); err != nil || len(items) != 1 {
+				t.Fatalf("intercept row json: %v items=%d", err, len(items))
 			}
+			row := items[0]
 			if legacy {
 				delete(row, "audit")
 				delete(row, "decision_source")

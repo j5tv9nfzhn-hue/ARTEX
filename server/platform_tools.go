@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/fsutil"
+	"github.com/Autumn-27/artex/stageerr"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -146,11 +148,11 @@ func (s *Server) toolCreateSkill() actool.CoreTool {
 			}
 			path := filepath.Join(s.skillDir, a.Name)
 			if err := os.MkdirAll(path, 0o755); err != nil {
-				return actool.Errorf(err.Error()), nil
+				return actool.Errorf(stageerr.Wrap(stageerr.StagePersist, "创建技能目录失败", err).Error()), nil
 			}
-			if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(doc), 0o644); err != nil {
+			if err := fsutil.WriteFileAtomic(filepath.Join(path, "SKILL.md"), []byte(doc), 0o644); err != nil {
 				_ = os.RemoveAll(path)
-				return actool.Errorf(err.Error()), nil
+				return actool.Errorf(stageerr.Wrap(stageerr.StagePersist, "写入技能文件失败", err).Error()), nil
 			}
 			return actool.Text("skill created: " + a.Name), nil
 		})
@@ -180,7 +182,7 @@ func (s *Server) toolUpdateSkillFile() actool.CoreTool {
 			}
 			clean, msg := skillRelPath(rel)
 			if msg != "" {
-				return actool.Errorf("非法路径: " + msg), nil
+				return actool.Errorf(stageerr.Msgf(stageerr.StageToolValidate, "非法路径: %s", msg).Error()), nil
 			}
 			if s.SkillReviewGateEnabled() {
 				return s.proposeOrWrite(ctx, a.Name, clean, a.Content,
@@ -188,10 +190,10 @@ func (s *Server) toolUpdateSkillFile() actool.CoreTool {
 			}
 			full := filepath.Join(skillPath, clean)
 			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-				return actool.Errorf(err.Error()), nil
+				return actool.Errorf(stageerr.Wrap(stageerr.StagePersist, "创建技能子目录失败", err).Error()), nil
 			}
-			if err := os.WriteFile(full, []byte(a.Content), 0o644); err != nil {
-				return actool.Errorf(err.Error()), nil
+			if err := fsutil.WriteFileAtomic(full, []byte(a.Content), 0o644); err != nil {
+				return actool.Errorf(stageerr.Wrap(stageerr.StagePersist, "写入技能文件失败", err).Error()), nil
 			}
 			return actool.Text("skill file written: " + a.Name + "/" + clean), nil
 		})
@@ -244,10 +246,10 @@ func (s *Server) toolCreateCustomTool() actool.CoreTool {
 			if !reToolKey.MatchString(a.Key) {
 				return actool.Errorf("key 需小写字母开头，仅含小写字母/数字/下划线"), nil
 			}
-			if a.Kind != "shell" && a.Kind != "command" && a.Kind != "script" && a.Kind != "http" {
+			if !toolKindKnown(a.Kind) {
 				return actool.Errorf("kind 需为 shell / command / script / http"), nil
 			}
-			if a.Kind == "http" && !hasSchemaProps(a.Schema) {
+			if a.Kind == toolKindHTTP && !hasSchemaProps(a.Schema) {
 				return actool.Errorf("http 工具必须提供参数 JSON Schema(不能留空)"), nil
 			}
 			if exist, _ := s.m.pg.GetTool(a.Key); exist != nil {
@@ -270,10 +272,10 @@ func (s *Server) toolUpdateCustomTool() actool.CoreTool {
 			if existing == nil || existing.System {
 				return actool.Errorf("只能修改自定义工具: " + a.Key), nil
 			}
-			if a.Kind != "shell" && a.Kind != "command" && a.Kind != "script" && a.Kind != "http" {
+			if !toolKindKnown(a.Kind) {
 				return actool.Errorf("kind 需为 shell / command / script / http"), nil
 			}
-			if a.Kind == "http" && !hasSchemaProps(a.Schema) {
+			if a.Kind == toolKindHTTP && !hasSchemaProps(a.Schema) {
 				return actool.Errorf("http 工具必须提供参数 JSON Schema(不能留空)"), nil
 			}
 			if err := s.m.pg.UpdateCustomTool(toDBTool(a)); err != nil {

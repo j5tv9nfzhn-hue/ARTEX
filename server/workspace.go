@@ -11,6 +11,9 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Autumn-27/artex/fsutil"
+	"github.com/Autumn-27/artex/stageerr"
 )
 
 // Workspace file manager — browse / view / edit / download / upload / delete the
@@ -167,11 +170,11 @@ func (s *Server) wsWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		writeErr(w, 500, err.Error())
+		writeErr(w, 500, stageerr.Wrap(stageerr.StagePersist, "创建工作区目录失败", err).Error())
 		return
 	}
-	if err := os.WriteFile(abs, []byte(req.Content), 0o644); err != nil {
-		writeErr(w, 500, err.Error())
+	if err := fsutil.WriteFileAtomic(abs, []byte(req.Content), 0o644); err != nil {
+		writeErr(w, 500, stageerr.Wrap(stageerr.StagePersist, "写入工作区文件失败", err).Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "path": s.wsRel(abs)})
@@ -271,7 +274,7 @@ func (s *Server) wsUpload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := saveUpload(hdr, destAbs); err != nil {
-			writeErr(w, 500, err.Error())
+			writeErr(w, 500, stageerr.Wrap(stageerr.StagePersist, "写入上传文件失败", err).Error())
 			return
 		}
 		saved++
@@ -285,13 +288,35 @@ func saveUpload(hdr *multipart.FileHeader, dest string) error {
 		return err
 	}
 	defer src.Close()
-	out, err := os.Create(dest)
+	// 原子落盘：同目录临时文件写完再 rename。上传中断/失败不会在目标路径留下半截
+	// 文件，上传进行中其它读者（agent/文件管理器）也不会读到不完整内容。
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, src)
-	return err
+	tmpName := tmp.Name()
+	discard := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+	if _, err := io.Copy(tmp, src); err != nil {
+		discard()
+		return err
+	}
+	// CreateTemp 用 0600；与 wsWrite 的最终权限保持一致。
+	if err := tmp.Chmod(0o644); err != nil {
+		discard()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // sanitizeFilename strips characters unsafe for a Content-Disposition filename token.

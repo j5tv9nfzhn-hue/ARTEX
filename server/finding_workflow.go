@@ -83,7 +83,9 @@ func (s *Server) seedFindingWorkflowTools() {
 			}
 		}
 		raw, _ := json.Marshal(schema)
-		result, err := s.m.pg.Exec(`UPDATE tools SET schema=$2::jsonb,updated_at=now() WHERE key=$1 AND system AND schema=$3::jsonb`, key, string(raw), string(row.Schema))
+		// schema 比较用 json() 规范化后等值，对齐 jsonb 的等值语义。
+		sqlUpd := `UPDATE tools SET schema=json($2),updated_at=now() WHERE key=$1 AND system AND json(schema)=json($3)`
+		result, err := s.m.pg.Exec(sqlUpd, key, string(raw), string(row.Schema))
 		if err != nil {
 			log.Printf("[evidence] upgrade %s: %v", key, err)
 			return
@@ -96,21 +98,55 @@ func (s *Server) seedFindingWorkflowTools() {
 	// flags survive; the one-time flag also preserves future user unbinding.
 	readers := `["worker","reporter"]`
 	for _, key := range []string{"traffic_search", "traffic_get", "traffic_blob"} {
-		if _, err := s.m.pg.Exec(`UPDATE tools SET agents=$2::jsonb WHERE key=$1 AND system AND (agents='["worker"]'::jsonb OR (agents @> '["worker","planner","mainagent","auto","pentest"]'::jsonb AND jsonb_array_length(agents)=5))`, key, readers); err != nil {
+		if _, err := s.m.pg.Exec(sqlSetReadersSQL(), key, readers); err != nil {
 			return
 		}
 	}
-	if _, err := s.m.pg.Exec(`UPDATE tools SET agents=$1::jsonb WHERE key='get_finding_traffic' AND system AND agents @> '["auto","reporter"]'::jsonb AND jsonb_array_length(agents)=2`, `["auto","reporter","worker","planner","mainagent","pentest"]`); err != nil {
+	if _, err := s.m.pg.Exec(sqlGetTrafficAgentsSQL(), `["auto","reporter","worker","planner","mainagent","pentest"]`); err != nil {
 		return
 	}
 	// Replace the previous code default only; preserve customized binding lists.
-	if _, err := s.m.pg.Exec(`UPDATE tools SET agents='["reporter"]'::jsonb WHERE key='bind_finding_traffic' AND system AND agents @> '["worker","planner","mainagent","auto","pentest"]'::jsonb AND jsonb_array_length(agents)=5`); err != nil {
+	if _, err := s.m.pg.Exec(sqlBindTrafficAgentsSQL()); err != nil {
 		return
 	}
 	if err := s.m.pg.AddAgentToToolBinding("reporter", []string{"bind_finding_traffic"}); err != nil {
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
+}
+
+// 下面的助手把「agents 恰好等于某个默认集合」的判定拆成双引擎版本。
+//
+//	PG:     agents @> '<list>' AND jsonb_array_length(agents)=N
+//
+// agentsSetEqualsCond 表达「agents 恰好等于某个默认集合」。
+//
+//	(SELECT COUNT(*) FROM json_each(agents))=N AND NOT EXISTS
+//	  （json_each('<list>') 里存在 agents 中没有的成员）
+//
+// 「包含全部成员 + 长度相等」与「互为子集」等价，即集合相等；这是原 PostgreSQL
+// `agents @> '<list>' AND jsonb_array_length(agents)=N` 的语义。jsonb 运算符与
+// jsonb_array_length 在 SQLite 全无，故改用 json_each 计数。
+func agentsSetEqualsCond(list string, n int) string {
+	return `((SELECT COUNT(*) FROM json_each(agents))=` + strconv.Itoa(n) + ` AND NOT EXISTS (SELECT 1 FROM json_each('` + list + `') w WHERE NOT EXISTS (SELECT 1 FROM json_each(agents) a WHERE a.value=w.value)))`
+}
+
+func sqlSetReadersSQL() string {
+	return `UPDATE tools SET agents=json($2) WHERE key=$1 AND system AND (json(agents)=json('["worker"]') OR ` + agentsSetEqualsCond(`["worker","planner","mainagent","auto","pentest"]`, 5) + `)`
+}
+
+func sqlGetTrafficAgentsSQL() string {
+	return `UPDATE tools SET agents=` + agentsJSONLit(`["auto","reporter"]`) + ` WHERE key='get_finding_traffic' AND system AND ` + agentsSetEqualsCond(`["auto","reporter"]`, 2)
+}
+
+func sqlBindTrafficAgentsSQL() string {
+	return `UPDATE tools SET agents=` + agentsJSONLit(`["reporter"]`) + ` WHERE key='bind_finding_traffic' AND system AND ` + agentsSetEqualsCond(`["worker","planner","mainagent","auto","pentest"]`, 5)
+}
+
+// agentsJSONLit 返回写入 agents 列的字面量形态：TEXT 列写 JSON 文本即可
+// （比较前两侧都有 json() 规范化）。
+func agentsJSONLit(list string) string {
+	return `json('` + list + `')`
 }
 
 func objectProperty(parent map[string]any, key string) map[string]any {

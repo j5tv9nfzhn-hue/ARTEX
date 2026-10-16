@@ -20,6 +20,12 @@ import (
 
 const taskArchivePollInterval = 2 * time.Second
 
+// taskArchiveWorkerDisabledEnv 与 notifier 的 notifyBackgroundDisabledEnv 同构：
+// 测试二进制里多个 Server 的后台归档 worker 会泄漏并互抢归档任务，在 SQLite
+// 单写者模型下把彼此顶成 SQLITE_BUSY。队列本身由测试直接驱动
+// （runOneTaskArchiveJob），后台轮询只在生产里需要，故给一个总开关。
+const taskArchiveWorkerDisabledEnv = "ARTEX_TASK_ARCHIVE_WORKER_DISABLED"
+
 type archiveBatchRequest struct {
 	TaskIDs    []string `json:"task_ids"`
 	ArchiveIDs []int64  `json:"archive_ids"`
@@ -34,6 +40,9 @@ type archiveBatchItem struct {
 }
 
 func (s *Server) startTaskArchiveWorker() {
+	if os.Getenv(taskArchiveWorkerDisabledEnv) == "1" {
+		return
+	}
 	if s.m == nil || s.m.pg == nil {
 		return
 	}
@@ -63,7 +72,7 @@ func (s *Server) startTaskArchiveWorker() {
 		ticker := time.NewTicker(taskArchivePollInterval)
 		defer ticker.Stop()
 		for {
-			if err := s.runOneTaskArchiveJob(); err != nil {
+			if _, err := s.runOneTaskArchiveJob(); err != nil {
 				log.Printf("[task-archive] worker: %v", err)
 			}
 			select {
@@ -87,10 +96,55 @@ func (s *Server) notifyTaskArchiveWorker() {
 	}
 }
 
-func (s *Server) runOneTaskArchiveJob() error {
+// isTransientSQLiteBusy 判定「锁竞争型」瞬态失败：这类错误重跑即可，且归档
+// 任务框架（FailTaskArchiveJob 回排队）本身按可重试设计。
+func isTransientSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "database is locked")
+}
+
+// runOneTaskArchiveJob runs one queued archive job, retrying lock contention.
+//
+// SQLite is a single-writer database: a concurrent writer (the notifier, a
+// request handler) can hold the file lock long enough that a restore transaction
+// fails with SQLITE_BUSY. Retrying is the right response, because the failure is
+// in obtaining the lock, not in the work itself.
+//
+// The retry must not mask the failure it is retrying. An earlier version returned
+// on the first attempt whose error was nil, which included an attempt that had
+// simply found no job left to claim (ran=false) after the failed job had been
+// re-queued — so a real failure was reported as success. A transient failure is
+// therefore only cleared by an attempt that actually ran and succeeded; if the
+// queue is simply empty, the recorded failure is returned.
+func (s *Server) runOneTaskArchiveJob() (bool, error) {
+	var last error
+	ran := false
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(300 * time.Millisecond)
+		}
+		r, err := s.runOneTaskArchiveJobAttempt()
+		if err == nil && r {
+			return true, nil
+		}
+		if err != nil && !isTransientSQLiteBusy(err) {
+			return r, err
+		}
+		if err != nil {
+			last = err
+		}
+		ran = ran || r
+	}
+	return ran, last
+}
+
+func (s *Server) runOneTaskArchiveJobAttempt() (bool, error) {
 	job, err := s.m.pg.ClaimTaskArchiveJob(s.ctx)
 	if err != nil || job == nil {
-		return err
+		return false, err
 	}
 	var runErr error
 	switch job.State {
@@ -105,13 +159,13 @@ func (s *Server) runOneTaskArchiveJob() error {
 	}
 	if runErr != nil {
 		if failErr := s.m.pg.FailTaskArchiveJob(job.ID, job.State, runErr); failErr != nil {
-			return errors.Join(runErr, failErr)
+			return true, errors.Join(runErr, failErr)
 		}
-		return fmt.Errorf("archive job %d (%s): %w", job.ID, job.State, runErr)
+		return true, fmt.Errorf("archive job %d (%s): %w", job.ID, job.State, runErr)
 	}
 	// Drain another queued item without waiting for the periodic poll.
 	s.notifyTaskArchiveWorker()
-	return nil
+	return true, nil
 }
 
 func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {

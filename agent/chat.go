@@ -152,13 +152,14 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		Compaction:            compactionConfig(c.window),
 		Todos:                 actool.NewTodoStore(),
 		// large tool output spills to cmd-output/ under the session dir.
-		// 截断上限用 SDK 默认(tool.Capture 的 30000 字符)。
-		ToolOutputDir: filepath.Join(sessionWorkDir, "cmd-output"),
+		// 截断上限见 maxToolOutputChars（超限全量落盘可重读）。
+		ToolOutputDir:      filepath.Join(sessionWorkDir, "cmd-output"),
+		MaxToolOutputChars: maxToolOutputChars, // 工具输出入历史的上限(超限全量落盘可重读)
 		// 命中预算(步数)→ SDK 跑收尾:输出一句总结。Prompt 与收尾轮数按本 agent key 后台可编辑
 		// (自定义 agent 各自一份;留空/0 用通用默认:10 轮)。
 		Settlement:   wrapupSettlement(agentKey, nil),
 		NonStreaming: c.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:    c.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
+		MaxTokens:    c.maxTokens(),    // 0 = 不单独设限;norma harness 兜底为 32768(harness/query.go maxTokens)
 	}
 	if c.guard != nil {
 		opts.Hooks = c.guard.Hooks()

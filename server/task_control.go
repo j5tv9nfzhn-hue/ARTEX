@@ -140,7 +140,7 @@ func (s *Server) applyTaskControlWithCause(t *Task, action string, pauseCause er
 			pauseCause = agent.AbortPausedByUser
 		}
 		s.engine.Pause(t.ID, pauseCause)
-		if err := s.m.ApplyTaskPause(t.ID); err != nil {
+		if err := s.m.ApplyTaskPauseReason(t.ID, pauseCauseReason(pauseCause)); err != nil {
 			if !wasEnginePaused && !wasQueued {
 				s.engine.Resume(t)
 			}
@@ -150,6 +150,10 @@ func (s *Server) applyTaskControlWithCause(t *Task, action string, pauseCause er
 		// after the persistent pause commits, so a failed control request is fully
 		// compensated and does not lose an otherwise valid conversation turn.
 		s.cancelTaskChat(t.ID, agent.AbortChatPausedWithTask)
+		// 中断联动（批次 6 / #27、#28）：打断在跑的后台压缩（它刻意不随规划轮
+		// 结束而停），并落一个可回滚的中断检查点。
+		s.interruptTaskCompaction(t, agent.AbortPausedByUser)
+		s.captureTaskCheckpoint(t, db.CheckpointReasonInterrupt, "任务已暂停（中断）", false)
 		out.Paused, out.Status = true, "paused"
 		go s.reconcileConcurrency()
 	case "resume":

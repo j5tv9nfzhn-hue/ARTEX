@@ -22,6 +22,11 @@ type Filter struct {
 	VulnClassExclude []string `json:"vulnclass_exclude"`
 	// OnStatusChange 决定该渠道是否接收漏洞状态变更事件（仅 realtime 模式有意义）。
 	OnStatusChange bool `json:"on_status_change"`
+	// OnTaskStatus 决定是否接收任务状态变化事件（完成/失败/超时/暂停）；
+	// OnApproval 决定是否接收「等待人工审批」。两者同样是 opt-in：存量渠道
+	// 缺这两个字段时解析为零值 false，不迁移；新建渠道由 server 侧写默认值开启。
+	OnTaskStatus bool `json:"on_task_status"`
+	OnApproval   bool `json:"on_approval"`
 }
 
 // ParseFilter 解析渠道过滤配置。
@@ -69,14 +74,30 @@ func (f Filter) Validate() error {
 // Match 判定一个事件是否应投递到带有该过滤条件的渠道。
 //
 // **永不返回 error**，理由同 ParseFilter：任何内部异常都按「命中」处理。
-// 判定顺序：事件类型 → 级别门槛 → 任务/资产范围 → 漏洞类型关键词。
+// 判定顺序：事件类型门 → 级别门槛 → 任务/资产范围 → 漏洞类型关键词。
 func Match(f Filter, s Snapshot) bool {
-	// 状态变更事件只有显式开启的渠道才接收。默认关，因为绝大多数使用者
-	// 期望「推送」指的是「发现新漏洞」，而不是流水账式地跟进每个状态流转。
-	if s.Kind == EventFindingStatusChanged && !f.OnStatusChange {
-		return false
+	// 状态变更与两类任务级事件都只有**显式开启**的渠道才接收。默认关，因为
+	// 绝大多数使用者期望「推送」指的是「发现新漏洞」，而不是流水账式地跟进
+	// 每个状态流转。任务结束/待审批虽属「人必须知道」，但默认替所有存量渠道
+	// 打开会瞬间改变它们的行为，所以同样 opt-in，由新建渠道的默认值开启。
+	switch s.Kind {
+	case EventFindingStatusChanged:
+		if !f.OnStatusChange {
+			return false
+		}
+	case EventTaskStatusChanged:
+		if !f.OnTaskStatus {
+			return false
+		}
+	case EventApprovalPending:
+		if !f.OnApproval {
+			return false
+		}
 	}
-	if !AtLeast(s.Severity, f.MinSeverity) {
+	// 任务级事件没有级别概念（severity 为空、序数为 0）：若仍过级别门，任何
+	// 非空的 min_severity 配置都会把它们静默挡掉——用户明明开了任务通知却
+	// 什么都收不到。因此这两类事件在此跳过级别门。
+	if !isTaskKind(s.Kind) && !AtLeast(s.Severity, f.MinSeverity) {
 		return false
 	}
 	if len(f.TaskIDs) > 0 && !slices.Contains(f.TaskIDs, s.TaskID) {

@@ -18,7 +18,7 @@ const (
 // 任务元数据 API 的中文错误；name、pinned 是 JSON 字段，保持原文。
 const (
 	errTaskMetaRequestTooLarge = "请求正文过大"
-	errTaskMetaNoFields        = "必须提供 name 或 pinned 中的一个"
+	errTaskMetaNoFields        = "必须提供 name、pinned 或 token_budget 中的一个"
 	errTaskMetaNameEmpty       = "任务名称不能为空"
 	// errTaskMetaNameTooLongFmt 由 fmt.Sprintf 填入长度上限。
 	errTaskMetaNameTooLongFmt = "任务名称最多只能输入 %d 个字符"
@@ -36,6 +36,10 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name   *string `json:"name"`
 		Pinned *bool   `json:"pinned"`
+		// TokenBudget(nil=不改;0=显式不限;负数由 DB 层归一为 0):预算闸每 run
+		// 结束重读它,调高后下一次 run 收尾即可恢复通过——典型用法是预算用尽
+		// 自动暂停后,用户调高预算再恢复任务。
+		TokenBudget *int `json:"token_budget"`
 	}
 	if err := decode(r, &request); err != nil {
 		var tooLarge *http.MaxBytesError
@@ -46,7 +50,7 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if request.Name == nil && request.Pinned == nil {
+	if request.Name == nil && request.Pinned == nil && request.TokenBudget == nil {
 		writeErr(w, http.StatusBadRequest, errTaskMetaNoFields)
 		return
 	}
@@ -62,7 +66,7 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Name = &name
 	}
-	task, err := s.m.UpdateTaskMetadata(taskID, db.TaskPatch{Name: request.Name, Pinned: request.Pinned})
+	task, err := s.m.UpdateTaskMetadata(taskID, db.TaskPatch{Name: request.Name, Pinned: request.Pinned, TokenBudget: request.TokenBudget})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

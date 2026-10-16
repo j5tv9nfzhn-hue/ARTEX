@@ -140,6 +140,7 @@ func TestTerminalTextNonAbortReasons(t *testing.T) {
 func TestAbortCausesAreWellFormed(t *testing.T) {
 	all := []*AbortCause{
 		AbortPausedByUser, AbortPausedByOrchestrator, AbortTaskDeleted, AbortPausedOnReload,
+		AbortPausedByTokenBudget,
 		AbortGoalMet, AbortSettleDrainTimeout, AbortKilledByPlanner, AbortWorkPausedByUser,
 		AbortWorkCancelledByUser, AbortWorkFinished, AbortPausedRaceGuard,
 		AbortChatStoppedByUser, AbortChatPausedWithTask, AbortChatTurnFinished,

@@ -231,7 +231,7 @@ func TestParseStructuredCompanyScope(t *testing.T) {
 func TestCompanyICPAttribution(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	// 关连接必须走 t.Cleanup 且**注册在清理之前**：t.Cleanup 是后进先出，
 	// 先注册关闭 → 关闭最后执行，下面的数据清理才连得上库。
@@ -316,7 +316,7 @@ func TestCompanyICPAttribution(t *testing.T) {
 func TestCompanyScopeAttribution(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	as := d.Assets()
 	cs := d.Companies()

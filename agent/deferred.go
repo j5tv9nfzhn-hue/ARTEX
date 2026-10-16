@@ -13,13 +13,21 @@ import (
 // placed as the LAST system-prompt segment, with DynamicBoundary set so the whole
 // (session-fixed) system prompt — including the block — is cached (design doc
 // §2.1 / C1). Skill-gated MCP names are NOT in this block; they surface when their
-// skill loads. Returns a single plain segment + boundary 0 when there is no global
-// block to add.
+// skill loads. Without a global block the single plain segment is still placed
+// inside the boundary: norma only sends cache_control when boundary>0, so
+// returning 0 here would leave the default path re-billing the entire system
+// prompt at full price on every request. 无块时也整段缓存的依据：worker 的
+// system 虽混入 per-intent 数据，但在单次 run 内恒定（跨轮复用命中），
+// planner/chat 的 system 跨轮/跨唤醒稳定；Anthropic 缓存区间内每轮复用，
+// 首轮 1.25x write 一次即回本。boundary=len(system) 命中 SDK 的“b>=len →
+// 整段一个块”分支。
 func deferredSystem(sysText string, def DeferredInfo) (system []string, boundary int) {
 	sysText += def.FindingGuidance
 	block := actool.RenderDeferredToolsBlock(def.GlobalNames)
 	if block == "" {
-		return []string{sysText}, 0
+		system = []string{sysText}
+		boundary = len(system) // b >= len → 整段 system 一个缓存块
+		return system, boundary
 	}
 	system = []string{sysText, block}
 	boundary = len(system) // b >= len → whole system prompt cached (SDK guard)

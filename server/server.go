@@ -26,6 +26,8 @@ import (
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/artex/llmpool"
 	"github.com/Autumn-27/artex/llmrec"
+	"github.com/Autumn-27/artex/llmtest"
+	"github.com/Autumn-27/artex/metrics"
 	"github.com/Autumn-27/artex/notify"
 	"github.com/Autumn-27/artex/report"
 	"github.com/Autumn-27/artex/traffic"
@@ -189,6 +191,14 @@ type Server struct {
 	// learned about which backends are out of credit / rate-limited.
 	llmHealth *llmpool.Registry
 
+	// roleHealthByRole holds one breaker registry per agent role that has a
+	// configured fallback chain (agent_llm_fallbacks). Deliberately in-memory only
+	// (nil persist/forget) and never shared with llmHealth or across roles — 角色级
+	// 故障隔离(计划 #151–152):一个角色的链熔断不能影响其他角色/全局链的解析与健康。
+	// 注册表按角色懒创建、跨 provider 缓存重建存活,由 applyRetryPolicy 推熔断参数。
+	roleHealthMu     sync.Mutex
+	roleHealthByRole map[string]*llmpool.Registry
+
 	// Explicit task chains use one task-scoped dynamic provider shared by goals,
 	// planner, workers, and the main agent. Bundles are stable; their runtime reads
 	// the persisted current profile at every new LLM call.
@@ -260,6 +270,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		defer s.cfgMu.Unlock()
 		return s.llmOn
 	})
+	// 批次 6：意图终态 → 时间线检查点（#29–#35）。
+	s.engine.SetIntentSettledHook(s.onIntentSettled)
 	// Wire DB-stored prompt templates into the agents (新版方案 §3.3 / §5a). With no
 	// override row, agents keep their built-in defaults — behavior is unchanged.
 	if m.pg != nil {
@@ -360,6 +372,13 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	} else {
 		log.Printf("[engine] no LLM provider configured — engine idle until set via /api/llm or env")
 	}
+	// 平台 shell 探测（#9）：启动时打一条日志，让运维/模型排障时知道 Bash 工具在此
+	// 平台实际用什么解释器、PATH 上还有哪些 shell。
+	if sc := shellCapability(); len(sc.Available) > 0 {
+		log.Printf("[shell] 平台 %s：Bash 工具执行器=%s，PATH 上可用 shell=%s", sc.OS, sc.Executor, strings.Join(sc.Available, ","))
+	} else {
+		log.Printf("[shell] 平台 %s：Bash 工具执行器=%s，PATH 上未探测到已知 shell", sc.OS, sc.Executor)
+	}
 	s.restoreTaskRuntimes()
 	go s.reconcileConcurrency()
 	s.startTaskArchiveWorker()
@@ -380,6 +399,8 @@ func (s *Server) restoreTaskRuntimes() {
 		if n, _ := t.Store.ResetRunningIntents(); n > 0 {
 			log.Printf("[engine] task %s 重置 %d 个残留 running 意图为 open", t.ID, n)
 		}
+		// 批次 6 / #37：重启后的压缩恢复一致性校验（上次进程中断在压缩中）。
+		s.recoverCompactionState(t)
 		if lifecycle.Paused {
 			s.engine.Pause(t.ID, agent.AbortPausedOnReload)
 		}
@@ -458,8 +479,8 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 	format := cfg.Provider()
 	var id int64
 	// 这个 legacy 端点的请求体不含轮询/收发/输出上限参数,故把库里已存的值原样带回 —
-	// 否则每次保存都会把 profile 的 priority、pool_exclude、streaming 以及输出上限
-	// (max_tokens / max_tokens_field)悄悄重置成零值。
+	// 否则每次保存都会把 profile 的 priority、pool_exclude、streaming、输出上限
+	// (max_tokens / max_tokens_field)以及输入模态声明(input_modalities)悄悄重置成零值。
 	var priority int
 	var poolExclude bool
 	streaming := true // 旧库/新建默认流式
@@ -467,6 +488,7 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 	var maxTokensField string
 	var sessionHeaderKey string
 	var retry db.RetryOverride
+	var inputModalities string
 	if profs, _ := s.m.pg.ListProfiles(); profs != nil {
 		for _, p := range profs {
 			if p.Name == "default" {
@@ -474,6 +496,7 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 				maxTokens, maxTokensField = p.MaxTokens, p.MaxTokensField
 				sessionHeaderKey = p.SessionHeaderKey
 				retry = p.Retry
+				inputModalities = p.InputModalities
 				break
 			}
 		}
@@ -484,7 +507,8 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 		ContextWindowK: cfg.ContextWindowK, ThinkingType: cfg.ThinkingType, ReasoningEffort: cfg.ReasoningEffort, IsDefault: true,
 		Priority: priority, PoolExclude: poolExclude, Streaming: streaming,
 		MaxTokens: maxTokens, MaxTokensField: maxTokensField, SessionHeaderKey: sessionHeaderKey,
-		Retry: retry,
+		Retry:           retry,
+		InputModalities: inputModalities,
 	})
 	if err != nil {
 		return err
@@ -767,6 +791,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/stats", s.stats)
+	mux.HandleFunc("GET /api/metrics", s.reliabilityMetrics)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/history", s.getLogsHistory)
 	mux.HandleFunc("GET /api/logs/stream", s.streamLogs)
@@ -838,8 +863,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}/llm/resolution", s.taskLLMResolutionHandler)
 	mux.HandleFunc("POST /api/tasks/{id}/intents/{iid}/control", s.controlIntent)
 	mux.HandleFunc("POST /api/tasks/{id}/intents/{iid}/messages", s.sendWorkerMessage)
-	mux.HandleFunc("POST /api/tasks/{id}/intents/{iid}/rerun", s.rerunIntent)    // 重跑单条 blocked/exhausted/stopped 意图
-	mux.HandleFunc("POST /api/tasks/{id}/intents/rerun-blocked", s.rerunBlocked) // 批量重跑本任务全部 blocked 意图
+	mux.HandleFunc("POST /api/tasks/{id}/intents/{iid}/steer", s.steerIntent)               // 引导:向运行中的 Worker 递话(不打断,下一步生效)
+	mux.HandleFunc("POST /api/tasks/{id}/intents/{iid}/rerun", s.rerunIntent)               // 重跑单条 blocked/exhausted/stopped 意图
+	mux.HandleFunc("POST /api/tasks/{id}/intents/rerun-blocked", s.rerunBlocked)            // 批量重跑本任务全部 blocked 意图
+	mux.HandleFunc("GET /api/tasks/{id}/checkpoints", s.taskCheckpoints)                    // 检查点:列出任务时间线检查点
+	mux.HandleFunc("POST /api/tasks/{id}/checkpoints/{cid}/revert", s.revertTaskCheckpoint) // 检查点:回滚任务时间线
 	mux.HandleFunc("POST /api/active", s.setActive)
 
 	mux.HandleFunc("GET /api/llm", s.getLLM)
@@ -903,7 +931,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/llm/records", s.pgListLLMRecords)
 	mux.HandleFunc("DELETE /api/llm/records", s.pgDeleteLLMRecords)
 	mux.HandleFunc("GET /api/llm/records/tasks", s.pgLLMTasks)
-	mux.HandleFunc("GET /api/llm/records/by-model", s.pgTokenByModel) // 按模型聚合本任务 token 用量
+	mux.HandleFunc("GET /api/llm/records/by-model", s.pgTokenByModel)   // 按模型聚合本任务 token 用量
+	mux.HandleFunc("GET /api/llm/records/by-worker", s.pgTokenByWorker) // 按角色聚合本任务 token 用量
 	mux.HandleFunc("GET /api/llm/records/{id}", s.pgGetLLMRecord)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
@@ -939,6 +968,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.pgSendConversationMessage)
 	mux.HandleFunc("POST /api/conversations/{id}/stop", s.pgStopConversation)
 	mux.HandleFunc("GET /api/conversations/{id}/messages/{seq}", s.pgConversationMsgDetail)
+	mux.HandleFunc("GET /api/conversations/{id}/checkpoints", s.pgListConversationCheckpoints)                // 检查点:列出会话时间线检查点
+	mux.HandleFunc("POST /api/conversations/{id}/checkpoints/{cid}/revert", s.pgRevertConversationCheckpoint) // 检查点:回滚会话时间线
 
 	mux.HandleFunc("GET /api/agents", s.pgListAgents)
 	mux.HandleFunc("POST /api/agents", s.pgCreateAgent)
@@ -946,6 +977,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/agents/{key}", s.pgUpdateAgent)
 	mux.HandleFunc("DELETE /api/agents/{key}", s.pgDeleteAgent)
 	mux.HandleFunc("PUT /api/agents/{key}/config", s.pgSaveAgentConfig)
+	mux.HandleFunc("GET /api/agents/{key}/llm-chain", s.pgGetAgentLLMChain)  // 备用模型链(链首=llm_profile_id)
+	mux.HandleFunc("PUT /api/agents/{key}/llm-chain", s.pgSaveAgentLLMChain) // 整体替换备用链(空=清空)
 	mux.HandleFunc("PUT /api/agents/{key}/prompt", s.pgSavePrompt)
 	mux.HandleFunc("POST /api/agents/{key}/prompt/reset", s.pgResetPrompt)
 	mux.HandleFunc("PUT /api/agents/{key}/wrapup", s.pgSaveWrapup)
@@ -1007,6 +1040,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/llm/profiles", s.pgSaveProfile)
 	mux.HandleFunc("DELETE /api/llm/profiles/{id}", s.pgDeleteProfile)
 	mux.HandleFunc("POST /api/llm/profiles/active", s.pgActivateProfile)
+	// 凭据实体（计划 46–47）：可被多个 LLM 配置引用
+	mux.HandleFunc("GET /api/llm/credentials", s.pgListCredentials)
+	mux.HandleFunc("POST /api/llm/credentials", s.pgSaveCredential)
+	mux.HandleFunc("DELETE /api/llm/credentials/{id}", s.pgDeleteCredential)
 	mux.HandleFunc("GET /api/llm/retry-policy", s.pgGetLLMRetryPolicy)
 	mux.HandleFunc("POST /api/llm/retry-policy", s.pgSaveLLMRetryPolicy)
 	mux.HandleFunc("GET /api/llm/pool", s.pgLLMPoolStatus)
@@ -1052,7 +1089,16 @@ func (s *Server) Handler() http.Handler {
 // --- handlers ---
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"ok": true, "service": "artex", "version": BuildVersion})
+	out := map[string]any{"ok": true, "service": "artex", "version": BuildVersion}
+	// 平台 shell 探测（#9）：登录页/前端可据此提示「模型 Bash 命令的实际执行器」。
+	out["shell"] = shellCapability()
+	writeJSON(w, 200, out)
+}
+
+// reliabilityMetrics 返回本次进程启动以来的工具调用可靠性快照（#1–3、#36、#165–171）。
+// 计数全在内存，重启清零；历史账本见 tool_usage / llm_usage 表。
+func (s *Server) reliabilityMetrics(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, metrics.TakeSnapshot())
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
@@ -1152,26 +1198,37 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	for _, t := range list {
 		dto := taskDTO(t, s.resolvedTaskStatus(t))
 		applyTaskArchiveBlocker(&dto, archiveBlockers)
-		metric := metrics[t.ExpID]
-		dto.Tokens = tokenTotalDTO(metric.Tokens)
-		// prefer the live in-memory heartbeat (fresher) and fall back to the
-		// persisted max activity time (survives restarts) for run-duration display.
-		dto.LastActivity = metric.LastActivity
-		if live := s.engine.LastActivity(t.ID); live > dto.LastActivity {
-			dto.LastActivity = live
-		}
-		dto.GoalsTotal = metric.Goals.Total
-		dto.GoalsMet = metric.Goals.Met
-		dto.InFlight = metric.RunningIntents
-		dto.Findings = FindingSeverityDTO{
-			Critical: metric.Findings.Critical,
-			High:     metric.Findings.High,
-			Medium:   metric.Findings.Medium,
-			Low:      metric.Findings.Low,
-		}
+		s.applyListMetrics(&dto, t, metrics[t.ExpID])
 		dtos = append(dtos, dto)
 	}
 	writeJSON(w, 200, map[string]any{"tasks": dtos, "active": active})
+}
+
+// applyListMetrics 把 TaskListMetricsAll/One 的聚合填进任务 DTO（列表与详情共用，
+// 保证两处口径一致）。LastActivity 取持久化聚合与引擎内存心跳的较大值：内存更新鲜，
+// 持久化的跨重启可用。
+func (s *Server) applyListMetrics(dto *TaskDTO, t *Task, metric db.TaskListMetrics) {
+	dto.Tokens = tokenTotalDTO(metric.Tokens)
+	dto.LastActivity = metric.LastActivity
+	if live := s.engine.LastActivity(t.ID); live > dto.LastActivity {
+		dto.LastActivity = live
+	}
+	dto.GoalsTotal = metric.Goals.Total
+	dto.GoalsMet = metric.Goals.Met
+	dto.InFlight = metric.RunningIntents
+	dto.Findings = FindingSeverityDTO{
+		Critical: metric.Findings.Critical,
+		High:     metric.Findings.High,
+		Medium:   metric.Findings.Medium,
+		Low:      metric.Findings.Low,
+	}
+	// 正常情况差值非负（finding 总在任务开始后落库）；时钟回拨/归档迁移等异常时
+	// 钳到 0，不把负时长丢给前端。
+	if metric.FirstFindingMS > 0 {
+		dto.FirstFindingMS = metric.FirstFindingMS
+	}
+	dto.FindingsPerHour = findingsPerHour(metric.FindingsTotal, metric.RunSeconds)
+	dto.PendingApprovals = metric.PendingApprovals
 }
 
 func (s *Server) resolvedTaskStatus(t *Task) string {
@@ -1393,6 +1450,7 @@ func (s *Server) rerunBlocked(w http.ResponseWriter, r *http.Request) {
 
 // getLLM returns the current LLM config (key never exposed).
 func (s *Server) getLLM(w http.ResponseWriter, r *http.Request) {
+	noStore(w) // key_set 属于凭据状态，不允许被缓存
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	writeJSON(w, 200, map[string]any{
@@ -1469,7 +1527,15 @@ func (s *Server) setLLM(w http.ResponseWriter, r *http.Request) {
 	s.getLLM(w, r)
 }
 
-// testLLM makes a real minimal completion to verify the config works.
+// testLLM 通过 llmtest 的独立轻量探测做一次最小补全，验证配置可用（#54–74）。
+// 它与「拉取模型」的 pgListModels 是两个互不触发的独立端点（#61–63）：本处理器
+// 不发模型列表请求，pgListModels 也不做任何补全。探测固定单发、非流式，不带
+// tools / tool_choice / system / stream，不写会话历史、不触发压缩、不创建
+// worker，也不经过完整 Agent 执行栈；失败时把 HTTP 状态码与供应商原文原样带回
+// 前端（#41–42）。
+//
+// 保留 agent.TestConnection 的既有导出与行为不变，仅供其它调用方使用；本路由
+// 不再经过它。
 func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Provider         string `json:"provider"`
@@ -1480,60 +1546,57 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 		ThinkingType     string `json:"thinking_type"`
 		ReasoningEffort  string `json:"reasoning_effort"`
 		ProfileID        *int64 `json:"profile_id"`         // 测已存 profile 时传入：api_key 为空则用它存的 key
-		Streaming        *bool  `json:"streaming"`          // 省略=流式，与保存 profile 时同一套默认
 		SessionHeaderKey string `json:"session_header_key"` // 非空=测试时也带该自定义会话头，值为一次性随机 session id
+		// 旧前端仍会夹带 "streaming" 字段；独立探测恒为非流式（不携带 stream，
+		// #70），该字段被忽略。
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	cfg := agent.ConfigFrom(req.Provider, req.Model, req.BaseURL, req.APIKey, req.Proxy)
-	// mirror production: send the SAME thinking params so a provider that rejects the
-	// reasoning_effort/thinking field fails the test too (no false "test ok, run 400").
-	cfg.ThinkingType = req.ThinkingType
-	cfg.ReasoningEffort = req.ReasoningEffort
-	// 同理，收发模式也照该 profile 的选择来：只支持其中一种通道的端点必须在这里就
-	// 暴露，而不是等会话里才发现"测试通过的配置根本跑不动"。
-	if req.Streaming != nil {
-		cfg.Stream = *req.Streaming
-	}
-	// 自定义会话头名照该配置来：非空则测试请求也发这个头(值为一次性随机 session id，
-	// 见 TestConnection)。opencode zen 等强制要求 x-opencode-session 的端点，缺了它
-	// 直接 400，必须在测试路径上也带上，否则"对话通、测试 400"。
-	cfg.SessionHeaderKey = req.SessionHeaderKey
 	// API Key 解析优先级：表单输入 > 指定 profile 存的 key > 全局配置的 key。
 	// 已存 profile 的 key 不回传浏览器，所以测试已存配置时表单为空，需从 DB 取。
 	// 会话头名同理：表单未带时用已存 profile 的值兜底。
-	if req.ProfileID != nil && (cfg.APIKey == "" || cfg.SessionHeaderKey == "") {
+	apiKey := strings.TrimSpace(req.APIKey)
+	sessionHeaderKey := strings.TrimSpace(req.SessionHeaderKey)
+	if req.ProfileID != nil && (apiKey == "" || sessionHeaderKey == "") {
 		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
-			if cfg.APIKey == "" {
-				cfg.APIKey = p.APIKey
+			if apiKey == "" {
+				apiKey = p.APIKey
 			}
-			if cfg.SessionHeaderKey == "" {
-				cfg.SessionHeaderKey = p.SessionHeaderKey
+			if sessionHeaderKey == "" {
+				sessionHeaderKey = p.SessionHeaderKey
 			}
 		}
 	}
-	if cfg.APIKey == "" {
+	if apiKey == "" {
 		s.cfgMu.Lock()
-		cfg.APIKey = s.llmCfg.APIKey
+		apiKey = s.llmCfg.APIKey
 		s.cfgMu.Unlock()
 	}
-	if cfg.APIKey == "" {
+	if apiKey == "" {
 		writeJSON(w, 200, map[string]any{"ok": false, "error": trMsg(errLLMTestNoAPIKey)})
 		return
 	}
-	// 重试参数【不】带进连接测试:测试有 30s 硬超时,把配置的重试次数/长间隔叠上去
-	// 只会让一个本来能用的端点测成"超时失败"。测试看的是"这个端点通不通",重试节奏
-	// 是跑起来之后的事。
-	lat, reply, err := agent.TestConnection(r.Context(), cfg)
+	// 重试参数【不】带进连接测试：测试看的是「这个端点通不通」，重试节奏是跑起来
+	// 之后的事；独立探测本身就是单发不重试，总时限 10s（llmtest.DefaultTimeout）。
+	res, err := llmtest.Probe(r.Context(), llmtest.Config{
+		Format:           llmtest.Format(req.Provider),
+		BaseURL:          req.BaseURL,
+		APIKey:           apiKey,
+		Model:            req.Model,
+		Proxy:            req.Proxy,
+		ThinkingType:     req.ThinkingType,
+		ReasoningEffort:  req.ReasoningEffort,
+		SessionHeaderKey: sessionHeaderKey,
+	})
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	// 回传模型实际回复，让"测试通过"有据可查：看得见它确实说了话，而不只是 HTTP 200。
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "latency_ms": lat.Milliseconds(), "model": cfg.Model, "reply": truncateReply(reply),
+		"ok": true, "latency_ms": res.Latency.Milliseconds(), "model": res.Model, "reply": truncateReply(res.Reply),
 	})
 }
 
@@ -1559,6 +1622,7 @@ type createTaskReq struct {
 	SourceTaskIDs        []string `json:"source_task_ids,omitempty"`   // 仅直接、只读继承的来源任务
 	CompanyIDs           []int64  `json:"company_ids,omitempty"`       // 关联企业范围并快照关联当前企业资产;不复制资产或强制生成意图
 	TimeoutSeconds       int      `json:"timeout_seconds"`             // 任务级超时(秒);0/省略=不限时
+	TokenBudget          *int     `json:"token_budget,omitempty"`      // 任务级 token 预算(input+output,0=不限);省略/null=取全局默认 default_task_token_budget;显式给值(含 0=显式不限)以请求为准。用尽自动暂停并留痕,调高后可恢复
 	PlanHeartbeatSeconds int      `json:"plan_heartbeat_seconds"`      // planner 心跳触发间隔(秒);0/省略=默认600(10min);下限=默认=600,低于自动抬到600
 	SeedFirstIntent      *bool    `json:"seed_first_intent,omitempty"` // 创建时直接下发一条种子意图(内容=描述+目标),让 worker 免等首轮 planner 直接开跑;省略/null=默认关闭,走标准先规划再执行。显式传 true 才开(CTF 常一 work 解决时可省掉开跑前的 planner 轮)。
 	CoverageEnabled      *bool    `json:"coverage_enabled,omitempty"`  // 资产覆盖度功能;省略/null=默认开(true)。false=关闭覆盖度计算/展示/自动累积范围+隐藏 add_task_scope/list_untested_assets。company 关联不受影响。
@@ -1584,6 +1648,15 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TimeoutSeconds < 0 {
 		req.TimeoutSeconds = 0
+	}
+	// Token 预算语义:省略(null)= 取 settings 默认(default_task_token_budget);显式给值
+	// (含 0=显式不限)以请求为准;负值归一为 0(不限),与超时/心跳的容错口径一致。
+	tokenBudget := s.m.DefaultTaskTokenBudget()
+	if req.TokenBudget != nil {
+		tokenBudget = *req.TokenBudget
+	}
+	if tokenBudget < 0 {
+		tokenBudget = 0
 	}
 	if len(req.SourceTaskIDs) > db.MaxTaskSourceCount {
 		writeErr(w, 400, fmt.Sprintf(trMsg(errCreateTaskSourceLimit), db.MaxTaskSourceCount))
@@ -1619,6 +1692,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
 		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds,
+		TokenBudget:     tokenBudget,
 		CoverageEnabled: req.CoverageEnabled,
 		InterceptRules:  interceptRules,
 	})
@@ -1841,6 +1915,13 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	dto := taskDTO(t, s.resolvedTaskStatus(t))
 	archiveBlockers, _ := s.m.PG().TaskArchiveBlockers()
 	applyTaskArchiveBlocker(&dto, archiveBlockers)
+	// 详情 DTO 与列表同口径：补上首个发现耗时/产出速率/等待审批计数（单任务查询，
+	// 详情页 3s 轮询不会扫全表）。
+	if taskID, err := strconv.ParseInt(t.ID, 10, 64); err == nil {
+		if metric, err := s.m.PG().TaskListMetricsOne(taskID); err == nil && metric != nil {
+			s.applyListMetrics(&dto, t, *metric)
+		}
+	}
 	writeJSON(w, 200, dto)
 }
 
@@ -3386,6 +3467,7 @@ func (s *Server) getTrafficBlob(w http.ResponseWriter, r *http.Request) {
 // is returned as a boolean presence flag (brave_key_set), never the value itself,
 // so the UI can show "configured" without echoing the secret back.
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	noStore(w) // 含 *_key_set 布尔（凭据是否已配置）
 	writeJSON(w, 200, s.settingsPayload())
 }
 
@@ -3399,20 +3481,23 @@ func (s *Server) settingsPayload() map[string]any {
 	// 用户输出语言：运行时设置 > config.Language()（环境变量、文件配置、默认简体中文）。
 	outputLang := s.outputLanguage()
 	return map[string]any{
-		"output_language":          outputLang, // 用户输出语言 zh/en/es；旧 ko 值兼容归一为 zh。
-		"traffic_capture":          s.m.TrafficEnabled(),
-		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
-		"llm_record":               s.m.LLMRecordEnabled(),
-		"web_search_enabled":       on,
-		"web_search_backend":       backend,
-		"brave_key_set":            strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":           strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":         proxy,                       // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":             s.m.GlobalProxy(),           // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
-		"python_interpreter":       strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
-		"workers":                  s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
-		"task_concurrency_enabled": concOn,                      // 任务并发上限开关(默认关)
-		"task_concurrency_limit":   concLimit,                   // 同时运行任务上限(开启后默认5)
+		"output_language":           outputLang, // 用户输出语言 zh/en/es；旧 ko 值兼容归一为 zh。
+		"traffic_capture":           s.m.TrafficEnabled(),
+		"agent_traffic_binding":     s.m.pg.GetBool(settingAgentTrafficBinding, false),
+		"llm_record":                s.m.LLMRecordEnabled(),
+		"web_search_enabled":        on,
+		"web_search_backend":        backend,
+		"brave_key_set":             strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":            strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":          proxy,                        // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":              s.m.GlobalProxy(),            // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		"python_interpreter":        strings.TrimSpace(pyStored),  // 用户/自动设的值(空=用运行时检测)
+		"workers":                   s.m.Workers(),                // 并发工作 agent 数(默认3)；对之后启动的任务生效
+		"default_task_token_budget": s.m.DefaultTaskTokenBudget(), // 新建任务的默认 token 预算(input+output,0=不限)；创建时未显式给值才取它
+		// 模型价目 JSON(USD/百万 token)；读取接口用它现算费用，空=不算钱。
+		"price_table":              s.m.PriceTable(),
+		"task_concurrency_enabled": concOn,    // 任务并发上限开关(默认关)
+		"task_concurrency_limit":   concLimit, // 同时运行任务上限(开启后默认5)
 		// LLM 轮询(故障转移)。默认关；开启后走全局激活配置的 agent 在当前配置不可用时
 		// 自动切到下一个配置。bind_fallback 仅在轮询开启时有意义(默认关)。
 		"llm_pool_enabled":       s.m.LLMPoolEnabled(),
@@ -3483,6 +3568,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		GlobalProxy      *string `json:"global_proxy"`       // 全局出口代理(http/https/socks5)；null=不改，""=清空(直连)
 		PythonInterp     *string `json:"python_interpreter"` // 自定义脚本工具的 python 解释器路径
 		Workers          *int    `json:"workers"`            // 并发工作 agent 数(>0)；对之后启动的任务生效
+		// 新建任务的默认 token 预算(0=不限)；负值钳 0。只影响之后创建且未显式给预算的任务，
+		// 已建任务的预算走 PATCH /api/tasks/{id} 的 token_budget。
+		DefaultTaskTokenBudget *int `json:"default_task_token_budget"`
+		// 模型价目 JSON(USD/百万 token)。空串=清除(不算钱)；非空必须能解析成
+		// {模型名子串: {input,output,cache_read,cache_write 均>=0}}，否则 400。
+		PriceTable *string `json:"price_table"`
 		// 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
 		ConcurrencyEnabled *bool `json:"task_concurrency_enabled"`
 		ConcurrencyLimit   *int  `json:"task_concurrency_limit"`
@@ -3573,6 +3664,31 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if req.Workers != nil {
 		if err := s.m.SetWorkers(*req.Workers); err != nil {
 			writeErr(w, 400, err.Error())
+			return
+		}
+	}
+	if req.DefaultTaskTokenBudget != nil {
+		// 负值钳 0(不限)：与 createTask / DB 层的归一保持一致，坏输入不能把新任务
+		// 锁死在极小预算上。只影响之后创建的、未显式给预算的任务。
+		budget := *req.DefaultTaskTokenBudget
+		if budget < 0 {
+			budget = 0
+		}
+		if err := s.m.pg.SetSetting(settingDefaultTaskTokenBudget, strconv.Itoa(budget)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.PriceTable != nil {
+		// 落库前校验：坏 JSON/负价格会让成本视图失声或失真，必须在入口拒绝(中文 400)。
+		// 空串=清除价格表，合法(回到"不算钱")。
+		raw := strings.TrimSpace(*req.PriceTable)
+		if _, err := ParsePriceTable(raw); err != nil {
+			writeErr(w, 400, "price_table 不合法："+err.Error())
+			return
+		}
+		if err := s.m.pg.SetSetting(settingPriceTable, raw); err != nil {
+			writeErr(w, 500, err.Error())
 			return
 		}
 	}
@@ -3805,6 +3921,17 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	agentMessage, ok := s.prepareChatMentionMessage(w, req.Message)
 	if !ok {
 		return
+	}
+	// 输入模态闸门(计划 75–96)：附件用到主 Agent 配置未声明的模态时，在持久化用户
+	// 轮次之前显式拦截——绝不静默丢弃附件，也绝不把附件硬塞进纯文本请求。只在主
+	// Agent 真的会跑(有可用 LLM)时拦；规则模式轮次不经过 LLM，附件照旧以路径清单
+	// 进入消息与界面。
+	if len(req.Attachments) > 0 && s.taskRuntimeAvailable(t, "mainagent") {
+		name, effective := s.taskChatModalities(t)
+		if err := checkTurnAttachments(name, effective, req.Attachments); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
 	}
 	// Admission is serialized with deletion's chat cancellation. Mark every chat
 	// turn busy before its first activity/file write, including rule-mode turns.
@@ -4076,6 +4203,13 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	// 将中文源消息替换为当前输出语言的词库条目，支持 en/es，zh 直接返回源消息。
 	// 未知词条和底层任意 err.Error() 通常没有对应键，原样保留诊断信息。
 	writeJSON(w, code, map[string]any{"error": trMsg(msg)})
+}
+
+// noStore marks a response as uncacheable. 凡响应里携带凭据状态（掩码/hint、
+// key_set 布尔、被掩蔽的 env/header）的 GET 都必须调用：共享缓存/中间代理不得
+// 把一个人的凭据视图回放给下一个请求，浏览器也不该把它留在磁盘缓存里。
+func noStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
 }
 
 func atoiDefault(s string, d int) int {

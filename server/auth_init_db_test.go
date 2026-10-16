@@ -31,7 +31,7 @@ func newAuthTestRig(t *testing.T) *authTestRig {
 	}
 	d, err := db.Open(dsn)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	clear := func() { _, _ = d.Exec(`DELETE FROM settings WHERE key = $1`, authPassKey) }

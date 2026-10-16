@@ -17,7 +17,7 @@ func notifyTestDB(t *testing.T) *DB {
 	t.Helper()
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
 	return d
@@ -108,6 +108,7 @@ func TestNotificationAssetNamesResolvesAndPreservesOrder(t *testing.T) {
 // 回滚能自动撤销 DDL，无需手工清理。断言只需要「事务还活着」，
 // 不需要真的提交。
 func TestRecordNotificationEventTxUnwindsOnFailure(t *testing.T) {
+	t.Skip("PostgreSQL DDL 语义用例（ADD CONSTRAINT ... NOT VALID / DROP CONSTRAINT 种约束逼失败）：SQLite 无约束 DDL；事务回滚语义由 companies/findings 的回滚用例覆盖")
 	d := notifyTestDB(t)
 	ctx := context.Background()
 
@@ -291,7 +292,7 @@ func TestClaimExpiredLeaseRecovers(t *testing.T) {
 		t.Fatalf("首次领取失败: %v (%d 条)", err, len(first))
 	}
 	// 把租约手动推到过去，模拟「租约已过期」。
-	if _, err := d.Exec(`UPDATE notification_deliveries SET next_attempt_at = now() - interval '1 minute' WHERE id=$1`, first[0].ID); err != nil {
+	if _, err := d.Exec(`UPDATE notification_deliveries SET next_attempt_at = $2 WHERE id=$1`, first[0].ID, time.Now().UTC().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	second, err := d.ClaimRealtimeDeliveries(ctx, ch.ID, 10, time.Minute)
@@ -355,7 +356,7 @@ func TestDigestBatchDueAndStableBatchID(t *testing.T) {
 	}
 
 	// 把三条投递的创建时间一起推老，模拟一个攒够周期的批次。
-	if _, err := d.Exec(`UPDATE notification_deliveries SET created_at = now() - interval '40 minutes' WHERE channel_id=$1`, ch.ID); err != nil {
+	if _, err := d.Exec(`UPDATE notification_deliveries SET created_at = $2 WHERE channel_id=$1`, ch.ID, time.Now().UTC().Add(-40*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	due, err = d.DigestBatchDue(ctx, ch.ID, 30*time.Minute)
@@ -397,7 +398,7 @@ func TestDigestBatchDueAndStableBatchID(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 把租约推到过去，模拟退避时间已到。
-	if _, err := d.Exec(`UPDATE notification_deliveries SET next_attempt_at = now() - interval '1 minute' WHERE channel_id=$1`, ch.ID); err != nil {
+	if _, err := d.Exec(`UPDATE notification_deliveries SET next_attempt_at = $2 WHERE channel_id=$1`, ch.ID, time.Now().UTC().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	reclaimed, err := d.ClaimDigestBatch(ctx, ch.ID, MaxDigestBatchSize, time.Minute)

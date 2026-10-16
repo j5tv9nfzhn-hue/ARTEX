@@ -26,6 +26,10 @@ const (
 	errIntentTaskSettling      = "任务正在收尾，无法向 Worker 发送消息"
 	errIntentInheritedReadonly = "继承的意图为只读，因此无法向 Worker 发送消息"
 	errIntentNotPaused         = "只能向已暂停的 Worker 发送消息。请先暂停"
+
+	errIntentSteerEmpty      = "引导内容不能为空"
+	errIntentSteerTooLong    = "引导内容不能超过 4000 个字符"
+	errIntentSteerNotRunning = "只能引导正在运行的 Worker 意图"
 )
 
 func validWorkerMessageRequestID(id string) bool {
@@ -159,4 +163,94 @@ func (s *Server) sendWorkerMessage(w http.ResponseWriter, r *http.Request) {
 		"accepted":   true,
 		"request_id": requestID,
 	})
+}
+
+// steerIntent 把人工纠偏指令递交给一条正在运行的 Worker 意图（不暂停、不重跑）：
+// 文本进入引擎的 steer 队列，worker 在下一步工具调用前收到并据此重新规划（见
+// Engine.SteerWork / steerHooks）。与 sendWorkerMessage 不同，这条通路不改变意图
+// 状态，所以只对 running 的意图有效——它必须投递到内存中正在执行的 work 上。
+func (s *Server) steerIntent(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.m.Task(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "task not found")
+		return
+	}
+	iid, err := strconv.ParseInt(r.PathValue("iid"), 10, 64)
+	if err != nil || iid <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad intent id")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkerMessageBytes)
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, errIntentRequestTooLarge)
+			return
+		}
+		writeErr(w, http.StatusBadRequest, "bad json: "+err.Error())
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeErr(w, http.StatusBadRequest, errIntentSteerEmpty)
+		return
+	}
+	if len([]rune(text)) > 4000 {
+		writeErr(w, http.StatusBadRequest, errIntentSteerTooLong)
+		return
+	}
+
+	// 生命周期闸与 sendWorkerMessage 完全一致：删除/暂停/排队/终态/收尾期递话
+	// 都会落进一个不会被消费的队列（或干脆没有 work），提前给出明确原因。
+	if s.engine.IsDeleting(t.ID) {
+		writeErr(w, http.StatusConflict, errIntentTaskDeleting)
+		return
+	}
+	lifecycle := t.lifecycleSnapshot()
+	switch {
+	case lifecycle.Paused || s.engine.IsPaused(t.ID):
+		writeErr(w, http.StatusConflict, errIntentTaskPaused)
+		return
+	case lifecycle.Queued:
+		writeErr(w, http.StatusConflict, errIntentTaskQueued)
+		return
+	case isTerminalStatus(lifecycle.Status):
+		writeErr(w, http.StatusConflict, errIntentTaskTerminal)
+		return
+	case s.engine.isSettling(t.ID):
+		writeErr(w, http.StatusConflict, errIntentTaskSettling)
+		return
+	}
+
+	node, err := t.Store.GetNode(iid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if node == nil {
+		if inherited, sourceErr := t.Store.GetNodeWithSources(iid); sourceErr == nil && inherited != nil && inherited.Inherited {
+			writeErr(w, http.StatusConflict, errIntentInheritedReadonly)
+			return
+		}
+		writeErr(w, http.StatusNotFound, "intent not found")
+		return
+	}
+	if node.Kind != db.KindIntent {
+		writeErr(w, http.StatusConflict, "node is not an intent")
+		return
+	}
+	if node.State != "running" {
+		writeErr(w, http.StatusConflict, errIntentSteerNotRunning)
+		return
+	}
+	// SteerWork 只投给内存里正在执行的 work；意图刚落库为 running 而 work 尚未
+	// 注册（或已在收尾）时它会报错，原样透出给用户重试。
+	if err := s.engine.SteerWork(iid, text); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": iid, "state": "running", "accepted": true})
 }

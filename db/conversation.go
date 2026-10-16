@@ -48,7 +48,7 @@ GROUP BY c.id`)
 }
 
 // Conversation is one ChatGPT-style chat thread bound to an agent key. It lives
-// independent of the pentest exploration graph — see schema.sql §I.
+// independent of the pentest exploration graph — see schema_sqlite.sql §I.
 type Conversation struct {
 	ID           int64      `json:"id"`
 	AgentKey     string     `json:"agent_key"`
@@ -257,7 +257,7 @@ func (d *DB) ConvActivityList(convID, sinceID int64, limit int) ([]Activity, int
 	}
 	const cols = `id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens`
 	rows, err := d.Query(`SELECT `+cols+`
-FROM conversation_activities WHERE conversation_id=$1 AND id>$2 ORDER BY id LIMIT $3`, convID, sinceID, limit)
+FROM conversation_activities WHERE conversation_id=$1 AND id>$2 AND reverted_at IS NULL ORDER BY id LIMIT $3`, convID, sinceID, limit)
 	if err != nil {
 		return nil, sinceID, err
 	}
@@ -291,7 +291,7 @@ func (d *DB) ConvActivityPage(convID, before int64, limit int) ([]Activity, bool
 	// fetch one extra row to detect whether older history remains before this window.
 	rows, err := d.Query(`SELECT `+cols+`
 FROM conversation_activities
-WHERE conversation_id=$1 AND ($2 <= 0 OR id < $2)
+WHERE conversation_id=$1 AND ($2 <= 0 OR id < $2) AND reverted_at IS NULL
 ORDER BY id DESC LIMIT $3`, convID, before, limit+1)
 	if err != nil {
 		return nil, false, err

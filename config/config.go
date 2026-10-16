@@ -1,5 +1,6 @@
 // Package config loads runtime configuration from a JSON file, with environment
-// variables taking precedence. Currently it carries the PostgreSQL connection.
+// variables taking precedence. It carries the SQLite database location and the
+// skill directory; everything else is stored in the database itself.
 package config
 
 import (
@@ -8,25 +9,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
-// Database is the PostgreSQL connection config. Either set DSN directly, or set
-// the component fields and a DSN is assembled from them.
+// Database is the storage config. ARTEX runs on SQLite only, so the single
+// meaningful setting is the database file path; the struct stays a struct (rather
+// than a bare string) so the config file keeps its `database` object shape.
 type Database struct {
-	DSN      string `json:"dsn"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	User     string `json:"user"`
-	Password string `json:"password"`
-	DBName   string `json:"dbname"`
-	SSLMode  string `json:"sslmode"`
-	// Engine selects the storage backend: "sqlite" (default) or "postgres".
-	// See Engine().
-	Engine string `json:"engine"`
-	// Path is the SQLite database file, used when Engine is "sqlite".
-	// See SQLitePath().
+	// Path is the SQLite database file. See SQLitePath().
 	Path string `json:"path"`
 }
 
@@ -178,57 +168,6 @@ func SkillDir() string {
 	}
 	_ = os.MkdirAll(d, 0o755)
 	return d
-}
-
-// PostgresDSN resolves the connection string with precedence:
-//
-//	env ARTEX_PG_DSN  >  config file (database.dsn, or assembled from fields)
-//
-// There is NO built-in fallback: when neither source supplies a database config,
-// it returns an error naming the config path it inspected, so startup fails loudly
-// instead of silently connecting to a wrong default. source describes where the
-// DSN came from (for startup logging).
-func PostgresDSN() (dsn, source string, err error) {
-	if v := strings.TrimSpace(os.Getenv("ARTEX_PG_DSN")); v != "" {
-		return v, trCfg("环境变量 ARTEX_PG_DSN"), nil
-	}
-	db := Load().Database
-	if d := strings.TrimSpace(db.DSN); d != "" {
-		return d, fmt.Sprintf(trCfg("配置文件 %s (database.dsn)"), Path()), nil
-	}
-	if db.Host != "" || db.DBName != "" || db.User != "" {
-		return db.buildDSN(), fmt.Sprintf(trCfg("配置文件 %s (database 字段)"), Path()), nil
-	}
-	return "", "", fmt.Errorf(trCfg("找不到数据库配置：环境变量 ARTEX_PG_DSN 未设置，配置文件 %s 中也没有 database（dsn 或 host/user/dbname）配置。请创建配置文件或设置环境变量后重试"), Path())
-}
-
-func (d Database) buildDSN() string {
-	host := d.Host
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	port := d.Port
-	if port == 0 {
-		port = 5432
-	}
-	ssl := d.SSLMode
-	if ssl == "" {
-		ssl = "disable"
-	}
-	u := url.URL{
-		Scheme: "postgres",
-		Host:   host + ":" + strconv.Itoa(port),
-		Path:   "/" + d.DBName,
-	}
-	if d.User != "" {
-		if d.Password != "" {
-			u.User = url.UserPassword(d.User, d.Password)
-		} else {
-			u.User = url.User(d.User)
-		}
-	}
-	u.RawQuery = url.Values{"sslmode": {ssl}}.Encode()
-	return u.String()
 }
 
 // String is a redacted view of the resolved DSN (password masked) for logging.

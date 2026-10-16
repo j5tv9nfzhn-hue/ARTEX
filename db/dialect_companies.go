@@ -55,7 +55,7 @@ import (
 //     规范化分叉。
 //  2. 非法输入必须返回"不匹配"而不是报错。assets.ip 是自由文本（Agent / 资产
 //     API 可能写进主机名），一条脏数据不能把整条重算语句打挂——这正是
-//     db/schema.sql 里 try_inet 用 EXCEPTION 捕获 22P02 的原因。
+//     db/schema_sqlite.sql 里 try_inet 用 EXCEPTION 捕获 22P02 的原因。
 //  3. 参数绑定：函数把值当普通实参收，调用点永远只写 $N。
 //
 // 函数名一律带 artex_ 前缀，与 dialect_arrays.go 的注册约定一致，也避免和
@@ -224,7 +224,7 @@ func inetContains(netText, ipText string) bool {
 
 // artexTryInetFunc 实现 artex_try_inet(value text)。
 //
-// 对应 db/schema.sql:15 的
+// 对应 db/schema_sqlite.sql:15 的
 //
 //	CREATE OR REPLACE FUNCTION try_inet(value text) RETURNS inet AS $$
 //	BEGIN RETURN value::inet; EXCEPTION WHEN others THEN RETURN NULL; END;
@@ -371,10 +371,7 @@ func artexJSONContainsAnyFunc(_ *sqlite.FunctionContext, args []driver.Value) (d
 // companySQL 在 PostgreSQL 与 SQLite 的两条语句之间二选一。
 // PostgreSQL 侧永远是逐字保留下来的原句。
 func companySQL(pg, lite string) string {
-	if isSQLiteEngine() {
-		return lite
-	}
-	return pg
+	return lite
 }
 
 // companyInetContains 表达 `<网段> >>= <地址>`。
@@ -384,10 +381,7 @@ func companySQL(pg, lite string) string {
 //
 // 两个操作数都必须是「值」的表达式（列或 $N 占位符），实现见 inetContains。
 func companyInetContains(netExpr, addrExpr string) string {
-	if isSQLiteEngine() {
-		return "artex_inet_contains(" + netExpr + ", " + addrExpr + ")"
-	}
-	return netExpr + " >>= " + addrExpr
+	return "artex_inet_contains(" + netExpr + ", " + addrExpr + ")"
 }
 
 // companyInetMasklen 表达 `masklen(<网段>)`。
@@ -399,10 +393,7 @@ func companyInetContains(netExpr, addrExpr string) string {
 // IPv4 返回 0..32、对 IPv6 返回 0..128，两族可以同序比较；SQLite 侧照抄同一
 // 口径，跨族比较的结果不变。
 func companyInetMasklen(netExpr string) string {
-	if isSQLiteEngine() {
-		return "artex_inet_masklen(" + netExpr + ")"
-	}
-	return "masklen(" + netExpr + ")"
+	return "artex_inet_masklen(" + netExpr + ")"
 }
 
 // companyTryInet 表达 `try_inet(<文本>)`。
@@ -413,10 +404,7 @@ func companyInetMasklen(netExpr string) string {
 // 用在两个地方：网段归属的「安全转 inet」，以及 malformedIPAssetWarning 里
 // 「哪些资产的 ip 解析不出来」那条告警查询。
 func companyTryInet(valueExpr string) string {
-	if isSQLiteEngine() {
-		return "artex_try_inet(" + valueExpr + ")"
-	}
-	return "try_inet(" + valueExpr + ")"
+	return "artex_try_inet(" + valueExpr + ")"
 }
 
 // companyICPKey 表达 ICP 归属用的规范化 key。
@@ -427,10 +415,7 @@ func companyTryInet(valueExpr string) string {
 // 语义见 artexICPKeyFunc：两边都要算成「去空白 + 小写」，与写入 cs.value 的
 // NormalizeICP 同形。
 func companyICPKey(valueExpr string) string {
-	if isSQLiteEngine() {
-		return "artex_icp_key(" + valueExpr + ")"
-	}
-	return "lower(regexp_replace(COALESCE(" + valueExpr + ",''), '[[:space:]]+', '', 'g'))"
+	return "artex_icp_key(" + valueExpr + ")"
 }
 
 // companyJSONArrayLength 表达 `jsonb_array_length(COALESCE(<col>, '[]'::jsonb))`，
@@ -444,10 +429,7 @@ func companyICPKey(valueExpr string) string {
 // NULL / 空串 / '{}' 这三种历史形状由 artex_json_array_length 内部统一归一成
 // 长度 0，所以调用点不需要再包一层 CASE。
 func companyJSONArrayLength(col string) string {
-	if isSQLiteEngine() {
-		return "artex_json_array_length(COALESCE(" + col + ", '[]'))"
-	}
-	return "jsonb_array_length(COALESCE(" + col + ", '[]'::jsonb))"
+	return "artex_json_array_length(COALESCE(" + col + ", '[]'))"
 }
 
 // companyCidrArg 表达写入 company_scope.net（PostgreSQL 是 CIDR 列）时的转换。
@@ -459,10 +441,7 @@ func companyJSONArrayLength(col string) string {
 // 文本），不需要也不应该有类型转换；而 `$3::cidr` 在 SQLite 上会被报
 // unrecognized token ":"。
 func companyCidrArg(ph string) string {
-	if isSQLiteEngine() {
-		return ph
-	}
-	return ph + "::cidr"
+	return ph
 }
 
 // companyInetAddrArg 表达「把绑定参数当成一个 inet 值」的转换，用作
@@ -475,10 +454,7 @@ func companyCidrArg(ph string) string {
 // TEXT，artex_inet_contains 自己就做文本解析，不需要（也不能）有转换——
 // 裸的 `$1::inet` 会被 SQLite 报 unrecognized token ":"。
 func companyInetAddrArg(ph string) string {
-	if isSQLiteEngine() {
-		return ph
-	}
-	return ph + "::inet"
+	return ph
 }
 
 // companyScopeConflictTarget 表达 company_scope 插入语句的冲突目标。
@@ -488,9 +464,9 @@ func companyInetAddrArg(ph string) string {
 //
 // 约束名 → 列清单的依据（两个 schema 一致，逐字对照）：
 //
-//	db/schema.sql:125        CONSTRAINT uq_sv2_domain UNIQUE (company_id, domain)
+//	db/schema_sqlite.sql:125        CONSTRAINT uq_sv2_domain UNIQUE (company_id, domain)
 //	db/schema_sqlite.sql:163  CONSTRAINT uq_sv2_domain UNIQUE (company_id, domain)
-//	db/schema.sql:126        CONSTRAINT uq_sv2_net    UNIQUE (company_id, net)
+//	db/schema_sqlite.sql:126        CONSTRAINT uq_sv2_net    UNIQUE (company_id, net)
 //	db/schema_sqlite.sql:164  CONSTRAINT uq_sv2_net    UNIQUE (company_id, net)
 //
 // SQLite 不支持按约束名指定冲突目标，但表级 UNIQUE 约束同样会建出一个唯一
@@ -501,10 +477,7 @@ func companyInetAddrArg(ph string) string {
 // **不会重复插行**：ON CONFLICT (company_id, domain) 与 ON CONFLICT (company_id, net)
 // 各自都命中上面对应的那个 UNIQUE 索引，重复规则仍然被 DO NOTHING 吞掉。
 func companyScopeConflictTarget(constraint string, cols ...string) string {
-	if isSQLiteEngine() {
-		return "ON CONFLICT (" + strings.Join(cols, ", ") + ")"
-	}
-	return "ON CONFLICT ON CONSTRAINT " + constraint
+	return "ON CONFLICT (" + strings.Join(cols, ", ") + ")"
 }
 
 // findingAssetScopeIDsCond 表达「findings.asset_ids 与这批资产 id 有交集」。
@@ -520,12 +493,8 @@ func companyScopeConflictTarget(constraint string, cols ...string) string {
 // Go 侧编码成一段 JSON 文本再交给 UDF——值仍然是绑定进去的，SQL 文本里没有
 // 任何用户输入。
 func findingAssetScopeIDsCond(colExpr string, ids []int64, args *[]any) string {
-	if isSQLiteEngine() {
-		*args = append(*args, companyJSONIDSet(ids))
-		return fmt.Sprintf("artex_json_contains_any(%s, $%d)", colExpr, len(*args))
-	}
-	*args = append(*args, assetIDContainments(ids))
-	return fmt.Sprintf("%s @> ANY($%d::jsonb[])", colExpr, len(*args))
+	*args = append(*args, companyJSONIDSet(ids))
+	return fmt.Sprintf("artex_json_contains_any(%s, $%d)", colExpr, len(*args))
 }
 
 // companyJSONIDSet 把资产 id 列表编码成 SQLite 侧的 JSON 数组文本，
@@ -559,16 +528,10 @@ func companyJSONIDSet(ids []int64) string {
 // 用 typeof 过滤等于把两者统一成"非整数元素不参与匹配"，与 asset_ids 永远只存
 // 整数的事实一致。
 func findingAssetRowsGoneCond(jsonExpr string) string {
-	if isSQLiteEngine() {
-		return `NOT EXISTS (
+	return `NOT EXISTS (
 			SELECT 1 FROM json_each(artex_json_array(` + jsonExpr + `)) e
 			WHERE typeof(e.value) = 'integer'
 			  AND EXISTS (SELECT 1 FROM assets a WHERE a.id = e.value)
-		)`
-	}
-	return `NOT EXISTS (
-			SELECT 1 FROM jsonb_array_elements_text(` + jsonExpr + `) e(v)
-			JOIN assets a ON a.id = e.v::bigint
 		)`
 }
 
@@ -582,19 +545,13 @@ func findingAssetRowsGoneCond(jsonExpr string) string {
 // 锁的用途是 AddFindingFollowUpIntent 里「确认来源 finding / 任务 / 节点三行
 // 在本事务提交前不被并发删除」。SQLite 的 WAL 写事务是库级独占写锁，粒度
 // 严格更粗，见 dialect_locking.go 文件头的论证。
-func findingShareOfClause(of ...string) string {
-	if isSQLiteEngine() {
-		return ""
-	}
-	if len(of) == 0 {
-		return " FOR SHARE"
-	}
-	return " FOR SHARE OF " + strings.Join(of, ",")
-}
+func findingShareOfClause(...string) string { return "" }
 
 // findingNodePayloadSetExpr 表达「把 payload.<jsonKey> 设成字符串 $1」。
 //
 //	PostgreSQL: jsonb_set(payload, '{<key>}', to_jsonb($1::text))
+//	本实现:     json_set(payload, '$.<key>', json_quote($1))
+//
 //	SQLite:     json_set(payload, '$.<key>', json_quote($1))
 //
 // 三处差别都要对齐：
@@ -606,10 +563,7 @@ func findingShareOfClause(of ...string) string {
 //   - jsonKey 必须是可信常量（severity / name / vulnclass），与调用点
 //     setFindingCol 的既有约定一致，绝不接受用户输入。
 func findingNodePayloadSetExpr(jsonKey string) string {
-	if isSQLiteEngine() {
-		return "json_set(payload, '$." + jsonKey + "', json_quote($1))"
-	}
-	return "jsonb_set(payload, '{" + jsonKey + "}', to_jsonb($1::text))"
+	return "json_set(payload, '$." + jsonKey + "', json_quote($1))"
 }
 
 // ---------------------------------------------------------------------
@@ -633,19 +587,13 @@ type findingTimestampScan struct {
 
 // dest 返回应当交给 rows.Scan 的落点。
 func (s *findingTimestampScan) dest() any {
-	if isSQLiteEngine() {
-		return &s.Text
-	}
-	return &s.Time
+	return &s.Text
 }
 
 // value 解析出最终的时间。SQL 值只可能是两种：驱动交出来的 time.Time，或
 // NULL（分组内没有任何 finding 时 MAX 为 NULL）；解析不出来按错误报出，
 // 不静默塞一个零值——那会把"时间戳坏了"伪装成"时间戳是零值"。
 func (s *findingTimestampScan) value() (time.Time, error) {
-	if !isSQLiteEngine() {
-		return s.Time, nil
-	}
 	if !s.Text.Valid {
 		return time.Time{}, nil
 	}

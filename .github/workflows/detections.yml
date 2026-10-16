@@ -19,9 +19,8 @@ name: detections
 # 除 detections 改动外，被指标固定的来源文件变化也触发测试。
 # 包括 enrich、selfupdate、guard、db 的 User-Agent、标记和破坏性命令 token。
 # 还包括 cmd/artex/main.go 默认端口、traffic.go 的 MITM CA 文件名。
-# db/schema.sql 探索图 schema 指纹也属于来源契约。
+# db/schema_sqlite.sql 探索图 schema 指纹也属于来源契约。
 # 源码指纹改变时必须同步规则和指标，不能让资料过期。
-# 公共 Docker 镜像无需认证，偶尔可能触发 Docker Hub 下载限流。
 # 遇到临时限流可重新运行工作流。
 on:
   push:
@@ -32,7 +31,7 @@ on:
       - "selfupdate/stage.go"
       - "guard/guard.go"
       - "db/db.go"
-      - "db/schema.sql"
+      - "db/schema_sqlite.sql"
       - "cmd/artex/main.go"
       - "traffic/traffic.go"
       # 内联模板门禁读取这两份防御指南。

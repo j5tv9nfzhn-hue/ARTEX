@@ -132,9 +132,7 @@ func (d *DB) SideHistory(ctx context.Context, key string, before int64, limit in
 	// this cast is meant to avoid there. `before` is bound as an integer, so
 	// the bare comparison is already well-typed.
 	cursor := "($2=0 OR ordinal<$2)"
-	if isPostgresEngine() {
-		cursor = "($2::bigint=0 OR ordinal<$2)"
-	}
+
 	rows, err := d.QueryContext(ctx, `SELECT `+sideCols+` FROM side_question_requests WHERE session_key=$1 AND `+cursor+` ORDER BY ordinal DESC LIMIT $3`, key, before, limit)
 	if err != nil {
 		return nil, err

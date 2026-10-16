@@ -74,7 +74,7 @@ func htmlBatchIntro(m Message) string {
 	return b.String()
 }
 
-// htmlItem 渲染单个漏洞。full=true 时含摘要与回链（单条推送），
+// htmlItem 渲染单个条目。full=true 时含摘要与回链（单条推送），
 // false 时压缩成一行（汇总列表）。
 func htmlItem(it Item, full bool) string {
 	color := htmlSeverityColor(it.Severity)
@@ -84,10 +84,24 @@ func htmlItem(it Item, full bool) string {
 	} else {
 		fmt.Fprintf(&b, `<div style="border-left:3px solid %s;padding:4px 0 4px 10px;margin-bottom:8px;">`, color)
 	}
-	fmt.Fprintf(&b, `<div style="font-weight:600;">%s &middot; %s</div>`,
-		htmlEscape(SeverityLabel(it.Severity)), htmlEscape(it.Title()))
+	if taskEvent(it) {
+		// 任务级事件没有级别，标题行直接写事件本身；汇总列表用单行版
+		// （含状态/工具），单条用标题版（信息在下面的键值行里）。
+		head := taskEventTitle(it)
+		if !full {
+			head = taskEventLine(it)
+		}
+		fmt.Fprintf(&b, `<div style="font-weight:600;">%s</div>`, htmlEscape(head))
+	} else {
+		fmt.Fprintf(&b, `<div style="font-weight:600;">%s &middot; %s</div>`,
+			htmlEscape(SeverityLabel(it.Severity)), htmlEscape(it.Title()))
+	}
 
 	if !full {
+		if taskEvent(it) {
+			b.WriteString(`</div>`)
+			return b.String()
+		}
 		var extras []string
 		if a := assetLine(it.Assets, maxAssetsShown); a != "" {
 			extras = append(extras, htmlEscape(a))
@@ -97,6 +111,18 @@ func htmlItem(it Item, full bool) string {
 		}
 		if len(extras) > 0 {
 			fmt.Fprintf(&b, `<div style="color:#595959;font-size:13px;">%s</div>`, strings.Join(extras, " &middot; "))
+		}
+		b.WriteString(`</div>`)
+		return b.String()
+	}
+
+	if taskEvent(it) {
+		for _, kv := range taskEventFields(it) {
+			fmt.Fprintf(&b, `<div><b>%s</b>：%s</div>`, kv[0], htmlEscape(kv[1]))
+		}
+		if it.DetailURL != "" {
+			fmt.Fprintf(&b, `<div style="margin-top:6px;"><a href="%s" style="color:#1677ff;">%s</a></div>`,
+				htmlEscapeAttr(it.DetailURL), htmlEscape(detailLinkLabel(it)))
 		}
 		b.WriteString(`</div>`)
 		return b.String()

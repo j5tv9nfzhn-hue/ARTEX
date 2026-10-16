@@ -60,11 +60,16 @@ func restoreFindingTrafficTx(tx *sql.Tx, snapshot *TaskArchiveSnapshot) error {
 		}
 	}
 	if len(rows) > 0 {
-		raw, _ := json.Marshal(rows)
-		if _, err = tx.Exec(`INSERT INTO finding_traffic_bindings SELECT * FROM json_populate_recordset(NULL::finding_traffic_bindings,$1::json)`, string(raw)); err != nil {
+		// 回写绑定行。PostgreSQL 侧原本用
+		// `INSERT INTO finding_traffic_bindings SELECT * FROM json_populate_recordset(...)`,
+		// 但 SQLite 没有该函数，改走按表定义顺序逐列绑定的通用回写助手
+		// （见 archive_restore_sqlite.go）：列顺序与缺列补 NULL 的语义一字未变。
+		if err = insertArchiveRowMaps(tx, "finding_traffic_bindings", rows, ""); err != nil {
 			return err
 		}
-		_, err = tx.Exec(`UPDATE traffic_evidence_snapshots AS s SET unreferenced_at=NULL WHERE EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=s.id)`)
+		if _, err = tx.Exec(`UPDATE traffic_evidence_snapshots SET unreferenced_at=NULL WHERE EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=traffic_evidence_snapshots.id)`); err != nil {
+			return err
+		}
 	}
 	return err
 }

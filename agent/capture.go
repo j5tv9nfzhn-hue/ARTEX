@@ -8,6 +8,7 @@ import (
 
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
+	"github.com/Autumn-27/artex/metrics"
 	"github.com/Autumn-27/artex/sidequestion"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/harness"
@@ -47,6 +48,14 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 		}
 	}
 	toolNames := map[string]string{} // tool_use id -> name, to label results
+	// awaiting 记录尚未收到结果的 tool_use；会话结束时残留 = 执行结束未收到结果的调用
+	// （中断或事件丢失），经 defer 统一计入协议防御计数（#14）。
+	awaiting := map[string]string{}
+	defer func() {
+		for range awaiting {
+			metrics.ObserveToolResultMissing()
+		}
+	}()
 
 	var tbuf strings.Builder
 	var tkind string
@@ -95,6 +104,7 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			}
 			flush()
 			toolNames[ev.ToolUse.ID] = ev.ToolUse.Name
+			awaiting[ev.ToolUse.ID] = ev.ToolUse.Name
 			in := string(ev.ToolUse.Input)
 			lastTool.start(ev.ToolUse.ID, ev.ToolUse.Name, in)
 			auditTrace.Start(ev.ToolUse.ID, ev.ToolUse.Name, ev.ToolUse.Input)
@@ -104,8 +114,20 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			if ev.ToolResult == nil {
 				continue
 			}
+			// 协议防御（#14）：没有调用 ID 的结果无法与任何 tool_use 配对——丢弃并
+			// 计数，别让它在会话流里冒充某个调用的执行结果。
+			if ev.ToolResult.ToolUseID == "" {
+				metrics.ObserveToolResultUnpaired()
+				continue
+			}
 			flush()
 			out := blocksText(ev.ToolResult.Content)
+			delete(awaiting, ev.ToolResult.ToolUseID)
+			if _, known := toolNames[ev.ToolResult.ToolUseID]; !known {
+				// 有 ID 但在本轮没有对应 tool_use（例如恢复会话带出的旧结果）：
+				// 保留记录，单独计数以便观察。
+				metrics.ObserveToolResultUnknown()
+			}
 			lastTool.done(ev.ToolResult.ToolUseID)
 			auditTrace.Complete(ev.ToolResult.ToolUseID, out, ev.ToolResult.IsError)
 			rec(db.Activity{Kind: "tool_result", Tool: toolNames[ev.ToolResult.ToolUseID], ToolUseID: ev.ToolResult.ToolUseID,

@@ -452,10 +452,24 @@ func isRetryableStreamError(err error) bool {
 }
 
 // CompactionWindow mirrors current()'s precedence so the context window always
-// matches the provider the role will actually stream on.
+// matches the provider the role will actually stream on. A role fallback chain can
+// switch profiles on any call, so the window is the MINIMUM across the whole chain:
+// a threshold that is safe for the smallest window never overflows a member that
+// failover might pick.
 func (r *taskLLMRuntime) CompactionWindow() int {
-	if _, cfg, ok := r.s.agentBindingProvider(r.agentKey); ok {
-		return cfg.CompactionWindow()
+	if binding, ok := r.s.resolveAgentBinding(r.agentKey); ok {
+		minimum := binding.headCfg.CompactionWindow()
+		for _, id := range binding.fallbackIDs {
+			if id == binding.headID {
+				continue
+			}
+			if cfg, ok := r.s.loadProfileConfig(id); ok {
+				if window := cfg.CompactionWindow(); window < minimum {
+					minimum = window
+				}
+			}
+		}
+		return minimum
 	}
 	taskNum, err := parseTaskID(r.taskID)
 	if err != nil {
@@ -486,21 +500,24 @@ func (r *taskLLMRuntime) CompactionWindow() int {
 	return minimum
 }
 
-// agentBindingProvider resolves the profile a role is explicitly bound to
-// (agents.llm_profile_id) — the highest-precedence level for task agents. ok=false
-// when the role has no binding or the bound profile no longer builds, so callers
-// fall through to the task chain. A bound profile stays exclusive unless
-// llm_pool_bind_fallback is on, which is what poolForBinding encodes.
+// agentBindingProvider resolves the provider a role is explicitly bound to
+// (agents.llm_profile_id) — the highest-precedence level for task agents. When the
+// role also has a saved fallback chain (agent_llm_fallbacks), the bound profile
+// leads it and the entries are tried in position order, with role-private breaker
+// state (角色级故障隔离)。ok=false when the role has no binding or the bound
+// profile no longer builds, so callers fall through to the task chain. Without a
+// chain the profile stays exclusive unless poolForBinding wraps it.
 func (s *Server) agentBindingProvider(agentKey string) (llm.Provider, agent.Config, bool) {
-	id := s.effectiveProfileForAgent(agentKey, nil)
-	if id == nil {
-		return nil, agent.Config{}, false
-	}
-	prov, cfg, ok := s.providerForProfile(*id)
+	binding, ok := s.resolveAgentBinding(agentKey)
 	if !ok {
 		return nil, agent.Config{}, false
 	}
-	return s.poolForBinding(*id, prov, cfg), cfg, true
+	// 角色链优先于 poolForBinding 的全局链包裹:显式配置的备用链是用户意图,
+	// 不受全局轮询开关 /「绑定回落」开关影响。
+	if pool := s.roleFallbackPool(agentKey, binding); pool != nil {
+		return pool, binding.headCfg, true
+	}
+	return s.poolForBinding(binding.headID, binding.headProv, binding.headCfg), binding.headCfg, true
 }
 
 // globalProvider returns the process-wide provider (persisted active profile or
@@ -570,7 +587,8 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetRunTimeout(time.Duration(s.agentRunSeconds("worker")) * time.Second)
 	wk.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	wk.SetWebSearch(s.webSearchFor("worker"))
-	wk.SetConstraintInject(s.constraintInjectWorker) // 操作约束注入 worker(可配置,默认开)
+	wk.SetConstraintInject(s.constraintInjectWorker)              // 操作约束注入 worker(可配置,默认开)
+	wk.SetEnvBrief(func() string { return s.taskEnvBrief(t.ID) }) // 共享环境上下文（批次 6 / #19）
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
@@ -581,11 +599,15 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	pl.SetSteerWork(s.engine.SteerWork)
 	pl.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	pl.SetWebSearch(s.webSearchFor("planner"))
-	pl.SetConstraintInject(s.constraintInjectPlanner) // 操作约束注入 planner(可配置,默认开)
+	pl.SetConstraintInject(s.constraintInjectPlanner)             // 操作约束注入 planner(可配置,默认开)
+	pl.SetEnvBrief(func() string { return s.taskEnvBrief(t.ID) }) // 共享环境上下文（批次 6 / #19）
 	// cold-digest §7: 冷节点后台压缩。引擎经权威解析器实际驱动的就是这套 per-task planner
 	// (agentsForTask),Compactor 必须接在这里。走任务路由的 planner provider(§4:与 agent
 	// 同模型,随任务 LLM 链解析),压缩用 Complete 一次性生成 body。
-	pl.SetCompactor(agent.NewCompactor(plannerRuntime, "task-router"))
+	// 批次 6：观察压缩生命周期（compaction_state + 中断检查点），任务暂停时可打断。
+	cmp := agent.NewCompactor(plannerRuntime, "task-router")
+	cmp.SetObserver(s.compactionObserver(t))
+	pl.SetCompactor(cmp)
 	main := agent.NewMainAgent(mainRuntime, "task-router", s.m.dir, tx, mainRuntime.CompactionWindow(), s.agentMaxTurns("mainagent"))
 	main.SetFindingRecorder(s.evidenceStore())
 	main.SetCompactionWindowResolver(mainRuntime.CompactionWindow)

@@ -25,6 +25,7 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/fsutil"
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/skill"
 )
@@ -531,6 +532,65 @@ func (s *Server) pgSaveAgentConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, resp)
 }
 
+// pgSaveAgentLLMChain replaces the agent's fallback chain tail (链首是「默认模型」绑定
+// agents.llm_profile_id)。body: {"profile_ids":[按顺序排列的配置 id]};空数组=清空。
+// 每个 id 必须能构建出配置(与绑定校验同一判据);与链首重复或重复出现的 id 静默去重。
+// 校验失败不落库:整体替换是原子的,不存在「改了一半」的链。
+func (s *Server) pgSaveAgentLLMChain(w http.ResponseWriter, r *http.Request) {
+	pg, a, ok := s.agentByKey(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ProfileIDs []int64 `json:"profile_ids"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	head := int64(0)
+	if a.LLMProfileID != nil {
+		head = *a.LLMProfileID
+	}
+	seen := map[int64]bool{}
+	ids := make([]int64, 0, len(req.ProfileIDs))
+	for _, id := range req.ProfileIDs {
+		if id <= 0 || id == head || seen[id] {
+			continue
+		}
+		if _, ok := s.loadProfileConfig(id); !ok {
+			writeErr(w, 400, errMgmtLLMProfileInvalid)
+			return
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if err := pg.ReplaceAgentLLMFallbacks(a.Key, ids); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	// 链的组成变了 → 绑定了该角色的任务下次调用就按新链解析(provider 缓存不变,
+	// 角色池是每次调用按 DB 现读构建的;这里失效任务包让运行中的 bundle 也重建)。
+	s.invalidateTaskAgents()
+	log.Printf("[agents] %s 的备用模型链已更新(%d 个配置)", a.Key, len(ids))
+	writeJSON(w, 200, map[string]any{"ok": true, "fallback_profile_ids": ids})
+}
+
+// pgGetAgentLLMChain returns the saved fallback tail in position order. The head
+// (agents.llm_profile_id) is deliberately not part of this list.
+func (s *Server) pgGetAgentLLMChain(w http.ResponseWriter, r *http.Request) {
+	pg, a, ok := s.agentByKey(w, r)
+	if !ok {
+		return
+	}
+	ids, err := pg.AgentLLMFallbacks(a.Key)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"fallback_profile_ids": ids})
+}
+
 func (s *Server) pgGetAgent(w http.ResponseWriter, r *http.Request) {
 	pg, a, ok := s.agentByKey(w, r)
 	if !ok {
@@ -548,18 +608,28 @@ func (s *Server) pgGetAgent(w http.ResponseWriter, r *http.Request) {
 	if sk == nil {
 		sk = []string{}
 	}
-	// 可选 LLM 配置列表(id/name/model/是否默认),供前端渲染 "默认模型" 下拉;当前绑定见 agent.llm_profile_id。
+	// 可选 LLM 配置列表(id/name/model/是否默认 + 能力元数据),供前端渲染「默认模型」
+	// 下拉与备用链编辑器(能力徽章 / 容量建议);当前绑定见 agent.llm_profile_id。
 	profs, _ := pg.ListProfiles()
 	llmProfiles := make([]map[string]any, 0, len(profs))
 	for _, p := range profs {
 		llmProfiles = append(llmProfiles, map[string]any{
 			"id": p.ID, "name": p.Name, "model": p.Model, "is_default": p.IsDefault,
+			"context_window_k":           p.ContextWindowK,
+			"input_modalities":           p.InputModalities,
+			"effective_input_modalities": p.EffectiveInputModalities(),
 		})
+	}
+	// 备用链尾(#139/#144);链首 = agent.llm_profile_id,不在这个列表里。
+	fallbacks, _ := pg.AgentLLMFallbacks(a.Key)
+	if fallbacks == nil {
+		fallbacks = []int64{}
 	}
 	writeJSON(w, 200, map[string]any{
 		"agent": agentDTO(a), "prompt": cur, "variables": vars, "versions": vers,
-		"visibility":   map[string]any{"mcp": mcp, "skill": sk},
-		"llm_profiles": llmProfiles, // 可绑定的 LLM 配置候选
+		"visibility":          map[string]any{"mcp": mcp, "skill": sk},
+		"llm_profiles":        llmProfiles, // 可绑定的 LLM 配置候选
+		"llm_chain_fallbacks": fallbacks,   // 备用模型链(按顺序;链首=llm_profile_id)
 
 		"wrapup_prompt":            a.WrapupPrompt,                  // 已保存的收尾提示词(空=用内置默认)
 		"wrapup_default":           agent.WrapupDefault(a.Key),      // 内置默认(供占位/恢复默认)
@@ -914,6 +984,7 @@ func (s *Server) pgListMCP(w http.ResponseWriter, r *http.Request) {
 	if pg == nil {
 		return
 	}
+	noStore(w) // env/header 里是被掩蔽的凭据
 	ms, err := pg.ListMCP()
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -921,6 +992,11 @@ func (s *Server) pgListMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	if ms == nil {
 		ms = []*db.MCPServer{}
+	}
+	// 回显唯一漏斗：敏感 env/header 值（X-API-Key、Authorization…）替换成掩码
+	// （计划 #49）——明文与密文都不出网。
+	for i, m := range ms {
+		ms[i] = maskMCPForResponse(m)
 	}
 	writeJSON(w, 200, map[string]any{"servers": ms})
 }
@@ -932,6 +1008,12 @@ func (s *Server) pgSaveMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	var m db.MCPServer
 	if err := decode(r, &m); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	// 整份 env 回传时敏感键是掩码值：先还原为库中原值再进写入口（加密在
+	// db.SaveMCP 内统一完成）。没有可保持的原值时明确拒绝，见 mergeMaskedMCPEnv。
+	if err := mergeMaskedMCPEnv(pg, &m); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
@@ -1008,6 +1090,7 @@ func (s *Server) pgMCPTools(w http.ResponseWriter, r *http.Request) {
 	if pg == nil {
 		return
 	}
+	noStore(w)
 	id, _ := pathInt(r, "id")
 	tools, err := pg.MCPToolsDetailed(id)
 	if err != nil {
@@ -1194,7 +1277,7 @@ func (s *Server) fsCreateSkill(w http.ResponseWriter, r *http.Request) {
 		sb.WriteString("<!-- Describe step-by-step instructions in Markdown. -->\n\n")
 		sb.WriteString("1. \n2. \n3. \n")
 	}
-	if err := os.WriteFile(filepath.Join(skillPath, "SKILL.md"), []byte(sb.String()), 0o644); err != nil {
+	if err := fsutil.WriteFileAtomic(filepath.Join(skillPath, "SKILL.md"), []byte(sb.String()), 0o644); err != nil {
 		_ = os.RemoveAll(skillPath)
 		writeErr(w, 500, err.Error())
 		return
@@ -1234,7 +1317,7 @@ func (s *Server) fsUpdateSkillMeta(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if err := os.WriteFile(skillMD, updated, 0o644); err != nil {
+	if err := fsutil.WriteFileAtomic(skillMD, updated, 0o644); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -1709,7 +1792,7 @@ func (s *Server) fsWriteFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	if err := os.WriteFile(fullPath, []byte(body.Content), 0o644); err != nil {
+	if err := fsutil.WriteFileAtomic(fullPath, []byte(body.Content), 0o644); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -1850,6 +1933,7 @@ func (s *Server) pgListProfiles(w http.ResponseWriter, r *http.Request) {
 	if pg == nil {
 		return
 	}
+	noStore(w) // api_key_hint / 凭据绑定状态
 	ps, err := pg.ListProfiles()
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -2047,6 +2131,10 @@ func (s *Server) pgLLMPoolReset(w http.ResponseWriter, r *http.Request) {
 // Supports OpenAI-format (GET /models) and Anthropic-format (GET /v1/models); for
 // Anthropic-compatible third parties (e.g. DeepSeek) whose model list lives only on
 // the OpenAI path, it falls back to the OpenAI endpoint at the stripped root.
+//
+// 与「测试连接」(/api/llm/test → llmtest.Probe) 是两个互不触发的独立端点
+// (#61–63): 本处理器只发模型列表 GET，不跑任何补全、不经过 Agent 执行栈;
+// 反之探测也不会拉模型列表。失败诊断即时回传 HTTP 状态码与供应商原文 (#42)。
 func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Provider  string `json:"provider"` // "openai" | "anthropic"
@@ -2067,7 +2155,7 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if apiKey == "" {
-		writeJSON(w, 200, map[string]any{"ok": false, "error": errMgmtNoAPIKey})
+		writeJSON(w, 200, map[string]any{"ok": false, "error": trMsg(errMgmtNoAPIKey)})
 		return
 	}
 
@@ -2135,19 +2223,19 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	for _, c := range candidates {
 		httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, c.url, nil)
 		if err != nil {
-			lastErr = errMgmtBuildReqFail + err.Error()
+			lastErr = trMsg(errMgmtBuildReqFail) + err.Error()
 			continue
 		}
 		httpReq.Header = c.hdr
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			lastErr = errMgmtReqFail + err.Error()
+			lastErr = trMsg(errMgmtReqFail) + err.Error()
 			continue
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Sprintf(errMgmtAPIReturned, resp.StatusCode, string(body[:min(len(body), 512)]))
+			lastErr = fmt.Sprintf(trMsg(errMgmtAPIReturned), resp.StatusCode, string(body[:min(len(body), 512)]))
 			continue
 		}
 		// Both OpenAI and Anthropic return {"data": [{"id": "..."},...]}.
@@ -2157,7 +2245,7 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(body, &parsed); err != nil {
-			lastErr = errMgmtParseRespFail + err.Error()
+			lastErr = trMsg(errMgmtParseRespFail) + err.Error()
 			continue
 		}
 		models := make([]string, 0, len(parsed.Data))
@@ -2177,7 +2265,7 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if lastErr == "" {
-		lastErr = errMgmtNoModelList
+		lastErr = trMsg(errMgmtNoModelList)
 	}
 	writeJSON(w, 200, map[string]any{"ok": false, "error": lastErr})
 }

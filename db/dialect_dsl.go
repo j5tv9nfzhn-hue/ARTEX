@@ -2,8 +2,6 @@ package db
 
 import (
 	"fmt"
-
-	"github.com/Autumn-27/artex/config"
 )
 
 // JSON 数组列的谓词构造（PostgreSQL ↔ SQLite）。
@@ -21,9 +19,6 @@ import (
 // 按 C.UTF-8 折叠。这一点与 assets.go 里其余 ILIKE 列的处理保持一致，
 // 不引入新的行为差异。
 func jsonArrayILikeExpr(col, placeholder string) string {
-	if config.Engine() == config.EnginePostgres {
-		return "EXISTS (SELECT 1 FROM unnest(" + col + ") t(v) WHERE v ILIKE " + placeholder + ")"
-	}
 	return "EXISTS (SELECT 1 FROM json_each(" + col + ") WHERE value LIKE " + placeholder + ")"
 }
 

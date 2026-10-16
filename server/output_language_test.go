@@ -18,7 +18,7 @@ func TestOutputLanguageCacheFollowsSettings(t *testing.T) {
 	t.Setenv("ARTEX_LANG", "")
 	m, err := NewManager(t.TempDir(), "")
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	defer m.Close()
 	prev, hadPrev, _ := m.pg.GetSetting(settingOutputLanguage)

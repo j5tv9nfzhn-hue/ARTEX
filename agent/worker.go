@@ -85,6 +85,11 @@ type Worker struct {
 	// maxTokensFn resolves the per-reply output cap in tokens, on the same
 	// per-run basis. nil or 0 = send no cap and let the endpoint decide.
 	maxTokensFn func() int
+	// envBriefFn resolves the task's shared execution-environment brief (批次 6 /
+	// #19/#22): a compact Chinese block (OS/shell/tool versions) appended to the
+	// system prompt so every worker reasons about the machine it actually runs on.
+	// Read per run; nil/empty = no injection.
+	envBriefFn func() string
 }
 
 // WorkerSessionID returns the stable transcript key used by a worker intent.
@@ -140,6 +145,18 @@ func (w *Worker) SetConstraintInject(fn func() bool) { w.injectConstraints = fn 
 
 // wantConstraints reports whether constraint injection is enabled (default yes).
 func (w *Worker) wantConstraints() bool { return w.injectConstraints == nil || w.injectConstraints() }
+
+// SetEnvBrief wires a resolver returning the task's shared environment brief
+// (批次 6 / #19：共享环境上下文). Appended to the worker system prompt alongside
+// the constraint block. nil/empty = no injection.
+func (w *Worker) SetEnvBrief(fn func() string) { w.envBriefFn = fn }
+
+func (w *Worker) envBrief() string {
+	if w.envBriefFn == nil {
+		return ""
+	}
+	return strings.TrimSpace(w.envBriefFn())
+}
 
 // SetRunTimeout configures the per-intent wall-clock budget for the main
 // exploration (0 = unlimited). When it fires, the SDK settlement phase still runs
@@ -317,22 +334,71 @@ func renderIntentTask(intent *db.Node) string {
 	return fmt.Sprintf("\n\n【你领到的意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n%s\n意图 id: %d（写回 record_fact / report_finding 时传它）", string(intent.Payload), intent.ID)
 }
 
+// assetPromptView 是意图锚定资产的注入紧凑视图:只留识别/定位资产的关键字段。
+// 完整字段(open_ports/technologies/params/auth/extra/task_ids/… )仍在库里,worker
+// 需要时用 list_assets(id/ids 直取) / asset_neighbors / node_detail 查。
+type assetPromptView struct {
+	ID         int64  `json:"id"`
+	Type       string `json:"type"`
+	Domain     string `json:"domain,omitempty"`
+	RootDomain string `json:"root_domain,omitempty"`
+	IP         string `json:"ip,omitempty"`
+	Port       *int   `json:"port,omitempty"`
+	URL        string `json:"url,omitempty"`
+}
+
+// renderWorkerIntentAssets 渲染意图锚定资产的注入块(上限 workerAssetPromptMax 条、
+// 每条只带关键字段),超出只给计数与查询指引。空资产返回空串 = 无该块(保持原行为)。
+// 为什么收紧:这段 JSON 拼进 worker system,每个 run 都重拼一次、没有压缩回旋余地,
+// 原样 marshal 全量资产(open_ports/technologies/params/extra 等长字段)会让 system
+// 轻松膨胀到几十 KB —— 每轮都随 system 重发计费。
+func renderWorkerIntentAssets(assets []*db.Asset) string {
+	if len(assets) == 0 {
+		return ""
+	}
+	shown := assets
+	overflow := 0
+	if len(shown) > workerAssetPromptMax {
+		overflow = len(shown) - workerAssetPromptMax
+		shown = shown[:workerAssetPromptMax]
+	}
+	views := make([]assetPromptView, 0, len(shown))
+	for _, a := range shown {
+		if a == nil {
+			continue
+		}
+		views = append(views, assetPromptView{ID: a.ID, Type: a.Type, Domain: a.Domain, RootDomain: a.RootDomain, IP: a.IP, Port: a.Port, URL: a.URL})
+	}
+	b, err := json.Marshal(views)
+	if err != nil {
+		return ""
+	}
+	out := "\n\n本意图 asset_ids 对应的目标资产（紧凑注入视图，只列关键字段；完整字段用 list_assets / asset_neighbors 查）：\n" + string(b)
+	if overflow > 0 {
+		out += fmt.Sprintf("\n（共 %d 条，这里只列前 %d 条；其余 %d 条资产请用资产工具查看：list_assets 直取/搜索、asset_neighbors。）", len(assets), workerAssetPromptMax, overflow)
+	}
+	return out
+}
+
 // renderWorkerGraphOverview folds the global situational snapshot into the worker's
 // launch USER message for AWARENESS ONLY. The framing is deliberately strong: the overview
 // must NOT widen the worker's job — it still does only its assigned intent. Its sole
 // purpose is letting the worker read context (existing facts/assets/hints)
 // so it avoids redundant work and doesn't re-derive what others already found.
+// 注入瘦身(批次 E):调用方传入 graphOverviewForPrompt 的紧凑视图(cold digests 15→8、
+// digest 正文截断);marshal 后再限总字节,防止字段膨胀把首消息撑大。完整图/资产/更早
+// 明细都可用工具按需查,这里只是"了解大局"的可降级信息(见 worker.go execute 的取舍注释)。
 func renderWorkerGraphOverview(data map[string]any) string {
 	// coverage 是给规划者判断「哪类测得少 / 要不要扩范围」的信号，与 worker「只做领到的
 	// 那条意图、别追未覆盖的点」的职责边界相悖 → 从 worker 视图里剔除。data 是本次 worker
 	// 专属的新 map，删键不影响 planner。
 	delete(data, "coverage")
-	b, err := json.Marshal(data)
-	if err != nil {
+	b := marshalOverviewCapped(data, workerOverviewMaxBytes)
+	if b == "" {
 		return "" // fall back silently: the worker just won't have the global context
 	}
 	return "\n\n【全局探索态势（只读，帮你把自己这条意图放进大局看）】：\n" +
-		"下面是整个任务当前的探索概况。用途有两个：一是知道别人已发现什么，别重复；二是让你探自己这条意图时，能联想到它和全局的关系。\n" +
+		"下面是整个任务当前的探索概况（注入紧凑版：列表截为最新一窗，完整内容可用 graph_overview / list_facts / list_assets / node_detail 等工具按需查询）。用途有两个：一是知道别人已发现什么，别重复；二是让你探自己这条意图时，能联想到它和全局的关系。\n" +
 		"**发散是好事**：探本意图时尽管深想、多联想。唯一的界线是——别真的动手去执行别的意图（那是别的 worker 的事，由规划者调度）。但凡你联想到有价值的线索（跨资产的联动、疑似另一条利用链的入口、全局层面的可疑点），**务必写进 fact 交规划者**——这是你重要的产出，不是可有可无。宁可多报一条让规划者判断，也别自己咽下去。\n" +
 		string(b)
 }
@@ -392,23 +458,29 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// The run-wide intent is not the current tool action. Do not forward it or
 	// inherit a parent run's background into the action reviewer.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
-	overview := renderWorkerGraphOverview(tsx.graphOverviewData())
+	overview := renderWorkerGraphOverview(tsx.graphOverviewForPrompt(workerPromptCaps))
 	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}
+	// 共享环境上下文（批次 6）：整台机器的探测快照（OS/执行器/工具版本），
+	// 与 constraintBlock 同一套 system 末尾追加法——同一个任务的所有 worker 看到同一份。
+	if brief := w.envBrief(); brief != "" {
+		sysBody += "\n\n" + brief
+	}
 	// 意图块 → 意图锚定资产块 → 启动指令，依次追加到 system 尾部（与 constraintBlock 同一套追加法）。
-	sysBody += renderIntentTask(intent)
+	// 意图块整体有 8KB 兜底(批次 E):超限时先丢资产块尾部(意图原文在前、必须保住),
+	// 完整资产可用 list_assets / asset_neighbors 按需取。
+	intentBlock := renderIntentTask(intent)
 	if as != nil {
 		if ids := intentAssetIDs(intent); len(ids) > 0 {
 			if assets, err := as.GetByIDs(ids); err == nil && len(assets) > 0 {
-				if b, err := json.Marshal(assets); err == nil {
-					sysBody += "\n\n本意图 asset_ids 对应的目标资产：\n" + string(b)
-				}
+				intentBlock += renderWorkerIntentAssets(assets)
 				// 意图明确针对的这些资产 → 自动纳入任务测试范围（与 insertAssets 同一套
 				// 保守粒度）。upsertTaskScope 的 ON CONFLICT DO NOTHING + uq_task_scope
 				// 唯一索引保证不会重复添加；重跑/重试同样是幂等 no-op。
-				// 资产覆盖度功能关闭时不再累积测试范围(分母)。
+				// 资产覆盖度功能关闭时不再累积测试范围(分母)。注意:注入瘦身只影响上面
+				// 拼进 prompt 的视图,这里仍对【全部】锚定资产累计范围,数据能力不减。
 				if coverageEnabled {
 					for _, a := range assets {
 						_ = as.AddAutoScope(taskID, a.Type, a.Domain, a.URL, a.IP)
@@ -417,6 +489,11 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			}
 		}
 	}
+	if len(intentBlock) > workerIntentBlockMaxBytes {
+		intentBlock = cutUTF8(intentBlock, workerIntentBlockMaxBytes) +
+			"\n…（意图块超长已截断；完整资产用 list_assets / asset_neighbors 查。）"
+	}
+	sysBody += intentBlock
 	sysBody += "\n\n开始执行上面这条意图：只做它、只产生事实、assets、finding、做完即停。"
 	system, boundary := deferredSystem(sysBody, def)
 	// 任务级 deadline(经 ctx 注入)夹逼本 run 的墙钟预算 + 决定收尾词(见 taskclock.go)。
@@ -461,12 +538,15 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		// 因步数=夹逼窗口内步数先耗尽→回落 per-run 词。非 clamped 维持纯 per-run。
 		Settlement: settle,
 		// large tool output spills to cmd-output/ with a head + pointer (SDK tool.Capture);
-		// full output preserved on disk. 截断上限用 SDK 默认(30000 字符)。
+		// full output preserved on disk. 截断上限见 maxToolOutputChars。
 		ToolOutputDir: cmdOutDir(runDir),
-		Compaction:    compactionConfig(w.compactionWindow()), // long tool-heavy runs stay within the window
-		Todos:         actool.NewTodoStore(),                  // 会话级临时待办（TodoWrite），纯规划用，退出即丢
-		NonStreaming:  w.nonStreaming(),                       // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:     w.maxTokens(),                          // 0 = 不发上限,由服务端默认值决定
+		// 工具输出进入对话历史的字符上限：超限部分仍全量落盘可重读，头部 12k 足够；
+		// 收紧上限直接降低每轮历史重发体积（详见 maxToolOutputChars 的注释）。
+		MaxToolOutputChars: maxToolOutputChars,
+		Compaction:         compactionConfig(w.compactionWindow()), // long tool-heavy runs stay within the window
+		Todos:              actool.NewTodoStore(),                  // 会话级临时待办（TodoWrite），纯规划用，退出即丢
+		NonStreaming:       w.nonStreaming(),                       // 该 profile 选非流式时走 Provider.Complete
+		MaxTokens:          w.maxTokens(),                          // 0 = 不单独设限;norma harness 兜底为 32768(harness/query.go maxTokens)
 	}
 	if hooks != nil { // typed-nil guard: only set when concrete (avoids harness panic)
 		opts.Hooks = hooks

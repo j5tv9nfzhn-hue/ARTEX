@@ -1,22 +1,16 @@
 {
   "_comment": "复制为 config.json，或通过 ARTEX_CONFIG 指定路径。此文件支持 database、skill_dir 和默认 language；LLM 等其他配置通过环境变量或应用设置管理。",
-  "_comment_database": "PostgreSQL 连接。优先级：ARTEX_PG_DSN > 本文件 database。选择填写独立字段，或在 database.dsn 中填写完整连接字符串。",
+  "_comment_database": "存储引擎只有 SQLite：一个数据库文件，无需安装、无需服务。留空本节即可——首次启动会在本文件旁自动创建 artex.db。要换位置就填 database.path，优先级：ARTEX_SQLITE_PATH > 本文件 database.path > 本文件旁的 artex.db。",
   "database": {
-    "host": "127.0.0.1",
-    "port": 5433,
-    "user": "artex",
-    "password": "",
-    "dbname": "artex",
-    "sslmode": "disable"
+    "path": ""
   },
-  "_comment_database_dsn": "方式 B：以完整 DSN 替换上方 database。dsn 非空时忽略其他连接字段。",
-  "_example_database_dsn": {
+  "_example_database_path": {
     "database": {
-      "dsn": "postgres://user:pass@db.example.com:5432/artex?sslmode=require"
+      "path": "D:/artex-data/artex.db"
     }
   },
   "_comment_skill_dir": "Skill 根目录，每个子目录对应一个含 SKILL.md 的 Skill。优先级：ARTEX_SKILL_DIR > 此字段 > 可执行文件旁的 skills/。空值使用默认值，相对路径基于当前工作目录。",
   "skill_dir": "/opt/artex/skills",
-  "_comment_language": "默认用户输出语言为简体中文 zh，支持 en 和 es。模型报告、摘要、对话及后端消息遵循此值。优先级：ARTEX_LANG > 此字段 > zh；运行时设置页选择优先于默认值。空值使用 zh，旧 ko 兼容归一为 zh。",
+  "_comment_language": "输出语言固定为简体中文 zh，由服务端设置管理；历史遗留的 ko/en/es 配置与未知值一律归一为 zh。优先级：ARTEX_LANG > 此字段 > zh；运行时设置页选择优先于默认值。界面语言属浏览器本地偏好，与此无关。",
   "language": "zh"
 }

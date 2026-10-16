@@ -122,10 +122,23 @@ func toNotifyDeliveryDTO(dl *db.NotificationDelivery) notifyDeliveryDTO {
 		NextAttempt: dl.NextAttemptAt,
 		Severity:    snap.Severity,
 	}
-	if snap.Name != "" {
-		dto.Title = snap.Name
-	} else {
-		dto.Title = snap.VulnClass
+	// 标题摘要按事件类型取：任务事件没有漏洞名，用任务标题（缺失回退「任务 #N」）；
+	// 审批事件标题就是固定文案，新的信息（工具名）在列表副行里呈现。
+	switch snap.Kind {
+	case notify.EventApprovalPending:
+		dto.Title = "等待人工审批"
+	case notify.EventTaskStatusChanged:
+		if snap.TaskTitle != "" {
+			dto.Title = snap.TaskTitle
+		} else {
+			dto.Title = fmt.Sprintf("任务 #%d", snap.TaskID)
+		}
+	default:
+		if snap.Name != "" {
+			dto.Title = snap.Name
+		} else {
+			dto.Title = snap.VulnClass
+		}
 	}
 	return dto
 }
@@ -170,6 +183,7 @@ func (s *Server) notifyListChannels(w http.ResponseWriter, r *http.Request) {
 	if pg == nil {
 		return
 	}
+	noStore(w) // 渠道配置里是掩码后的凭据
 	channels, err := pg.ListNotificationChannels(r.Context())
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -259,6 +273,12 @@ func (s *Server) notifyCreateChannel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		raw, _ := json.Marshal(req.Filter)
+		ch.Filter = raw
+	} else {
+		// 未传过滤配置的新渠道：默认接收两类任务级事件——任务结束与待审批都是
+		// 「人必须知道、不看页面任务就一直卡着」的事项，默认勾选符合直觉。
+		// 存量渠道不受影响：它们缺这两个字段时解析为零值=false（opt-in 不迁移）。
+		raw, _ := json.Marshal(notify.Filter{OnTaskStatus: true, OnApproval: true})
 		ch.Filter = raw
 	}
 	rawCfg, _ := json.Marshal(req.Config)

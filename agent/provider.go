@@ -59,9 +59,10 @@ type Config struct {
 	// 某些网关糟糕的 SSE 实现(空帧、思考字段丢帧),代价是失去运行中的实时进度/实时
 	// token 计数。映射为 agentcore.Options.NonStreaming = !Stream。
 	Stream bool
-	// MaxTokens 是单次回复的输出上限(token)。0 = 不发送该字段,由服务端默认值决定
-	// (历史行为)。与 ContextWindowK 不同:后者是模型总容量,只在本地用来算压缩阈值,
-	// 不出现在请求里;本值随每次请求发出。映射为 agentcore.Options.MaxTokens。
+	// MaxTokens 是单次回复的输出上限(token)。0 = 不单独设限——norma harness 会把
+	// 请求值兜底为 32768(harness/query.go maxTokens():Options.MaxTokens>0 才用本值),
+	// 所以 0 并非「不发送上限」。与 ContextWindowK 不同:后者是模型总容量,只在本地
+	// 用来算压缩阈值,不出现在请求里;本值随每次请求发出。映射为 agentcore.Options.MaxTokens。
 	MaxTokens int
 	// MaxTokensField 选择 MaxTokens 用哪个请求字段名,仅对 format=openai 生效:
 	//   "" = max_tokens(默认); "max_completion_tokens" = 新字段。

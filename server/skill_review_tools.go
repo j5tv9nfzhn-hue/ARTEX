@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/fsutil"
+	"github.com/Autumn-27/artex/stageerr"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -116,13 +118,13 @@ func (s *Server) applySkillFile(skill, file, content string) error {
 	}
 	clean, msg := skillRelPath(rel)
 	if msg != "" {
-		return fmt.Errorf("非法路径: %s", msg)
+		return stageerr.Msgf(stageerr.StageToolValidate, "非法路径: %s", msg)
 	}
 	full := filepath.Join(s.skillDir, skill, clean)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return err
+		return stageerr.Wrap(stageerr.StagePersist, "创建技能子目录失败", err)
 	}
-	return os.WriteFile(full, []byte(content), 0o644)
+	return stageerr.Wrap(stageerr.StagePersist, "写入技能文件失败", fsutil.WriteFileAtomic(full, []byte(content), 0o644))
 }
 
 // proposeOrWrite 是技能写入的唯一入口。

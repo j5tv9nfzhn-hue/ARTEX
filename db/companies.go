@@ -528,7 +528,7 @@ func (s *CompanyStore) RecomputeAttribution() error {
 // 「company_id 更小优先」三条择优规则在两个引擎上完全一致。
 func recomputeAttributionTx(tx *sql.Tx) (string, error) {
 	// Only derived rows are cleared. Historical rows migrated without provenance
-	// are marked explicit by schema.sql, which is the non-destructive default.
+	// are marked explicit by schema_sqlite.sql, which is the non-destructive default.
 	if _, err := tx.Exec(`
 UPDATE assets
 SET company_id = NULL, company_source = 'scope'

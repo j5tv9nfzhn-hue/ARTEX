@@ -22,9 +22,15 @@ const (
 )
 
 // 事件类型，对应 notification_events.kind。
+//
+// finding_* 是漏洞生命周期事件；task_status_changed / approval_pending 是
+// 「人必须知道」的任务级事件——任务跑完/挂了/被暂停、工具调用在等人审批，
+// 用户不看页面就会一直卡着，所以它们独立成事件而不混进漏洞语义里。
 const (
 	EventFindingCreated       = "finding_created"
 	EventFindingStatusChanged = "finding_status_changed"
+	EventTaskStatusChanged    = "task_status_changed"
+	EventApprovalPending      = "approval_pending"
 )
 
 // InitKind 是 config 里为空的 kind 的兜底值。

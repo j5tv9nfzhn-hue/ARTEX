@@ -269,9 +269,8 @@ func (d *DB) AddNotificationEvent(ctx context.Context, kind string, findingID in
 //
 // 整轮操作在一个事务里：事件按「抢占」语义领取，多个进程同时跑也各自领到不同的行
 // （项目里归档队列的领取用的是同一套手法，见 db/task_archives.go 的
-// ClaimTaskArchiveJob）。抢占在两个引擎上是两条等价但不同的写法：
-// PG 保留原来的 SELECT ... FOR UPDATE SKIP LOCKED；SQLite 没有行锁，改成
-// 「UPDATE 即领取」（见 claimPendingEventsTx 与 dialect_locking.go）。
+// ClaimTaskArchiveJob）。领取用「UPDATE 即领取」（见 claimPendingEventsTx 与
+// dialect_locking.go）。
 //
 // 过滤匹配刻意放在 Go 侧而非 SQL：渠道的过滤条件是一组可选字段的 JSONB，
 // 用 SQL 表达六种组合的匹配会让查询难以维护，而渠道数量是「人手配的几条」，
@@ -328,48 +327,28 @@ func (d *DB) FanOutPendingEvents(ctx context.Context, limit int) (eventCount, de
 		}
 	}
 
-	// 标记本轮事件已分派。未命中任何渠道的事件也一起标记（见函数注释）。
-	//
-	// 只在 PG 分支做：SQLite 分支的领取语句本身就是 UPDATE，已经把 fanned_out 置上，
-	// 这里再写一遍既多余也会让「未命中任何渠道」的事件漏掉标记之外的语义。
-	if isPostgresEngine() {
-		ids := make([]string, 0, len(events))
-		markArgs := make([]any, 0, len(events))
-		for _, ev := range events {
-			markArgs = append(markArgs, ev.ID)
-			ids = append(ids, fmt.Sprintf("$%d", len(markArgs)))
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE notification_events SET fanned_out=true WHERE id IN (`+strings.Join(ids, ",")+`)`, markArgs...); err != nil {
-			return 0, 0, err
-		}
-	}
+	// 标记本轮事件已分派的工作由 claimPendingEventsTx 的 UPDATE 一并完成（见函数注释），
+	// 这里不再补写。
+
 	return len(events), len(toInsert), tx.Commit()
 }
 
 // claimPendingEventsTx 领取一批尚未分派的事件，并返回它们的快照。
 //
-// 抢占语义按引擎走两条路（等价性论证见 dialect_locking.go 文件头）：
+// 领取用一条 UPDATE … WHERE id IN (SELECT … LIMIT $1) RETURNING …：领取与「标记已分派」
+// 在同一条语句里原子完成。它同时是本事务的第一条语句，一开口就拿到库级写锁，
+// 因此并发的第二个分派轮次只会在 busy_timeout 内等第一个提交；提交之后它的
+// 子查询已经看不到 fanned_out=true 的行，于是自然地领到下一批，不会重复分派。
+// （等价性论证见 dialect_locking.go 文件头。）
 //
-//   - PG：SELECT ... FOR UPDATE SKIP LOCKED … LIMIT $1 原样保留；行锁一直持有到本轮
-//     事务提交，「已分派」标记由 FanOutPendingEvents 收尾时统一写。
-//   - SQLite：没有行锁也没有 SKIP LOCKED（写上去就是 `near "FOR"`），改成一条
-//     UPDATE … WHERE id IN (SELECT … LIMIT $1) RETURNING …：领取与「标记已分派」
-//     在同一条语句里原子完成。它同时是本事务的第一条语句，一开口就拿到库级写锁，
-//     因此并发的第二个分派轮次只会在 busy_timeout 内等第一个提交；提交之后它的
-//     子查询已经看不到 fanned_out=true 的行，于是自然地领到下一批，不会重复分派。
-//
-// 两个分支给调用方的东西是同一种：events[i] 与 parsedSnaps[i] 一一对应。
+// events[i] 与 parsedSnaps[i] 一一对应。
 func claimPendingEventsTx(ctx context.Context, tx *sql.Tx, limit int) ([]NotificationEvent, []notify.Snapshot, error) {
-	// 候选行条件只有一份，两个分支的差别只在「取哪些列」与「怎么防止两人领同一行」。
+	// 候选行条件只有一份。IN 子查询只能返回一列，所以这里只投影 id；内容由同一条
+	// UPDATE 的 RETURNING 带回来。SET 子句没有占位符，LIMIT 的 $1 仍是 limit。
 	const pending = `FROM notification_events
 	WHERE NOT fanned_out ORDER BY id`
-	query := `SELECT id, kind, finding_id, snapshot ` + pending + forUpdateClause(true) + "\nLIMIT $1"
-	if isSQLiteEngine() {
-		// IN 子查询只能返回一列，所以这里只投影 id；内容由同一条 UPDATE 的
-		// RETURNING 带回来。SET 子句没有占位符，LIMIT 的 $1 仍是 limit。
-		query, _ = sqliteClaimUpdate("notification_events", "SELECT id "+pending,
-			"id, kind, finding_id, snapshot", []any{limit}, "fanned_out=true")
-	}
+	query, _ := sqliteClaimUpdate("notification_events", "SELECT id "+pending,
+		"id, kind, finding_id, snapshot", []any{limit}, "fanned_out=true")
 	rows, err := tx.QueryContext(ctx, query, limit)
 	if err != nil {
 		return nil, nil, err
@@ -581,10 +560,8 @@ type NotificationStats struct {
 	BacklogAgeMS int64 `json:"backlog_age_ms"` // 最老的待发投递距今毫秒数
 }
 
-// notificationStatsQueryPG / notificationStatsQuerySQLite 是同一条统计语句的两种写法。
-//
-// PG 版是原句，逐字未动。SQLite 版只换掉三处 PG 专有构造，其余（列、表、
-// 参数编号 $1..$4、COALESCE 语义）完全共用：
+// notificationStatsQuerySQLite 是通知统计语句的 SQLite 写法，只换掉三处 PG 专有构造，
+// 其余（列、表、参数编号 $1..$4、COALESCE 语义）完全共用：
 //
 //  1. `sent_at >= date_trunc('day', now())`
 //     SQLite 没有 date_trunc，也没有注册它——直接跑是 `no such function: date_trunc`。
@@ -608,14 +585,6 @@ type NotificationStats struct {
 //  3. 末尾的 `::bigint` 是 PG 的类型转换，SQLite 认 `:`（报 `unrecognized token`）。
 //     改成 `CAST(… AS INTEGER)`，顺带把 julianday 相减产生的 REAL 截成整数：
 //     少了这一步，database/sql 会拿 "29499.98…" 去 ParseInt 而失败。
-const notificationStatsQueryPG = `SELECT
-    (SELECT count(*) FROM notification_channels),
-    (SELECT count(*) FROM notification_channels WHERE enabled),
-    (SELECT count(*) FROM notification_deliveries WHERE state IN ($1,$2)),
-    (SELECT count(*) FROM notification_deliveries WHERE state=$3),
-    (SELECT count(*) FROM notification_deliveries WHERE state=$4 AND sent_at >= date_trunc('day', now())),
-    COALESCE((SELECT EXTRACT(EPOCH FROM (now() - min(created_at))) * 1000 FROM notification_deliveries WHERE state=$1), 0)::bigint`
-
 const notificationStatsQuerySQLite = `SELECT
     (SELECT count(*) FROM notification_channels),
     (SELECT count(*) FROM notification_channels WHERE enabled),
@@ -629,11 +598,7 @@ const notificationStatsQuerySQLite = `SELECT
 // 因为积压 3 条和积压 3 条的差别可以是从 3 秒到 3 小时。
 func (d *DB) NotificationStatsSnapshot(ctx context.Context) (*NotificationStats, error) {
 	var s NotificationStats
-	query := notificationStatsQueryPG
-	if isSQLiteEngine() {
-		query = notificationStatsQuerySQLite
-	}
-	if err := d.QueryRowContext(ctx, query,
+	if err := d.QueryRowContext(ctx, notificationStatsQuerySQLite,
 		NotifyStatePending, NotifyStateSending, NotifyStateFailed, NotifyStateSent).
 		Scan(&s.Channels, &s.ChannelsOn, &s.Pending, &s.Failed, &s.SentToday, &s.BacklogAgeMS); err != nil {
 		return nil, err

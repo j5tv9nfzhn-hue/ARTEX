@@ -33,23 +33,30 @@ const (
 
 // connectMCP dials one MCP server per its transport. Callers must Close the client.
 func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
+	// env/header 值可能带 enc:v1: 密文（计划 #49）。拨号前在唯一出口解成明文；
+	// 解不开（主密钥丢失/密文损坏）就明确失败，绝不把密文当明文塞进
+	// Authorization 头——那只会得到一个原因离现场很远的 401。
+	env, err := db.MCPEnvPlain(m.Env)
+	if err != nil {
+		return nil, fmt.Errorf("MCP %s：%w", m.Name, err)
+	}
 	switch m.Transport {
 	case "stdio":
 		if m.Command == "" {
 			return nil, errors.New(errMCPStdioNoCommand)
 		}
-		return mcp.NewStdioClient(ctx, m.Name, m.Command, jsonStrMap(m.Env), jsonStrSlice(m.Args)...)
+		return mcp.NewStdioClient(ctx, m.Name, m.Command, env, jsonStrSlice(m.Args)...)
 	case "http":
 		if m.URL == "" {
 			return nil, errors.New(errMCPHTTPNoURL)
 		}
 		// env map doubles as HTTP headers (e.g. Authorization).
-		return mcphttp.New(ctx, m.Name, m.URL, jsonStrMap(m.Env), m.Insecure)
+		return mcphttp.New(ctx, m.Name, m.URL, env, m.Insecure)
 	case "sse":
 		if m.URL == "" {
 			return nil, errors.New(errMCPSSENoURL)
 		}
-		return mcphttp.NewSSE(ctx, m.Name, m.URL, jsonStrMap(m.Env), m.Insecure)
+		return mcphttp.NewSSE(ctx, m.Name, m.URL, env, m.Insecure)
 	default:
 		return nil, fmt.Errorf(trMsg(errMCPUnknownTransportFmt), m.Transport)
 	}

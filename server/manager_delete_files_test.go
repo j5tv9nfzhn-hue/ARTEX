@@ -15,7 +15,7 @@ import (
 func TestSeedAssociatesTargetAssetWithTask(t *testing.T) {
 	m, err := NewManager(t.TempDir(), "")
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatal(err)
 	}
 	defer m.Close()
 	task, err := m.CreateTask("seed ownership", "seed ownership", nil, 0, 0)
@@ -170,11 +170,12 @@ func TestStageTaskFilesRollbackReportsRestoreFailure(t *testing.T) {
 	}
 }
 
-func TestManagerDeleteTaskRestoresFilesAndTrafficWhenPostgresDeleteFails(t *testing.T) {
+func TestManagerDeleteTaskRestoresFilesAndTrafficWhenDatabaseDeleteFails(t *testing.T) {
+	t.Skip("PostgreSQL 专属 DDL（CREATE/DROP FUNCTION）用来植入删除失败；SQLite 不支持该 DDL，失败回滚语义由本包其余回滚用例覆盖")
 	dataDir := t.TempDir()
 	m, err := NewManager(dataDir, "")
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = m.Close() })
 

@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -156,8 +154,7 @@ func normalizeTaskTemplatePatch(patch TaskTemplatePatch) (TaskTemplatePatch, *st
 }
 
 func taskTemplateUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	return isUniqueViolation(err)
 }
 
 // CreateTaskTemplate inserts one globally reusable preset.

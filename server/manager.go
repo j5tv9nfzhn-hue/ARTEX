@@ -58,6 +58,7 @@ type Task struct {
 	TimeoutSeconds       int                    `json:"timeout_seconds"`
 	PlanHeartbeatSeconds int                    `json:"plan_heartbeat_seconds"` // planner 心跳触发间隔(秒)
 	CoverageEnabled      bool                   `json:"coverage_enabled"`       // 资产覆盖度功能开关(创建时定,默认开)
+	TokenBudget          int                    `json:"token_budget"`           // 任务级 token 预算(0=不限);预算闸每 run 读一次
 	FirstRunAt           int64                  `json:"first_run_at,omitempty"`
 	DeadlineAt           int64                  `json:"deadline_at,omitempty"`
 	Store                *pgdb.ExplorationStore `json:"-"`
@@ -88,6 +89,7 @@ type taskLifecycleState struct {
 	CompletedAt   int64
 	FirstRunAt    int64
 	DeadlineAt    int64
+	TokenBudget   int
 	SourceTaskIDs []int64
 	CompanyIDs    []int64
 	CategoryID    *int64
@@ -115,6 +117,7 @@ func (t *Task) lifecycleSnapshotLocked() taskLifecycleState {
 		CompletedAt:   t.CompletedAt,
 		FirstRunAt:    t.FirstRunAt,
 		DeadlineAt:    t.DeadlineAt,
+		TokenBudget:   t.TokenBudget,
 		SourceTaskIDs: append([]int64(nil), t.SourceTaskIDs...),
 		CompanyIDs:    append([]int64(nil), t.CompanyIDs...),
 		CategoryID:    cloneInt64Ptr(t.CategoryID),
@@ -139,6 +142,7 @@ func (t *Task) updateLifecycle(update func(*taskLifecycleState)) {
 	t.CompletedAt = state.CompletedAt
 	t.FirstRunAt = state.FirstRunAt
 	t.DeadlineAt = state.DeadlineAt
+	t.TokenBudget = state.TokenBudget
 	t.SourceTaskIDs = append(t.SourceTaskIDs[:0], state.SourceTaskIDs...)
 	t.CompanyIDs = append(t.CompanyIDs[:0], state.CompanyIDs...)
 	t.CategoryID = cloneInt64Ptr(state.CategoryID)
@@ -271,6 +275,13 @@ const (
 	// 任务并发上限:开关 + 上限数。默认关闭;开启后默认上限 5(见 defaultConcurrencyLimit)。
 	settingConcurrencyOn    = "task_concurrency_enabled"
 	settingConcurrencyLimit = "task_concurrency_limit"
+	// settingDefaultTaskTokenBudget 是新建任务的默认 token 预算(0=不限)。web 创建
+	// 任务不填预算时取它;请求显式给了值(含 0=显式不限)则以请求为准。见 createTask。
+	settingDefaultTaskTokenBudget = "default_task_token_budget"
+	// settingPriceTable 是模型价目 JSON(USD/百万 token),key 为模型名子串(最长匹配)。
+	// 读接口(用量/成本视图)在读取时用它现算费用,空 = 不算钱。解析与匹配见
+	// server/pricing.go；写入校验在 putSettings。
+	settingPriceTable = "price_table"
 	// 实验功能:noa 模型驱动上下文压缩(norma v0.4.0)。默认关闭——开启后平台接入的四类
 	// agent(planner/worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction。
 	// 每 run 读一次,切换只影响之后启动的 run。
@@ -316,6 +327,32 @@ func (m *Manager) SetConcurrency(enabled bool, limit int) error {
 		return err
 	}
 	return m.pg.SetSetting(settingConcurrencyOn, strconv.FormatBool(enabled))
+}
+
+// DefaultTaskTokenBudget returns the global default token budget applied to new
+// tasks that did not specify one (0 = 不限)。设置缺失/非法一律回落 0——预算闸
+// 的 0 语义是"不限",坏配置绝不能把任务锁死在极小的预算上。
+func (m *Manager) DefaultTaskTokenBudget() int {
+	v, ok, err := m.pg.GetSetting(settingDefaultTaskTokenBudget)
+	if err != nil || !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// PriceTable returns the raw price_table JSON ("" when unset). 原样返回、不在
+// Manager 层解析:解析/匹配规则集中在 server/pricing.go，PUT 校验保证入库值合法，
+// 读取方(pricingTable)解析失败按未配置处理。
+func (m *Manager) PriceTable() string {
+	v, _, err := m.pg.GetSetting(settingPriceTable)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
 }
 
 // Workers returns the configured concurrent work-agent count (default 3). Read
@@ -367,10 +404,19 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf(logT("[pg] 数据库配置来源：%s"), source)
+	log.Printf(logT("[db] 数据库配置来源：%s"), source)
 	pg, err := pgdb.Open(dsn)
 	if err != nil {
 		return nil, err
+	}
+	// 存量内联 Key 迁移为独立凭据（计划 46–47）。幂等：迁移过的行不再满足条件，
+	// 每次启动调用都是空操作；个别 key 读不出来（主密钥缺失/密文损坏）就跳过该行，
+	// 绝不改动、绝不失败——那些行的读取行为与迁移前完全一致。非致命，仅记日志。
+	if mig, merr := pg.MigrateInlineProfileKeys(); merr != nil {
+		log.Printf("[credentials] 内联 Key 迁移失败（本次跳过，不影响启动）：%v", merr)
+	} else if mig.Migrated > 0 || len(mig.Skipped) > 0 {
+		log.Printf("[credentials] 内联 Key 迁移完成：%d 个已转为独立凭据，%d 个读不出被跳过",
+			mig.Migrated, len(mig.Skipped))
 	}
 	if err := pg.RecoverFindingRetests(); err != nil {
 		pg.Close()
@@ -857,6 +903,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		CompanyIDs:     append([]int64(nil), pt.CompanyIDs...),
 		TimeoutSeconds: pt.TimeoutSeconds, PlanHeartbeatSeconds: pt.PlanHeartbeatSeconds,
 		CoverageEnabled: pt.CoverageEnabled,
+		TokenBudget:     pt.TokenBudget,
 		FirstRunAt:      unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
 		Store: store, Guard: guard.NewWithInterceptor(ic), notify: make(chan struct{}, 1),
 	}
@@ -884,6 +931,7 @@ func (m *Manager) UpdateTaskMetadata(taskID string, patch pgdb.TaskPatch) (*Task
 	task.updateLifecycle(func(state *taskLifecycleState) {
 		state.Name = updated.Name
 		state.PinnedAt = unixOrZero(updated.PinnedAt)
+		state.TokenBudget = updated.TokenBudget
 	})
 	return task, nil
 }
@@ -1244,11 +1292,21 @@ func (m *Manager) ApplyTaskAdmission(id, expectedStatus, status string, queued b
 // the user pause. queue_mode is intentionally retained so resuming a never-run
 // bootstrap task still performs goal decomposition, but the next enqueue receives
 // a new queued_at timestamp and therefore moves to the FIFO tail.
+//
+// 原因缺省留空：渲染端回退到通用文案「任务已暂停」。需要细因的调用方
+// （用户/编排暂停、预算闸）用 ApplyTaskPauseReason。
 func (m *Manager) ApplyTaskPause(id string) error {
+	return m.ApplyTaskPauseReason(id, "")
+}
+
+// ApplyTaskPauseReason 与 ApplyTaskPause 相同，但携带暂停原因（进通知文案）。
+// 原因只进通知快照，不额外落库——任务表没有这列，也不需要：暂停事实本身
+// （paused 标志 + 活动流）已经在库里。
+func (m *Manager) ApplyTaskPauseReason(id, reason string) error {
 	m.taskStateMu.Lock()
-	defer m.taskStateMu.Unlock()
 	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
+		m.taskStateMu.Unlock()
 		return err
 	}
 	var mode string
@@ -1258,9 +1316,11 @@ func (m *Manager) ApplyTaskPause(id string) error {
 		  AND status NOT IN ('done','failed','timeout')
 		RETURNING COALESCE(queue_mode,'')`, n).Scan(&mode)
 	if errors.Is(err, sql.ErrNoRows) {
+		m.taskStateMu.Unlock()
 		return fmt.Errorf("task %s is unavailable for pause", id)
 	}
 	if err != nil {
+		m.taskStateMu.Unlock()
 		return err
 	}
 	m.mu.Lock()
@@ -1273,6 +1333,10 @@ func (m *Manager) ApplyTaskPause(id string) error {
 		})
 	}
 	m.mu.Unlock()
+	m.taskStateMu.Unlock()
+	// Guarded UPDATE 未命中会以 sql.ErrNoRows 早退，所以走到这里必定是真实
+	// 的「未暂停 → 已暂停」迁移，直接发事件，不会重复。
+	m.emitTaskStatusEvent(n, "paused", reason)
 	return nil
 }
 
@@ -1393,13 +1457,14 @@ func (m *Manager) StampTaskFirstRun(id string) (int64, error) {
 // won status on the live handle. won=false means another terminal already stuck.
 func (m *Manager) SetTaskStatusGuarded(id, status string) (won bool, err error) {
 	m.taskStateMu.Lock()
-	defer m.taskStateMu.Unlock()
 	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
+		m.taskStateMu.Unlock()
 		return false, err
 	}
 	won, err = m.pg.SetTerminalStatusGuarded(n, status)
 	if err != nil || !won {
+		m.taskStateMu.Unlock()
 		return won, err
 	}
 	m.mu.Lock()
@@ -1412,6 +1477,10 @@ func (m *Manager) SetTaskStatusGuarded(id, status string) (won bool, err error) 
 		})
 	}
 	m.mu.Unlock()
+	m.taskStateMu.Unlock()
+	// won=true 即「非终态 → 终态」的真实变化（守卫 UPDATE 只在此情况下命中），
+	// 直接发事件；竞态输掉的一侧 won=false 早已返回，不会重复推送。
+	m.emitTaskStatusEvent(n, status, terminalStatusReason(status))
 	return true, nil
 }
 
@@ -1419,12 +1488,16 @@ func (m *Manager) SetTaskStatusGuarded(id, status string) (won bool, err error) 
 // on the in-memory handle so the derived DTO status shows it without a reload.
 func (m *Manager) SetTaskStatus(id, status string) error {
 	m.taskStateMu.Lock()
-	defer m.taskStateMu.Unlock()
 	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
+		m.taskStateMu.Unlock()
 		return err
 	}
-	if err := m.pg.SetStatus(n, status); err != nil {
+	// 与 SetStatus 相比多一个「是否真实变化」的返回值：调用方可能多轮以同一
+	// 状态收尾（如 planner 每轮都以 met 结束），重复写不应重复推送。
+	changed, err := m.pg.SetStatusChanged(n, status)
+	if err != nil {
+		m.taskStateMu.Unlock()
 		return err
 	}
 	m.mu.Lock()
@@ -1443,6 +1516,10 @@ func (m *Manager) SetTaskStatus(id, status string) error {
 		})
 	}
 	m.mu.Unlock()
+	m.taskStateMu.Unlock()
+	if changed {
+		m.emitTaskStatusEvent(n, status, "")
+	}
 	return nil
 }
 
@@ -1869,4 +1946,13 @@ func (t *Task) drainTriggers() []agent.TriggerEvent {
 	ev := t.pendingTriggers
 	t.pendingTriggers = nil
 	return ev
+}
+
+// hasPendingTriggers reports whether any trigger events are queued, WITHOUT
+// consuming them. 心跳空转跳过判定用:只探测有无新变动,不能 drain——真跑轮时
+// 还要把这些事件渲染进 planner 的 user 输入。
+func (t *Task) hasPendingTriggers() bool {
+	t.trigMu.Lock()
+	defer t.trigMu.Unlock()
+	return len(t.pendingTriggers) > 0
 }

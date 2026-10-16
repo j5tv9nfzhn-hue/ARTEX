@@ -51,16 +51,27 @@ func main() {
 }
 
 func run() int {
+	// 先把控制台切到 UTF-8（仅 Windows；可用 ARTEX_UTF8_CONSOLE=0 关闭），
+	// 横幅、日志与子进程输出才不会在 GBK 控制台上乱码（批次 7 / #4–5）。
+	enableUTF8Console()
+
 	var (
-		addr    = flag.String("addr", "127.0.0.1:8787", "HTTP listen address (default accepts local connections only; use :8787 to serve other hosts)")
-		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
-		proxy   = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
+		addr      = flag.String("addr", "127.0.0.1:8787", "HTTP listen address (default accepts local connections only; use :8787 to serve other hosts)")
+		dataDir   = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
+		proxy     = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
+		resetPass = flag.Bool("reset-password", false, "重置 ARTEX 管理员密码后退出；新密码取自 ARTEX_RESET_NEWPASS，未设置则交互输入")
 	)
 	flag.Parse()
 
-	// exeDir 是发行包根目录：内置 pg/ 与用户数据都相对它定位。
+	// exeDir 是发行包根目录：凭据主密钥、jwt.key 与用户数据都相对它定位。
 	// 单独求值一次，供自举逻辑复用，避免与 config.BaseDir() 的解析时机耦合。
 	exeDir := config.BaseDir()
+
+	// 密码重置是一次性离线操作：不占端口、不跑自更新、不起后台 worker。
+	// 账户被抢占后运维需要它独立于正常启动路径可用，所以排在所有启动步骤之前。
+	if *resetPass {
+		return runResetPassword()
+	}
 
 	// hand the build version to the server package so GET /api/health can report it
 	// to the frontend top bar.
@@ -91,12 +102,12 @@ func run() int {
 	if _, e := os.Stat(cfgPath); e == nil {
 		log.Printf(config.T("[config] 配置文件: %s"), cfgPath)
 	} else {
-		log.Printf(config.T("[config] 配置文件: %s (文件不存在 · 仅使用环境变量 ARTEX_PG_DSN)"), cfgPath)
+		log.Printf(config.T("[config] 配置文件: %s (文件不存在 · 使用内置默认数据库路径)"), cfgPath)
 	}
 
-	// 自举：先解决端口占用与数据库可用性，再打开任何存储。
-	// 位置在 selfupdate 之后——自举会真正开始接管端口与数据库，
-	// 不应与更新的换装流程交错。
+	// 自举：先解决端口占用，再打开任何存储。
+	// 位置在 selfupdate 之后——自举会真正开始接管端口，
+	// 不应与更新的换装流程交错。数据库是进程内打开的文件，无需自举。
 	if err := bootBeforeStart(*addr, *proxy, exeDir); err != nil {
 		log.Fatalf("自举启动失败：%v", err)
 	}

@@ -4,14 +4,20 @@ import (
 	"testing"
 )
 
-// The raw-body columns were added after release, so existing installs only get
-// them through llmRecordsMigrate. This runs the real migration against the dev
-// PG on a table stripped back to its pre-upgrade shape, inside a transaction
-// that is always rolled back — PG does transactional DDL, so nothing persists.
+// TestLLMRecordsMigrateAddsRawColumnsToOldTable covered the PostgreSQL upgrade
+// path: the raw-body columns were added after release, so existing installs only
+// got them through llmRecordsMigrate, which runs the real migration on a table
+// stripped back to its pre-upgrade shape.
+//
+// That path no longer exists. SQLite's llm_records is created with every column by
+// the single CREATE TABLE, and llmRecordsMigrateSQL is empty; DROP COLUMN IF EXISTS
+// and information_schema are PostgreSQL-only. Kept as an explicit skip rather than
+// deleted so the upgrade path it documented is not silently forgotten.
 func TestLLMRecordsMigrateAddsRawColumnsToOldTable(t *testing.T) {
+	t.Skip("PostgreSQL 升级路径用例：SQLite 的 llm_records 建表已含全部列，无老表迁移")
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	defer d.Close()
 	if err := d.EnsureLLMRecordsTable(); err != nil {

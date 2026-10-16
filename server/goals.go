@@ -139,6 +139,11 @@ func (s *Server) admitTaskWhen(t *Task, mode string, requirePaused bool) (queued
 		return false, fmt.Errorf("task is being deleted")
 	}
 	defer s.engine.decInflight(t.ID)
+	// 批次 6：共享环境上下文（#10/#19/#22）与准入检查点（#29–#35）。环境探测
+	// 进程内缓存（首次调用付一次性版本探测成本），契约校验很便宜；检查点给
+	// 「回滚到本次准入之前」一个可寻址的快照。两者都在准入锁内、开跑之前完成。
+	s.captureTaskEnvContext(t)
+	s.captureTaskCheckpoint(t, db.CheckpointReasonAdmit, "任务准入（启动/恢复）", true)
 	lifecycle := t.lifecycleSnapshot()
 	if requirePaused {
 		if isTerminalStatus(lifecycle.Status) {

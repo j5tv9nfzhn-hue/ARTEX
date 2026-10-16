@@ -1,42 +1,47 @@
 package db
 
 import (
-	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
-// TestMain serialises the db test suite when it runs against PostgreSQL.
+// TestMain gives the suite its own database file.
 //
-// The package holds a PostgreSQL advisory lock (7337741002) for the whole run.
-// Packages agent and server hold the same lock, so a parallel `go test ./...`
-// serialises across packages on the shared dev DB and avoids cross-package
-// cleanup races (e.g. DELETE FROM assets WHERE id > X from one package deleting
-// assets created by another).
+// ARTEX is SQLite-only, so the package's tests would otherwise open the real
+// database next to the config file — running `go test ./...` would mutate a
+// user's data. Pointing ARTEX_SQLITE_PATH at a fresh file under the OS temp dir
+// keeps the suite hermetic and makes it reproducible on any machine.
 //
-// SQLite needs none of this and cannot provide it: the lock is a server-side
-// facility, whereas SQLite's guarantee is structural -- the database file is
-// locked for the duration of a write transaction, and busy_timeout makes a
-// contended writer wait rather than fail. Attempting the lock would only turn
-// a correct no-op into an error and make every test look unavailable.
+// The previous harness held a PostgreSQL advisory lock (7337741002) across the
+// whole run to serialise the db, agent and server packages against one shared
+// dev database. That coordination is gone with the shared server: each package
+// now gets its own file, and SQLite serialises writers on the file itself
+// (busy_timeout makes a contended writer wait rather than fail), so there is
+// nothing left for a cross-package lock to protect.
+//
+// An explicitly configured ARTEX_SQLITE_PATH is respected, so a developer can
+// still point the suite at a specific file to inspect it afterwards.
 func TestMain(m *testing.M) {
-	if engineIsSQLite() {
-		os.Exit(m.Run())
+	dir := ""
+	if os.Getenv(envSQLitePathForTest) == "" {
+		var err error
+		dir, err = os.MkdirTemp("", "artex-db-test-")
+		if err != nil {
+			panic(err)
+		}
+		_ = os.Setenv(envSQLitePathForTest, filepath.Join(dir, "test.db"))
 	}
-
-	dsn, _, err := DSN()
-	if err != nil {
-		// No DB configured — tests that need a database will skip themselves.
-		os.Exit(m.Run())
+	// os.Exit skips defers, so cleanup has to happen before it rather than
+	// through one — otherwise every run leaves a database file in %TEMP%.
+	code := m.Run()
+	if dir != "" {
+		_ = os.RemoveAll(dir)
 	}
-	conn, err := sql.Open("pgx", dsn)
-	if err != nil || conn.Ping() != nil {
-		os.Exit(m.Run())
-	}
-	defer conn.Close()
-	if _, err := conn.Exec(`SELECT pg_advisory_lock(7337741002)`); err != nil {
-		os.Exit(m.Run())
-	}
-	defer conn.Exec(`SELECT pg_advisory_unlock(7337741002)`) //nolint:errcheck
-	os.Exit(m.Run())
+	os.Exit(code)
 }
+
+// envSQLitePathForTest is config's ARTEX_SQLITE_PATH. Duplicated as a literal
+// because the constant lives in an unexported config identifier and this file
+// must not depend on that name.
+const envSQLitePathForTest = "ARTEX_SQLITE_PATH"

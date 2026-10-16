@@ -66,6 +66,7 @@ type webhookTemplateData struct {
 }
 
 type webhookItem struct {
+	Kind          string
 	FindingID     int64
 	Name          string
 	VulnClass     string
@@ -78,6 +79,16 @@ type webhookItem struct {
 	ToStatus      string
 	// StatusLabel 是状态变更的可读描述，如「待处理 → 已修复」；非状态变更时为空。
 	StatusLabel string
+	// 任务级事件字段；漏洞条目为零值。TaskStatusLabel 是 TaskStatus 的中文
+	// 展示名（如 paused → 已暂停），免去接收端自己维护映射。
+	TaskID          int64
+	TaskTitle       string
+	TaskStatus      string
+	TaskStatusLabel string
+	StatusReason    string
+	ApprovalID      int64
+	ToolName        string
+	ConversationID  int64
 }
 
 func (webhookChannel) Validate(cfg map[string]any) error {
@@ -204,16 +215,25 @@ func newWebhookTemplateData(m Message) webhookTemplateData {
 	}
 	for _, it := range m.Items {
 		wi := webhookItem{
-			FindingID:     it.FindingID,
-			Name:          it.Name,
-			VulnClass:     it.VulnClass,
-			Severity:      it.Severity,
-			SeverityLabel: SeverityLabel(it.Severity),
-			Summary:       it.Summary,
-			Assets:        append([]string{}, it.Assets...),
-			DetailURL:     it.DetailURL,
-			FromStatus:    it.FromStatus,
-			ToStatus:      it.ToStatus,
+			Kind:            it.Kind,
+			FindingID:       it.FindingID,
+			Name:            it.Name,
+			VulnClass:       it.VulnClass,
+			Severity:        it.Severity,
+			SeverityLabel:   SeverityLabel(it.Severity),
+			Summary:         it.Summary,
+			Assets:          append([]string{}, it.Assets...),
+			DetailURL:       it.DetailURL,
+			FromStatus:      it.FromStatus,
+			ToStatus:        it.ToStatus,
+			TaskID:          it.TaskID,
+			TaskTitle:       it.TaskTitle,
+			TaskStatus:      it.TaskStatus,
+			TaskStatusLabel: TaskStatusLabel(it.TaskStatus),
+			StatusReason:    it.StatusReason,
+			ApprovalID:      it.ApprovalID,
+			ToolName:        it.ToolName,
+			ConversationID:  it.ConversationID,
 		}
 		if it.IsStatusChange() {
 			wi.StatusLabel = StatusLabel(it.FromStatus) + " → " + StatusLabel(it.ToStatus)

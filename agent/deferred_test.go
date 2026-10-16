@@ -10,10 +10,12 @@ import (
 )
 
 func TestDeferredSystem_NoGlobal(t *testing.T) {
-	// No global MCP names → plain single-segment system, no cache boundary.
+	// No global MCP names → plain single-segment system, but the whole segment is
+	// still placed inside the cache boundary (boundary=1=len) so the default path
+	// gets prompt caching instead of re-billing the full system prompt every turn.
 	sys, boundary := deferredSystem("SYS", DeferredInfo{})
-	if len(sys) != 1 || sys[0] != "SYS" || boundary != 0 {
-		t.Fatalf("expected [SYS],0 — got %v,%d", sys, boundary)
+	if len(sys) != 1 || sys[0] != "SYS" || boundary != len(sys) {
+		t.Fatalf("expected [SYS],1 — got %v,%d", sys, boundary)
 	}
 }
 

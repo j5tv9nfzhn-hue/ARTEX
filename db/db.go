@@ -1,204 +1,44 @@
-// Package db is the PostgreSQL data source for ARTEX (取代旧 graph 单文件 SQLite)。
-// 它打开连接、应用 schema、并 seed 内置 agent 与变量目录。
+// Package db is the SQLite data source for ARTEX. It opens the database file,
+// applies the schema, and seeds built-in agents and the variable catalog.
 package db
 
 import (
 	"context"
 	"database/sql"
 	_ "embed"
-	"errors"
 	"fmt"
-	"net/url"
-	"strings"
-	"time"
 
 	"github.com/Autumn-27/artex/config"
-	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib" // pgx database/sql driver ("pgx")
+
+	_ "modernc.org/sqlite"
 )
 
-//go:embed schema.sql
-var schemaSQL string
+//go:embed schema_sqlite.sql
+var schemaSQLiteSQL string
 
-const schemaMigrationLockKey int64 = 7337741001
-
-var schemaDeadlockRetryDelays = [...]time.Duration{
-	100 * time.Millisecond,
-	250 * time.Millisecond,
-	500 * time.Millisecond,
-	time.Second,
-}
-
-type schemaExecer interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}
-
-func isPostgresDeadlock(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
-}
-
-func applySchemaWithRetry(ctx context.Context, execer schemaExecer, sleep func(time.Duration)) error {
-	for attempt := 0; ; attempt++ {
-		if _, err := execer.ExecContext(ctx, schemaSQL); err != nil {
-			if !isPostgresDeadlock(err) || attempt >= len(schemaDeadlockRetryDelays) {
-				return err
-			}
-			sleep(schemaDeadlockRetryDelays[attempt])
-			continue
-		}
-		return nil
-	}
-}
-
-// withSchemaMigrationLock pins the session-level lock to one checked-out
-// connection. Running pg_advisory_lock through *sql.DB is incorrect because a
-// later schema or unlock call may use a different pooled PostgreSQL session.
-func withSchemaMigrationLock(ctx context.Context, sqlDB *sql.DB, action func(*sql.Conn) error) (err error) {
-	conn, err := sqlDB.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, schemaMigrationLockKey); err != nil {
-		return fmt.Errorf("advisory lock: %w", err)
-	}
-	defer func() {
-		if _, unlockErr := conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, schemaMigrationLockKey); unlockErr != nil && err == nil {
-			err = fmt.Errorf("advisory unlock: %w", unlockErr)
-		}
-	}()
-	return action(conn)
-}
-
-// engineIsSQLite reports the active engine. Tests and engine-specific helpers
-// use it to skip behaviour that cannot exist on one of the two backends.
-func engineIsSQLite() bool {
-	return config.Engine() == config.EngineSQLite
-}
-
-// advisoryLock takes a transaction-scoped PostgreSQL advisory lock, and does
-// nothing on SQLite.
+// DSN resolves the SQLite connection string and reports where it came from.
 //
-// These locks exist to serialise mutations that span several tables against
-// each other on a server that runs many goroutines against one database.
-// SQLite already provides that guarantee structurally: the whole file is
-// locked for the duration of a write transaction, so two concurrent
-// multi-table writes cannot interleave. Emulating the lock would therefore
-// add nothing, and attempting it would turn a correct no-op into
-// "no such function: pg_advisory_xact_lock" on every archive and company-scope
-// write.
-func advisoryLock(ctx context.Context, tx *sql.Tx, key int64) error {
-	if config.Engine() != config.EnginePostgres {
-		return nil
-	}
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
-		return fmt.Errorf("advisory lock %d: %w", key, err)
-	}
-	return nil
-}
-
-// coordinateWithSchemaMigration makes long, multi-table archive transactions
-// mutually exclusive with startup DDL while allowing ordinary runtime queries
-// to continue normally.
-//
-// On SQLite the whole concern disappears -- see advisoryLock -- so this
-// delegates there rather than issuing an unavailable function.
-func coordinateWithSchemaMigration(tx *sql.Tx) error {
-	return advisoryLock(context.Background(), tx, schemaMigrationLockKey)
-}
-
-// DSN resolves the connection string and reports where it came from.
-// Precedence: env ARTEX_DB_ENGINE picks the engine, then for PostgreSQL
-//
-//	env ARTEX_PG_DSN > config file (config.json); for SQLite
-//	env ARTEX_SQLITE_PATH > config file, defaulting next to the config file.
-//
-// There is no built-in default for PostgreSQL — it errors if unconfigured, so
-// startup fails loudly instead of silently connecting to the wrong database.
-// SQLite needs no configuration and therefore always resolves.
+// Unlike the PostgreSQL backend this replaces, there is no configuration that can
+// be missing: the database is a file next to the config file, created on first
+// open. source is retained for the startup log line so an operator can see which
+// path was used.
 func DSN() (dsn, source string, err error) {
-	if config.Engine() == config.EngineSQLite {
-		return config.SQLiteDSN(),
-			"SQLite（" + config.EngineSource() + "，" + config.SQLitePath() + "）", nil
-	}
-	return config.PostgresDSN()
+	return config.SQLiteDSN(),
+		"SQLite（" + config.SQLitePathSource() + "，" + config.SQLitePath() + "）", nil
 }
 
-// DB wraps the shared *sql.DB. PG handles its own connection pool + concurrency
-// (MVCC), so unlike the old SQLite store there is no process-wide write mutex.
+// DB wraps the shared *sql.DB.
 type DB struct{ *sql.DB }
-
-// ensureDatabase connects to the postgres system database and creates the target
-// database if it does not exist. dsn must be a postgres:// URL.
-func ensureDatabase(dsn string) error {
-	u, err := url.Parse(dsn)
-	if err != nil {
-		return nil // unparseable DSN — let the normal Open fail with a clear error
-	}
-	dbName := strings.TrimPrefix(u.Path, "/")
-	if dbName == "" || dbName == "postgres" {
-		return nil
-	}
-	// connect to the postgres maintenance database instead
-	adminDSN := *u
-	adminDSN.Path = "/postgres"
-	admin, err := sql.Open("pgx", adminDSN.String())
-	if err != nil {
-		return nil // best-effort; let Open surface the real error
-	}
-	defer admin.Close()
-	if err := admin.Ping(); err != nil {
-		return nil
-	}
-	var exists bool
-	_ = admin.QueryRow(`SELECT true FROM pg_database WHERE datname=$1`, dbName).Scan(&exists)
-	if !exists {
-		if _, err := admin.Exec(`CREATE DATABASE "` + dbName + `"`); err != nil {
-			return fmt.Errorf("create database %q: %w", dbName, err)
-		}
-	}
-	return nil
-}
 
 // Open connects, applies the schema (idempotent), and seeds builtin rows.
 //
-// The engine is taken from the DSN rather than from a parameter, so the many
-// existing call sites that resolve a DSN with DSN() and hand it here keep
-// working unchanged on either backend.
+// The DSN is accepted rather than resolved internally so the many call sites that
+// do DSN() → Open(dsn) keep working unchanged; it must be a SQLite URI.
 func Open(dsn string) (*DB, error) {
-	if isSQLiteDSN(dsn) {
-		return openSQLite(dsn)
+	if !isSQLiteDSN(dsn) {
+		return nil, fmt.Errorf("unsupported database DSN %q：ARTEX 仅支持 SQLite（file:…）", config.Redact(dsn))
 	}
-	if err := ensureDatabase(dsn); err != nil {
-		return nil, err
-	}
-	sqlDB, err := sql.Open("pgx", dsn)
-	if err != nil {
-		return nil, err
-	}
-	if err := sqlDB.Ping(); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("ping postgres (%s): %w", config.Redact(dsn), err)
-	}
-	d := &DB{sqlDB}
-	// pgx runs multi-statement Exec via the simple protocol when there are no args.
-	// Keep the dedicated lock connection checked out until both DDL and seeding
-	// finish so concurrent application instances cannot initialize out of order.
-	err = withSchemaMigrationLock(context.Background(), sqlDB, func(conn *sql.Conn) error {
-		if err := applySchemaWithRetry(context.Background(), conn, time.Sleep); err != nil {
-			return fmt.Errorf("apply schema: %w", err)
-		}
-		if err := d.seedBuiltins(); err != nil {
-			return fmt.Errorf("seed builtins: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		sqlDB.Close()
-		return nil, err
-	}
-	return d, nil
+	return openSQLite(dsn)
 }
 
 // builtinAgent describes one of the fixed agents and its prompt-variable catalog.
@@ -294,8 +134,8 @@ ON CONFLICT (name) DO NOTHING`,
 		return fmt.Errorf("seed browser mcp: %w", err)
 	}
 	// NOTE: the placeholder ScopeSentry data-source MCP (empty URL + empty X-API-Key,
-	// disabled) is seeded directly in schema.sql §F so a raw `psql < schema.sql` init
-	// also gets it. schema.sql is Exec'd on every startup, so it stays idempotent.
+	// disabled) is seeded directly in schema_sqlite.sql §F so a raw `psql < schema_sqlite.sql` init
+	// also gets it. schema_sqlite.sql is Exec'd on every startup, so it stays idempotent.
 	if err := d.seedBuiltinSkillVisibility(); err != nil {
 		return fmt.Errorf("seed skill visibility: %w", err)
 	}
@@ -643,4 +483,30 @@ WHERE NOT EXISTS (SELECT 1 FROM intercept_rules WHERE name = $1)`,
 		return fmt.Errorf("rule %q: %w", name, err)
 	}
 	return d.SetSetting("intercept_default_rules_v3", "done")
+}
+
+// advisoryLock is a no-op, and deliberately so.
+//
+// These calls exist to serialise mutations that span several tables against each
+// other on a server running many goroutines against one database. SQLite already
+// provides that guarantee structurally: the whole file is locked for the duration
+// of a write transaction (see the _txlock=immediate note in config.SQLiteDSN), so
+// two concurrent multi-table writes cannot interleave. The function is kept as a
+// named extension point so call sites still document *why* the mutation needs to
+// be atomic rather than merely *that* it is.
+func advisoryLock(context.Context, *sql.Tx, int64) error { return nil }
+
+// AdvisoryLock is the exported face of advisoryLock for callers outside this
+// package that build their own transactions (server/finding_retests.go's seed
+// migration, for one).
+func AdvisoryLock(ctx context.Context, tx *sql.Tx, key int64) error {
+	return advisoryLock(ctx, tx, key)
+}
+
+// coordinateWithSchemaMigration marks long, multi-table archive transactions
+// that must not race startup DDL. On SQLite the concern disappears for the same
+// reason as advisoryLock: the write transaction holds the file lock, and the
+// schema is applied on the single connection that opens the database.
+func coordinateWithSchemaMigration(tx *sql.Tx) error {
+	return advisoryLock(context.Background(), tx, 0)
 }

@@ -154,6 +154,105 @@ func (s *Server) poolForBinding(id int64, prov llm.Provider, cfg agent.Config) l
 	return prov
 }
 
+// agentBindingResolution is the role's explicit binding snapshot: the head
+// profile (agents.llm_profile_id) with its built provider/config, plus the
+// ordered fallback tail saved in agent_llm_fallbacks.
+type agentBindingResolution struct {
+	headID      int64
+	headProv    llm.Provider
+	headCfg     agent.Config
+	fallbackIDs []int64
+}
+
+// resolveAgentBinding reads the role's binding + fallback tail. ok=false when the
+// role has no binding or the bound profile can't build — callers then fall through
+// to the task chain, exactly like before this feature existed.
+func (s *Server) resolveAgentBinding(role string) (agentBindingResolution, bool) {
+	if s.m == nil || s.m.pg == nil || role == "" {
+		return agentBindingResolution{}, false
+	}
+	a, err := s.m.pg.GetAgentByKey(role)
+	if err != nil || a == nil || a.LLMProfileID == nil {
+		return agentBindingResolution{}, false
+	}
+	prov, cfg, ok := s.providerForProfile(*a.LLMProfileID)
+	if !ok {
+		return agentBindingResolution{}, false
+	}
+	fallbacks, err := s.m.pg.AgentLLMFallbacks(role)
+	if err != nil {
+		// 读备用链失败按「没有备用链」处理:绑定本身仍可用,不让辅助表的问题把
+		// 既有绑定路径拖垮(仅记日志)。
+		log.Printf("[llmpool] 读取角色 %s 的备用链失败: %v", role, err)
+		fallbacks = nil
+	}
+	return agentBindingResolution{headID: *a.LLMProfileID, headProv: prov, headCfg: cfg, fallbackIDs: fallbacks}, true
+}
+
+// roleHealth returns the private in-memory breaker registry for one agent role,
+// creating it on first use. persist/forget are nil on purpose: role chains must
+// not write into the shared llm_health table (that table drives the global pool
+// status page) and must not share state with other roles or the global chain —
+// 角色级故障隔离(计划 #151–152)。
+func (s *Server) roleHealth(role string) *llmpool.Registry {
+	s.roleHealthMu.Lock()
+	defer s.roleHealthMu.Unlock()
+	if reg := s.roleHealthByRole[role]; reg != nil {
+		return reg
+	}
+	reg := llmpool.NewRegistry(nil, nil)
+	// 熔断阈值来自全局策略;注册表按角色懒创建,创建时读一次 DB 拷入,之后由
+	// applyRetryPolicy 在策略保存时推新值(不在热路径上做 DB 读取)。
+	pol := s.retryPolicy()
+	reg.SetPolicy(pol.Breaker.Attempts, pol.Breaker.Interval())
+	if s.roleHealthByRole == nil {
+		s.roleHealthByRole = map[string]*llmpool.Registry{}
+	}
+	s.roleHealthByRole[role] = reg
+	return reg
+}
+
+// roleFallbackPool builds the role's explicit chain: head = the bound profile,
+// tail = the saved fallback entries in position order. Returns nil when the chain
+// has fewer than two usable members, so the caller keeps the old bound-profile
+// behaviour (bare provider, or poolForBinding when the global switches allow).
+//
+// Ranks strictly decrease, so the position order is absolute: the head always
+// leads, the first fallback is tried second, and so on — unlike the global chain
+// there is no rotation between 同顺位配置。health is the role's OWN registry, so
+// role chains neither read nor write the global breaker state. A configured chain
+// is explicit user intent, so it applies even when the global 轮询开关关闭。
+func (s *Server) roleFallbackPool(role string, r agentBindingResolution) *llmpool.Pool {
+	if len(r.fallbackIDs) == 0 || s.m == nil || s.m.pg == nil {
+		return nil
+	}
+	head, err := s.m.pg.ProfileByID(r.headID)
+	if err != nil || head == nil {
+		return nil
+	}
+	members := []*llmpool.Member{{
+		ID: head.ID, Name: head.Name, Model: head.Model, Format: head.Format,
+		Priority: head.Priority, Active: head.IsDefault, Rank: llmpool.RankActive,
+		WindowTokens: r.headCfg.CompactionWindow(), Prov: r.headProv,
+	}}
+	for i, id := range r.fallbackIDs {
+		if id == r.headID {
+			continue // 防御:链首不得重复出现在尾部
+		}
+		p, err := s.m.pg.ProfileByID(id)
+		if err != nil || p == nil {
+			continue // 配置不存在(删除与查询竞态)→ 跳过,不是硬错误
+		}
+		if m := s.poolMember(p, llmpool.RankActive-1-i); m != nil {
+			members = append(members, m)
+		}
+	}
+	if len(members) < 2 {
+		return nil // 没有可用的备选 → 保持「绑定独占」的原有语义
+	}
+	return llmpool.New(members, s.roleHealth(role))
+}
+
 // LLMPoolMemberStatus is one chain entry as shown in the UI.
 type LLMPoolMemberStatus struct {
 	ProfileID string `json:"profile_id"`

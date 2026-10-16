@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	actool "github.com/Autumn-27/norma/tool"
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
+	actool "github.com/Autumn-27/norma/tool"
 )
 
 func names(tools []actool.CoreTool) map[string]actool.CoreTool {
@@ -28,7 +28,7 @@ func TestWireTools(t *testing.T) {
 	}
 	pg, err := db.Open(dsn)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatal(err)
 	}
 	defer pg.Close()
 

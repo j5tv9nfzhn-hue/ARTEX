@@ -39,6 +39,9 @@ type Planner struct {
 	noaEnabledFn      func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor         *Compactor                             // cold-node compaction (§7); nil = disabled
+	// envBriefFn resolves the task's shared execution-environment brief (批次 6 /
+	// #19/#22), appended to the planner system prompt. Read per round. nil = none.
+	envBriefFn func() string
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -58,6 +61,22 @@ func (p *Planner) SetCompactionWindowResolver(fn func() int) { p.windowFn = fn }
 // planner wake-up to advance the round counter, maintain cold stamps, and
 // (off the hot path) fold cold nodes into digests. nil = feature disabled.
 func (p *Planner) SetCompactor(c *Compactor) { p.compactor = c }
+
+// Compactor returns the wired compactor (nil = disabled) so the host can observe
+// its lifecycle and interrupt an in-flight run when the task pauses (批次 6).
+func (p *Planner) Compactor() *Compactor { return p.compactor }
+
+// SetEnvBrief wires a resolver returning the task's shared environment brief
+// (批次 6 / #19：共享环境上下文). Appended to the planner system prompt next to the
+// constraint block. nil/empty = no injection.
+func (p *Planner) SetEnvBrief(fn func() string) { p.envBriefFn = fn }
+
+func (p *Planner) envBrief() string {
+	if p.envBriefFn == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.envBriefFn())
+}
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
 // model path (true = non-streaming). nil/unset = streaming (default).
@@ -170,6 +189,8 @@ type TriggerEvent struct {
 // worker — which intent + its output conclusion; for a finding — which intent +
 // what was found. Empty for time/heartbeat wakes. Reads the store (best-effort;
 // a blank field never blocks the round).
+// 每条消息经 capPromptLine 限长(条数不变):输出结论/目标文本是外部数据,单条
+// 几十 KB 时不设限会撑爆每轮 user 输入。
 func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 	if len(evs) == 0 || ts == nil {
 		return ""
@@ -177,38 +198,40 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 	var b strings.Builder
 	b.WriteString("\n\n【本次触发本轮的实际变动（先看这里，再决定是否补方向）】：")
 	for _, ev := range evs {
+		var line string
 		switch ev.Kind {
 		case "goal":
 			if len(ev.Goals) == 1 {
-				b.WriteString(fmt.Sprintf("\n- 人（主 agent）新增了一个目标：%s —— 新的待达成目标，请据此补充探索方向（若尚无对应意图）。", ev.Goals[0]))
+				line = fmt.Sprintf("\n- 人（主 agent）新增了一个目标：%s —— 新的待达成目标，请据此补充探索方向（若尚无对应意图）。", ev.Goals[0])
 			} else {
-				b.WriteString(fmt.Sprintf("\n- 人（主 agent）新增了 %d 个目标：%s —— 均为新的待达成目标，请逐一为尚无对应意图的目标补充探索方向。", len(ev.Goals), strings.Join(ev.Goals, "；")))
+				line = fmt.Sprintf("\n- 人（主 agent）新增了 %d 个目标：%s —— 均为新的待达成目标，请逐一为尚无对应意图的目标补充探索方向。", len(ev.Goals), strings.Join(ev.Goals, "；"))
 			}
 		case "hint":
 			if len(ev.Hints) == 1 {
-				b.WriteString(fmt.Sprintf("\n- 人（主 agent）新增了一条战略提示：%s —— 已挂到探索图上，请据此调整/补充探索方向（若尚无对应意图）。", ev.Hints[0]))
+				line = fmt.Sprintf("\n- 人（主 agent）新增了一条战略提示：%s —— 已挂到探索图上，请据此调整/补充探索方向（若尚无对应意图）。", ev.Hints[0])
 			} else {
-				b.WriteString(fmt.Sprintf("\n- 人（主 agent）新增了 %d 条战略提示：%s —— 均已挂到探索图上，请逐一据此调整/补充探索方向。", len(ev.Hints), strings.Join(ev.Hints, "；")))
+				line = fmt.Sprintf("\n- 人（主 agent）新增了 %d 条战略提示：%s —— 均已挂到探索图上，请逐一据此调整/补充探索方向。", len(ev.Hints), strings.Join(ev.Hints, "；"))
 			}
 		case "goal_deleted":
-			b.WriteString(fmt.Sprintf("\n- 人删除了该目标：%s —— 该目标已移除，请据此重判剩余目标/方向（不必再为它派意图）。", ev.Detail))
+			line = fmt.Sprintf("\n- 人删除了该目标：%s —— 该目标已移除，请据此重判剩余目标/方向（不必再为它派意图）。", ev.Detail)
 		case "goal_edited":
-			b.WriteString(fmt.Sprintf("\n- 人修改了目标，由「%s」变为「%s」—— 请据新目标调整探索方向（原方向若已不适用请停派）。", ev.OldGoal, ev.NewGoal))
+			line = fmt.Sprintf("\n- 人修改了目标，由「%s」变为「%s」—— 请据新目标调整探索方向（原方向若已不适用请停派）。", ev.OldGoal, ev.NewGoal)
 		case "finding":
-			b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 报告了一个 finding：%s", ev.IntentID, intentSummary(ts, ev.IntentID), ev.Detail))
+			line = fmt.Sprintf("\n- 意图 #%d（%s）的 worker 报告了一个 finding：%s", ev.IntentID, intentSummary(ts, ev.IntentID), ev.Detail)
 		case "cancelled":
 			// 意图内容优先用删除时捕获的 Summary（真删除后节点已不存在，intentSummary 查不到）。
 			sm := ev.Summary
 			if sm == "" {
 				sm = intentSummary(ts, ev.IntentID)
 			}
-			b.WriteString(fmt.Sprintf("\n- 意图 #%d 由用户删除，意图内容是：%s、删除原因是：%s。该意图已删除（不再执行）；请据此重新规划。", ev.IntentID, sm, ev.Detail))
+			line = fmt.Sprintf("\n- 意图 #%d 由用户删除，意图内容是：%s、删除原因是：%s。该意图已删除（不再执行）；请据此重新规划。", ev.IntentID, sm, ev.Detail)
 		default: // "done"
-			b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 结束，输出结论：%s", ev.IntentID, intentSummary(ts, ev.IntentID), workerOutput(ts, ev.IntentID)))
+			line = fmt.Sprintf("\n- 意图 #%d（%s）的 worker 结束，输出结论：%s", ev.IntentID, intentSummary(ts, ev.IntentID), workerOutput(ts, ev.IntentID))
 			if fids := factIDsYielded(ts, ev.IntentID); fids != "" {
-				b.WriteString(fmt.Sprintf("；本意图新产生的事实 id：%s ", fids))
+				line += fmt.Sprintf("；本意图新产生的事实 id：%s ", fids)
 			}
 		}
+		b.WriteString(capPromptLine(line, promptTriggerLineMaxBytes))
 	}
 	b.WriteString("\n（完整细节可 node_detail / get_worker_output / list_findings 再查。）")
 	return b.String()
@@ -280,16 +303,20 @@ func truncOutput(s string, n int) string {
 }
 
 // renderGraphOverview folds the pre-computed graph_overview snapshot into the
-// wake-up prompt so the planner starts each round with the full situation in
-// hand — saving the round-trip it would otherwise spend calling the tool. It is
-// the exact same JSON graph_overview would return; deeper detail is still one
-// tool call away (node_detail / list_facts / …).
+// wake-up prompt so the planner starts each round with the situation in hand —
+// saving the round-trip it would otherwise spend calling the tool. It renders a
+// COMPACT injection view (caller passes graphOverviewForPrompt data): lists are
+// capped, digest bodies truncated, and the whole block is byte-capped (批次 E
+// 输入瘦身:这份 JSON 每轮重复计费). Deeper detail — full graph, all assets,
+// older windows — is still one tool call away (graph_overview / node_detail /
+// list_facts / list_assets / …), as the trailing JIT hint reminds the model.
 func renderGraphOverview(data map[string]any) string {
-	b, err := json.Marshal(data)
-	if err != nil {
+	b := marshalOverviewCapped(data, plannerOverviewMaxBytes)
+	if b == "" {
 		return "" // fall back to the model calling graph_overview itself
 	}
-	return "\n\n【本轮态势（graph_overview 预取，等同你调用该工具的返回；需要细节再按需调 node_detail/list_facts 等）】：\n" + string(b)
+	return "\n\n【本轮态势（graph_overview 的注入紧凑版：列表按最新一窗截断，digest 正文有上限；等同按需调工具取数的精简视图）】：\n" + b +
+		"\n（完整图/资产/更早明细不在此列，可随时用工具按需查询：graph_overview / list_facts / list_findings / list_assets / asset_neighbors / node_detail。）"
 }
 
 // plannerDefaultTmpl is the built-in EDITABLE body (段 [A]) of the planner prompt,
@@ -306,7 +333,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 **每次唤醒的决策流程**：
 
-1. **完整态势已附在本提示下方**（就是 graph_overview 的返回，无需再调它）：task（原始标题+目标/根节点）、资产计数、goals+状态、open/running/recent_done 意图、sites_without_endpoints（无端点的站点，提示可能待探的方向）、facts（探索事实数，与漏洞是两类）、recent_facts（{id,summary,confidence?}）。
+1. **完整态势已附在本提示下方**（graph_overview 的注入紧凑版：列表截为最新一窗、正文有上限，完整内容随时按需调工具）：task（原始标题+目标/根节点）、资产计数、goals+状态、open/running/recent_done 意图、sites_without_endpoints（无端点的站点，提示可能待探的方向）、facts（探索事实数，与漏洞是两类）、recent_facts（{id,summary,confidence?}）。
    - **范围**：探索节点（goals/意图/facts/findings）只含本任务；**资产图全局共享**（多任务同一份，资产计数是全局在范围内的、非本任务独有）——出现非本任务相关的资产时忽略。
    - **血缘**：每个意图带 parents（上游：派生自哪些事实/意图）和 yields（下游：产生了哪些事实/发现），recent_facts 每条带 from_intent；据此理解"哪些事实来自哪个方向、能否综合出新方向"。
    - **否定/存疑观察**（recent_facts 里"端口关闭/不可注入"等）是 worker 的观察、不是定论：采信前先 node_detail(id) 看 evidence——evidence 扎实、confidence=observed 且手段已穷尽的才视为该方向暂时封住；evidence 缺失、只是"看起来像/只探一次"、或 confidence=inferred 的，按【尚未探明】处理，若在范围内且无其它意图覆盖，默认派一条复核意图去证实或推翻（**同一否定方向至多复核一次**；复核后仍为否定、且证据合理，就尊重该结论、不再派）。
@@ -379,7 +406,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// 关键态势（刚完成的意图 + 预取的完整图）改放【本轮 user 输入】(见下方 input)，system
 	// 只留静态规划正文。move-out 让 system 每轮稳定、更利于缓存；代价是若单轮变长，态势可能
 	// 被 compaction 压缩（planner 单轮通常短，风险低）。situational 会拼进下方 input。
-	situational := renderTriggers(ts, triggers) + renderGraphOverview(tsx.graphOverviewData())
+	situational := renderTriggers(ts, triggers) + renderGraphOverview(tsx.graphOverviewForPrompt(plannerPromptCaps))
 	// 任务级 deadline / 终局模式(经 ctx 注入,见 taskclock.go)。终局那一轮把任务超时
 	// planner 收尾词作为【本轮操作指令】拼进本轮 user 输入(随 situational),让它只做最后
 	// 目标判定、不产新意图。
@@ -393,6 +420,10 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	sysBody := plannerSystem(goal, p.workDir, taskDir)
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
+	}
+	// 共享环境上下文（批次 6，与 worker 同一份探测快照）。
+	if brief := p.envBrief(); brief != "" {
+		sysBody += "\n\n" + brief
 	}
 	system, boundary := deferredSystem(sysBody, def)
 	// planner 无自身墙钟预算;有 deadline 时把 MaxDuration 夹逼到剩余,让在跑的规划轮在
@@ -426,8 +457,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		BashEnv:               proxyEnv(p.proxyAddr, p.proxyCACert), // Bash 子命令默认走代理+信任 CA
 		WorkingDir:            taskDir,                              // 本任务工作目录 <workDir>/tasks/<taskID>
 		ToolOutputDir:         cmdOutDir(taskDir),
-		MaxTurns:              p.maxTurns, // 0 = unlimited (configurable in agent management)
-		MaxDuration:           maxDur,     // 0=不限;有 deadline 时=距 deadline 剩余
+		MaxToolOutputChars:    maxToolOutputChars, // 工具输出入历史的上限(超限全量落盘可重读)
+		MaxTurns:              p.maxTurns,         // 0 = unlimited (configurable in agent management)
+		MaxDuration:           maxDur,             // 0=不限;有 deadline 时=距 deadline 剩余
 		Compaction:            compactionConfig(p.compactionWindow()),
 		// 跨唤醒共享的规划待办：让串行链在多轮之间保留（session 是新的，store 不是）。
 		Todos: p.todoFor(ts.ID()),
@@ -436,7 +468,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		// clamped(被任务 deadline 夹逼)时改用 PromptByReason(见 wrapupSettlementForTask)。
 		Settlement:   settle,
 		NonStreaming: p.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:    p.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
+		MaxTokens:    p.maxTokens(),    // 0 = 不单独设限;norma harness 兜底为 32768(harness/query.go maxTokens)
 	}
 	if p.tx != nil { // persist raw LLM conversation; one accumulating file per task's planner
 		opts.Transcript = p.tx

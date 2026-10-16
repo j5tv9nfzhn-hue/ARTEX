@@ -74,8 +74,11 @@ func (s *Server) seedFindingTrafficTools() {
 		if len(properties[name]) == 0 {
 			return
 		}
-		_, err = s.m.pg.Exec(`UPDATE tools SET schema=jsonb_set(schema,ARRAY['properties',$2::text],$3::jsonb,true),updated_at=now()
-WHERE key=$1 AND system AND NOT(COALESCE(schema->'properties','{}'::jsonb) ? $2)`, key, name, string(properties[name]))
+		// SQLite 无 jsonb_set/?；json_set 走 '$.properties.'||$2 路径补齐缺失键
+		// （create_missing=true 语义），成员性判断用 json_each 按 key 对齐。
+		sqlAdd := `UPDATE tools SET schema=json_set(schema,'$.properties.'||$2,json($3)),updated_at=now()
+WHERE key=$1 AND system AND NOT EXISTS (SELECT 1 FROM json_each(COALESCE(json_extract(schema,'$.properties'),'{}')) k WHERE k.key=$2)`
+		_, err = s.m.pg.Exec(sqlAdd, key, name, string(properties[name]))
 		if err != nil {
 			log.Printf("[evidence] upgrade tool %s: %v", key, err)
 			return

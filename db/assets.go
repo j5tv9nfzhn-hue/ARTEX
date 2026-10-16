@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-
-	"github.com/Autumn-27/artex/config"
 )
 
 // =====================================================================
@@ -309,26 +307,7 @@ func (s *AssetStore) UpsertRootDomain(req UpsertRootDomainReq) (int64, error) {
 //	assets.extra || EXCLUDED.extra 保持原样——它是 jsonb 合并而不是数组操作，
 //	  属于 jsonb 方言层，不在本函数范围内。
 func upsertRootDomainSQL() string {
-	if config.Engine() == config.EnginePostgres {
-		return `
-INSERT INTO assets(type, domain, root_domain, icp, company_id, company_source, task_ids)
-VALUES ('root_domain', $1, $1, $2, $3, 'scope', $4::bigint[])
-ON CONFLICT (domain) WHERE type = 'root_domain' DO UPDATE SET
-    icp        = COALESCE(EXCLUDED.icp, assets.icp),
-    company_id = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
-        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
-    END,
-    company_source = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
-        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
-        ELSE assets.company_source
-    END,
-    task_ids   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
-    extra      = assets.extra || EXCLUDED.extra,
-    last_seen  = now()
-RETURNING id`
-	}
+
 	return `
 INSERT INTO assets(type, domain, root_domain, icp, company_id, company_source, task_ids)
 VALUES ('root_domain', $1, $1, $2, $3, 'scope', $4)
@@ -355,7 +334,7 @@ RETURNING id`
 var ErrAssetIPInvalid = errors.New("invalid asset ip")
 
 // ValidateAssetIP keeps hostnames out of assets.ip. Network attribution casts
-// that column to inet (see try_inet in schema.sql), so a hostname stored here is
+// that column to inet (see try_inet in schema_sqlite.sql), so a hostname stored here is
 // silently invisible to every IP/CIDR scope rule — the asset simply never gets
 // attributed and nobody can tell why. The message states the fix rather than
 // just the fault, so an agent can correct the item on its next turn. An empty
@@ -435,34 +414,7 @@ func (s *AssetStore) UpsertIP(req UpsertIPReq) (int64, error) {
 //	  一端口一条、同端口优先留 service 非空的、结果按端口号升序。
 //	task_ids 同上 → artex_json_merge。
 func upsertIPSQL() string {
-	if config.Engine() == config.EnginePostgres {
-		return `
-INSERT INTO assets(type, ip, c_segment, bound_domains, open_ports, company_id, company_source, task_ids)
-VALUES ('ip', $1, $2::cidr, $3::text[], $4::jsonb[], $5, 'scope', $6::bigint[])
-ON CONFLICT (ip) WHERE type = 'ip' DO UPDATE SET
-    bound_domains = (SELECT ARRAY(SELECT DISTINCT unnest(assets.bound_domains || EXCLUDED.bound_domains))),
-    open_ports    = (
-        SELECT ARRAY(
-            SELECT DISTINCT ON ((elem->>'port')::int) elem
-            FROM unnest(assets.open_ports || EXCLUDED.open_ports) AS elem
-            ORDER BY (elem->>'port')::int,
-                     CASE WHEN elem->>'service' IS NOT NULL AND elem->>'service' <> '' THEN 0 ELSE 1 END
-        )
-    ),
-    c_segment  = COALESCE(assets.c_segment, EXCLUDED.c_segment),
-    company_id = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
-        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
-    END,
-    company_source = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
-        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
-        ELSE assets.company_source
-    END,
-    task_ids   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
-    last_seen  = now()
-RETURNING id`
-	}
+
 	return `
 INSERT INTO assets(type, ip, c_segment, bound_domains, open_ports, company_id, company_source, task_ids)
 VALUES ('ip', $1, $2, $3, $4, $5, 'scope', $6)
@@ -494,21 +446,7 @@ func (s *AssetStore) AppendIPPort(ipStr string, port int, serviceName string) er
 	// ARRAY[...] 把它包成单元素数组再拼接。SQLite 侧的 artex_json_merge_ports 会对
 	// 第二个参数做同样的"不是数组就包成单元素"处理，所以这里传的仍是裸对象 JSON，
 	// 不需要在 Go 侧多包一层数组。
-	if config.Engine() == config.EnginePostgres {
-		_, err := s.db.Exec(`
-UPDATE assets SET
-    open_ports = (
-        SELECT ARRAY(
-            SELECT DISTINCT ON ((elem->>'port')::int) elem
-            FROM unnest(open_ports || ARRAY[$1::jsonb]) AS elem
-            ORDER BY (elem->>'port')::int,
-                     CASE WHEN elem->>'service' IS NOT NULL AND elem->>'service' <> '' THEN 0 ELSE 1 END
-        )
-    ),
-    last_seen = now()
-WHERE type = 'ip' AND ip = $2`, string(entry), ipStr)
-		return err
-	}
+
 	_, err := s.db.Exec(`
 UPDATE assets SET
     open_ports = artex_json_merge_ports(open_ports, $1),
@@ -524,14 +462,7 @@ func (s *AssetStore) AppendIPBoundDomain(ipStr, domain string) error {
 	}
 	// Postgres: bound_domains || ARRAY[$1::text]，DISTINCT 保证同一个域名不重复。
 	// SQLite: artex_json_merge 把 $1 当单元素数组拼进去并按元素去重，语义相同。
-	if config.Engine() == config.EnginePostgres {
-		_, err := s.db.Exec(`
-UPDATE assets SET
-    bound_domains = (SELECT ARRAY(SELECT DISTINCT unnest(bound_domains || ARRAY[$1::text]))),
-    last_seen = now()
-WHERE type = 'ip' AND ip = $2`, domain, ipStr)
-		return err
-	}
+
 	_, err := s.db.Exec(`
 UPDATE assets SET
     bound_domains = artex_json_merge(bound_domains, $1),
@@ -639,29 +570,7 @@ func (s *AssetStore) UpsertSubdomain(req UpsertSubdomainReq) (id int64, err erro
 // ON CONFLICT (domain, COALESCE(record_type,”)) 是 SQLite 原生支持的表达式
 // 冲突目标，对应 schema 里的部分唯一索引 uq_av2_subdomain，两边行为一致。
 func upsertSubdomainSQL() string {
-	if config.Engine() == config.EnginePostgres {
-		return `
-INSERT INTO assets(type, domain, root_domain, record_type, record_value, ip, c_segment, icp, company_id, company_source, task_ids)
-VALUES ('subdomain', $1, $2, $3, $4::text[], $5, $6::cidr, $7, $8, 'scope', $9::bigint[])
-ON CONFLICT (domain, COALESCE(record_type,'')) WHERE type = 'subdomain' DO UPDATE SET
-    ip           = COALESCE(EXCLUDED.ip, assets.ip),
-    c_segment    = COALESCE(EXCLUDED.c_segment, assets.c_segment),
-    icp          = COALESCE(EXCLUDED.icp, assets.icp),
-    company_id   = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
-        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
-    END,
-    company_source = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
-        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
-        ELSE assets.company_source
-    END,
-    task_ids     = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
-    record_value = (SELECT ARRAY(SELECT DISTINCT unnest(assets.record_value || EXCLUDED.record_value))),
-    extra        = assets.extra || EXCLUDED.extra,
-    last_seen    = now()
-RETURNING id`
-	}
+
 	return `
 INSERT INTO assets(type, domain, root_domain, record_type, record_value, ip, c_segment, icp, company_id, company_source, task_ids)
 VALUES ('subdomain', $1, $2, $3, $4, $5, $6, $7, $8, 'scope', $9)
@@ -762,30 +671,7 @@ func (s *AssetStore) UpsertApp(req UpsertAppReq) (int64, error) {
 // 读取侧与合并侧都经过 db/dialect_arrays.go 的 jsonArrayOf 归一化，所以 '{}'
 // 会被当作空数组，不会触发 malformed JSON。
 func upsertAppByBundleSQL() string {
-	if config.Engine() == config.EnginePostgres {
-		return `
-INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
-VALUES ('app', $1, $2, $3, $4, $5, $6, $7, $8::bigint[])
-ON CONFLICT (bundle_id) WHERE type = 'app' AND bundle_id IS NOT NULL DO UPDATE SET
-    app_name        = COALESCE(EXCLUDED.app_name, assets.app_name),
-    category        = COALESCE(EXCLUDED.category, assets.category),
-    app_description = COALESCE(EXCLUDED.app_description, assets.app_description),
-    app_icp         = COALESCE(EXCLUDED.app_icp, assets.app_icp),
-    company_id      = CASE
-        WHEN EXCLUDED.company_source = 'explicit' THEN EXCLUDED.company_id
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
-        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
-    END,
-    company_source  = CASE
-        WHEN EXCLUDED.company_source = 'explicit' THEN 'explicit'
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
-        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
-        ELSE assets.company_source
-    END,
-    task_ids        = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
-    last_seen       = now()
-RETURNING id`
-	}
+
 	return `
 INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
 VALUES ('app', $1, $2, $3, $4, $5, $6, $7, $8)
@@ -811,29 +697,7 @@ RETURNING id`
 }
 
 func upsertAppByNameSQL() string {
-	if config.Engine() == config.EnginePostgres {
-		return `
-INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
-VALUES ('app', NULL, $1, $2, $3, $4, $5, $6, $7::bigint[])
-ON CONFLICT (app_name) WHERE type = 'app' AND bundle_id IS NULL DO UPDATE SET
-    category        = COALESCE(EXCLUDED.category, assets.category),
-    app_description = COALESCE(EXCLUDED.app_description, assets.app_description),
-    app_icp         = COALESCE(EXCLUDED.app_icp, assets.app_icp),
-    company_id      = CASE
-        WHEN EXCLUDED.company_source = 'explicit' THEN EXCLUDED.company_id
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
-        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
-    END,
-    company_source  = CASE
-        WHEN EXCLUDED.company_source = 'explicit' THEN 'explicit'
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
-        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
-        ELSE assets.company_source
-    END,
-    task_ids        = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
-    last_seen       = now()
-RETURNING id`
-	}
+
 	return `
 INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
 VALUES ('app', NULL, $1, $2, $3, $4, $5, $6, $7)
@@ -970,45 +834,7 @@ func (s *AssetStore) UpsertHTTPService(req UpsertHTTPServiceReq) (int64, error) 
 //	  PostgreSQL jsonb ::text 的规范化形态）。
 //	task_ids 同上 → artex_json_merge。
 func upsertHTTPServiceSQL() string {
-	if config.Engine() == config.EnginePostgres {
-		return `
-INSERT INTO assets(
-    type, url, service_type, service_name, domain, ip, port, root_domain,
-    c_segment, favicon_mmh3, technologies, status_code, content_length, page_title,
-    auth, company_id, company_source, task_ids
-)
-VALUES (
-    'service', $1, 'http', $2, $3, $4, $5, $6,
-    $7::cidr, $8, $9::text[], $10, $11, $12,
-    $13::jsonb[], $14, 'scope', $15::bigint[]
-)
-ON CONFLICT (url) WHERE type = 'service' AND service_type = 'http' DO UPDATE SET
-    status_code    = COALESCE(EXCLUDED.status_code,    assets.status_code),
-    content_length = COALESCE(EXCLUDED.content_length, assets.content_length),
-    page_title     = COALESCE(EXCLUDED.page_title,     assets.page_title),
-    favicon_mmh3   = COALESCE(EXCLUDED.favicon_mmh3,   assets.favicon_mmh3),
-    ip             = COALESCE(EXCLUDED.ip,             assets.ip),
-    c_segment      = COALESCE(EXCLUDED.c_segment,      assets.c_segment),
-    technologies   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.technologies || EXCLUDED.technologies))),
-    auth           = (
-        SELECT ARRAY(
-            SELECT DISTINCT ON (elem::text) elem
-            FROM unnest(assets.auth || EXCLUDED.auth) AS elem
-        )
-    ),
-    task_ids       = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
-    company_id     = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
-        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
-    END,
-    company_source = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
-        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
-        ELSE assets.company_source
-    END,
-    last_seen      = now()
-RETURNING id`
-	}
+
 	return `
 INSERT INTO assets(
     type, url, service_type, service_name, domain, ip, port, root_domain,
@@ -1148,36 +974,7 @@ func (s *AssetStore) UpsertOtherService(req UpsertOtherServiceReq) (int64, error
 // $9::bigint[] 三处类型转换，auth 的 DISTINCT ON (elem::text) 与 task_ids 的
 // ARRAY(SELECT DISTINCT unnest(...)) 都换成 artex_json_merge。
 func upsertOtherServiceSQL() string {
-	if config.Engine() == config.EnginePostgres {
-		return `
-INSERT INTO assets(
-    type, service_type, service_name, domain, ip, port, root_domain,
-    c_segment, auth, company_id, company_source, task_ids
-)
-VALUES ('service', 'other', $1, $2, $3, $4, $5, $6::cidr, $7::jsonb[], $8, 'scope', $9::bigint[])
-ON CONFLICT (COALESCE(domain,''), COALESCE(ip,''), port, service_name) WHERE type = 'service' AND service_type = 'other' DO UPDATE SET
-    domain     = COALESCE(EXCLUDED.domain,     assets.domain),
-    ip         = COALESCE(EXCLUDED.ip,         assets.ip),
-    c_segment  = COALESCE(EXCLUDED.c_segment,  assets.c_segment),
-    auth       = (
-        SELECT ARRAY(
-            SELECT DISTINCT ON (elem::text) elem
-            FROM unnest(assets.auth || EXCLUDED.auth) AS elem
-        )
-    ),
-    task_ids   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
-    company_id = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
-        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
-    END,
-    company_source = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
-        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
-        ELSE assets.company_source
-    END,
-    last_seen  = now()
-RETURNING id`
-	}
+
 	return `
 INSERT INTO assets(
     type, service_type, service_name, domain, ip, port, root_domain,
@@ -1311,36 +1108,7 @@ func (s *AssetStore) UpsertEndpoint(req UpsertEndpointReq) (int64, error) {
 // 一条（PG 的 ORDER BY ... DESC + DISTINCT ON 就是这个意思），结果按 location、
 // name 升序排列，NULL 排最后。详见 db/dialect_arrays.go。
 func upsertEndpointSQL() string {
-	if config.Engine() == config.EnginePostgres {
-		return `
-INSERT INTO assets(
-    type, url, method, domain, ip, port, root_domain,
-    params, company_id, company_source, task_ids, c_segment
-)
-VALUES ('endpoint', $1, $2, $3, $4, $5, $6, $7::jsonb[], $8, 'scope', $9::bigint[], $10::cidr)
-ON CONFLICT (url, method) WHERE type = 'endpoint' DO UPDATE SET
-    params     = (
-        SELECT ARRAY(
-            SELECT DISTINCT ON ((elem->>'location'), (elem->>'name')) elem
-            FROM unnest(assets.params || EXCLUDED.params) AS elem
-            ORDER BY (elem->>'location'), (elem->>'name'), elem::text DESC
-        )
-    ),
-    ip         = COALESCE(EXCLUDED.ip,        assets.ip),
-    c_segment  = COALESCE(EXCLUDED.c_segment, assets.c_segment),
-    task_ids   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
-    company_id = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
-        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
-    END,
-    company_source = CASE
-        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
-        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
-        ELSE assets.company_source
-    END,
-    last_seen  = now()
-RETURNING id`
-	}
+
 	return `
 INSERT INTO assets(
     type, url, method, domain, ip, port, root_domain,
@@ -1499,22 +1267,14 @@ func (s *AssetStore) CountsByTypeForTask(taskID int64) (map[string]int, error) {
 func (s *AssetStore) DeleteByTaskID(taskID int64) (int64, error) {
 	var err error
 	var res sql.Result
-	if config.Engine() == config.EnginePostgres {
-		res, err = s.db.Exec(`DELETE FROM assets WHERE task_ids = ARRAY[$1]::bigint[]`, taskID)
-	} else {
-		res, err = s.db.Exec(`DELETE FROM assets WHERE artex_json_equals(task_ids, $1)`, encodeTaskIDArray(taskID))
-	}
+	res, err = s.db.Exec(`DELETE FROM assets WHERE artex_json_equals(task_ids, $1)`, encodeTaskIDArray(taskID))
 	if err != nil {
 		return 0, err
 	}
 	deleted, _ := res.RowsAffected()
-	if config.Engine() == config.EnginePostgres {
-		_, err = s.db.Exec(`UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, taskID)
-	} else {
-		_, err = s.db.Exec(`
+	_, err = s.db.Exec(`
 UPDATE assets SET task_ids = artex_json_remove(task_ids, $1)
 WHERE artex_json_contains(task_ids, $1)`, taskID)
-	}
 	if err != nil {
 		return deleted, err
 	}

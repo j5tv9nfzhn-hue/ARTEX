@@ -14,31 +14,23 @@ import (
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
+	"github.com/Autumn-27/artex/metrics"
 	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// isFKViolation reports whether err is a Postgres foreign-key violation (SQLSTATE
-// 23503) — e.g. an activity insert whose exploration_id has no parent row.
+// isFKViolation reports whether err is a foreign-key violation — e.g. an activity
+// insert whose exploration_id has no parent row. foreign_keys(ON) is part of the
+// DSN contract (see config.SQLiteDSN), so this can actually fire.
 func isFKViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+	return db.ForeignKeyViolation(err)
 }
 
 // dropReason classifies why an activity write was dropped, so the log can be
 // grouped/analysed by cause rather than by raw error text.
 func dropReason(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23503":
-			return "fk_violation(23503,父exploration不存在)"
-		case "23505":
-			return "unique_violation(23505)"
-		default:
-			return "pg_error(" + pgErr.Code + ")"
-		}
+	if code := db.ConstraintCode(err); code != "" {
+		return code
 	}
 	return "write_error"
 }
@@ -71,19 +63,18 @@ func preview(s string, n int) string {
 const (
 	// model_error 收场后整条意图的重跑次数。
 	//
-	// 调高到 10 是为了容纳“供应商响应变慢”这一类瞬时抖动：单次重跑只花
-	// modelErrorRetryBackoff(3s) 的等待，10 次合计约 30 秒缓冲，
-	// 足以扛过一次排队或短时限流，不必因为一次慢响应就把整条意图判死。
+	// 上限压到 4 次是成本导向：每次重跑都是一整轮 LLM + 工具调用，10 次会把
+	// 「供应商抖动」放大成一次昂贵的自动循环。默认退避改为指数梯度（见
+	// modelErrorRetryBackoff），4 次合计等待 3+6+12+24≈45 秒，足以扛过短时
+	// 限流/排队；更长的大面积故障交给用户观察后手动重跑，不在这里无声烧钱。
 	//
-	// 硬失败（密钥失效、余额不足、参数非法）不值得等满 10 次——重试不会
-	// 让它们变好，只会把失败推迟 30 秒后才告诉用户。这类错误由
-	// modelErrorHardFailRetries 单独限制到 3 次。
-	modelErrorRetries = 10
+	// 硬失败（密钥失效、余额不足、参数非法）不值得等——重试不会让它们变好。
+	// 连续硬失败多为配置/模型问题，继续重试只是烧钱，所以由
+	// modelErrorHardFailRetries 单独限制到 2 次，尽快把问题暴露给用户。
+	modelErrorRetries = 4
 	// modelErrorHardFailRetries 是硬失败的意图重跑上限。
-	modelErrorHardFailRetries = 3
-	// modelErrorRetryBackoff 是每次重跑前的固定退避。
-	modelErrorRetryBackoff = 3 * time.Second
-	workControlWaitTimeout = 30 * time.Second
+	modelErrorHardFailRetries = 2
+	workControlWaitTimeout    = 30 * time.Second
 )
 
 var errWorkControlConflict = errors.New("work control conflict")
@@ -174,6 +165,30 @@ type Engine struct {
 	// readiness reports whether a global LLM provider is configured — the signal behind
 	// Ready()/the llm_configured indicator. Wired once at startup; nil → not ready.
 	readiness func() bool
+
+	// intentSettledHook observes every intent run reaching a settled state
+	// (done/blocked/exhausted/stopped/paused) — the host uses it to capture
+	// timeline checkpoints (批次 6 / #29–#35). Set once via SetIntentSettledHook;
+	// called from the worker goroutine, must not block.
+	intentSettledHook func(t *Task, intentID int64, state string)
+}
+
+// SetIntentSettledHook wires the per-intent settle observer (see field doc).
+func (e *Engine) SetIntentSettledHook(fn func(t *Task, intentID int64, state string)) {
+	e.intentSettledHook = fn
+}
+
+// notifyIntentSettled invokes the settle hook defensively (foreign goroutine).
+func (e *Engine) notifyIntentSettled(t *Task, intentID int64, state string) {
+	if e.intentSettledHook == nil || t == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[checkpoints] intent settled hook panic: %v", r)
+		}
+	}()
+	e.intentSettledHook(t, intentID, state)
 }
 
 type taskRuntime struct {
@@ -201,6 +216,58 @@ func (e *Engine) nextPlannerRound(taskID string) int {
 func (e *Engine) Pause(taskID string, cause error) {
 	e.paused.Store(taskID, true)
 	e.cancelExec(taskID, cause)
+}
+
+// checkTokenBudget 是任务级 Token 预算硬闸：每次 run（worker 意图 / 规划轮）收尾后
+// 检查本任务在 llm_usage 账本上的累计 input+output 是否达到预算上限（计量口径见
+// db.TaskTokenTotal），达到则自动暂停任务并在活动流留痕。
+//
+// 为什么放在 run 收尾而不是 run 启动前：llmrec 每次 LLM 调用返回即落账，收尾时
+// 读到的读数必然包含刚结束这一 run 的全部消耗，不会漏按本 run 计费；且此刻不在
+// LLM 调用临界区，暂停不会打断正在进行的一次调用。两道调用点覆盖全部消耗路径：
+// runIntent（worker 池 + 人工消息直投，defer 覆盖所有 return 分支）与 plannerLoop
+// 的常规规划轮。
+//
+// 顺序上先落库（ApplyTaskPause 的 Guarded UPDATE）再停引擎：落库失败时任务保持
+// 原样、日志留痕，下一轮 run 收尾会重试，绝不出现「内存已暂停、UI 仍显示运行」的
+// 劈叉。Guarded UPDATE 未命中（任务已被用户暂停/删除/进入收尾/变终态）说明别的
+// 路径已接管，同样静默让位——这里不区分失败原因，统一保持任务现状。
+//
+// 幂等：预算<=0（不限）、已暂停、删除中、收尾中、已终态一律早退；调用点是稀疏的
+// run 收尾（每个任务同一时刻只有少量在跑），自身不会并发触发。
+func (e *Engine) checkTokenBudget(t *Task) {
+	if t == nil {
+		return
+	}
+	lifecycle := t.lifecycleSnapshot()
+	if lifecycle.TokenBudget <= 0 {
+		return // 0=不限
+	}
+	if lifecycle.Paused || e.IsPaused(t.ID) || e.IsDeleting(t.ID) || e.isSettling(t.ID) {
+		return
+	}
+	if isTerminalStatus(e.m.TaskStatus(t.ID)) {
+		return
+	}
+	used, err := e.m.pg.TaskTokenTotal(t.ID)
+	if err != nil {
+		log.Printf("[budget] task %s 读取 Token 累计用量失败: %v", t.ID, err)
+		return
+	}
+	if used < int64(lifecycle.TokenBudget) {
+		return
+	}
+	if err := e.m.ApplyTaskPauseReason(t.ID, fmt.Sprintf("%s（已用 %d，预算 %d）", agent.AbortPausedByTokenBudget.Short, used, lifecycle.TokenBudget)); err != nil {
+		log.Printf("[budget] task %s 预算已用尽（已用 %d/预算 %d）但自动暂停未落库（可能已被其他操作接管，或 DB 写入失败，下一轮 run 收尾会重试）: %v",
+			t.ID, used, lifecycle.TokenBudget, err)
+		return
+	}
+	// 落库成功后再停引擎：取消在跑的 planner/worker（被中断的意图退回 open，恢复后
+	// 重新领取），worker 池不再领新意图。
+	e.Pause(t.ID, agent.AbortPausedByTokenBudget)
+	e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
+		Summary: fmt.Sprintf(budgetPausedSummaryFmt, used, lifecycle.TokenBudget)})
+	log.Printf("[budget] task %s Token 预算已用尽（已用 %d/预算 %d），已自动暂停", t.ID, used, lifecycle.TokenBudget)
 }
 
 // BeginDelete installs an execution barrier before task data/files are removed.
@@ -670,6 +737,9 @@ func (e *Engine) Broadcaster() *Broadcaster { return e.bc }
 const (
 	goallessTaskDoneSummary = "所有目标均已达成，直接投入的意图也已执行完毕，任务结束"
 	plannerRoundSummaryFmt  = "第 %d 轮规划"
+	// budgetPausedSummaryFmt 是预算闸自动暂停后的任务级留痕（activity，无 node_id），
+	// 参数为已用量与预算上限；文案同时给出恢复办法，用户看活动流即可自助处理。
+	budgetPausedSummaryFmt = "Token 预算已用尽（已用 %d/预算 %d），任务已自动暂停；可在任务设置中调高预算后恢复"
 )
 
 func (e *Engine) emitActivity(t *Task, r db.Activity) db.Activity {
@@ -843,11 +913,16 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 	// runRound 跑一轮规划(含 debounce 合并 + 各 guard)。src 仅用于日志区分触发来源。
 	runRound := func(src string) {
 		// debounce: coalesce a burst of changes into one planning round
+		// coalescedEdge 记录 debounce 窗口内是否吞掉了额外的 notify 信号:它们可能是
+		// 带触发事件的唤醒(done/finding,会进 pendingTriggers),也可能是不带事件的
+		// 边沿唤醒(如资产范围变更、Resume)。只要出现过,本轮就不能当"纯心跳空转"跳过。
+		coalescedEdge := false
 		timer := time.NewTimer(e.debounce)
 	drain:
 		for {
 			select {
 			case <-t.notify:
+				coalescedEdge = true
 			case <-timer.C:
 				break drain
 			}
@@ -891,6 +966,22 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 			}
 			return // goalless 分支永不进入 planner.Plan
 		}
+		// 心跳空转跳过(批次 E,输入/调用双省):心跳到点、drain 后没有任何触发消息、
+		// debounce 也没合并到边沿信号、且任务仍有 open/running 意图(=有活干,worker 跑完
+		// 会带 done/finding 事件回来唤醒;疑似卡死的 worker 有 run 超时兜底并会带事件回来)
+		// 时,跳过整轮 planner LLM——原行为是心跳到点即烧一整轮,任务无变动时每 10min
+		// 重复计费。判定放在 debounce/drain 之后、beginTaskOperation 之前:不丢事件、
+		// 不打规划轮 marker、不计 inflight。语义护栏:
+		//   - 无在跑意图(需要规划新方向,如 frontier 空了等硬底线)一律照跑;
+		//   - 有触发消息/边沿合并一律照跑(上方 coalescedEdge/pendingTriggers 已挡);
+		//   - 终局/deadline 收尾轮由 settleTask→runFinalPlannerRound 直接驱动,不经
+		//     这里;isSettling 早退在上方,不受影响。
+		if src == "heartbeat" && !coalescedEdge && !t.hasPendingTriggers() {
+			if active, err := t.Store.HasActiveIntent(); err == nil && active {
+				log.Printf("[planner] task %s 心跳跳过:存在在跑意图且无新变动", t.ID)
+				return
+			}
+		}
 		if !e.beginTaskOperation(t.ID) {
 			return
 		}
@@ -930,6 +1021,9 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		default:
 			log.Printf("[planner] task %s 规划完成", t.ID)
 		}
+		// 每轮规划收尾复查 Token 预算（见 checkTokenBudget）；met→done 等终态/暂停/
+		// 收尾场景由闸内守卫自动早退，不重复动作。
+		e.checkTokenBudget(t)
 		e.touch(t.ID)
 	}
 
@@ -940,7 +1034,8 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		case <-t.notify:
 			runRound("edge") // worker 结束 / finding / kill / resume / seed 首轮
 		case <-heartbeat.C:
-			// 周期兜底:死锁兜底 + 唤醒去监督飞行中的 worker(steer/kill) + 周期复查。
+			// 周期兜底:无在跑意图时必须唤醒规划新方向;有在跑意图且无新变动时在
+			// runRound 内被空转跳过(见上方判定),不烧规划轮 LLM。
 			runRound("heartbeat")
 		}
 		// 每次唤醒(边沿或心跳)后重臂心跳:任意规划触发都重算这段静置计时。
@@ -1015,6 +1110,10 @@ func (e *Engine) runWorkerStep(ctx context.Context, t *Task, name string, worker
 // must already hold one task-operation admission for the whole sequence so a delete
 // cannot observe quiescence between the LLM return and the final DB writes.
 func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *agent.Worker, intent *db.Node, requestID, message string) bool {
+	// 每次 worker run 收尾统一复查 Token 预算（defer 覆盖所有 return 分支；worker 池
+	// 与人工消息直投 runDetachedIntent 都汇聚到这里）。预算用尽会自动暂停任务，
+	// 详见 checkTokenBudget。
+	defer e.checkTokenBudget(t)
 	hasChatMessage := message != ""
 	e.stampFirstRun(t) // 首次真正执行 → 盖 first_run_at + 算 deadline(仅带 timeout 的任务)
 	e.touch(t.ID)
@@ -1066,9 +1165,12 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	for attempt := 1; attempt <= maxRetries &&
 		retryableWorkerModelError(reason, err) &&
 		workCtx.Err() == nil && ectx.Err() == nil && !e.IsPaused(t.ID) && !e.isSettling(t.ID); attempt++ {
+		// 退避随重试次数指数增长（或用户定制的固定值），sleepCtx 返回 true 表示
+		// 退避期间被取消（终止/暂停）。
+		delay := retryBackoff(attempt)
 		log.Printf("[worker %s] task %s 意图 #%d model_error 收场，%v 后重试 (%d/%d)",
-			name, t.ID, intent.ID, retryBackoff, attempt, maxRetries)
-		if sleepCtx(workCtx, retryBackoff) {
+			name, t.ID, intent.ID, delay, attempt, maxRetries)
+		if sleepCtx(workCtx, delay) {
 			break // 退避期间被取消（终止/暂停）→ 交给下方分支处理
 		}
 		e.BeginLLMCall(t.ID)
@@ -1108,7 +1210,11 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 			log.Printf("[worker %s] task %s 意图 #%d 暂停状态落库失败: %v", name, t.ID, intent.ID, controlErr)
 			return true
 		}
+		// 中断恢复度量（#165–171）：意图级暂停是一次中断事件；该意图恢复后的终态
+		// 由 IntentSettled 结算为成功/失败。
+		metrics.MarkInterruptPending(intent.ID)
 		log.Printf("[worker %s] task %s 意图 #%d 已暂停", name, t.ID, intent.ID)
+		e.notifyIntentSettled(t, intent.ID, "paused")
 		e.touch(t.ID)
 		return true
 	}
@@ -1129,37 +1235,46 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	// so it is re-claimed on resume — the worker will resume the prior LLM
 	// conversation from its transcript instead of restarting from scratch.
 	if ectx.Err() != nil && taskExecutionPaused(context.Cause(ectx)) {
+		// 中断恢复度量：任务级暂停打断在跑的意图，也是一次中断事件。
+		metrics.MarkInterruptPending(intent.ID)
 		if err := transitionIntentState(t.Store, intent.ID, "running", "open"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d 任务暂停回退失败: %v", name, t.ID, intent.ID, err)
 		}
+		e.notifyIntentSettled(t, intent.ID, "open")
 		return true
 	}
 	// 任务超时收尾的硬兜底 cancel(非 pause、非 kill)取消了本 run → 归为 exhausted(已收尾),
 	// 不要误标 blocked。此时 worker 通常已在 settlement 阶段把结果写回。
 	if ectx.Err() != nil && e.isSettling(t.ID) {
+		metrics.IntentSettled(intent.ID, "exhausted")
 		if err := transitionIntentState(t.Store, intent.ID, "running", "exhausted"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d 超时收尾状态落库失败: %v", name, t.ID, intent.ID, err)
 		}
 		log.Printf("[worker %s] task %s 意图 #%d 因任务超时收尾结束(exhausted)，写回 %s", name, t.ID, intent.ID, wrote)
+		e.notifyIntentSettled(t, intent.ID, "exhausted")
 		e.touch(t.ID)
 		return true
 	}
 	// 任务已判完成(done via 常规路径)→ 上面 cancelExec 取消了本 run。意图结果已无意义,
 	// 标 stopped(不是 blocked),别污染已完成任务的意图状态。
 	if ectx.Err() != nil && isTerminalStatus(e.m.TaskStatus(t.ID)) {
+		metrics.IntentSettled(intent.ID, "stopped")
 		if err := transitionIntentState(t.Store, intent.ID, "running", "stopped"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d 终态停止落库失败: %v", name, t.ID, intent.ID, err)
 		}
 		log.Printf("[worker %s] task %s 意图 #%d 因任务已完成而取消(stopped)", name, t.ID, intent.ID)
+		e.notifyIntentSettled(t, intent.ID, "stopped")
 		e.touch(t.ID)
 		return true
 	}
 	// killed by the planner: mark stopped (don't write back results, don't auto-reclaim).
 	if killed {
+		metrics.IntentSettled(intent.ID, "stopped")
 		if err := transitionIntentState(t.Store, intent.ID, "running", "stopped"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d planner 停止落库失败: %v", name, t.ID, intent.ID, err)
 		}
 		log.Printf("[worker %s] task %s 意图 #%d 被终止(stopped)", name, t.ID, intent.ID)
+		e.notifyIntentSettled(t, intent.ID, "stopped")
 		e.touch(t.ID)
 		t.Notify()
 		return true
@@ -1180,6 +1295,8 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		state = "exhausted"
 		log.Printf("[worker %s] intent %d 运行超时(exhausted)，收尾后写回 %s", name, intent.ID, wrote)
 	}
+	// 恢复度量结算：若该意图此前被登记过重放/中断标记，这次终态决定成功或失败。
+	metrics.IntentSettled(intent.ID, state)
 	if state == "blocked" && isTaskLLMChainExhausted(err) {
 		_ = t.Store.SetIntentBlockedReason(intent.ID, db.IntentBlockedLLMQuota)
 	} else {
@@ -1188,6 +1305,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		}
 	}
 	log.Printf("[worker %s] task %s 意图 #%d 结束: %s (写回 %s)", name, t.ID, intent.ID, state, wrote)
+	e.notifyIntentSettled(t, intent.ID, state)
 	e.touch(t.ID)
 	t.NotifyDone(intent.ID) // results changed the graph -> wake the planner (with the just-finished intent id)
 	return true
@@ -1257,6 +1375,7 @@ func taskExecutionPaused(cause error) bool {
 	}
 	switch abort.Code {
 	case "paused_by_user", "paused_by_orchestrator", "paused_on_reload", "paused_race_guard",
+		"paused_by_token_budget",
 		"queued_for_admission", "llm_unavailable_queued", "task_deleted":
 		return true
 	default:

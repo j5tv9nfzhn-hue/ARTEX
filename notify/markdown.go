@@ -78,6 +78,9 @@ func markdownTitle(m Message) string {
 		return "漏洞通知"
 	}
 	it := m.Items[0]
+	if taskEvent(it) {
+		return taskEventTitle(it)
+	}
 	return fmt.Sprintf("[%s] %s", SeverityLabel(it.Severity), OneLine(it.Title(), 0))
 }
 
@@ -156,7 +159,7 @@ func markdownBatchIntro(m Message, items []Item, total int) string {
 	return b.String()
 }
 
-// writeItem 渲染单个漏洞条目。
+// writeItem 渲染单个条目。
 //
 // prefix 用于汇总列表的序号；single=true 时渲染完整版（含摘要与回链），
 // 汇总列表里只渲染一行摘要——否则 50 条汇总会变成一篇长文档。
@@ -165,6 +168,10 @@ func markdownBatchIntro(m Message, items []Item, total int) string {
 // 单行化 + 转义。回链是管理员配置的 public_base_url 拼出来的，不是不可信内容，
 // 且必须是可点的链接，所以原样输出。
 func writeItem(b *strings.Builder, it Item, prefix string, single bool) {
+	if taskEvent(it) {
+		writeTaskItem(b, it, prefix, single)
+		return
+	}
 	line := fmt.Sprintf("%s**%s · %s**", prefix, SeverityLabel(it.Severity), markdownText(it.Title(), 0))
 	if !single {
 		// 汇总模式：单行呈现，资产与摘要压缩后跟在后面。
@@ -199,5 +206,24 @@ func writeItem(b *strings.Builder, it Item, prefix string, single bool) {
 	}
 	if it.DetailURL != "" {
 		fmt.Fprintf(b, "[查看详情](%s)\n", it.DetailURL)
+	}
+}
+
+// writeTaskItem 渲染任务级条目（任务状态变化 / 等待审批）。汇总模式压成一行；
+// 单条模式输出「标题 + 键值明细 + 回链」，与漏洞单条版式对齐。
+//
+// 任务标题/工具名同样过 markdownText：它们来自任务元数据与工具调用，
+// 而任务名可由用户任意填写，仍需按不可信内容处理。
+func writeTaskItem(b *strings.Builder, it Item, prefix string, single bool) {
+	if !single {
+		fmt.Fprintf(b, "%s%s\n", prefix, markdownText(taskEventLine(it), 0))
+		return
+	}
+	fmt.Fprintf(b, "%s**%s**\n", prefix, markdownText(taskEventTitle(it), 0))
+	for _, kv := range taskEventFields(it) {
+		fmt.Fprintf(b, "**%s**：%s\n", kv[0], markdownText(kv[1], 0))
+	}
+	if it.DetailURL != "" {
+		fmt.Fprintf(b, "[%s](%s)\n", detailLinkLabel(it), it.DetailURL)
 	}
 }

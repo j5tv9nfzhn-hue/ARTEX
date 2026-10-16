@@ -52,16 +52,37 @@ func (s *Server) applyProfileRetry(cfg *agent.Config, p *db.LLMProfile) {
 }
 
 // 熔断(轮询冷却)的默认值,与 llmpool 内置的一致 —— 这里只在「用户配了值」时才覆盖。
-// 意图重跑的默认值见 engine.go 的 modelErrorRetries / modelErrorRetryBackoff。
+// 意图重跑的默认次数见 engine.go 的 modelErrorRetries;默认退避是下面的指数梯度。
+
+// modelErrorRetryBackoff 是【第 attempt 次】整意图重跑前的默认退避:3s 起步、逐次
+// 翻倍、单次封顶 30s,即 3s / 6s / 12s / 24s / 30s…。用指数而不是固定短退避,是因为
+// 连续 model_error 大概率是同一成因:固定短退避只会让每轮重跑(一整轮 LLM + 工具
+// 调用)烧得更快,而指数等待才有机会真正等到 provider 恢复。单次封顶 30s 保证自动
+// 重试的总等待仍停在分钟级,更长的故障交给用户手动重跑。
+//
+// 以变量形式暴露,便于测试把退避置零。
+var modelErrorRetryBackoff = func(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	return min(3*time.Second<<(attempt-1), 30*time.Second)
+}
 
 // applyRetryPolicy pushes the process-wide layers of the policy into the objects
 // that consume them on a hot path: the circuit-breaker registry. Called at
-// startup and whenever the policy is saved.
+// startup and whenever the policy is saved. Role-scoped registries (per-agent
+// fallback chains) get the same values so 角色链 and 全局链 share one breaker
+// policy without sharing health state.
 func (s *Server) applyRetryPolicy() {
 	pol := s.retryPolicy()
 	if s.llmHealth != nil {
 		s.llmHealth.SetPolicy(pol.Breaker.Attempts, pol.Breaker.Interval())
 	}
+	s.roleHealthMu.Lock()
+	for _, reg := range s.roleHealthByRole {
+		reg.SetPolicy(pol.Breaker.Attempts, pol.Breaker.Interval())
+	}
+	s.roleHealthMu.Unlock()
 }
 
 // modelErrorRetryPolicyFor picks the retry budget from the failure that just
@@ -78,7 +99,7 @@ func (s *Server) applyRetryPolicy() {
 // reason is accepted so the caller can hand over both halves without a second
 // lookup; a non-model_error reason never reaches the retry loop, so it falls
 // through to the transient budget and the loop condition rejects it anyway.
-func (e *Engine) modelErrorRetryPolicyFor(reason harness.TerminalReason, err error) (retries int, backoff time.Duration) {
+func (e *Engine) modelErrorRetryPolicyFor(reason harness.TerminalReason, err error) (retries int, backoff func(int) time.Duration) {
 	if reason == harness.ReasonModelError && isHardModelError(err) {
 		return e.modelErrorHardRetryPolicy()
 	}
@@ -102,15 +123,16 @@ func isHardModelError(err error) bool {
 
 // modelErrorRetryPolicy resolves the intent-level replay knobs (layer ⑤): how
 // many times a model_error work is re-run and how long to back off between runs.
-func (e *Engine) modelErrorRetryPolicy() (retries int, backoff time.Duration) {
+// backoff 是「第 N 次重跑前」的退避函数:默认走指数梯度,用户配了固定间隔则恒定。
+func (e *Engine) modelErrorRetryPolicy() (retries int, backoff func(int) time.Duration) {
 	return e.modelErrorRetryPolicyLimited(modelErrorRetries)
 }
 
 // modelErrorHardRetryPolicy is modelErrorRetryPolicy for errors that retrying
 // cannot fix — an invalid/expired key, an exhausted balance, a malformed request.
-// Waiting out ten attempts there only delays the same failure by half a minute,
-// so these stop after modelErrorHardFailRetries.
-func (e *Engine) modelErrorHardRetryPolicy() (retries int, backoff time.Duration) {
+// Waiting out the ladder there only delays the same failure by ~45s, so these stop
+// after modelErrorHardFailRetries.
+func (e *Engine) modelErrorHardRetryPolicy() (retries int, backoff func(int) time.Duration) {
 	return e.modelErrorRetryPolicyLimited(modelErrorHardFailRetries)
 }
 
@@ -118,10 +140,12 @@ func (e *Engine) modelErrorHardRetryPolicy() (retries int, backoff time.Duration
 // count used when neither the settings table nor the hard-failure cap applies.
 //
 // The stored policy (settings.llm_retry_policy → Intent) still wins when set,
-// so an operator who pinned a count keeps it. The hard-failure cap is applied
-// only to the built-in default: an explicit configuration is a deliberate choice
-// and is not silently overridden by a constant.
-func (e *Engine) modelErrorRetryPolicyLimited(fallback int) (retries int, backoff time.Duration) {
+// so an operator who pinned a count keeps it. The same goes for the interval: a
+// non-zero IntervalMS keeps its original meaning — one fixed delay replacing the
+// built-in exponential ladder. The hard-failure cap is applied only to the
+// built-in default: an explicit configuration is a deliberate choice and is not
+// silently overridden by a constant.
+func (e *Engine) modelErrorRetryPolicyLimited(fallback int) (retries int, backoff func(int) time.Duration) {
 	retries, backoff = fallback, modelErrorRetryBackoff
 	if e == nil || e.m == nil || e.m.pg == nil {
 		return retries, backoff
@@ -131,7 +155,7 @@ func (e *Engine) modelErrorRetryPolicyLimited(fallback int) (retries int, backof
 		retries = max(rule.Attempts, 0)
 	}
 	if d := rule.Interval(); d > 0 {
-		backoff = d
+		backoff = func(int) time.Duration { return d }
 	}
 	return retries, backoff
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/mcphttp"
+	"github.com/Autumn-27/artex/notify"
 )
 
 // ScopeSentry 资产同步。ASM 平台经 MCP 从项目、任务两个维度导入
@@ -73,7 +74,12 @@ func (s *Server) scopeSentryClient(ctx context.Context) (*mcphttp.Client, error)
 	if m.URL == "" {
 		return nil, fmt.Errorf(trMsg(errSSDataSourceNoURLFmt), scopeSentryMCPName)
 	}
-	return mcphttp.New(ctx, m.Name, m.URL, jsonStrMap(m.Env), m.Insecure)
+	// env/header 值是 enc:v1: 密文（计划 #49），拨号前解成明文；解不开就报错。
+	env, err := db.MCPEnvPlain(m.Env)
+	if err != nil {
+		return nil, err
+	}
+	return mcphttp.New(ctx, m.Name, m.URL, env, m.Insecure)
 }
 
 // envHasValue reports whether the env/header map has any non-empty value
@@ -93,6 +99,7 @@ func (s *Server) syncSSStatus(w http.ResponseWriter, r *http.Request) {
 	if s.pg(w) == nil {
 		return
 	}
+	noStore(w) // 配置/连通性探针结果
 	m, err := s.findMCPByName(scopeSentryMCPName)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -116,15 +123,19 @@ func (s *Server) syncSSStatus(w http.ResponseWriter, r *http.Request) {
 	if m.Tools != nil {
 		resp["tools"] = m.Tools
 	}
-	// Light reachability probe only when it can actually connect.
+	// Light reachability probe only when it can actually connect. 密文解不开
+	// （主密钥丢失/损坏）时跳过探测：此时 reachable=false 就是诚实的回答，
+	// 而把密文当头部发出去只会得到误导读者的 401。
 	if configured && m.Enabled {
-		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-		defer cancel()
-		if cl, cerr := mcphttp.New(ctx, m.Name, m.URL, jsonStrMap(m.Env), m.Insecure); cerr == nil {
-			if _, terr := cl.Tools(ctx); terr == nil {
-				resp["reachable"] = true
+		if env, eerr := db.MCPEnvPlain(m.Env); eerr == nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+			defer cancel()
+			if cl, cerr := mcphttp.New(ctx, m.Name, m.URL, env, m.Insecure); cerr == nil {
+				if _, terr := cl.Tools(ctx); terr == nil {
+					resp["reachable"] = true
+				}
+				_ = cl.Close()
 			}
-			_ = cl.Close()
 		}
 	}
 	writeJSON(w, 200, resp)
@@ -157,7 +168,10 @@ func (s *Server) syncSSDatasource(w http.ResponseWriter, r *http.Request) {
 	if body.URL != "" {
 		m.URL = body.URL
 	}
-	if body.APIKey != "" {
+	// 掩码值（如从 MCP 页面复制来的 "__masked__…"）含义是「保持原值」，
+	// 绝不能当新 key 存进库——那会静默换成一把错的凭据。本页 UI 从不回显 key，
+	// 这行是防御性的：语义上与 notify.MergeConfig 的掩码规则一致。
+	if body.APIKey != "" && !notify.IsMasked(body.APIKey) {
 		env, _ := json.Marshal(map[string]string{"X-API-Key": body.APIKey})
 		m.Env = env
 	}

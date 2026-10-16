@@ -448,19 +448,37 @@ func (n *Notifier) itemFor(ctx context.Context, snap notify.Snapshot, baseURL st
 		log.Printf("[notify] 解析资产名失败 finding=%d: %v", snap.FindingID, err)
 	}
 	item := notify.Item{
-		FindingID:  snap.FindingID,
-		Name:       snap.Name,
-		VulnClass:  snap.VulnClass,
-		Severity:   snap.Severity,
-		Summary:    snap.Summary,
-		Assets:     assets,
-		FromStatus: snap.FromStatus,
-		ToStatus:   snap.ToStatus,
+		Kind:           snap.Kind,
+		FindingID:      snap.FindingID,
+		Name:           snap.Name,
+		VulnClass:      snap.VulnClass,
+		Severity:       snap.Severity,
+		Summary:        snap.Summary,
+		Assets:         assets,
+		FromStatus:     snap.FromStatus,
+		ToStatus:       snap.ToStatus,
+		TaskID:         snap.TaskID,
+		TaskTitle:      snap.TaskTitle,
+		TaskStatus:     snap.TaskStatus,
+		StatusReason:   snap.StatusReason,
+		ApprovalID:     snap.ApprovalID,
+		ToolName:       snap.ToolName,
+		ConversationID: snap.ConversationID,
 	}
 	if baseURL != "" {
-		// 详情页路由见 web/src/app/(main)/function/findings/detail/page.tsx，
-		// 它从 query 参数 id 读取漏洞 id。
-		item.DetailURL = fmt.Sprintf("%s/function/findings/detail?id=%d", baseURL, snap.FindingID)
+		// 回链目标随事件类型变化：漏洞看详情、任务看进展、审批去处理。
+		switch snap.Kind {
+		case notify.EventTaskStatusChanged:
+			// 路由见 web/src/app/(main)/function/tasks/detail/page.tsx（query 参数 id）。
+			item.DetailURL = fmt.Sprintf("%s/function/tasks/detail?id=%d", baseURL, snap.TaskID)
+		case notify.EventApprovalPending:
+			// 路由见 web/src/app/(main)/system/intercept/approvals/page.tsx。
+			item.DetailURL = baseURL + "/system/intercept/approvals"
+		default:
+			// 详情页路由见 web/src/app/(main)/function/findings/detail/page.tsx，
+			// 它从 query 参数 id 读取漏洞 id。
+			item.DetailURL = fmt.Sprintf("%s/function/findings/detail?id=%d", baseURL, snap.FindingID)
+		}
 	}
 	return item, nil
 }

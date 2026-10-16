@@ -2,22 +2,8 @@ package config
 
 // 数据库连接之前的启动阶段，操作员消息按照 Language() 翻译：
 // ARTEX_LANG > 配置文件 > 简体中文。不能在此时读取运行时 settings。
-// ARTEX_PG_DSN、database、dsn、host/user/dbname 等操作所需标识保持原文。
+// ARTEX_SQLITE_PATH、database、path 等操作所需标识保持原文。
 // 源消息为中文，zh 直接使用源消息，未知条目也回退到源消息。
-var cfgCatalog = map[string]map[string]string{
-	"环境变量 ARTEX_PG_DSN": {
-		"zh": "环境变量 ARTEX_PG_DSN",
-	},
-	"配置文件 %s (database.dsn)": {
-		"zh": "配置文件 %s (database.dsn)",
-	},
-	"配置文件 %s (database 字段)": {
-		"zh": "配置文件 %s (database 字段)",
-	},
-	"找不到数据库配置：环境变量 ARTEX_PG_DSN 未设置，配置文件 %s 中也没有 database（dsn 或 host/user/dbname）配置。请创建配置文件或设置环境变量后重试": {
-		"zh": "找不到数据库配置：环境变量 ARTEX_PG_DSN 未设置，配置文件 %s 中也没有 database（dsn 或 host/user/dbname）配置。请创建配置文件或设置环境变量后重试",
-	},
-}
 
 // logCatalog holds operator-facing console log templates (startup + runtime
 // diagnostics). Keyed by the Simplified Chinese source template; format verbs are preserved in
@@ -26,14 +12,14 @@ var logCatalog = map[string]map[string]string{
 	"[config] 配置文件: %s": {
 		"zh": "[config] 配置文件: %s",
 	},
-	"[config] 配置文件: %s (文件不存在 · 仅使用环境变量 ARTEX_PG_DSN)": {
-		"zh": "[config] 配置文件: %s (文件不存在 · 仅使用环境变量 ARTEX_PG_DSN)",
+	"[config] 配置文件: %s (文件不存在 · 使用内置默认数据库路径)": {
+		"zh": "[config] 配置文件: %s (文件不存在 · 使用内置默认数据库路径)",
 	},
 	"[config] skill 目录: %s": {
 		"zh": "[config] skill 目录: %s",
 	},
-	"已暂停": { "zh": "已暂停" },
-	"已恢复": { "zh": "已恢复" },
+	"已暂停": {"zh": "已暂停"},
+	"已恢复": {"zh": "已恢复"},
 	"[auth] 已将 JWT 密钥从 %s 迁移到 %s（移出可被发现的工作区）": {
 		"zh": "[auth] 已将 JWT 密钥从 %s 迁移到 %s（移出可被发现的工作区）",
 	},
@@ -97,14 +83,14 @@ var logCatalog = map[string]map[string]string{
 	"[tools] 已将 orchestration/platform 工具 schema 刷新为代码默认值（一次性）": {
 		"zh": "[tools] 已将 orchestration/platform 工具 schema 刷新为代码默认值（一次性）",
 	},
-	"[reporter] 已预配置「%s」agent + finding 触发器": {
-		"zh": "[reporter] 已预配置「%s」agent + finding 触发器",
+	"[reporter] 已预配置「%s」agent + finding 触发器（默认关闭，按需在触发器界面开启）": {
+		"zh": "[reporter] 已预配置「%s」agent + finding 触发器（默认关闭，按需在触发器界面开启）",
 	},
 	"[custom-tool] 自动检测到 python 解释器：%s": {
 		"zh": "[custom-tool] 自动检测到 python 解释器：%s",
 	},
-	"[pg] 数据库配置来源：%s": {
-		"zh": "[pg] 数据库配置来源：%s",
+	"[db] 数据库配置来源：%s": {
+		"zh": "[db] 数据库配置来源：%s",
 	},
 	"[mcp] browser MCP 抓包代理已连接：%s (CA %s)": {
 		"zh": "[mcp] browser MCP 抓包代理已连接：%s (CA %s)",
@@ -112,18 +98,6 @@ var logCatalog = map[string]map[string]string{
 	"[mcp] 已移除 browser MCP 抓包代理配置": {
 		"zh": "[mcp] 已移除 browser MCP 抓包代理配置",
 	},
-}
-
-// trCfg translates a startup/operator message to the configured default language
-// (Language()). Format templates are translated the same way: pass the Simplified Chinese
-// template through trCfg before fmt.Sprintf/fmt.Errorf.
-func trCfg(ko string) string {
-	if m, ok := cfgCatalog[ko]; ok {
-		if v, ok2 := m[Language()]; ok2 && v != "" {
-			return v
-		}
-	}
-	return ko
 }
 
 // T translates an operator-facing console log template to the configured default

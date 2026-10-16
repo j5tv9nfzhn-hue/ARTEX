@@ -14,7 +14,7 @@ func testSetup(t *testing.T) (*DB, *AssetStore, *CompanyStore) {
 	t.Helper()
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v)", err)
+		t.Fatal(err)
 	}
 	return d, d.Assets(), d.Companies()
 }
@@ -24,36 +24,24 @@ func deleteAsset(d *DB, id int64) {
 	d.Exec(`DELETE FROM assets WHERE id = $1`, id)
 }
 
-// testTaskIDsInsert returns the SQL fragment that stores a single task id in
-// assets.task_ids together with the driver value to bind to it.
+// testTaskIDsInsert 返回把单个 task id 写进数组列的占位符与绑定值。
 //
-//	PostgreSQL: ARRAY[$N]::bigint[]  ← bound with the raw int64
-//	SQLite:     $N                   ← bound with encodeTaskIDArray(id)
-//
-// 两个引擎没有共同写法：SQLite 既没有 `::` 转换也没有 ARRAY[] 构造子，只能收
-// 文本；而 pgx 无法把 Go string 编码成 bigint[] 参数（array codec 只认切片、
-// 数组文本类型或 TextValuer），所以 PG 分支逐字保留原句，行为零变化。
+// PostgreSQL 侧写的是 ARRAY[$N]::bigint[] 并直接绑 int64；SQLite 侧写裸 $N 并绑
+// encodeTaskIDArray(id) 编出的 JSON 数组文本——SQLite 既没有 `::` 转换也没有
+// ARRAY[] 构造子，只能收文本，而 pgx 无法把 Go string 编码成 bigint[] 参数
+// （array codec 只认切片、数组文本类型或 TextValuer）。
 func testTaskIDsInsert(placeholder string, taskID int64) (string, any) {
-	if engineIsSQLite() {
-		return placeholder, encodeTaskIDArray(taskID)
-	}
-	return "ARRAY[" + placeholder + "]::bigint[]", taskID
+	return placeholder, encodeTaskIDArray(taskID)
 }
 
 // testArrayLenExpr 返回「数组列有几个元素」的表达式。
 //
-//	PostgreSQL: cardinality(col) / array_length(col, 1)
-//	SQLite:     json_array_length(col)
-//
-// 这些列（open_ports / auth / params / technologies / bound_domains）在 PG 是
-// 数组、在 SQLite 是存 JSON 数组文本的 TEXT 列，长度函数的拼法不通用。SQLite 侧
+// 这些列（open_ports / auth / params / technologies / bound_domains）在 PostgreSQL
+// 是数组、在 SQLite 是存 JSON 数组文本的 TEXT 列，长度函数的拼法不通用。SQLite 侧
 // 用内建 json_array_length：空数组文本 '[]' 返回 0，与 PG 的 cardinality('{}') 一致；
 // 两边在列本身为 NULL 时同样返回 NULL。
 func testArrayLenExpr(col string) string {
-	if engineIsSQLite() {
-		return "json_array_length(" + col + ")"
-	}
-	return "cardinality(" + col + ")"
+	return "json_array_length(" + col + ")"
 }
 
 // =====================================================================

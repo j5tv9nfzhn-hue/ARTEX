@@ -59,9 +59,11 @@ func TestSQLiteSchemaApplies(t *testing.T) {
 	).Scan(&tables); err != nil {
 		t.Fatal(err)
 	}
-	// The PostgreSQL schema declares 49 CREATE TABLE statements.
-	if tables != 49 {
-		t.Errorf("建表数 = %d，预期 49", tables)
+	// The PostgreSQL schema declares 50 CREATE TABLE statements; batch 6 adds
+	// task_env_context / checkpoints / compaction_state (→ 53); batch 8 adds
+	// credentials (→ 54).
+	if tables != 54 {
+		t.Errorf("建表数 = %d，预期 54", tables)
 	}
 }
 
@@ -87,8 +89,14 @@ func TestSQLiteSchemaColumnParity(t *testing.T) {
 		{"exploration_nodes", "content_version"},
 		{"side_question_sessions", "memory"},
 		{"llm_profiles", "retry_connect_attempts"},
+		{"llm_profiles", "input_modalities"},
 		{"assets", "company_source"},
 		{"findings", "evidence_version"},
+		// 批次 6 新增列同样折进 CREATE TABLE，老库靠 sqliteColumnAdds 补列。
+		{"activity", "reverted_at"},
+		{"conversation_activities", "reverted_at"},
+		// 任务级 token 预算（0=不限），同样折进 CREATE TABLE + sqliteColumnAdds 补旧库。
+		{"tasks", "token_budget"},
 	} {
 		rows, err := con.Query("PRAGMA table_info(" + tc.table + ")")
 		if err != nil {

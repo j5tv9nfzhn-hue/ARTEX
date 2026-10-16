@@ -158,8 +158,8 @@ CREATE TABLE IF NOT EXISTS company_scope (
     kind       TEXT NOT NULL CHECK (kind IN ('domain','ip','cidr','icp','keyword')),
     domain     TEXT,
     net        TEXT,
-    value      TEXT,
-    raw        TEXT NOT NULL,
+    value      TEXT CHECK (value IS NULL OR instr(value, char(0)) = 0),
+    raw        TEXT NOT NULL CHECK (instr(raw, char(0)) = 0),
     reason     TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
     CONSTRAINT uq_sv2_domain UNIQUE (company_id, domain),
@@ -294,13 +294,16 @@ CREATE TABLE IF NOT EXISTS activity (
     is_error           BOOLEAN NOT NULL DEFAULT false,
     summary            TEXT,
     detail             TEXT,
-    metadata           TEXT NOT NULL DEFAULT '{}',
+    metadata           TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
     input_tokens       INTEGER,
     output_tokens      INTEGER,
     cache_read_tokens  INTEGER,
     cache_write_tokens INTEGER,
     created_at         TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
-    main_seg INTEGER
+    main_seg INTEGER,
+    -- 时间线回滚（批次 6）：非 NULL = 该步被一次检查点回滚「隐藏」。行不删除，
+    -- 活动列表/翻页查询过滤 reverted_at IS NULL；重新跑出来的步骤是全新行。
+    reverted_at TIMESTAMP
 );
 -- main_seg segments the main-agent session into resettable conversations: a new
 -- main session bumps the segment so its transcript + activity start clean while the
@@ -345,6 +348,27 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
 );
 
+-- 凭据独立实体(计划.md 46–47):供应商 API Key 从 llm_profiles 抽出来,一份凭据
+-- 可被多个配置引用。api_key 与 llm_profiles.api_key 走同一套静态加密(enc:v1:,
+-- db/credential_crypto.go);api_key_hint 由明文尾 4 位推导,是唯一对外可见的部分。
+-- 读取优先级(db/config.go 的 profileCols*):profile.credential_id 非空时取本表的
+-- api_key,否则沿用 profile 自己的内联列(旧库/旧行为完全不变)。
+CREATE TABLE IF NOT EXISTS credentials (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL UNIQUE,
+    api_key      TEXT,
+    api_key_hint TEXT,
+    created_at   TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    updated_at   TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
+);
+DROP TRIGGER IF EXISTS trg_credentials_upd;
+
+CREATE TRIGGER IF NOT EXISTS trg_credentials_upd_updated_at
+AFTER UPDATE ON credentials
+BEGIN
+  UPDATE credentials SET updated_at = (strftime('%Y-%m-%d %H:%M:%f+00:00','now')) WHERE rowid = NEW.rowid;
+END;
+
 CREATE TABLE IF NOT EXISTS llm_profiles (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     name             TEXT NOT NULL UNIQUE,
@@ -354,6 +378,10 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     model            TEXT NOT NULL,
     api_key          TEXT,
     api_key_hint     TEXT,
+    -- 绑定的凭据(可空):非空时 Key 以 credentials 行为准,本表的 api_key/hint 会被
+    -- 清空(保存时)。凭据被删除 → ON DELETE SET NULL 回到「内联 Key 模式」。
+    -- 旧库补列见 open_sqlite.go 的 sqliteColumnAdds。
+    credential_id    BIGINT REFERENCES credentials(id) ON DELETE SET NULL,
     rate_per_second  REAL NOT NULL DEFAULT 0,
     rate_per_minute  REAL NOT NULL DEFAULT 0,
     context_window_k INTEGER NOT NULL DEFAULT 0,
@@ -389,6 +417,14 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     retry_empty_interval_ms   INTEGER NOT NULL DEFAULT 0,
     retry_stream_attempts     INTEGER NOT NULL DEFAULT 0,
     retry_stream_interval_ms  INTEGER NOT NULL DEFAULT 0,
+    -- 输入模态声明(计划.md 75–96):该配置可以接收哪些输入模态,逗号分隔,取值
+    -- text/image/audio/pdf(顺序无关,读写前由 db.NormalizeModalities 归一)。
+    -- '' = 未声明 → 按模型名启发式推断(db.InferInputModalities,保守:不确定即纯文本)。
+    -- 运行时路由据此决定图片/音频/PDF 附件能不能随消息发给该模型:不支持必须显式
+    -- 报错,绝不静默丢弃附件、也不把附件硬塞进纯文本请求。
+    -- 补旧库:SQLite 没有 ADD COLUMN IF NOT EXISTS,老库缺列由 openSQLite 的
+    -- sqliteColumnAdds 先查 pragma_table_info 再 ALTER,保证每次启动幂等。
+    input_modalities TEXT NOT NULL DEFAULT '',
     created_at       TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
     updated_at       TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
 );
@@ -476,6 +512,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     company_id     BIGINT REFERENCES companies(id) ON DELETE SET NULL,
     parent_ref     TEXT,
     timeout_seconds INTEGER NOT NULL DEFAULT 0,
+    token_budget   INTEGER NOT NULL DEFAULT 0,
     plan_heartbeat_seconds INTEGER NOT NULL DEFAULT 300,
     coverage_enabled BOOLEAN NOT NULL DEFAULT true,
     pinned_at      TIMESTAMP,
@@ -498,6 +535,9 @@ BEGIN
 END;
 
 -- planner 心跳触发间隔(秒);补旧库。默认 300s(5min)。见 docs/planner-trigger-impl-plan.md
+-- 任务级 token 预算(硬上限);补旧库。0(默认)=不限。预算闸在 worker run 结束/planner
+-- 每轮结束时核对 llm_usage 账本(input+output)累计,达到上限即按用户暂停语义自动暂停
+-- 任务并留痕;调高预算后恢复。见 server/engine.go 的 checkTokenBudget。
 -- 并发上限挂起态;补旧库。true=因并发上限排队、等待空位自动启动。
 -- 资产覆盖度功能开关;补旧库。true(默认)=计算/展示测试覆盖度、自动累积测试范围、
 -- 给 agent 开放 add_task_scope/list_untested_assets;false=全部关闭(见 task_scope.go)。
@@ -777,6 +817,31 @@ BEGIN
 END;
 
 
+-- 按角色(Agent)的备用模型链(计划 #139/#144)。链首 = agents.llm_profile_id(「默认模型」
+-- 绑定),本表只存其后的故障转移顺序(position 从 0 递增)。语义与 task_llm_profiles 的
+-- 顺序链一致,但作用域是「这个角色的每一次 LLM 调用」:链上的配置按 position 依次尝试,
+-- 与全局轮询链无关;熔断状态是本角色私有的进程内状态,一个角色的链失败不影响其他角色
+-- 或全局链。不得用本表存链首(链首只认 agents.llm_profile_id)。
+CREATE TABLE IF NOT EXISTS agent_llm_fallbacks (
+    agent_id     BIGINT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    profile_id   BIGINT NOT NULL REFERENCES llm_profiles(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL CHECK (position >= 0),
+    created_at   TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    updated_at   TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    PRIMARY KEY (agent_id, profile_id),
+    UNIQUE (agent_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_llm_fallbacks_order ON agent_llm_fallbacks(agent_id, position);
+CREATE INDEX IF NOT EXISTS idx_agent_llm_fallbacks_profile ON agent_llm_fallbacks(profile_id, agent_id);
+DROP TRIGGER IF EXISTS trg_agent_llm_fallbacks_upd;
+
+CREATE TRIGGER IF NOT EXISTS trg_agent_llm_fallbacks_upd_updated_at
+AFTER UPDATE ON agent_llm_fallbacks
+BEGIN
+  UPDATE agent_llm_fallbacks SET updated_at = (strftime('%Y-%m-%d %H:%M:%f+00:00','now')) WHERE rowid = NEW.rowid;
+END;
+
+
 CREATE TABLE IF NOT EXISTS agent_prompts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id      BIGINT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -962,7 +1027,9 @@ CREATE TABLE IF NOT EXISTS conversation_activities (
     output_tokens      INTEGER,
     cache_read_tokens  INTEGER,
     cache_write_tokens INTEGER,
-    created_at         TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
+    created_at         TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    -- 时间线回滚（批次 6）：同 activity.reverted_at，会话活动被回滚隐藏而非删除。
+    reverted_at        TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_conv_act ON conversation_activities(conversation_id, id);
 CREATE INDEX IF NOT EXISTS idx_conv_act_tool_call ON conversation_activities(conversation_id, tool_use_id, id)
@@ -1376,3 +1443,59 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_batch
     ON notification_deliveries(batch_id) WHERE batch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_channel
     ON notification_deliveries(channel_id, id DESC);
+
+-- =====================================================================
+-- N. 共享环境上下文与检查点（批次 6：#10/19/22 环境快照、#27–37 中断/压缩
+--    联动与时间线回滚）
+-- =====================================================================
+
+-- task_env_context: one row per task — the platform's probe of the shared
+-- execution environment, captured at admission. env_json is the display/injectable
+-- snapshot (OS/shell/tool versions/workdir); contract_json is the contract check
+-- (shell available, data dir writable) with warnings listed as text. Rows follow
+-- the task (CASCADE); refreshed on later admissions.
+CREATE TABLE IF NOT EXISTS task_env_context (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       BIGINT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+    captured_at   TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    source        TEXT NOT NULL DEFAULT 'probe',
+    env_json      TEXT NOT NULL DEFAULT '{}',
+    contract_json TEXT NOT NULL DEFAULT '{}',
+    warnings      TEXT NOT NULL DEFAULT ''
+);
+
+-- checkpoints: addressable timeline snapshots for conversations AND tasks.
+-- scope is "conv-<id>" or "task-<id>"; seq is monotonic per scope (the timeline
+-- address). snapshots are deliberately light references — activity boundary id,
+-- transcript file size, graph counters/intent states — never full message copies:
+-- revert = hide later incident activities (reverted_at), truncate the transcript
+-- file to the recorded size, reopen unfinished intents. Tool side effects and
+-- already-written graph products are NOT rolled back; the UI states this.
+-- status: active | superseded (a later revert invalidated it). reason records what
+-- produced the checkpoint: user_message / turn_complete / admit / intent_settled /
+-- interrupt / compaction_recover / revert / manual.
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope         TEXT NOT NULL,
+    seq           INTEGER NOT NULL,
+    reason        TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'active',
+    summary       TEXT NOT NULL DEFAULT '',
+    snapshot_json TEXT NOT NULL DEFAULT '{}',
+    created_at    TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    UNIQUE (scope, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_scope ON checkpoints(scope, seq DESC);
+
+-- compaction_state: one row per task-scope compaction lifecycle (cold-digest
+-- Compactor). phase: idle | running | interrupted. boundary_json carries the
+-- run's boundary info (round, phase minor/major, candidate members, active
+-- digests, last error). updated_at doubles as the staleness marker the recovery
+-- check uses after a restart.
+CREATE TABLE IF NOT EXISTS compaction_state (
+    scope         TEXT PRIMARY KEY,
+    phase         TEXT NOT NULL DEFAULT 'idle',
+    boundary_json TEXT NOT NULL DEFAULT '{}',
+    started_at    TIMESTAMP,
+    updated_at    TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
+);

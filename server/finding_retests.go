@@ -140,7 +140,14 @@ func (s *Server) startFindingRetest(w http.ResponseWriter, r *http.Request) {
 		s.chatMu.Lock()
 		s.chatBusy[busyKey] = true
 		s.chatMu.Unlock()
-		s.runConversation(conv, retest.InitialMessage(), busyKey)
+		// 归因补齐:复测会话此前在用量台账里 task_id/worker 双缺(conv-* session
+		// 解析不出任务与泳道)。这里从 finding 反查所属任务,并把泳道标为 retester,
+		// 让复测消耗能按任务聚合、在 by-worker 视图里独立成列。
+		taskID := ""
+		if f.TaskID != nil {
+			taskID = strconv.FormatInt(*f.TaskID, 10)
+		}
+		s.runConversation(conv, retest.InitialMessage(), busyKey, conversationAttribution{taskID: taskID, worker: db.FindingRetestAgentKey})
 	}
 	code := http.StatusOK
 	if created {
@@ -216,7 +223,7 @@ func (s *Server) seedFindingRetester() error {
 	}
 	defer tx.Rollback()
 	// Lock this migration, including concurrent server initialization.
-	if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(7337741010)`); err != nil {
+	if err = db.AdvisoryLock(context.Background(), tx, 7337741010); err != nil {
 		return err
 	}
 	var done string

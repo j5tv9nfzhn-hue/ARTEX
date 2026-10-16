@@ -54,16 +54,7 @@ import (
 //
 // 返回值自带前导空格，因此调用点写成 `...WHERE id=$1`+forUpdateClause(false) 即可，
 // 拼出来的 SQL 与原来逐字相同。
-func forUpdateClause(skipLocked bool, of ...string) string {
-	if isSQLiteEngine() {
-		return ""
-	}
-	clause := sqlForUpdate(of...)
-	if skipLocked {
-		clause += sqlSkipLocked()
-	}
-	return clause
-}
+func forUpdateClause(bool, ...string) string { return "" }
 
 // forShareClause 返回「共享锁」子句（FOR SHARE），SQLite 侧返回空串。
 //
@@ -71,10 +62,7 @@ func forUpdateClause(skipLocked bool, of ...string) string {
 // 自己的会话行之前先锁住真实的会话/任务/意图行（见 side_questions.go 的 lockSideParent）。
 // 对应的 PG 语义是「别人可以并发读，但写/删会等锁」；SQLite 的库级写锁严格强于它。
 func forShareClause() string {
-	if isSQLiteEngine() {
-		return ""
-	}
-	return " FOR SHARE"
+	return ""
 }
 
 // forKeyShareClause 返回 FOR KEY SHARE，SQLite 侧返回空串。
@@ -83,10 +71,7 @@ func forShareClause() string {
 // 只在并发删除/改主键时等待。本项目用它锁住被外键引用的 llm_profiles 行——
 // 只要求它在本次事务提交前不被删掉即可（见 config.go 的 lockLLMProfileForReference）。
 func forKeyShareClause() string {
-	if isSQLiteEngine() {
-		return ""
-	}
-	return " FOR KEY SHARE"
+	return ""
 }
 
 // sqliteClaimUpdate 组装 SQLite 侧的「更新即领取」语句，用来替代
@@ -140,10 +125,7 @@ func sqliteClaimUpdate(table, selection, returning string, selArgs []any, setSQL
 // 「2026-10-14 19:16:05.123+00:00」——定宽、UTC、固定 +00:00，字典序即时间序
 // （sqlite_compat.go 与 dialect_mixed.go 的 sqlNowPlusSeconds 是同一条论证）。
 func sqlTimestampNotAfterNow(col string) string {
-	if isSQLiteEngine() {
-		return "CAST(" + col + " AS TEXT) <= now()"
-	}
-	return col + " <= now()"
+	return "CAST(" + col + " AS TEXT) <= now()"
 }
 
 // claimIDs 读一条 sqliteClaimUpdate 的 RETURNING id 结果。

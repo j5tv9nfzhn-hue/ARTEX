@@ -129,6 +129,16 @@ func telegramHTML(m Message) (string, int) {
 		return b.String(), 0
 	}
 	it := m.Items[0]
+	if taskEvent(it) {
+		for _, kv := range taskEventFields(it) {
+			b.WriteString("\n<b>" + kv[0] + "</b>： " + telegramEscape(kv[1]))
+		}
+		if it.DetailURL != "" {
+			b.WriteString(fmt.Sprintf("\n\n<a href=\"%s\">%s</a>",
+				telegramEscapeAttr(it.DetailURL), telegramEscape(detailLinkLabel(it))))
+		}
+		return TruncateHTML(b.String(), telegramTextLimit), 1
+	}
 	if it.IsStatusChange() {
 		b.WriteString(fmt.Sprintf("\n<b>状态变更</b>：%s → %s",
 			telegramEscape(StatusLabel(it.FromStatus)), telegramEscape(StatusLabel(it.ToStatus))))
@@ -153,6 +163,9 @@ const telegramReservedRunes = 160
 
 // telegramBatchLine 渲染汇总里的一条（未转义，由调用方统一转义）。
 func telegramBatchLine(it Item, idx int) string {
+	if taskEvent(it) {
+		return fmt.Sprintf("%d. %s", idx, taskEventLine(it))
+	}
 	if a := assetLine(it.Assets, maxAssetsShown); a != "" {
 		return fmt.Sprintf("%d. %s · %s — %s", idx, SeverityLabel(it.Severity), it.Title(), a)
 	}

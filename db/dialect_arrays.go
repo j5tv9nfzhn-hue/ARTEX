@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Autumn-27/artex/config"
-
 	"modernc.org/sqlite"
 )
 
@@ -21,7 +19,7 @@ import (
 // 背景：这些列在两个引擎里的物理形态完全不同
 // ---------------------------------------------------------------------
 //
-// PostgreSQL（db/schema.sql）里它们是真数组：
+// PostgreSQL（db/schema_sqlite.sql）里它们是真数组：
 //
 //	task_ids      BIGINT[]
 //	bound_domains TEXT[]
@@ -243,18 +241,12 @@ const assetsFromPrefix = "\nFROM assets "
 // 的等价物（EXISTS (SELECT 1 FROM json_each(task_ids) WHERE value = $1)），差别
 // 只在于它是一个函数调用，因此没有任何把值拼进 SQL 的机会。
 func assetContainsTaskID() string {
-	if config.Engine() == config.EnginePostgres {
-		return "$1 = ANY(task_ids)"
-	}
 	return "artex_json_contains(task_ids, $1)"
 }
 
 // assetContainsTaskIDAlias 是 assetContainsTaskID 的带表别名版本，
 // 用于 hostsForTaskDeletion 里 `t.id = ANY(a.task_ids)` 这种跨表引用。
 func assetContainsTaskIDAlias(alias string) string {
-	if config.Engine() == config.EnginePostgres {
-		return "t.id=ANY(" + alias + ".task_ids)"
-	}
 	return "artex_json_contains(" + alias + ".task_ids, t.id)"
 }
 
@@ -267,9 +259,6 @@ func assetContainsTaskIDAlias(alias string) string {
 // 左值始终是 $N 形式或表列名，函数调用把值当普通实参收，
 // 任何地方都没有把值拼进 SQL 文本的机会。
 func taskIDsAnyExpr(left, col string) string {
-	if config.Engine() == config.EnginePostgres {
-		return left + "=ANY(" + col + ")"
-	}
 	return "artex_json_contains(" + col + ", " + left + ")"
 }
 
@@ -284,9 +273,6 @@ func taskIDsAnyExpr(left, col string) string {
 //
 // 空集合分别编码成 "{}" 与 "[]"，与 schema 里两边的默认值形状一致。
 func encodeTextArray(items []string) string {
-	if config.Engine() == config.EnginePostgres {
-		return marshalStringArray(items)
-	}
 	if len(items) == 0 {
 		return "[]"
 	}
@@ -305,9 +291,6 @@ func encodeTextArray(items []string) string {
 // PostgreSQL 分支逐字沿用原来的 marshalJSONBArray，保证线上行为不变；
 // SQLite 分支就是标准 JSON 编码，元素结构与 Go 侧 struct tag 一致。
 func encodeJSONBArray(items []map[string]any) (string, error) {
-	if config.Engine() == config.EnginePostgres {
-		return marshalJSONBArray(items)
-	}
 	if len(items) == 0 {
 		return "[]", nil
 	}
@@ -325,12 +308,6 @@ func encodeJSONBArray(items []map[string]any) (string, error) {
 //
 // 只编码一个元素，因为所有调用点都是 UpsertXxx(req.TaskID) 这种"挂到某个任务"。
 func encodeTaskIDArray(taskID int64) string {
-	if config.Engine() == config.EnginePostgres {
-		if taskID > 0 {
-			return fmt.Sprintf("{%d}", taskID)
-		}
-		return "{}"
-	}
 	if taskID > 0 {
 		return fmt.Sprintf("[%d]", taskID)
 	}

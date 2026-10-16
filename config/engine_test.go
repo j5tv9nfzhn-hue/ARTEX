@@ -7,72 +7,42 @@ import (
 	"testing"
 )
 
-// Engine selection decides which backend every query goes to, so it is pinned
-// here rather than discovered at runtime. The default matters most: during the
-// SQLite migration the tree must stay green on PostgreSQL, and flipping the
-// default early is the one change that would silently break unrelated packages.
-
-func TestNormalizeEngine(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{"sqlite", EngineSQLite},
-		{"SQLite", EngineSQLite},
-		{" sqlite3 ", EngineSQLite},
-		{"postgres", EnginePostgres},
-		{"postgresql", EnginePostgres},
-		{"pg", EnginePostgres},
-		{"PGSQL", EnginePostgres},
-		{"", ""},
-		{"mysql", ""},
-		{"sqlite4", ""},
-	} {
-		if got := NormalizeEngine(tc.in); got != tc.want {
-			t.Errorf("NormalizeEngine(%q) = %q，预期 %q", tc.in, got, tc.want)
-		}
-	}
-}
+// The database location is the one piece of storage configuration left, so it is
+// pinned here rather than discovered at runtime. These tests also guard the DSN
+// contract: every pragma below is load-bearing, and a test that quietly lost one
+// would only surface later as a time.Time scan failure or a lock-contention
+// flake in an unrelated package.
 
 // pointConfigAt redirects the package-level config lookup at a scratch file so
-// the precedence test does not depend on -- or disturb -- the developer's real
+// the precedence tests do not depend on -- or disturb -- the developer's real
 // configuration.
 func pointConfigAt(t *testing.T, path string) {
 	t.Helper()
 	t.Setenv("ARTEX_CONFIG", path)
 }
 
-func TestEnginePrecedence(t *testing.T) {
-	t.Setenv(envEngine, "")
+func TestSQLitePathPrecedence(t *testing.T) {
 	t.Setenv(envSQLitePath, "")
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	pointConfigAt(t, cfg)
 
-	// Neither source configured: PostgreSQL, so an unfinished SQLite migration
-	// cannot turn every skipped test into a failure.
-	if got := Engine(); got != EnginePostgres {
-		t.Errorf("默认引擎 = %q，预期 %q", got, EnginePostgres)
+	// Nothing configured: the file lands next to the config file.
+	if got := SQLitePath(); filepath.Base(got) != sqliteFileName {
+		t.Errorf("默认库文件名 = %q，预期 %q", filepath.Base(got), sqliteFileName)
 	}
 
 	// Config file, then environment on top of it.
-	dir := t.TempDir()
-	cfg := filepath.Join(dir, "config.json")
-	write := func(engine string) {
-		if err := os.WriteFile(cfg, []byte(`{"database":{"engine":"`+engine+`"}}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	fromFile := filepath.Join(dir, "from-file.db")
+	writeConfig(t, cfg, Config{Database: Database{Path: fromFile}})
+	if got := SQLitePath(); got != fromFile {
+		t.Errorf("配置文件指定 path 时 = %q，预期 %q", got, fromFile)
 	}
-	pointConfigAt(t, cfg)
 
-	write(EngineSQLite)
-	if got := Engine(); got != EngineSQLite {
-		t.Errorf("配置文件指定 sqlite 时 = %q", got)
-	}
-	t.Setenv(envEngine, EnginePostgres)
-	if got := Engine(); got != EnginePostgres {
+	fromEnv := filepath.Join(dir, "from-env.db")
+	t.Setenv(envSQLitePath, fromEnv)
+	if got := SQLitePath(); got != fromEnv {
 		t.Errorf("环境变量应覆盖配置文件，实际 = %q", got)
-	}
-
-	// An unrecognised value falls through instead of becoming an engine that
-	// does not exist.
-	t.Setenv(envEngine, "cassandra")
-	if got := Engine(); got != EngineSQLite {
-		t.Errorf("非法环境变量应被忽略，实际 = %q", got)
 	}
 }
 
@@ -95,6 +65,18 @@ func TestSQLiteDSNCarriesRequiredPragmas(t *testing.T) {
 	}
 }
 
+// TestSQLiteDSNForMatchesSQLiteDSN pins the two constructors to one contract.
+// Tests and tooling use SQLiteDSNFor with their own path; if it ever drifted from
+// SQLiteDSN, those callers would silently exercise a different database
+// configuration than production.
+func TestSQLiteDSNForMatchesSQLiteDSN(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "same.db")
+	t.Setenv(envSQLitePath, path)
+	if got, want := SQLiteDSNFor(path), SQLiteDSN(); got != want {
+		t.Errorf("SQLiteDSNFor 与 SQLiteDSN 不一致：\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestSQLitePathIsAbsoluteAndCreatesParent(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "nested", "deeper", "artex.db")
@@ -106,5 +88,20 @@ func TestSQLitePathIsAbsoluteAndCreatesParent(t *testing.T) {
 	}
 	if fi, err := os.Stat(filepath.Dir(got)); err != nil || !fi.IsDir() {
 		t.Errorf("父目录未被创建：%v", err)
+	}
+}
+
+// TestSQLitePathSourceNamesOrigin pins the three startup-log labels so an
+// operator can tell which source won without reading the code.
+func TestSQLitePathSourceNamesOrigin(t *testing.T) {
+	t.Setenv(envSQLitePath, "")
+	pointConfigAt(t, filepath.Join(t.TempDir(), "nope.json"))
+	if got := SQLitePathSource(); !strings.Contains(got, "内置默认") {
+		t.Errorf("无配置时来源 = %q，预期内置默认", got)
+	}
+
+	t.Setenv(envSQLitePath, filepath.Join(t.TempDir(), "x.db"))
+	if got := SQLitePathSource(); !strings.Contains(got, envSQLitePath) {
+		t.Errorf("环境变量来源 = %q，应含 %q", got, envSQLitePath)
 	}
 }

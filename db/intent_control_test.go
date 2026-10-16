@@ -11,7 +11,7 @@ import (
 func TestCompareAndSetIntentStateAllowsSingleWinner(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatal(err)
 	}
 	defer d.Close()
 	expID, err := d.CreateExploration("intent CAS", "only one controller wins")
@@ -61,7 +61,7 @@ func TestCompareAndSetIntentStateAllowsSingleWinner(t *testing.T) {
 func TestCancelIntentPreservesTokenMeteringWithoutDoubleCount(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatal(err)
 	}
 	defer d.Close()
 	expID, err := d.CreateExploration("cancel token rollup", "preserve consumed tokens")
@@ -168,11 +168,16 @@ func TestCancelIntentPreservesTokenMeteringWithoutDoubleCount(t *testing.T) {
 		t.Fatalf("cancelled intent leaked into sessions: %+v", sessions)
 	}
 	var rollups, datedRollups int
+	// SQLite 既没有 ->> 也没有 TO_CHAR ... AT TIME ZONE；json_extract 与
+	// sqlUTCDate 是方言等价物（同一 key 路径 / 同一 UTC 日）。
+	metaDay := `json_extract(metadata,'$.token_day')`
+	metaCancelled := `CAST(json_extract(metadata,'$.cancelled_intent_id') AS TEXT)`
+	dayExpr := `sqlUTCDate("created_at")`
 	if err := d.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (
-			WHERE metadata->>'token_day'=TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+			WHERE `+metaDay+`=`+dayExpr+`
 		) FROM activity
 		WHERE exploration_id=$1 AND worker='token-ledger' AND kind='result'
-		  AND metadata->>'cancelled_intent_id'=$2`, expID, fmt.Sprint(intentID)).Scan(&rollups, &datedRollups); err != nil {
+		  AND `+metaCancelled+`=$2`, expID, fmt.Sprint(intentID)).Scan(&rollups, &datedRollups); err != nil {
 		t.Fatal(err)
 	}
 	if rollups != 3 || datedRollups != rollups {
@@ -229,7 +234,7 @@ func assertDailyTokenBucketsEqual(t *testing.T, got, want map[string]DailyTokenB
 func TestCancelIntentPreservesOutputsYieldedByAnotherIntent(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatal(err)
 	}
 	defer d.Close()
 	expID, err := d.CreateExploration("shared intent output", "preserve shared facts and findings")

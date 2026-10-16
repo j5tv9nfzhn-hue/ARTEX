@@ -68,19 +68,19 @@ func (d *DB) SearchChatMentionsPage(ctx context.Context, kind, query, cursor str
 	pattern := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(query) + "%"
 	rows, err := d.QueryContext(ctx, `
 SELECT kind, id, left(label, 160), left(description, 240) FROM (
- (SELECT 'finding' AS kind, id, COALESCE(NULLIF(name,''), vulnclass) AS label,
+ SELECT * FROM (SELECT 'finding' AS kind, id, COALESCE(NULLIF(name,''), vulnclass) AS label,
          concat_ws(' · ', severity, status, left(summary, 160)) AS description
   FROM findings WHERE ($1='' OR $1='finding') AND
     ($2='' OR `+sqlCastText("id")+`=$2 OR concat_ws(' ',name,vulnclass,summary) `+sqlILike()+` $3)
     AND ($4=0 OR (`+sqlCastText("id")+`=$2)<$6 OR ((`+sqlCastText("id")+`=$2)=$6 AND (id<$4 OR (id=$4 AND 'finding'>$5))))
   ORDER BY (`+sqlCastText("id")+`=$2) DESC, id DESC LIMIT 21)
  UNION ALL
- (SELECT 'company', id, name, nkey FROM companies
+ SELECT * FROM (SELECT 'company', id, name, nkey FROM companies
   WHERE ($1='' OR $1='company') AND ($2='' OR `+sqlCastText("id")+`=$2 OR name `+sqlILike()+` $3 OR nkey `+sqlILike()+` $3)
     AND ($4=0 OR (`+sqlCastText("id")+`=$2)<$6 OR ((`+sqlCastText("id")+`=$2)=$6 AND (id<$4 OR (id=$4 AND 'company'>$5))))
   ORDER BY (`+sqlCastText("id")+`=$2) DESC, id DESC LIMIT 21)
  UNION ALL
- (SELECT type, id,
+ SELECT * FROM (SELECT type, id,
     CASE WHEN type='endpoint' THEN concat_ws(' ',NULLIF(method,''),url)
          ELSE COALESCE(NULLIF(app_name,''),NULLIF(url,''),NULLIF(domain,''),NULLIF(ip,''),NULLIF(bundle_id,''),'资产 #'||`+sqlCastText("id")+`) END,
     concat_ws(' · ',type,NULLIF(page_title,''),NULLIF(service_name,''),NULLIF(bundle_id,''),NULLIF(ip,''),`+sqlCastText("port")+`)

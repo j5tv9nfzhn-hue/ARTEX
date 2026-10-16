@@ -583,7 +583,7 @@ func (s *AssetStore) QueryDSLInScope(dsl, typ string, taskID int64, limit, offse
 	}
 	where += " AND id IN (SELECT id FROM target)"
 	args = append(args, limit, offset)
-	q := `WITH ` + scopeTargetCTE + ` ` + assetSelectCols + " WHERE " + where +
+	q := `WITH ` + scopeTargetCTE() + ` ` + assetSelectCols + " WHERE " + where +
 		fmt.Sprintf(" ORDER BY last_seen DESC, id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -618,7 +618,7 @@ func (s *AssetStore) GetByIDsInScope(taskID int64, ids []int64) ([]*Asset, error
 		placeholders[i] = fmt.Sprintf("$%d", i+2)
 		args = append(args, id)
 	}
-	q := `WITH ` + scopeTargetCTE + ` ` + assetSelectCols +
+	q := `WITH ` + scopeTargetCTE() + ` ` + assetSelectCols +
 		" WHERE id IN (" + strings.Join(placeholders, ",") + ")" +
 		" AND id IN (SELECT id FROM target) ORDER BY last_seen DESC, id DESC"
 	rows, err := s.db.Query(q, args...)

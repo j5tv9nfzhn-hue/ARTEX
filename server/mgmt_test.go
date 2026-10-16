@@ -16,7 +16,7 @@ func TestMgmtAPI(t *testing.T) {
 		t.Skipf("database unavailable (%v) — skipping management API test", err)
 	}
 	if m.pg == nil {
-		t.Skip("postgres unavailable — skipping management API test")
+		t.Fatal("数据库不可用")
 	}
 	td := t.TempDir()
 	s := New(context.Background(), m, td, td, td)
