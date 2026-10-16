@@ -59,7 +59,7 @@ const NAV_SEARCH_ALIASES: Record<string, string[]> = {
 
 const searchItems: SearchItem[] = sidebarItems.flatMap((group) => {
   const headingKey = navGroupMessageKey(group.id);
-  return group.items.flatMap((item) => {
+  return group.items.flatMap((item): SearchItem[] => {
     if (item.subItems) {
       return item.subItems.map((sub) => ({
         id: sub.id,

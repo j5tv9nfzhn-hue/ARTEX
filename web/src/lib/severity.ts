@@ -47,8 +47,7 @@ export interface SeverityMeta {
 export const SEVERITY_META: Record<Severity, SeverityMeta> = {
   critical: {
     text: "text-red-600 dark:text-red-400",
-    badge:
-      "bg-red-600/10 text-red-700 border-red-600/20 dark:bg-red-400/10 dark:text-red-400 dark:border-red-400/20",
+    badge: "bg-red-600/10 text-red-700 border-red-600/20 dark:bg-red-400/10 dark:text-red-400 dark:border-red-400/20",
     softChip: "bg-red-600/10 text-red-700 dark:bg-red-400/10 dark:text-red-400",
     dot: "bg-red-600 dark:bg-red-400",
     bar: "bg-red-600 dark:bg-red-400",
@@ -88,12 +87,10 @@ export const SEVERITY_META: Record<Severity, SeverityMeta> = {
 const FILTER_CHIP_ON: Record<Severity, string> = {
   critical:
     "data-[state=on]:border-red-600/40 data-[state=on]:bg-red-600/10 data-[state=on]:text-red-700 dark:data-[state=on]:border-red-400/40 dark:data-[state=on]:bg-red-400/10 dark:data-[state=on]:text-red-400",
-  high:
-    "data-[state=on]:border-orange-500/40 data-[state=on]:bg-orange-500/10 data-[state=on]:text-orange-700 dark:data-[state=on]:border-orange-400/40 dark:data-[state=on]:bg-orange-400/10 dark:data-[state=on]:text-orange-400",
+  high: "data-[state=on]:border-orange-500/40 data-[state=on]:bg-orange-500/10 data-[state=on]:text-orange-700 dark:data-[state=on]:border-orange-400/40 dark:data-[state=on]:bg-orange-400/10 dark:data-[state=on]:text-orange-400",
   medium:
     "data-[state=on]:border-amber-500/40 data-[state=on]:bg-amber-500/10 data-[state=on]:text-amber-700 dark:data-[state=on]:border-amber-400/40 dark:data-[state=on]:bg-amber-400/10 dark:data-[state=on]:text-amber-400",
-  low:
-    "data-[state=on]:border-slate-500/40 data-[state=on]:bg-slate-500/10 data-[state=on]:text-slate-600 dark:data-[state=on]:border-slate-400/40 dark:data-[state=on]:bg-slate-400/10 dark:data-[state=on]:text-slate-400",
+  low: "data-[state=on]:border-slate-500/40 data-[state=on]:bg-slate-500/10 data-[state=on]:text-slate-600 dark:data-[state=on]:border-slate-400/40 dark:data-[state=on]:bg-slate-400/10 dark:data-[state=on]:text-slate-400",
 };
 
 // isSeverity 用于运行时字符串(后端返回的 severity 是 string)判定。

@@ -26,10 +26,7 @@ export interface MotionProps {
 /** 单元素进场:延迟由调用方给出(省略 = 立即进场)。 */
 export function FadeIn({ delay = 0, className, children }: MotionProps) {
   return (
-    <div
-      className={cn("animate-fade-up", className)}
-      style={delay > 0 ? { animationDelay: `${delay}ms` } : undefined}
-    >
+    <div className={cn("animate-fade-up", className)} style={delay > 0 ? { animationDelay: `${delay}ms` } : undefined}>
       {children}
     </div>
   );

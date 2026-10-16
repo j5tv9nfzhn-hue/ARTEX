@@ -5,6 +5,7 @@ import * as React from "react";
 import { ArrowDownIcon, ArrowUpIcon, XIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { ChainCapabilityAdvice, ProfileCapabilityBadges } from "@/components/llm-profile-badges";
 import { Button } from "@/components/ui/button";
 import {
   Combobox,
@@ -17,7 +18,6 @@ import {
   ComboboxList,
   ComboboxValue,
 } from "@/components/ui/combobox";
-import { ChainCapabilityAdvice, ProfileCapabilityBadges } from "@/components/llm-profile-badges";
 import type { AgentLLMProfileOption } from "@/lib/types";
 
 // AgentLLMFallbackChain 编辑「某个角色」的备用模型链尾（计划 #139/#144）。
@@ -46,7 +46,10 @@ export function AgentLLMFallbackChain({
   inputId,
 }: AgentLLMFallbackChainProps) {
   const t = useTranslations("llmChain");
-  const profilesByID = React.useMemo(() => new Map(profiles.map((profile) => [String(profile.id), profile])), [profiles]);
+  const profilesByID = React.useMemo(
+    () => new Map(profiles.map((profile) => [String(profile.id), profile])),
+    [profiles],
+  );
   // 链首不出现在备用链的候选里（后端保存时也会剔除，这里提前保持一致）。
   const itemIDs = React.useMemo(
     () => profiles.filter((profile) => String(profile.id) !== headProfileId).map((profile) => String(profile.id)),
@@ -179,10 +182,7 @@ export function AgentLLMFallbackChain({
         </div>
       )}
 
-      <ChainCapabilityAdvice
-        head={head}
-        members={[head, ...value.map((id) => profilesByID.get(id))]}
-      />
+      <ChainCapabilityAdvice head={head} members={[head, ...value.map((id) => profilesByID.get(id))]} />
       <p className="text-muted-foreground text-xs">{t("roleScopeHint")}</p>
     </div>
   );

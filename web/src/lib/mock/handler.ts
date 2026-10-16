@@ -67,7 +67,11 @@ function mockCheckpointList(scope: string): Checkpoint[] {
   const isTask = scope.startsWith("task-");
   const entries: Array<{ reason: string; summary: string; counts?: Record<string, number> }> = isTask
     ? [
-        { reason: "admit", summary: "任务准入：探测共享环境并建立基线", counts: { nodes: 6, edges: 5, max_node_id: 6 } },
+        {
+          reason: "admit",
+          summary: "任务准入：探测共享环境并建立基线",
+          counts: { nodes: 6, edges: 5, max_node_id: 6 },
+        },
         { reason: "intent_settled", summary: "意图 #3 结束：已完成" },
         { reason: "interrupt", summary: "任务暂停（后台压缩已打断）" },
         { reason: "intent_settled", summary: "意图 #4 结束：受阻" },

@@ -29,11 +29,7 @@ export function ThemeSwitcher() {
   };
 
   return (
-    <Button
-      size="icon"
-      onClick={cycleTheme}
-      aria-label={`当前主题：${THEME_NAMES[themeMode]}，点击切换`}
-    >
+    <Button size="icon" onClick={cycleTheme} aria-label={`当前主题：${THEME_NAMES[themeMode]}，点击切换`}>
       {/* SYSTEM */}
       <Monitor className="hidden [html[data-theme-mode=system]_&]:block" />
 

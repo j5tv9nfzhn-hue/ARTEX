@@ -430,10 +430,7 @@ export default function ToolsPage() {
             </CardHeader>
             <CardContent>
               {systemTools.length === 0 ? (
-                <EmptyState
-                  illustration="terminal"
-                  title={query.trim() ? t("systemNoMatch") : t("systemEmpty")}
-                />
+                <EmptyState illustration="terminal" title={query.trim() ? t("systemNoMatch") : t("systemEmpty")} />
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {systemTools.map((tool) => (
@@ -464,10 +461,7 @@ export default function ToolsPage() {
             </CardHeader>
             <CardContent>
               {customTools.length === 0 ? (
-                <EmptyState
-                  illustration="terminal"
-                  title={query.trim() ? t("customNoMatch") : t("customEmpty")}
-                />
+                <EmptyState illustration="terminal" title={query.trim() ? t("customNoMatch") : t("customEmpty")} />
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {customTools.map((tool) => (

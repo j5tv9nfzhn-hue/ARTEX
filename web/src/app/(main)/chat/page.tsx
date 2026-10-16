@@ -2,6 +2,8 @@
 
 import * as React from "react";
 
+import Link from "next/link";
+
 import {
   ArrowUpIcon,
   Bot,
@@ -21,7 +23,6 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import Link from "next/link";
 import { toast } from "sonner";
 
 import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/components/approval-execution-focus";
@@ -575,6 +576,9 @@ function ChatView({
   // page shows it immediately (issue #3: opening/refresh used to load the oldest
   // page, so the completed result was missing until another message advanced the
   // cursor). Older history streams in on scroll-up (loadEarlier below).
+  // reloadToken 不在回调内引用:它是触发式依赖——检查点回滚后 bump(onReverted)
+  // 强制重载时间线,因此不能按 Biome 建议移除,显式抑制该诊断。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 触发式依赖:回滚后强制重载时间线
   React.useEffect(() => {
     cursorRef.current = 0;
     earliestRef.current = 0;

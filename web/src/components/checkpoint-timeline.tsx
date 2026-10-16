@@ -8,10 +8,10 @@
 import * as React from "react";
 
 import { HistoryIcon, RefreshCwIcon, RotateCcwIcon, TriangleAlertIcon } from "lucide-react";
-import { EmptyState } from "@/components/empty-state";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -159,17 +159,15 @@ export function CheckpointTimeline({
                     {t("superseded")}
                   </Badge>
                 )}
-                <span className="text-muted-foreground ml-auto text-xs tabular-nums">
-                  {shortTime(cp.created_at)}
-                </span>
+                <span className="text-muted-foreground ml-auto text-xs tabular-nums">{shortTime(cp.created_at)}</span>
               </div>
-              {cp.summary && (
-                <p className="text-muted-foreground mt-1.5 text-sm break-words">{cp.summary}</p>
-              )}
+              {cp.summary && <p className="text-muted-foreground mt-1.5 text-sm break-words">{cp.summary}</p>}
               <div className="text-muted-foreground mt-1.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <span>{t("boundary", { id: cp.snapshot.activity_id })}</span>
                 {typeof cp.snapshot.counts?.nodes === "number" && (
-                  <span>{t("graphCount", { nodes: cp.snapshot.counts.nodes, edges: cp.snapshot.counts.edges ?? 0 })}</span>
+                  <span>
+                    {t("graphCount", { nodes: cp.snapshot.counts.nodes, edges: cp.snapshot.counts.edges ?? 0 })}
+                  </span>
                 )}
                 {cp.snapshot.compaction && <span>{t("compactionBoundary")}</span>}
               </div>
@@ -209,9 +207,7 @@ export function CheckpointTimeline({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {pendingRevert ? t("revertTo", { seq: pendingRevert.seq }) : ""}
-            </AlertDialogTitle>
+            <AlertDialogTitle>{pendingRevert ? t("revertTo", { seq: pendingRevert.seq }) : ""}</AlertDialogTitle>
             <AlertDialogDescription>
               {scope === "task" ? t("revertDescTask") : t("revertDescConversation")}
             </AlertDialogDescription>

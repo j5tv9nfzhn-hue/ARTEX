@@ -767,7 +767,12 @@ export default function FindingsPage() {
   const statCards = [
     { label: t("stat.total"), value: stats.total, icon: BugIcon },
     { label: t("stat.pending"), value: stats.pending, tone: "text-amber-500", icon: ClockIcon },
-    { label: t("severity.critical"), value: stats.critical, tone: severityTextClass("critical"), icon: ShieldAlertIcon },
+    {
+      label: t("severity.critical"),
+      value: stats.critical,
+      tone: severityTextClass("critical"),
+      icon: ShieldAlertIcon,
+    },
     { label: t("severity.high"), value: stats.high, tone: severityTextClass("high"), icon: TriangleAlertIcon },
     { label: t("severity.medium"), value: stats.medium, tone: severityTextClass("medium"), icon: TriangleAlertIcon },
     { label: t("severity.low"), value: stats.low, tone: severityTextClass("low"), icon: InfoIcon },

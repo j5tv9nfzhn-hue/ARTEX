@@ -2011,7 +2011,11 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                     focusedSeq={focusHistory.ready ? approvalFocus.state?.source?.seq : undefined}
                   />
                 ) : (
-                  <EmptyState compact illustration="chat" title={isMain ? t("transcript.emptyMain") : t("transcript.emptyWorker")} />
+                  <EmptyState
+                    compact
+                    illustration="chat"
+                    title={isMain ? t("transcript.emptyMain") : t("transcript.emptyWorker")}
+                  />
                 )}
               </div>
             </ScrollArea>

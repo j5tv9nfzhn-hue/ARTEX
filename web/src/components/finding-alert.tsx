@@ -70,14 +70,13 @@ function FindingAlertCard({ count, items }: { count: number; items: Finding[] })
   const latest = items[0];
   const severity = topSeverity(items);
   const single = count === 1;
-  const title = single
-    ? latest.name || latest.vulnclass || t("titleSingle")
-    : t("titleMany", { count });
+  const title = single ? latest.name || latest.vulnclass || t("titleSingle") : t("titleMany", { count });
   // 来源行:优先任务描述(与发现列表"所属任务"列一致),退回漏洞摘要/类别。
   const source = single
     ? latest.task_description || latest.summary || latest.vulnclass
     : latest.name || latest.vulnclass || latest.summary;
-  const target = single && latest.finding_id ? `/function/findings/detail?id=${latest.finding_id}` : "/function/findings";
+  const target =
+    single && latest.finding_id ? `/function/findings/detail?id=${latest.finding_id}` : "/function/findings";
 
   return (
     <div

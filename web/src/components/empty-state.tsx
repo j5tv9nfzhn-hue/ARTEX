@@ -1,4 +1,4 @@
-import * as React from "react";
+import type * as React from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -16,6 +16,8 @@ export interface EmptyStateSuggestion {
 }
 
 // 统一画布 120×72,strokeWidth=2,圆头圆角,保证缩到小尺寸仍清晰。
+// 插画一律装饰性:aria-hidden="true" 逐个写在 svg 上(须是 svg 的字面属性,
+// 放进 svgProps 常量经 {...spread} 后不参与 biome noSvgWithoutTitle 判定)。
 const svgProps = {
   viewBox: "0 0 120 72",
   fill: "none",
@@ -26,9 +28,9 @@ const svgProps = {
 } as const;
 
 // 雷达扫描:侦察 / 流量 / 探索类空态。
-function RadarArt() {
+function RadarArt(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg {...svgProps}>
+    <svg {...svgProps} aria-hidden="true" {...props}>
       <circle cx="60" cy="36" r="24" />
       <circle cx="60" cy="36" r="14" className="text-primary" />
       <path d="M60 36 78 22" className="text-primary" />
@@ -41,9 +43,9 @@ function RadarArt() {
 }
 
 // 节点网络:资产 / Agent / MCP 类空态。
-function NodesArt() {
+function NodesArt(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg {...svgProps}>
+    <svg {...svgProps} aria-hidden="true" {...props}>
       <path d="M34 24l52-4" />
       <path d="M36 29l19 18" />
       <path d="M86 25 65 49" />
@@ -56,9 +58,9 @@ function NodesArt() {
 }
 
 // 终端光标:命令执行 / 日志 / 工具 / Skill 类空态。
-function TerminalArt() {
+function TerminalArt(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg {...svgProps}>
+    <svg {...svgProps} aria-hidden="true" {...props}>
       <rect x="24" y="16" width="72" height="38" rx="5" />
       <path d="M34 30l6 5-6 5" className="text-primary" />
       <path d="M48 40h18" />
@@ -69,9 +71,9 @@ function TerminalArt() {
 }
 
 // 对话气泡:对话 / 通知类空态。
-function ChatArt() {
+function ChatArt(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg {...svgProps}>
+    <svg {...svgProps} aria-hidden="true" {...props}>
       <path d="M30 18h60a6 6 0 0 1 6 6v18a6 6 0 0 1-6 6H52l-14 10v-10h-8a6 6 0 0 1-6-6V24a6 6 0 0 1 6-6z" />
       <circle cx="46" cy="33" r="1.6" fill="currentColor" stroke="none" />
       <circle cx="60" cy="33" r="1.6" fill="currentColor" stroke="none" className="text-primary" />
@@ -82,9 +84,9 @@ function ChatArt() {
 }
 
 // 旗标:任务 / 目标类空态。
-function FlagArt() {
+function FlagArt(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg {...svgProps}>
+    <svg {...svgProps} aria-hidden="true" {...props}>
       <path d="M44 12v48" />
       <path d="M44 15c10-4 18 4 28 0v20c-10 4-18-4-28 0z" className="text-primary" />
       <path d="M32 60h18" />
@@ -94,9 +96,9 @@ function FlagArt() {
 }
 
 // 盾牌:拦截规则 / 审批 / 安全类空态。
-function ShieldArt() {
+function ShieldArt(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg {...svgProps}>
+    <svg {...svgProps} aria-hidden="true" {...props}>
       <path d="M60 10l22 7v16c0 14-9 22-22 27-13-5-22-13-22-27V17z" />
       <path d="M51 35l7 7 12-13" className="text-primary" />
       <path d="M22 66h76" className="opacity-50" />
@@ -104,7 +106,7 @@ function ShieldArt() {
   );
 }
 
-const ILLUSTRATIONS: Record<EmptyStateIllustration, React.ComponentType> = {
+const ILLUSTRATIONS: Record<EmptyStateIllustration, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
   radar: RadarArt,
   nodes: NodesArt,
   terminal: TerminalArt,

@@ -5,6 +5,7 @@ import * as React from "react";
 import { ArrowDownIcon, ArrowUpIcon, XIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 
+import { ChainCapabilityAdvice, ProfileCapabilityBadges } from "@/components/llm-profile-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +19,6 @@ import {
   ComboboxList,
   ComboboxValue,
 } from "@/components/ui/combobox";
-import { ChainCapabilityAdvice, ProfileCapabilityBadges } from "@/components/llm-profile-badges";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { LLMProfile } from "@/lib/types";
 

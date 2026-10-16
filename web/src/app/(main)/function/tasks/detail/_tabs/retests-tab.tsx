@@ -112,7 +112,12 @@ export function RetestsTab({ taskId }: { taskId: string }) {
               </React.Fragment>
             ))}
             {loaded && findings.length === 0 ? (
-              <EmptyState compact illustration="flag" title={t("retests.emptyTitle")} description={t("retests.emptyDesc")} />
+              <EmptyState
+                compact
+                illustration="flag"
+                title={t("retests.emptyTitle")}
+                description={t("retests.emptyDesc")}
+              />
             ) : null}
           </CardContent>
           {data && data.total > PAGE_SIZE ? (

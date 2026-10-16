@@ -896,7 +896,9 @@ function CredentialSheet({
             <Input
               id="c-key"
               type="password"
-              placeholder={cred?.api_key_hint ? t("profile.apiKey.placeholderSet", { hint: cred.api_key_hint }) : "sk-…"}
+              placeholder={
+                cred?.api_key_hint ? t("profile.apiKey.placeholderSet", { hint: cred.api_key_hint }) : "sk-…"
+              }
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
             />

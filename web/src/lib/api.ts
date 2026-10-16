@@ -106,9 +106,9 @@ import type {
   TrafficResp,
   UpdateCheck,
   UsageStats,
+  WorkerTokenStat,
   WorkspaceFile,
   WorkspaceListing,
-  WorkerTokenStat,
 } from "@/lib/types";
 
 // ApiError 携带 HTTP 状态码；服务端消息随语言变化，
@@ -998,8 +998,7 @@ export const api = {
   llmCredentials: () => get<{ credentials: LLMCredential[] }>("/llm/credentials").then((r) => arr(r.credentials)),
   saveLLMCredential: (c: { id?: number; name: string; api_key?: string }) =>
     post<{ id: string }>("/llm/credentials", c),
-  deleteLLMCredential: (id: string) =>
-    del<{ deleted: string; unbound_profiles: number }>(`/llm/credentials/${id}`),
+  deleteLLMCredential: (id: string) => del<{ deleted: string; unbound_profiles: number }>(`/llm/credentials/${id}`),
   saveLLMProfile: (p: {
     id?: number; // omit/0 = create; set = update that profile
     name: string;

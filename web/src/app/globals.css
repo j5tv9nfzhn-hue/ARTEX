@@ -155,9 +155,12 @@ These serve as the fallback; there is no separate default.css file. */
     @apply bg-background text-foreground;
     /* 西文由 --font-sans(next/font 注入)提供,其后为中文回退栈;system-ui 置于中文之后,避免抢占中文 glyph 归属。
        var 内层 system-ui 兜底:万一 data-font 残留失效键导致 body 没有 --font-sans 声明,也不会整条 font-family 失效 */
-    font-family: var(--font-sans, system-ui), "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+    font-family:
+      var(--font-sans, system-ui), "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI",
+      "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
     /* next/font 的字体变量挂在 <body> 类上,:root 解析不到;必须在 body 声明 --font-mono,font-mono 工具类才能拿到 JetBrains Mono */
-    --font-mono: var(--font-jetbrains-mono, ui-monospace), SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --font-mono:
+      var(--font-jetbrains-mono, ui-monospace), SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   }
   html {
     @apply font-sans;
@@ -214,15 +217,8 @@ These serve as the fallback; there is no separate default.css file. */
      不随 data-font 切换 —— 用户换的是正文字体,该点缀保持一致,避免标题与正文双双换脸的杂乱。 */
   .font-display {
     font-family:
-      var(--font-space-grotesk, var(--font-sans)),
-      "PingFang SC",
-      "HarmonyOS Sans SC",
-      "MiSans",
-      "Microsoft YaHei UI",
-      "Microsoft YaHei",
-      "Noto Sans CJK SC",
-      system-ui,
-      sans-serif;
+      var(--font-space-grotesk, var(--font-sans)), "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI",
+      "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
   }
 
   /* 动效工具类(主题重塑第 8 项):与 tw-animate-css 的 animate-* 同前缀习惯,

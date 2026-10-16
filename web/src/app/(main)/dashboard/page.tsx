@@ -519,7 +519,9 @@ export default function DashboardPage() {
     [reliability],
   );
   const protocolTotal = reliability
-    ? reliability.protocol.unpaired_results + reliability.protocol.unknown_results + reliability.protocol.missing_results
+    ? reliability.protocol.unpaired_results +
+      reliability.protocol.unknown_results +
+      reliability.protocol.missing_results
     : 0;
 
   // activity kind label
@@ -1348,7 +1350,9 @@ export default function DashboardPage() {
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-[10px] text-muted-foreground">{t("replaySuccessRate")}</span>
                   {reliability.replay.succeeded + reliability.replay.failed > 0 ? (
-                    <span className={cn("text-lg font-semibold tabular-nums", rateClass(reliability.replay.success_rate))}>
+                    <span
+                      className={cn("text-lg font-semibold tabular-nums", rateClass(reliability.replay.success_rate))}
+                    >
                       {fmtPct(reliability.replay.success_rate)}
                     </span>
                   ) : (
@@ -1369,7 +1373,12 @@ export default function DashboardPage() {
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-[10px] text-muted-foreground">{t("interruptRecoveryRate")}</span>
                   {reliability.interrupts.succeeded + reliability.interrupts.failed > 0 ? (
-                    <span className={cn("text-lg font-semibold tabular-nums", rateClass(reliability.interrupts.success_rate))}>
+                    <span
+                      className={cn(
+                        "text-lg font-semibold tabular-nums",
+                        rateClass(reliability.interrupts.success_rate),
+                      )}
+                    >
                       {fmtPct(reliability.interrupts.success_rate)}
                     </span>
                   ) : (
@@ -1390,7 +1399,10 @@ export default function DashboardPage() {
             {stageRows.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {stageRows.map(([stage, count]) => (
-                  <span key={stage} className="rounded border bg-muted/20 px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                  <span
+                    key={stage}
+                    className="rounded border bg-muted/20 px-1.5 py-0.5 text-[9px] text-muted-foreground"
+                  >
                     {t.has(`stage.${stage}`) ? t(`stage.${stage}`) : stage} {count}
                   </span>
                 ))}

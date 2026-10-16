@@ -1951,7 +1951,11 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
           </div>
         ) : archives.length === 0 ? (
           <div className="mx-4 rounded-lg border border-dashed lg:mx-6">
-            <EmptyState illustration="flag" title={t("archive.emptyTitle")} description={t("archive.emptyDescription")} />
+            <EmptyState
+              illustration="flag"
+              title={t("archive.emptyTitle")}
+              description={t("archive.emptyDescription")}
+            />
           </div>
         ) : (
           <Table className="**:data-[slot='table-cell']:px-4 **:data-[slot='table-head']:px-4">

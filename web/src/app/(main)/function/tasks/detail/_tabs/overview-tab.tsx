@@ -850,7 +850,9 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                 {budget > 0 && (
                   <span
                     className={
-                      budgetPct >= 100 ? "text-destructive text-xs tabular-nums" : "text-muted-foreground text-xs tabular-nums"
+                      budgetPct >= 100
+                        ? "text-destructive text-xs tabular-nums"
+                        : "text-muted-foreground text-xs tabular-nums"
                     }
                   >
                     {t("tokens.budgetUsage", { used: fmtTokens(budgetUsed), pct: budgetPct })}
@@ -905,9 +907,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                           <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.output")}</th>
                           <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.cacheRead")}</th>
                           <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colHitRate")}</th>
-                          {showModelCost && (
-                            <th className="py-1.5 text-right font-medium">{t("tokens.colCost")}</th>
-                          )}
+                          {showModelCost && <th className="py-1.5 text-right font-medium">{t("tokens.colCost")}</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -1229,9 +1229,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
         {/* 价值指标：从任务开始到首个漏洞登记的耗时 + 产出速率（漏洞数 ÷ 已运行小时）。 */}
         <StatCard
           label={t("stat.firstFinding")}
-          value={
-            task?.first_finding_ms && task.first_finding_ms > 0 ? fmtFirstFindingMS(task.first_finding_ms) : "—"
-          }
+          value={task?.first_finding_ms && task.first_finding_ms > 0 ? fmtFirstFindingMS(task.first_finding_ms) : "—"}
           icon={ClockIcon}
           sub={t("stat.firstFindingSub")}
         />

@@ -51,13 +51,7 @@ export function profileWindowK(profile?: CapabilityProfile): number {
 
 // ProfileCapabilityBadges 在链编辑器的选项与链行上展示扩展模态徽章 + 显式设置的
 // 上下文窗口；两者都没有时不占版面（纯文本配置不显示任何徽章）。
-export function ProfileCapabilityBadges({
-  profile,
-  className,
-}: {
-  profile?: CapabilityProfile;
-  className?: string;
-}) {
+export function ProfileCapabilityBadges({ profile, className }: { profile?: CapabilityProfile; className?: string }) {
   const t = useTranslations("llmChain");
   const mods = profileModalities(profile);
   const windowK = profile?.context_window_k ?? 0;
@@ -79,7 +73,9 @@ export function ProfileCapabilityBadges({
           {t("modality.pdf")}
         </Badge>
       )}
-      {windowK > 0 && <span className="text-muted-foreground/80 text-[10px] tabular-nums">{t("windowK", { k: windowK })}</span>}
+      {windowK > 0 && (
+        <span className="text-muted-foreground/80 text-[10px] tabular-nums">{t("windowK", { k: windowK })}</span>
+      )}
     </span>
   );
 }
@@ -114,7 +110,9 @@ export function ChainCapabilityAdvice({
     undefined,
   );
   if (widest && profileWindowK(widest) > headK) {
-    notes.push(t("advice.smallWindow", { head: head.name, k: headK, other: widest.name, otherK: profileWindowK(widest) }));
+    notes.push(
+      t("advice.smallWindow", { head: head.name, k: headK, other: widest.name, otherK: profileWindowK(widest) }),
+    );
   }
   if (notes.length === 0) return null;
   return (

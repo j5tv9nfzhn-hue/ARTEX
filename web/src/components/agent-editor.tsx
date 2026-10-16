@@ -144,15 +144,8 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
     const isTraffic = TRAFFIC_TOOL_KEYS.has(t.key);
     const gated = isTraffic && !captureOn; // traffic tools need 流量捕获 on
     return (
-      <label
-        key={t.key}
-        className={cn("flex items-center gap-2 rounded-md border p-2 text-sm", gated && "opacity-60")}
-      >
-        <Checkbox
-          checked={t.agents.includes(agentKey)}
-          disabled={gated}
-          onCheckedChange={() => toggleTool(t)}
-        />
+      <label key={t.key} className={cn("flex items-center gap-2 rounded-md border p-2 text-sm", gated && "opacity-60")}>
+        <Checkbox checked={t.agents.includes(agentKey)} disabled={gated} onCheckedChange={() => toggleTool(t)} />
         <span className="font-mono text-xs">{t.key}</span>
         {isTraffic && (
           <Badge variant="secondary" className="px-1 py-0 text-[9px]">
@@ -168,9 +161,7 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
           <span className="text-muted-foreground ml-auto text-xs">{tr("tools.needCapture")}</span>
         ) : (
           t.description && (
-            <span className="text-muted-foreground ml-auto line-clamp-1 max-w-[55%] text-xs">
-              {t.description}
-            </span>
+            <span className="text-muted-foreground ml-auto line-clamp-1 max-w-[55%] text-xs">{t.description}</span>
           )
         )}
       </label>
@@ -292,7 +283,10 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
       // 备用链与主绑定同一次保存(#139/#144):链首=「默认模型」,尾部按顺序整体替换;
       // 与链首相同的 id 由后端再剔除一次(双保险)。
       const head = llmProfileId === "" ? null : Number(llmProfileId);
-      await api.saveAgentLLMChain(agentKey, [...new Set(llmFallbacks.map(Number))].filter((id) => id !== head));
+      await api.saveAgentLLMChain(
+        agentKey,
+        [...new Set(llmFallbacks.map(Number))].filter((id) => id !== head),
+      );
       toast.success(tr("toast.configSaved"));
       reload();
     } catch (e) {

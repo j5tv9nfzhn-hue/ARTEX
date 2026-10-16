@@ -322,7 +322,12 @@ export default function LLMRecordsPage() {
             className="h-8 pl-8"
           />
         </div>
-        <Input placeholder={t("modelPlaceholder")} className="h-8 w-48" value={model} onChange={(e) => setModel(e.target.value)} />
+        <Input
+          placeholder={t("modelPlaceholder")}
+          className="h-8 w-48"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+        />
         <Select value={pickedTask} onValueChange={setPickedTask}>
           <SelectTrigger size="sm" className="w-56">
             <SelectValue placeholder={t("taskPlaceholder")} />

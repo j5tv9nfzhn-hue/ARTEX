@@ -365,7 +365,10 @@ function AssetTreeRow({
       </button>
       <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums">
         {node.critical > 0 && (
-          <span className={severityTextClass("critical")} title={t("assetTree.criticalCount", { count: node.critical })}>
+          <span
+            className={severityTextClass("critical")}
+            title={t("assetTree.criticalCount", { count: node.critical })}
+          >
             {node.critical}
           </span>
         )}
