@@ -98,7 +98,9 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
-      # 静态检查门禁：配置见 .golangci.yml（保守基线 govet + gofmt，之后逐项收紧）。
+      # 静态检查门禁：配置见 .golangci.yml（保守基线 govet，之后逐项收紧）。
+      # 格式不在此重复检查：golangci-lint 的 gofmt 内嵌其构建时的 Go 版本
+      # （v2.14.0 = go1.27），与上面 gofmt 门禁的 1.26 可能判定相反。
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

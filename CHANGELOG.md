@@ -62,7 +62,7 @@
 - **预览图片统一为中文演示截图。** 保留原作者署名和图片来源说明，不将历史演示截图伪称为本次生产验证（历史截图已于 2026-10-16 整体移除，见本节末条）。
 - **完善维护与贡献指南。** [维护手册](MAINTAINING.md)涵盖上游同步、语言漂移、指标契约及发布前置条件；[贡献指南](CONTRIBUTING.md)说明验证范围和检测规则契约。
 - **每次 push、PR 执行合并门禁。** [Go/数据库/前端/检测规则/语言检查](.github/workflows/ci.yml)合并在单工作流中执行，检测规则另由[独立工作流](.github/workflows/detections.yml)按路径触发。数据库测试按包使用独立的临时 SQLite 库（无需服务容器），内部链接检查只使用标准库、不依赖网络。
-- **新增 Go lint 门禁。** [.golangci.yml](.golangci.yml) 以 `govet` + `gofmt` 的干净基线起步（后续按清单逐项收紧），CI 与 [pre-commit](.pre-commit-config.yaml) 的 go 钩子使用同一配置，本地可复现。
+- **新增 Go lint 门禁。** [.golangci.yml](.golangci.yml) 以 `govet` 的干净基线起步（后续按清单逐项收紧），CI 与 [pre-commit](.pre-commit-config.yaml) 的 go 钩子使用同一配置，本地可复现；格式检查由 CI 的 gofmt 门禁（Go 1.26 工具链）唯一把关——golangci-lint 内嵌的 gofmt 使用其构建时的 Go 版本，与工具链对中文对齐的行可能判定相反，不重复启用。
 - **外部链接周期检查不阻止合并。** 作为 [ci.yml 的定时任务](.github/workflows/ci.yml)每周或手动执行浏览器 User-Agent、GET、重定向检查；限流/机器人限制和允许列表中的上游既有失效链接不计为新的失败。
 - **保留贡献与治理设施。** [Issue 模板](.github/ISSUE_TEMPLATE/)、[PR 模板](.github/PULL_REQUEST_TEMPLATE.md)、[安全政策](SECURITY.md)、[行为准则](CODE_OF_CONDUCT.md)改为简体中文，英文版本继续提供。
 - **保留英文文档层。** README、变更历史、安全政策、行为准则、贡献/维护指南、防御指南、流量证据设计与检测规则均有英文入口；历史 `*-ko.md` 路径继续有效，但内容现为简体中文。

@@ -17,8 +17,10 @@
 # 删除或移动被引用的图片、LICENSE 等也可能破坏链接。
 # 仅使用 Python 标准库，不访问网络。
 # 不需要 Docker，可快速完成本地检查。
-# 3) go：Go 源码变更时执行 gofmt 格式与 golangci-lint 门禁。
-# 配置见 .golangci.yml（当前仅 govet + gofmt，均为干净基线）。
+# 3) go：Go 源码变更时执行 golangci-lint 静态检查（当前仅 govet）。
+# 配置见 .golangci.yml（干净基线）；格式检查不在此处重复：golangci-lint
+# 的 gofmt 内嵌其构建时的 Go 版本，可能与 CI 锁定的工具链判定相反
+# （2026-10-16 errmsg_catalog.go 事件），格式唯一由 CI 的 gofmt 门禁把关。
 # 需要本机安装 golangci-lint v2，参考 https://golangci-lint.run/usage/install/；
 # CI（.github/workflows/ci.yml）使用固定版本 v2.14.0，配置格式一致。
 #
@@ -50,7 +52,7 @@ repos:
         pass_filenames: false
         always_run: true
       - id: go
-        name: Go 源码检查（gofmt 格式 + golangci-lint）
+        name: Go 源码静态检查（golangci-lint：govet）
         entry: golangci-lint run
         language: system
         pass_filenames: false
