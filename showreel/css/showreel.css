@@ -98,6 +98,8 @@ html, body {
 }
 .caption p { margin-bottom: 10px; }
 .caption .details { font-weight: 700; letter-spacing: 0.12em; color: var(--cyan); margin-top: 16px; }
+.caption .download { color: var(--cyan); font-weight: 700; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.caption .download:hover { color: var(--white); }
 .caption ul { margin: 8px 0 0 18px; }
 .caption li { margin-bottom: 4px; }
 

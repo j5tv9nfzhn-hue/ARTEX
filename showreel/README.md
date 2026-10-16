@@ -11,6 +11,17 @@
 >
 > Details ⤵️
 
+## 已导出成片
+
+仓库内附带完整 60 秒 MP4 成片：**1920 × 1080、60 fps、H.264 + AAC、120 BPM 原创配乐**。
+
+[![ARTEX showreel 封面，点击播放 / 下载](./poster.jpg)](./ARTEX-Showreel-60s.mp4)
+
+- [下载 / 查看 ARTEX-Showreel-60s.mp4](./ARTEX-Showreel-60s.mp4)
+- [交互式播放器与逐帧源码](./index.html)
+
+可用下方命令重新生成视频；需要系统已安装带 `libx264` 的 FFmpeg。渲染器会逐帧流式送入编码器，不会落地 3600 张 PNG。
+
 ## Run it
 
 ```bash
@@ -101,7 +112,8 @@ js/scenes.js        all 30 bars of choreography as pure functions of t
 js/render.js        hard-edged transition compositor (flood + scan line)
 js/main.js          GSAP master transport + player UI
 tools/render_frames.js  offline PNG frame exporter (npm i @napi-rs/canvas)
-test/smoke.js       renders all 3600 frames headlessly (node test/smoke.js)
+tools/render_video.js   stream frames into H.264/AAC MP4 (requires FFmpeg)
+test/smoke.js + test/loop.js  all-frame smoke + pixel-exact loop seam check (npm test)
 audio/score.py      original 120 BPM score + auto-synced SFX (python3 score.py)
 ```
 
@@ -124,3 +136,17 @@ npm i @napi-rs/canvas
 # copy Geist-*.ttf from the `geist` npm package into vendor/
 node tools/render_frames.js --fonts vendor --out out --frames 0:3599:1
 ```
+
+## MP4 export
+
+Requires FFmpeg with `libx264` available on `PATH` (or set `FFMPEG_PATH`).
+
+```bash
+npm install
+python3 audio/score.py
+npm run video -- --out ARTEX-Showreel-60s.mp4
+```
+
+The exporter streams 3600 deterministic frames at 60 fps directly to FFmpeg,
+then muxes the 60-second stereo score as AAC. It writes no intermediate frame
+sequence. Add `--mute` for a silent render.
