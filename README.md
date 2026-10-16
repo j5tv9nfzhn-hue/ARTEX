@@ -230,13 +230,13 @@ flowchart TB
   NOT --> SQL
   ENG -->|"发现 / 终态"| NOT
   TL -.->|"产物落盘"| DISK
-  classDef c1 fill:#E8F4FD,stroke:#2F80ED,color:#1F2937
-  classDef c2 fill:#EAF7EF,stroke:#27AE60,color:#1F2937
-  classDef c3 fill:#FFF4E5,stroke:#F2994A,color:#1F2937
-  classDef c4 fill:#F3E8FF,stroke:#9B51E0,color:#1F2937
-  classDef c5 fill:#E6F6F6,stroke:#00A3A3,color:#1F2937
-  classDef c6 fill:#F3F4F6,stroke:#6B7280,color:#1F2937
-  classDef c7 fill:#FDECEC,stroke:#D35454,color:#1F2937
+  classDef c1 fill:#2F80ED33,stroke:#2F80ED
+  classDef c2 fill:#27AE6033,stroke:#27AE60
+  classDef c3 fill:#F2994A33,stroke:#F2994A
+  classDef c4 fill:#9B51E033,stroke:#9B51E0
+  classDef c5 fill:#00A3A333,stroke:#00A3A3
+  classDef c6 fill:#6B728033,stroke:#6B7280
+  classDef c7 fill:#D3545433,stroke:#D35454
   class BR,FED c1
   class API,AUTH c2
   class MGR,ENG,SCH,INV,NOT c3
