@@ -1164,6 +1164,40 @@ LIMIT $2 OFFSET $3`, typ, limit, offset)
 	return scanAssets(rows)
 }
 
+// Search returns the newest matching assets across tasks. The keyword is a
+// literal substring of non-credential metadata, not a LIKE pattern or SQL.
+// Results are bounded before materialization and use the shared asset decoder.
+func (s *AssetStore) Search(query string, limit int) ([]*Asset, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	statement := assetProjection + assetsFromPrefix
+	var args []any
+	if query = strings.TrimSpace(query); query != "" {
+		// Column names are a fixed internal whitelist; only the value is supplied
+		// by the caller. Do not search authentication/credential payloads.
+		columns := []string{"type", "domain", "root_domain", "ip", "url", "port",
+			"page_title", "technologies", "service_name", "app_name", "bundle_id", "method"}
+		predicates := make([]string, 0, len(columns))
+		for _, column := range columns {
+			predicates = append(predicates, "instr(lower(COALESCE(CAST("+column+" AS TEXT), '')), lower($1)) > 0")
+		}
+		statement += "WHERE (" + strings.Join(predicates, " OR ") + ")\n"
+		args = append(args, query)
+	}
+	statement += fmt.Sprintf("ORDER BY last_seen DESC, id DESC LIMIT $%d", len(args)+1)
+	args = append(args, limit)
+	rows, err := s.db.Query(statement, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAssets(rows)
+}
+
 // CountByType returns the total number of assets of a type (for server-side pagination).
 func (s *AssetStore) CountByType(typ string) (int, error) {
 	var n int

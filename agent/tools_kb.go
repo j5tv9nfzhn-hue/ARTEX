@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -163,7 +164,7 @@ var builtinVulnPatternCards = []vulnPatternCard{
 }
 
 func (t *ToolSet) tacticalKBTool() actool.CoreTool {
-	return readOnlyTool(
+	return readTool(
 		"tactical_kb",
 		"跨任务战术知识库与专家战法秒级检索工具（零外部进程开销）。支持 4 种模式：\n"+
 			"- past_findings：检索本平台历史漏洞记录（逐条返回状态；非误报不等于已确认）（按域名、漏洞类型、关键词匹配，直接复用过往成功攻击链与 PoC）；\n"+
@@ -174,7 +175,7 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 			"mode":     str("必填：检索模式，可选 past_findings | past_assets | skill_search | vuln_patterns"),
 			"query":    str("可选：检索关键词（域名、端点路径、技术栈如 fastapi/supabase/graphql、漏洞词如 mfa/jwt/bola/ssrf）"),
 			"category": str("可选：vuln_patterns 模式下指定分类（bola_idor | auth_mfa | jwt_oauth | graphql_api | ssrf_cloud | race_toctou | js_reverse | sqli_injection_triage），留空返回全部分类概览"),
-			"limit":    num("可选：最大返回条数（默认 8，上限 25）"),
+			"limit":    intp("可选：最大返回条数（默认 8，上限 25）"),
 		}, "mode"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -262,10 +263,7 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 						"note":   "AssetStore 未挂载",
 					})
 				}
-				rows, err := t.as.Query(db.AssetFilter{
-					Search: q,
-					Limit:  limit,
-				})
+				rows, err := t.as.Search(q, limit)
 				if err != nil {
 					return actool.Errorf("检索历史资产失败: " + err.Error()), nil
 				}
@@ -341,7 +339,7 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 				})
 
 			default:
-				return actool.Errorf("未知 mode %q，可选值: past_findings | past_assets | skill_search | vuln_patterns", a.Mode), nil
+				return actool.Errorf(fmt.Sprintf("未知 mode %q，可选值: past_findings | past_assets | skill_search | vuln_patterns", a.Mode)), nil
 			}
 		},
 	)

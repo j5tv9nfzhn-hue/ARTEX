@@ -715,3 +715,58 @@ func (t *ToolSet) runOASTCallbackProbe(
 		"callbacks":           hits,
 	}, nil
 }
+
+// parsePortSpec accepts decimal ports and inclusive ranges, de-duplicates them,
+// and rejects the entire request rather than silently truncating its scope.
+func parsePortSpec(spec string, maxPorts int) ([]int, error) {
+	if maxPorts < 1 || maxPorts > 65535 {
+		return nil, fmt.Errorf("invalid port count limit")
+	}
+	if len(spec) > 4096 || strings.TrimSpace(spec) == "" {
+		return nil, fmt.Errorf("port specification must contain 1 to 4096 bytes")
+	}
+	parsePort := func(raw string) (int, error) {
+		raw = strings.TrimSpace(raw)
+		for _, digit := range raw {
+			if digit < '0' || digit > '9' {
+				return 0, fmt.Errorf("invalid decimal port %q", raw)
+			}
+		}
+		port, err := strconv.Atoi(raw)
+		if err != nil || port < 1 || port > 65535 {
+			return 0, fmt.Errorf("port %q must be between 1 and 65535", raw)
+		}
+		return port, nil
+	}
+	seen := make(map[int]bool)
+	var ports []int
+	for _, item := range strings.Split(spec, ",") {
+		first, last, ranged := strings.Cut(strings.TrimSpace(item), "-")
+		start, err := parsePort(first)
+		if err != nil {
+			return nil, err
+		}
+		end := start
+		if ranged {
+			end, err = parsePort(last)
+			if err != nil {
+				return nil, err
+			}
+			if end < start {
+				return nil, fmt.Errorf("reversed port range %q", item)
+			}
+		}
+		for port := start; port <= end; port++ {
+			if seen[port] {
+				continue
+			}
+			if len(ports) >= maxPorts {
+				return nil, fmt.Errorf("port specification exceeds %d unique ports", maxPorts)
+			}
+			seen[port] = true
+			ports = append(ports, port)
+		}
+	}
+	sort.Ints(ports)
+	return ports, nil
+}
