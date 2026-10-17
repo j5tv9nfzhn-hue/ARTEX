@@ -681,7 +681,9 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
   const [ref, inView] = useInView();
   const [full, setFull] = React.useState<string | null>(null);
   React.useEffect(() => {
-    if (!inView) return; // fetch the full answer only when it nears view
+    // 失败步骤只显示单句摘要，不拉取详情（详情里是「终态/底层错误/耗时」整段
+    // 排障信息，铺开成红色段落太吵；完整内容仍留在活动记录里可查）。
+    if (!inView || step.is_error) return; // fetch the full answer only when it nears view
     let live = true;
     getDetail(step.seq)
       .then((d) => {
@@ -693,7 +695,7 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
     return () => {
       live = false;
     };
-  }, [inView, step.seq, getDetail, step.summary]);
+  }, [inView, step.seq, step.is_error, getDetail, step.summary]);
   return (
     <div ref={ref} className="mb-2 mt-1 flex min-w-0 flex-col gap-1">
       <div
@@ -702,11 +704,7 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
           (step.is_error ? "text-sm text-red-600 dark:text-red-400" : "")
         }
       >
-        {step.is_error ? (
-          <span className="whitespace-pre-wrap">{full ?? step.summary}</span>
-        ) : (
-          <Markdown text={full ?? step.summary} />
-        )}
+        {step.is_error ? <span>{step.summary.split("\n")[0]}</span> : <Markdown text={full ?? step.summary} />}
       </div>
       <ActivityTime ts={step.ts} />
     </div>
