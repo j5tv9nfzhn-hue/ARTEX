@@ -44,8 +44,15 @@ func TestCredentialRoundtrip(t *testing.T) {
 	}
 
 	// Tamper: flipping the body must fail authentication, never yield garbage.
-	raw := strings.TrimPrefix(enc, credentialPrefix)
-	tampered := credentialPrefix + "A" + raw[1:]
+	// The replacement byte must DIFFER from the original first character — a
+	// blind "A" is a no-op ~1/64 of runs (the flake this guards against), which
+	// would let a broken decrypt slip through as a false pass.
+	body := strings.TrimPrefix(enc, credentialPrefix)
+	flip := "A"
+	if strings.HasPrefix(body, "A") {
+		flip = "B"
+	}
+	tampered := credentialPrefix + flip + body[1:]
 	if _, err := decryptCredential(tampered); err == nil {
 		t.Fatal("tampered ciphertext decrypted without error")
 	}
