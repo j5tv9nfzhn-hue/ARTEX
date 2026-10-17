@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/Autumn-27/artex/agent"
@@ -18,22 +19,20 @@ func names(tools []actool.CoreTool) map[string]actool.CoreTool {
 	return m
 }
 
-// TestWireTools verifies end-to-end against the live dev PG: wireTools seeds the
-// catalog, ToolResolve keeps record_fact for worker but drops it for planner (not
-// bound), and an edited description + injected default flow through.
+// TestWireTools uses an isolated SQLite fixture to verify current default
+// bindings, explicit rebinding/disable filters, and description/default decoration.
 func TestWireTools(t *testing.T) {
-	dsn, _, err := db.DSN()
-	if err != nil {
-		t.Skipf("no database config (%v) — skipping", err)
-	}
-	pg, err := db.Open(dsn)
+	pg, err := db.Open("file:" + filepath.ToSlash(filepath.Join(t.TempDir(), "tools-wire.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
-
-	wireTools(pg, nil) // nil domainReg: test only covers filter/decoration, not injection
-	t.Cleanup(func() { agent.ToolResolve = nil })
+	t.Cleanup(func() { _ = pg.Close() })
+	originalResolve, originalTrafficBinding := agent.ToolResolve, agent.FindingTrafficBindingEnabled
+	wireTools(pg, nil)
+	t.Cleanup(func() {
+		agent.ToolResolve = originalResolve
+		agent.FindingTrafficBindingEnabled = originalTrafficBinding
+	})
 	// Prevent interactive-shell Bash decoration: if the worker agent has
 	// interactive_shell=true in the DB, ToolResolve would append a note to
 	// Bash's description. Disable that for this test so the undecorated
@@ -66,10 +65,10 @@ func TestWireTools(t *testing.T) {
 	} else if want := actool.NewBash().Description() + platformShellNote(); bash.Description() != want {
 		t.Errorf("Bash should pass through undecorated (plus platform note #9), got %q want %q", bash.Description(), want)
 	}
-	// planner is not bound to record_fact → resolving a base that contains it drops it.
+	// Planner now has record_fact by default for its own evidence-backed findings.
 	planner := names(agent.ToolResolve(ctx, "planner", base))
-	if _, ok := planner["record_fact"]; ok {
-		t.Error("planner should not get record_fact (not bound)")
+	if _, ok := planner["record_fact"]; !ok {
+		t.Error("planner lost default record_fact binding")
 	}
 
 	// Edit description + add a default to a scalar param, then confirm the resolved
@@ -87,6 +86,11 @@ func TestWireTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// An explicit worker-only edit must override the broader code default.
+	planner = names(agent.ToolResolve(ctx, "planner", base))
+	if _, ok := planner["record_fact"]; ok {
+		t.Error("explicit worker-only binding leaked to planner")
+	}
 	worker2 := names(agent.ToolResolve(ctx, "worker", base))
 	got := worker2["record_fact"]
 	if got == nil {
@@ -103,6 +107,16 @@ func TestWireTools(t *testing.T) {
 	if conf["default"] != "inferred" {
 		t.Errorf("confidence.default = %v, want inferred", conf["default"])
 	}
+	if err := pg.UpdateTool(rf.Key, "EDITED DESC", edited, mustJSON([]string{"worker", "planner"}), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"worker", "planner"} {
+		resolved := names(agent.ToolResolve(ctx, key, base))
+		if _, ok := resolved["record_fact"]; ok {
+			t.Errorf("disabled tool leaked to %s", key)
+		}
+	}
+
 }
 
 func mustJSON(v any) json.RawMessage {

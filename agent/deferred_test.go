@@ -53,22 +53,61 @@ func TestDeferredSystem_GatedNotInBlock(t *testing.T) {
 }
 
 func TestSeedUnlockFromHistory(t *testing.T) {
-	skillCall := func(name string) llm.ContentBlock {
-		return llm.ContentBlock{Type: llm.BlockToolUse, Name: "Skill", Input: json.RawMessage(`{"name":"` + name + `"}`)}
+	skillCall := func(id, name string) llm.ContentBlock {
+		input, err := json.Marshal(map[string]string{"name": name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return llm.ContentBlock{Type: llm.BlockToolUse, ID: id, Name: "Skill", Input: input}
 	}
 	msgs := []llm.Message{
-		{Role: llm.RoleAssistant, Content: []llm.ContentBlock{skillCall("browsing")}},
+		{Role: llm.RoleAssistant, Content: []llm.ContentBlock{skillCall("call-browsing", "browsing")}},
+		{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: llm.BlockToolResult, ToolUseID: "call-browsing"}}},
 		{Role: llm.RoleAssistant, Content: []llm.ContentBlock{
-			{Type: llm.BlockToolUse, Name: "Bash", Input: json.RawMessage(`{}`)}, // ignored
-			skillCall("recon"),
+			{Type: llm.BlockToolUse, ID: "call-bash", Name: "Bash", Input: json.RawMessage(`{}`)},
+			skillCall("call-recon", "recon"),
 		}},
+		{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: llm.BlockToolResult, ToolUseID: "call-recon"}}},
 	}
 	var got []string
 	seedUnlockFromHistory(msgs, func(name string) { got = append(got, name) })
 	if strings.Join(got, ",") != "browsing,recon" {
 		t.Fatalf("unlocked=%v want [browsing recon]", got)
 	}
-	seedUnlockFromHistory(msgs, nil) // nil → no-op, no panic
+	seedUnlockFromHistory(msgs, nil)
+}
+
+func TestSeedUnlockFromHistoryRejectsUnconfirmedCalls(t *testing.T) {
+	use := func(id, name string, input json.RawMessage) llm.Message {
+		return llm.Message{Role: llm.RoleAssistant, Content: []llm.ContentBlock{{Type: llm.BlockToolUse, ID: id, Name: name, Input: input}}}
+	}
+	result := func(id string, failed bool) llm.Message {
+		return llm.Message{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: llm.BlockToolResult, ToolUseID: id, IsError: failed}}}
+	}
+	valid := json.RawMessage(`{"name":"browsing"}`)
+	for _, tc := range []struct {
+		name string
+		msgs []llm.Message
+	}{
+		{"pending", []llm.Message{use("a", "Skill", valid)}},
+		{"missing id", []llm.Message{use("", "Skill", valid), result("", false)}},
+		{"failed", []llm.Message{use("a", "Skill", valid), result("a", true)}},
+		{"unpaired", []llm.Message{use("a", "Skill", valid), result("b", false)}},
+		{"result before call", []llm.Message{result("a", false), use("a", "Skill", valid)}},
+		{"not Skill", []llm.Message{use("a", "Bash", valid), result("a", false)}},
+		{"invalid JSON", []llm.Message{use("a", "Skill", json.RawMessage(`{`)), result("a", false)}},
+		{"conflicting names", []llm.Message{use("a", "Skill", json.RawMessage(`{"name":"browsing","skill":"recon"}`)), result("a", false)}},
+		{"failed cannot be retried by another result", []llm.Message{use("a", "Skill", valid), result("a", true), result("a", false)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seedUnlockFromHistory(tc.msgs, func(name string) { t.Errorf("unconfirmed call unlocked %q", name) })
+		})
+	}
+	got := 0
+	seedUnlockFromHistory([]llm.Message{use("a", "Skill", valid), result("a", false), result("a", false)}, func(string) { got++ })
+	if got != 1 {
+		t.Fatalf("duplicate result unlocked %d times", got)
+	}
 }
 
 // TestUnlockGatingFlow mirrors what OnInvoke / seedUnlockFromHistory do: a gated

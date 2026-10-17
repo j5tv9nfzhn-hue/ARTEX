@@ -26,15 +26,11 @@ func hasSkillTool(tools []actool.CoreTool) bool {
 // ToolAugment hook. Skills live on disk under skillDir; visibility is a per-agent
 // (agent × skill_name) row keyed by the skill's directory name.
 func TestAssembleVisibleSkill(t *testing.T) {
-	dsn, _, err := db.DSN()
-	if err != nil {
-		t.Skipf("no database config (%v) — skipping", err)
-	}
-	pg, err := db.Open(dsn)
+	pg, err := db.Open("file:" + filepath.ToSlash(filepath.Join(t.TempDir(), "assembly.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	t.Cleanup(func() { _ = pg.Close() })
 
 	// Filesystem skill fixture: <skillDir>/t-assemble/SKILL.md. The directory name
 	// (t-assemble) is the visibility key matched against AgentSkillNames.
@@ -48,24 +44,42 @@ func TestAssembleVisibleSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	originalAugment := agent.ToolAugment
 	wireAgentAugment(pg, skillDir, nil)
-	t.Cleanup(func() { agent.ToolAugment = nil })
+	t.Cleanup(func() { agent.ToolAugment = originalAugment })
 
 	ag, _ := pg.GetAgentByKey("planner")
 	if ag == nil {
 		t.Fatal("planner agent missing")
 	}
 
-	// Isolate this test from whatever skill visibility the planner already has in the
-	// shared DB: clear it now, restore it on cleanup.
+	// Clear planner grants in this isolated fixture and restore seeded defaults
+	// during cleanup. Explicit worker-only binding is tested separately below.
 	orig, _ := pg.AgentSkillNames(ag.ID)
 	if err := pg.SetAgentSkillVisibility(ag.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pg.SetAgentSkillVisibility(ag.ID, orig) })
 
-	// before: skill not visible → no Skill meta-tool
+	// No explicit binding: core roles discover the skill by default.
 	extra, _, cleanup := agent.ToolAugment(context.Background(), "planner")
+	cleanup()
+	if !hasSkillTool(extra) {
+		t.Fatal("unbound skill should be discoverable by a core role")
+	}
+
+	// Once explicitly restricted to worker, it must not leak to planner.
+	worker, err := pg.GetAgentByKey("worker")
+	if err != nil || worker == nil {
+		t.Fatalf("worker agent missing: %v", err)
+	}
+	if err := pg.ToggleSkillVisibility(worker.ID, skillName, true); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pg.ToggleSkillVisibility(worker.ID, skillName, false) })
+
+	// before: explicitly worker-only → no Skill meta-tool for planner
+	extra, _, cleanup = agent.ToolAugment(context.Background(), "planner")
 	cleanup()
 	if hasSkillTool(extra) {
 		t.Fatalf("expected no Skill meta-tool before the skill is made visible")
@@ -90,4 +104,13 @@ func TestAssembleVisibleSkill(t *testing.T) {
 	if !hasSkillTool(combined) {
 		t.Fatalf("AugmentTools should surface the Skill meta-tool")
 	}
+	if err := pg.ToggleSkillVisibility(ag.ID, skillName, false); err != nil {
+		t.Fatal(err)
+	}
+	extra, _, cleanup = agent.ToolAugment(context.Background(), "planner")
+	cleanup()
+	if hasSkillTool(extra) {
+		t.Fatal("revoked explicit planner grant still visible while worker is bound")
+	}
+
 }

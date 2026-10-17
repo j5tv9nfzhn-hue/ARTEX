@@ -53,17 +53,99 @@ func TestSQLiteSchemaApplies(t *testing.T) {
 	con := openSQLiteForSchema(t)
 	applySQLiteSchemaForTest(t, con)
 
-	var tables int
-	if err := con.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
-	).Scan(&tables); err != nil {
+	// Independent schema inventory: the original 54 tables plus six RE tables
+	// and retention_plans / retention_audit. Missing and unexpected tables both fail.
+	want := []string{
+		"activity",
+		"agent_llm_fallbacks",
+		"agent_prompt_vars",
+		"agent_prompts",
+		"agent_skill_visibility",
+		"agent_triggers",
+		"agent_visibility",
+		"agents",
+		"asset_intercept_rules",
+		"assets",
+		"checkpoints",
+		"compaction_state",
+		"companies",
+		"company_scope",
+		"conversation_activities",
+		"conversations",
+		"credentials",
+		"exploration_anchors",
+		"exploration_edges",
+		"exploration_nodes",
+		"explorations",
+		"finding_retests",
+		"finding_traffic_bindings",
+		"findings",
+		"intercept_pending",
+		"intercept_rules",
+		"llm_profile_health",
+		"llm_profiles",
+		"main_sessions",
+		"mcp_servers",
+		"mcp_tools_cache",
+		"notification_channels",
+		"notification_deliveries",
+		"notification_events",
+		"re_entities",
+		"re_evidence",
+		"re_providers",
+		"re_samples",
+		"re_sessions",
+		"re_task_samples",
+		"retention_audit",
+		"retention_plans",
+		"scheduler_state",
+		"server_logs",
+		"settings",
+		"side_question_requests",
+		"side_question_sessions",
+		"skill_usage",
+		"task_archives",
+		"task_asset_links",
+		"task_categories",
+		"task_constraints",
+		"task_env_context",
+		"task_intercept_rules",
+		"task_llm_profiles",
+		"task_relations",
+		"task_scope",
+		"task_templates",
+		"tasks",
+		"tool_usage",
+		"tools",
+		"traffic_evidence_snapshots",
+	}
+	rows, err := con.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// The PostgreSQL schema declares 50 CREATE TABLE statements; batch 6 adds
-	// task_env_context / checkpoints / compaction_state (→ 53); batch 8 adds
-	// credentials (→ 54).
-	if tables != 54 {
-		t.Errorf("建表数 = %d，预期 54", tables)
+	defer rows.Close()
+	got := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		got[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Errorf("建表数 = %d，预期 %d", len(got), len(want))
+	}
+	for _, name := range want {
+		if !got[name] {
+			t.Errorf("缺少表 %s", name)
+		}
+		delete(got, name)
+	}
+	for name := range got {
+		t.Errorf("出现非预期表 %s", name)
 	}
 }
 
