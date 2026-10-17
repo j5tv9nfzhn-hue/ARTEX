@@ -53,11 +53,12 @@ func TestSQLiteDSNCarriesRequiredPragmas(t *testing.T) {
 	// Each of these is load-bearing rather than tuning; see SQLiteDSN's comment.
 	for _, want := range []string{
 		"file:",
-		"journal_mode(WAL)",  // readers must not block behind a writer
-		"busy_timeout(5000)", // contended writes wait instead of SQLITE_BUSY
-		"foreign_keys(ON)",   // SQLite ignores REFERENCES without this
-		"_texttotime=1",      // otherwise every time.Time scan fails
-		"_txlock=immediate",  // otherwise read-then-write has a race window
+		"journal_mode(WAL)",   // readers must not block behind a writer
+		"busy_timeout(10000)", // contended writes wait instead of SQLITE_BUSY
+		"synchronous(NORMAL)", // no per-commit fsync: a commit must not hog the write lock
+		"foreign_keys(ON)",    // SQLite ignores REFERENCES without this
+		"_texttotime=1",       // otherwise every time.Time scan fails
+		"_txlock=immediate",   // otherwise read-then-write has a race window
 	} {
 		if !strings.Contains(dsn, want) {
 			t.Errorf("DSN 缺少 %q：%s", want, dsn)

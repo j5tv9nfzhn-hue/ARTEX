@@ -183,13 +183,16 @@ func Open(dir, addr string) (*Traffic, error) {
 	// than in a one-off Exec: the pool opens connections on demand, and an Exec
 	// only configures whichever one happened to serve it — leaving every other
 	// connection to fail instantly the moment a writer holds the database.
+	// The budget and synchronous(NORMAL) mirror the main database contract
+	// (config/sqlite.go): the proxy records exchanges from many goroutines, and
+	// a per-commit fsync would serialise them behind each other on a slow disk.
 	// The driver splits the DSN at the first '?', so a data directory containing
 	// one would silently name a different file; that path falls back to a bare
 	// DSN, where initIndex still applies the pragmas to its own connection.
 	index := filepath.Join(dir, "_index", "index.sqlite")
 	dsn := index
 	if !strings.ContainsRune(index, '?') {
-		dsn = "file:" + index + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+		dsn = "file:" + index + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_txlock=immediate"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -256,7 +259,7 @@ func (t *Traffic) initIndex() error {
 	// Re-applied rather than left to the DSN so the bare-DSN fallback in Open is
 	// still correct: journal_mode persists in the file header, which is what every
 	// later connection reads.
-	for _, p := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`} {
+	for _, p := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=10000`} {
 		if _, err := conn.ExecContext(ctx, p); err != nil {
 			return err
 		}

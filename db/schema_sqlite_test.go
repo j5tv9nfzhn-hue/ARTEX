@@ -27,7 +27,7 @@ func openSQLiteForSchema(t *testing.T) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "schema.db")
 	con, err := sql.Open("sqlite",
-		"file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+		"file:"+path+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

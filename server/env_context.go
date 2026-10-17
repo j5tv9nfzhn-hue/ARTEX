@@ -194,7 +194,7 @@ func (s *Server) captureTaskEnvContext(t *Task) string {
 	}
 	env := s.sharedEnvSnapshot(t.ID)
 	contract, warnings := s.checkEnvContract(env)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 	defer cancel()
 	prev, _ := s.m.pg.GetTaskEnvContext(ctx, taskID)
 	if err := s.m.pg.UpsertTaskEnvContext(ctx, taskID, "probe", env, contract, warnings); err != nil {

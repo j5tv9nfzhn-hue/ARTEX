@@ -383,6 +383,10 @@ func (d *DB) RecoverTaskArchiveJobs() error {
 	return err
 }
 
+// taskArchiveQueuedStates 是「等待领取」的队列状态集合：ClaimTaskArchiveJob 的
+// 空队早退探测与领取语句的 IN 子查询共用同一份，避免两处条件在后续修改中漂移。
+const taskArchiveQueuedStates = `state IN ('archive_queued','restore_queued','delete_queued')`
+
 // ClaimTaskArchiveJob claims one persistent FIFO item for the single archive
 // worker. It returns nil when the queue is empty.
 //
@@ -392,6 +396,17 @@ func (d *DB) RecoverTaskArchiveJobs() error {
 // state 的映射由 CASE 就地完成，RETURNING 直接给出占用态后的整行。
 // （等价性论证见 dialect_locking.go 文件头。）
 func (d *DB) ClaimTaskArchiveJob(ctx context.Context) (*TaskArchive, error) {
+	// 空队早退：领取是一条 UPDATE，即便匹配 0 行也会先拿库级写锁；队列为空时
+	// 后台 worker 每个轮询周期都白占一次写锁。用只读的 EXISTS 先探测（读不参与
+	// 写锁竞争），为空直接返回；探测与领取共用 taskArchiveQueuedStates 条件。
+	var hasJob bool
+	if err := d.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT id FROM task_archives WHERE `+taskArchiveQueuedStates+`)`).Scan(&hasJob); err != nil {
+		return nil, err
+	}
+	if !hasJob {
+		return nil, nil
+	}
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -404,7 +419,7 @@ SET state=CASE state
         ELSE '`+Deleting+`' END,
     phase='starting',progress=1,error=''
 WHERE id=(SELECT id FROM task_archives
-          WHERE state IN ('archive_queued','restore_queued','delete_queued')
+          WHERE `+taskArchiveQueuedStates+`
           ORDER BY requested_at,id LIMIT 1)
 RETURNING `+taskArchiveCols))
 	if errors.Is(err, sql.ErrNoRows) {

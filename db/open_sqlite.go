@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/Autumn-27/artex/config"
@@ -203,10 +204,12 @@ func openSQLite(dsn string) (*DB, error) {
 
 // sqliteMaintenancePragmas is the set the application relies on. It is applied
 // per connection through the DSN, but a reader that wants to assert on them
-// needs the same list.
+// needs the same list. The busy budget comes from config.SQLiteBusyTimeout so
+// this list cannot drift from the DSN it describes.
 var sqliteMaintenancePragmas = []string{
-	"PRAGMA busy_timeout = 5000",
+	"PRAGMA busy_timeout = " + strconv.FormatInt(config.SQLiteBusyTimeout.Milliseconds(), 10),
 	"PRAGMA journal_mode = WAL",
+	"PRAGMA synchronous = NORMAL",
 	"PRAGMA foreign_keys = ON",
 }
 

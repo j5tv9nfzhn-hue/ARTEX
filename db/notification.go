@@ -282,6 +282,17 @@ func (d *DB) FanOutPendingEvents(ctx context.Context, limit int) (eventCount, de
 	if limit <= 0 {
 		limit = 200
 	}
+	// 空队早退：领取是一条 UPDATE，即便匹配 0 行也会先拿库级写锁；没有待分派
+	// 事件时每个 tick 都白占一次写锁（多任务同跑时就是无谓的排队者）。用只读的
+	// EXISTS 先探测——读不参与写锁竞争——为空直接返回。探测与领取共用
+	// notificationPendingEvents 条件，不会漂移。
+	var hasPending bool
+	if err := d.QueryRowContext(ctx, `SELECT EXISTS(SELECT id `+notificationPendingEvents+`)`).Scan(&hasPending); err != nil {
+		return 0, 0, err
+	}
+	if !hasPending {
+		return 0, 0, nil
+	}
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, err
@@ -333,6 +344,12 @@ func (d *DB) FanOutPendingEvents(ctx context.Context, limit int) (eventCount, de
 	return len(events), len(toInsert), tx.Commit()
 }
 
+// notificationPendingEvents 是「待分派事件」的候选行条件：FanOutPendingEvents 的
+// 空队早退探测与 claimPendingEventsTx 领取语句的 IN 子查询共用同一份，避免两处
+// 条件在后续修改中漂移。
+const notificationPendingEvents = `FROM notification_events
+WHERE NOT fanned_out ORDER BY id`
+
 // claimPendingEventsTx 领取一批尚未分派的事件，并返回它们的快照。
 //
 // 领取用一条 UPDATE … WHERE id IN (SELECT … LIMIT $1) RETURNING …：领取与「标记已分派」
@@ -343,11 +360,9 @@ func (d *DB) FanOutPendingEvents(ctx context.Context, limit int) (eventCount, de
 //
 // events[i] 与 parsedSnaps[i] 一一对应。
 func claimPendingEventsTx(ctx context.Context, tx *sql.Tx, limit int) ([]NotificationEvent, []notify.Snapshot, error) {
-	// 候选行条件只有一份。IN 子查询只能返回一列，所以这里只投影 id；内容由同一条
-	// UPDATE 的 RETURNING 带回来。SET 子句没有占位符，LIMIT 的 $1 仍是 limit。
-	const pending = `FROM notification_events
-	WHERE NOT fanned_out ORDER BY id`
-	query, _ := sqliteClaimUpdate("notification_events", "SELECT id "+pending,
+	// IN 子查询只能返回一列，所以这里只投影 id；内容由同一条 UPDATE 的 RETURNING
+	// 带回来。SET 子句没有占位符，LIMIT 的 $1 仍是 limit。
+	query, _ := sqliteClaimUpdate("notification_events", "SELECT id "+notificationPendingEvents,
 		"id, kind, finding_id, snapshot", []any{limit}, "fanned_out=true")
 	rows, err := tx.QueryContext(ctx, query, limit)
 	if err != nil {

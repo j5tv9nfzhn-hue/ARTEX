@@ -6,7 +6,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/notify"
@@ -22,8 +21,10 @@ import (
 // 状态变化才发」的判定放在这里，才能保证不论来源、不论重复调用，事件不重不漏。
 
 // notifyEmitTimeout 限制事件写库的最长耗时。emit 是 best-effort 旁路：
-// 它绝不能因为数据库慢而拖住任务状态迁移的调用方。
-const notifyEmitTimeout = 5 * time.Second
+// 它绝不能无限期拖住任务状态迁移的调用方，但也不能在写锁排队时白白丢事件
+// （本文件头部承诺的「不重不漏」）——因此取 sqliteWriteTimeout：比 busy 等待
+// 预算长，排队中的写入会等到锁而不是撞上 ctx 超时（见 sqlite_write.go）。
+const notifyEmitTimeout = sqliteWriteTimeout
 
 // emitTaskStatusEvent 在任务状态**真实变化**后写入 task_status_changed 事件。
 //

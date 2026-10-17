@@ -93,7 +93,11 @@ func (s *Server) initSideQuestions() {
 	})
 	go func() {
 		defer close(s.side.done)
-		tick := time.NewTicker(250 * time.Millisecond)
+		// 1s 而不是更短：每次刷盘都是整份会话快照（可达数百 KB）的重写，250ms
+		// 的节奏在慢盘上等于持续的大块写压力。旁问答的实时进度走
+		// side_question_requests 的 SSE，不依赖这个节奏；1s 只影响追问上下文
+		// 的滞后上界。
+		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
 			select {
@@ -118,7 +122,7 @@ func (s *Server) flushSideSnapshots() {
 	s.side.pending = map[string]sidequestion.Snapshot{}
 	s.side.mu.Unlock()
 	for key, snap := range pending {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 		err := s.m.pg.SaveSideSnapshot(ctx, snap)
 		cancel()
 		s.side.mu.Lock()
@@ -470,7 +474,7 @@ func (s *Server) runSide(ctx context.Context, cancel context.CancelFunc, e sideq
 	lastSave := time.Now()
 	persist := func() (bool, error) {
 		e.Sequence++
-		writeCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		writeCtx, stop := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 		defer stop()
 		ok, err := s.m.pg.UpdateSideRequest(writeCtx, e)
 		if err != nil {

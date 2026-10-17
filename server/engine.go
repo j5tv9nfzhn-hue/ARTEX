@@ -778,15 +778,28 @@ func (e *Engine) emitActivity(t *Task, r db.Activity) db.Activity {
 	return r
 }
 
-// appendActivity persists one activity row, retrying briefly on write failure.
+// appendActivity 的中止线：activityAppendAttempts 次尝试 + 递增退避。
+// 上限的意义是「宁可多等，不轻易丢配对记录」：busy_timeout 已经承担了锁等待，
+// 这里的退避针对的是「等待被立即拒绝」的路径（如快照失效），几十到几百毫秒后
+// 重试就能在对方提交后成功。
+const activityAppendAttempts = 4
+
+// activityAppendBackoff[i] 是第 i+1 次失败后的等待时长。
+var activityAppendBackoff = [...]time.Duration{
+	100 * time.Millisecond,
+	400 * time.Millisecond,
+	1200 * time.Millisecond,
+}
+
+// appendActivity persists one activity row, retrying on write failure.
 // Concurrent planner + worker inserts into the same exploration's activity log
-// occasionally fail; a couple of quick retries recover most. Crucially, every
-// failure is now LOGGED (it used to be swallowed by an `if err == nil`), so the
-// underlying DB error is finally visible for diagnosis.
+// occasionally fail under SQLite write contention; the retry keeps a failed
+// record from being dropped, because a dropped tool_use/tool_result row leaves
+// the UI stuck on 「执行中」 forever (see emitActivity). Every failure is logged.
 func (e *Engine) appendActivity(t *Task, r db.Activity) (int64, error) {
 	var id int64
 	var err error
-	for attempt := 1; attempt <= 3; attempt++ {
+	for attempt := 1; attempt <= activityAppendAttempts; attempt++ {
 		if id, err = t.Store.AppendActivity(r); err == nil {
 			if attempt > 1 {
 				log.Printf("[activity] task %s 写入第 %d 次重试成功 (worker=%s kind=%s tool=%s)",
@@ -794,9 +807,11 @@ func (e *Engine) appendActivity(t *Task, r db.Activity) (int64, error) {
 			}
 			return id, nil
 		}
-		log.Printf("[activity] task %s 写入失败 (第 %d/3 次, worker=%s kind=%s tool=%s expID=%d): %v",
-			t.ID, attempt, r.Worker, r.Kind, r.Tool, t.Store.ID(), err)
-		time.Sleep(time.Duration(attempt) * 25 * time.Millisecond)
+		log.Printf("[activity] task %s 写入失败 (第 %d/%d 次, worker=%s kind=%s tool=%s expID=%d): %v",
+			t.ID, attempt, activityAppendAttempts, r.Worker, r.Kind, r.Tool, t.Store.ID(), err)
+		if attempt < activityAppendAttempts {
+			time.Sleep(activityAppendBackoff[attempt-1])
+		}
 	}
 	return 0, err
 }

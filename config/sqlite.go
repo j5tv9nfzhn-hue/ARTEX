@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // SQLite is the only storage engine ARTEX supports. The database is a single
@@ -26,6 +28,17 @@ const (
 	// no path is configured.
 	sqliteFileName = "artex.db"
 )
+
+// SQLiteBusyTimeout 是「等待写锁」的时间预算（DSN 里下发的 busy_timeout pragma）。
+//
+// 它是并发写入的**下限契约**：SQLite 单写者模型下，写语句遇到库级写锁时会先在
+// 这个预算内等待、再报 SQLITE_BUSY。任何环绕写事务的 context 超时都必须比它长，
+// 否则一次本来会等到锁的写入会被 ctx 提前打断成 "context deadline exceeded"。
+// server 侧的后台持久化统一下限见 server/sqlite_write.go。
+//
+// 10 秒是「桌面单机 + 慢盘」的取值：正常写入是毫秒级，只有磁盘抖动、杀毒扫描、
+// 检查点回写叠加时才会排到秒级；更长的等待对交互式操作已无意义。
+const SQLiteBusyTimeout = 10 * time.Second
 
 // SQLitePath resolves the on-disk database file.
 //
@@ -68,8 +81,17 @@ func SQLitePathSource() string {
 //   - journal_mode(WAL) lets readers proceed while a write is in flight.
 //     SQLite's default rollback journal serialises all access behind one
 //     writer, which would stall the server's concurrent readers.
-//   - busy_timeout(5000) makes a contended write wait instead of failing
-//     immediately with SQLITE_BUSY, which the runtime does not retry.
+//   - busy_timeout makes a contended write wait instead of failing immediately
+//     with SQLITE_BUSY, which the runtime does not retry. The budget is
+//     SQLiteBusyTimeout; caller-side deadlines around writes must exceed it or
+//     a queued write turns into a spurious context timeout.
+//   - synchronous(NORMAL) drops the per-commit fsync in WAL mode. Durability
+//     still covers an application crash (the WAL survives through the OS
+//     cache); only an OS crash or power loss can lose the last commits. The
+//     trade turns a commit on a Windows box (fsync, often through antivirus,
+//     on the WAL file) from hundreds of milliseconds into an append — and a
+//     shorter lock-hold is what keeps the single write lock available to
+//     everyone else.
 //   - foreign_keys(ON) restores referential integrity; SQLite ignores declared
 //     REFERENCES unless this is set.
 //
@@ -110,8 +132,9 @@ func SQLiteDSN() string {
 // is supposed to be exercising works fine.
 func SQLiteDSNFor(path string) string {
 	return "file:" + path +
-		"?_pragma=busy_timeout(5000)" +
+		"?_pragma=busy_timeout(" + strconv.FormatInt(SQLiteBusyTimeout.Milliseconds(), 10) + ")" +
 		"&_pragma=journal_mode(WAL)" +
+		"&_pragma=synchronous(NORMAL)" +
 		"&_pragma=foreign_keys(ON)" +
 		"&_texttotime=1" +
 		"&_time_format=" + sqliteTimeFormat +
