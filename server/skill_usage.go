@@ -17,16 +17,22 @@ func meterSkillTool(inner actool.CoreTool, pg *db.DB, reg *skill.Registry, agent
 	if inner == nil || pg == nil {
 		return inner
 	}
-	return &meteredSkill{CoreTool: inner, pg: pg, reg: reg, agentKey: agentKey, taskID: run.TaskID, sessID: run.SessionID}
+	return &meteredSkill{
+		CoreTool: inner, pg: pg, reg: reg, agentKey: agentKey,
+		taskID: run.TaskID, sessID: run.SessionID,
+		explorationID: run.ExplorationID, intentID: run.IntentID,
+	}
 }
 
 type meteredSkill struct {
 	actool.CoreTool
-	pg       *db.DB
-	reg      *skill.Registry
-	agentKey string
-	taskID   int64
-	sessID   string
+	pg            *db.DB
+	reg           *skill.Registry
+	agentKey      string
+	taskID        int64
+	sessID        string
+	explorationID int64
+	intentID      int64
 }
 
 func (m *meteredSkill) Description() string { return m.Prompt() }
@@ -131,26 +137,30 @@ func (m *meteredSkill) Call(ctx context.Context, in json.RawMessage, tc *actool.
 	var res actool.Result
 	var err error
 	if normalizeErr != nil {
-		res = actool.Errorf("%s", normalizeErr.Error())
+		res = actool.Errorf(normalizeErr.Error())
 	} else {
 		res, err = m.CoreTool.Call(ctx, normalized, tc)
 	}
-	status, errMsg := "ok", ""
-	if err != nil {
-		status = "error"
-		errMsg = err.Error()
-	} else if res.IsError {
-		status = "error"
-		errMsg = res.Flatten()
-	}
-	if name == "" {
-		name = "<invalid>"
-	}
-	if runes := []rune(errMsg); len(runes) > 2048 {
-		errMsg = string(runes[:2048]) + "…"
-	}
-	if e := m.pg.RecordSkillUsage(db.SkillUsage{Skill: name, AgentKey: m.agentKey, TaskID: m.taskID, SessionID: m.sessID, Status: status, Error: errMsg}); e != nil {
-		log.Printf("[skills] 记录调用失败 (%s/%s): %v", m.agentKey, name, e)
+	// The existing ledger records resolution, not execution status. Never count
+	// malformed input or an unavailable registry as a missing skill, and never
+	// persist args/error text. The original result/error is returned unchanged.
+	if m.pg != nil && m.reg != nil && normalizeErr == nil {
+		_, found := m.reg.Get(name)
+		var args struct {
+			Args string `json:"args"`
+		}
+		if e := json.Unmarshal(normalized, &args); e != nil {
+			log.Printf("[skills] 无法解析规范化计量参数 (%s/%s)", m.agentKey, name)
+			return res, err
+		}
+		usage := &db.SkillUsage{
+			Skill: name, AgentKey: m.agentKey, TaskID: m.taskID,
+			ExplorationID: m.explorationID, IntentID: m.intentID, SessionID: m.sessID,
+			ArgsLen: len(args.Args), Found: found,
+		}
+		if e := m.pg.InsertSkillUsage(usage); e != nil {
+			log.Printf("[skills] 记录调用失败 (%s/%s): %v", m.agentKey, name, e)
+		}
 	}
 	return res, err
 }
