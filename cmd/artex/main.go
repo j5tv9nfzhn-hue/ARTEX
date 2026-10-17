@@ -83,6 +83,12 @@ func run() int {
 	// page can show a live log stream. Do this first, to catch startup logs too.
 	server.StartLogCapture()
 
+	// 进程树收口：把自己放进 kill-on-close Job Object。之后派生的子进程（Bash 工具的
+	// powershell/python 及其多进程子进程、rg、npx…）全部与 ARTEX 同生共死——被强杀、
+	// 崩溃或被新实例自举顶掉时，不再留下跑满 CPU 的孤儿脚本（详见 jobobject_windows.go）。
+	// 失败只降级：退回「子进程可能残留」的旧行为，日志里会说明原因。
+	_ = guardProcessTree()
+
 	// Self-update bootstrap: swap in a staged binary, or count a post-swap boot
 	// attempt and roll back if the new build keeps dying. Must run before we open
 	// the stores or bind a port — this may end with "exit and let the start script
@@ -129,6 +135,14 @@ func run() int {
 		log.Fatalf("open stores: %v", err)
 	}
 	defer mgr.Close()
+
+	// workers 是「同时有几个 agent 在跑」的上限。超过物理/逻辑核数时，多个 worker
+	// 同时执行 CPU 密集型命令（穷举、爆破、高并发 fuzz）会把 CPU 打满，平台服务与
+	// SQLite 写入都会跟着变慢——只提示，不擅自改用户设置。
+	if w := mgr.Workers(); w > runtime.NumCPU() {
+		log.Printf("[config] workers=%d 超过本机逻辑 CPU 数 %d：并行 worker 同时跑 CPU 密集型脚本会打满 CPU，"+
+			"平台与数据库会一起变慢；建议设为不超过 %d", w, runtime.NumCPU(), runtime.NumCPU())
+	}
 
 	// Surviving this long means a freshly swapped-in build actually works, so drop
 	// the upgrade marker and stop counting attempts. Until it fires, every boot

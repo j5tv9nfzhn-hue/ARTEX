@@ -239,6 +239,15 @@ func (s *Server) taskEnvBrief(taskID string) string {
 	return renderEnvBrief(env, warnings)
 }
 
+// cpuBoundConcurrencyCap 是注入提示词的 CPU 密集命令并发上限：取逻辑核数与 4 的
+// 较小值。在本机（2 核 4 线程）就是 4；大机器上也不鼓励 agent 把全部核压满。
+func cpuBoundConcurrencyCap() int {
+	if n := runtime.NumCPU(); n < 4 {
+		return n
+	}
+	return 4
+}
+
 // renderEnvBrief is the compact Chinese block appended to planner/worker system
 // prompts (#19). Includes only what changes an action: platform+executor, shells,
 // working dirs, probed tools, contract warnings.
@@ -266,6 +275,11 @@ func renderEnvBrief(env envSnapshot, warnings []string) string {
 	if env.Executor != "bash" {
 		fmt.Fprintf(&b, "\n- 命令按 %s 语法书写（不要用 Unix 专属命令/写法）。", env.Executor)
 	}
+	// CPU 治理：任务里的穷举/爆破/大规模 fuzz 脚本曾把本机 CPU 打满，连带平台服务与
+	// SQLite 写入一起变慢。这里给出可执行的硬约束，避免模型写出无上限的并发脚本。
+	fmt.Fprintf(&b, "\n- 本机逻辑 CPU %d 核。CPU 密集型命令（穷举、爆破、大规模 fuzz）：自限并发（进程/线程数 ≤ %d，"+
+		"禁止无上限 multiprocessing），预计超过 1 分钟的命令用 run_in_background 后台执行、不再需要时立即 TaskStop；"+
+		"避免多个 worker 同时跑满 CPU——平台服务与数据库会被拖慢。", runtime.NumCPU(), cpuBoundConcurrencyCap())
 	if len(warnings) > 0 {
 		fmt.Fprintf(&b, "\n- ⚠ 环境契约警告：%s", strings.Join(warnings, "；"))
 	}
