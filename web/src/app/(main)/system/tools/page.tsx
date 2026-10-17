@@ -652,6 +652,7 @@ function CustomToolDialog({
   }
 
   async function save() {
+    if (!edit) return;
     if (isNew && !/^[a-z][a-z0-9_]*$/.test(key.trim())) {
       toast.error(t("keyError"));
       return;
@@ -691,8 +692,8 @@ function CustomToolDialog({
       deferred: kind === "shell" ? false : deferred,
     };
     try {
-      if (isNew) await api.createCustomTool({ key: key.trim(), ...payload });
-      else await api.updateCustomTool(tool?.key, payload);
+      if (edit === "new") await api.createCustomTool({ key: key.trim(), ...payload });
+      else await api.updateCustomTool(edit.key, payload);
       toast.success(isNew ? t("createdCustom") : t("saved"));
       onSaved();
     } catch (e) {
