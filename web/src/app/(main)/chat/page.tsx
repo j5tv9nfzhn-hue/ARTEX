@@ -30,9 +30,10 @@ import { CheckpointTimelineButton } from "@/components/checkpoint-timeline";
 import { EmptyState } from "@/components/empty-state";
 import { LiveDot } from "@/components/live-dot";
 import { MentionTextarea } from "@/components/mention-textarea";
+import { MessageRollbackDialog } from "@/components/message-rollback-dialog";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
-import { Transcript } from "@/components/transcript";
+import { parseUserBody, Transcript } from "@/components/transcript";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -529,6 +530,7 @@ function ChatView({
   onConvUpdated: () => void;
 }) {
   const t = useTranslations("chat");
+  const tc = useTranslations("checkpoints");
   const approvalFocus = useApprovalFocus({ conversationId: conv.id });
   const [messages, setMessages] = React.useState<Activity[]>([]);
   const [running, setRunning] = React.useState(false);
@@ -546,6 +548,9 @@ function ChatView({
   const [hasMore, setHasMore] = React.useState(false); // drives the "load earlier" hint
   // 检查点回滚后强制重载时间线（隐藏的步骤从列表消失）。
   const [reloadToken, setReloadToken] = React.useState(0);
+  // 消息级回滚（气泡箭头）：待确认的用户消息 + 提交中标记；确认后消息原文回填输入框。
+  const [rollbackTarget, setRollbackTarget] = React.useState<Activity | null>(null);
+  const [rollbackBusy, setRollbackBusy] = React.useState(false);
   const agent = agents.find((a) => a.key === conv.agent_key);
   const currentProfileId = conv.llm_profile_id ?? null;
   const side = useSideQuestions(`/api/conversations/${conv.id}`);
@@ -808,6 +813,28 @@ function ChatView({
     }
   }
 
+  // confirmRollback 执行消息级回滚（气泡箭头）：后端隐藏该消息及之后的步骤，这里
+  // 把消息原文连同附件回填输入框，并 bump reloadToken 强制重载时间线（被回滚的
+  // 内容从列表消失）。
+  async function confirmRollback() {
+    const step = rollbackTarget;
+    if (!step || rollbackBusy) return;
+    setRollbackBusy(true);
+    try {
+      const body = parseUserBody((await api.conversationMsgDetail(conv.id, step.seq)) || step.summary);
+      const result = await api.rollbackConversationMessage(conv.id, step.seq);
+      setInput(body.text);
+      setAttachments(body.attachments.map((a) => ({ name: a.name, path: a.path, size: a.size })));
+      setRollbackTarget(null);
+      setReloadToken((n) => n + 1);
+      toast.success(tc("msgRollback.doneConversation", { hidden: result.hidden }));
+    } catch (e) {
+      toast.error(tc("msgRollback.failed", { msg: (e as Error).message }));
+    } finally {
+      setRollbackBusy(false);
+    }
+  }
+
   return (
     <SideQuestionWorkspace side={side} label={agent?.name ?? conv.agent_key} composerLayout="inline">
       {/* header: which agent + live + token meta */}
@@ -866,6 +893,10 @@ function ChatView({
                 chat
                 fetchDetail={fetchDetail}
                 focusedSeq={focusHistory.ready ? approvalFocus.state?.source?.seq : undefined}
+                rollback={{
+                  disabledReason: running ? tc("msgRollback.busyTurn") : undefined,
+                  onRollback: setRollbackTarget,
+                }}
               />
             </>
           )}
@@ -893,6 +924,14 @@ function ChatView({
         onChange={changeProfile}
         disabled={running || sending}
         rightSlot={<TodoPopover seq={latestTodoSeq} fetchDetail={fetchDetail} />}
+      />
+      <MessageRollbackDialog
+        open={rollbackTarget !== null}
+        busy={rollbackBusy}
+        onOpenChange={(open) => {
+          if (!open) setRollbackTarget(null);
+        }}
+        onConfirm={() => void confirmRollback()}
       />
     </SideQuestionWorkspace>
   );

@@ -33,9 +33,10 @@ import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/
 import { EmptyState } from "@/components/empty-state";
 import { LiveDot } from "@/components/live-dot";
 import { MentionTextarea } from "@/components/mention-textarea";
+import { MessageRollbackDialog } from "@/components/message-rollback-dialog";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
-import { Transcript } from "@/components/transcript";
+import { parseUserBody, Transcript } from "@/components/transcript";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -502,6 +503,7 @@ function WorkerAssetBadge({ assets }: { assets: IntentAsset[] }) {
 
 export function SessionsTab({ taskId }: { taskId: string }) {
   const t = useTranslations("sessions");
+  const tc = useTranslations("checkpoints");
   const approvalFocus = useApprovalFocus({ taskId });
   const [selectedSessionId, setActiveId] = React.useState(MAIN_ID);
   const focusSession = React.useMemo<Session | undefined>(() => {
@@ -570,6 +572,10 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const [steerTarget, setSteerTarget] = React.useState<Session | null>(null);
   const [steerText, setSteerText] = React.useState("");
   const [steerSending, setSteerSending] = React.useState(false);
+  // 消息级回滚（总 AGENT 气泡箭头）：待确认的用户消息 + 提交中标记。确认后整任务
+  // 回滚到该消息之前，消息原文回填输入框。
+  const [rollbackTarget, setRollbackTarget] = React.useState<Activity | null>(null);
+  const [rollbackBusy, setRollbackBusy] = React.useState(false);
   // 方式1 文件上传:选好的附件(已落到任务工作目录 uploads/),随下条消息一起发。
   const [attachments, setAttachments] = React.useState<ChatAttachment[]>([]);
   const [uploading, setUploading] = React.useState(false);
@@ -1593,6 +1599,32 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       .finally(() => setSending(false));
   }
 
+  // confirmMessageRollback 执行消息级回滚（总 AGENT 气泡箭头）：后端整任务回滚到
+  // 该消息之前（隐藏主 Agent/Worker/规划器步骤、重排未完成意图），这里把消息原文
+  // 连同附件回填输入框，丢弃会话缓存并按当前会话重载，被回滚内容从列表消失。
+  async function confirmMessageRollback() {
+    const step = rollbackTarget;
+    if (!step || rollbackBusy) return;
+    setRollbackBusy(true);
+    try {
+      const detail = (await api.activityDetail(step.seq, taskId)).detail ?? "";
+      const body = parseUserBody(detail || step.summary);
+      const result = await api.rollbackTaskMessage(taskId, step.seq);
+      setInput(body.text);
+      setAttachments(body.attachments.map((a) => ({ name: a.name, path: a.path, size: a.size })));
+      setRollbackTarget(null);
+      // 缓存里含被隐藏步骤，merge 无法移除——整店清空，当前会话立即重载，其它会话
+      // 在打开时惰性重载。
+      setStore({});
+      loadSession(activeKey);
+      toast.success(tc("msgRollback.doneTask", { hidden: result.hidden, reopened: result.reopened?.length ?? 0 }));
+    } catch (e) {
+      toast.error(tc("msgRollback.failed", { msg: (e as Error).message }));
+    } finally {
+      setRollbackBusy(false);
+    }
+  }
+
   function sendWorkerChat() {
     const intentId = active.intent_id;
     const message = workerMessage.trim();
@@ -2009,6 +2041,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                     taskId={taskId}
                     chat={isMain}
                     focusedSeq={focusHistory.ready ? approvalFocus.state?.source?.seq : undefined}
+                    rollback={
+                      isMain
+                        ? {
+                            disabledReason: mainBusy ? tc("msgRollback.busyMain") : undefined,
+                            onRollback: setRollbackTarget,
+                          }
+                        : undefined
+                    }
                   />
                 ) : (
                   <EmptyState
@@ -2374,6 +2414,16 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <MessageRollbackDialog
+          task
+          open={rollbackTarget !== null}
+          busy={rollbackBusy}
+          onOpenChange={(open) => {
+            if (!open) setRollbackTarget(null);
+          }}
+          onConfirm={() => void confirmMessageRollback()}
+        />
       </div>
     </TooltipProvider>
   );

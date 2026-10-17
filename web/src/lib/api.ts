@@ -363,6 +363,10 @@ export const api = {
     get<{ checkpoints: Checkpoint[] }>(`/tasks/${id}/checkpoints`).then((r) => arr(r.checkpoints)),
   revertTaskCheckpoint: (id: string, checkpointId: number) =>
     post<CheckpointRevertResult>(`/tasks/${id}/checkpoints/${checkpointId}/revert`, {}),
+  // 消息级回滚（气泡箭头）：隐藏该用户消息及之后的全部步骤，消息原文由界面回填
+  // 输入框。要求任务未在运行且主 Agent 无进行中回合。
+  rollbackTaskMessage: (id: string, seq: number) =>
+    post<CheckpointRevertResult>(`/tasks/${id}/messages/${seq}/rollback`, {}),
   archiveTasks: (taskIds: string[]) =>
     post<{ items: ArchiveBatchItem[] }>("/tasks/archive/batch", { task_ids: taskIds }),
   restoreTaskArchive: (id: number) => post<TaskArchive>(`/task-archives/${id}/restore`),
@@ -1085,6 +1089,10 @@ export const api = {
     get<{ checkpoints: Checkpoint[] }>(`/conversations/${id}/checkpoints`).then((r) => arr(r.checkpoints)),
   revertConversationCheckpoint: (id: number, checkpointId: number) =>
     post<CheckpointRevertResult>(`/conversations/${id}/checkpoints/${checkpointId}/revert`, {}),
+  // 消息级回滚（气泡箭头）：隐藏该用户消息及之后的全部步骤，消息原文由界面回填
+  // 输入框。要求会话不在运行中。
+  rollbackConversationMessage: (id: number, seq: number) =>
+    post<CheckpointRevertResult>(`/conversations/${id}/messages/${seq}/rollback`, {}),
   saveAgentPrompt: (key: string, template: string, note = "") =>
     put<{ version: number }>(`/agents/${key}/prompt`, { template, note }),
   resetAgentPrompt: (key: string) => post<{ version: number }>(`/agents/${key}/prompt/reset`, {}),

@@ -330,3 +330,19 @@ func (d *DB) ConvActivityDetail(convID, id int64) (string, error) {
 	}
 	return s.String, err
 }
+
+// ConvActivityMeta returns one step's kind and whether it is hidden by a rollback
+// (found=false when the id does not belong to this conversation). Used by the
+// message-level rollback to validate its target message.
+func (d *DB) ConvActivityMeta(convID, id int64) (kind string, reverted, found bool, err error) {
+	var k, rev sql.NullString
+	err = d.QueryRow(`SELECT kind, reverted_at FROM conversation_activities WHERE id=$1 AND conversation_id=$2`, id, convID).
+		Scan(&k, &rev)
+	if err == sql.ErrNoRows {
+		return "", false, false, nil
+	}
+	if err != nil {
+		return "", false, false, err
+	}
+	return k.String, rev.Valid, true, nil
+}

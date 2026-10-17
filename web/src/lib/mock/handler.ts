@@ -132,6 +132,44 @@ function mockRevertCheckpoint(scope: string, checkpointID: number) {
   };
 }
 
+// mockRollbackMessage 模拟「回滚到某条用户消息之前」（气泡箭头）：作废边界落在
+// 隐藏区内的检查点、追加回滚标记，并记住该 scope 的回滚目标 seq —— 会话消息列表
+// 据此过滤，让被回滚的消息在 demo 里也从列表消失。demo 层不还原 transcript
+// 截断、任务重排意图等完整语义（真实实现见 server/checkpoints.go）。
+const mockRollbackBefore = new Map<string, number>(); // scope → 回滚目标消息 seq（该 seq 及之后隐藏）
+
+function mockRollbackMessage(scope: string, seq: number) {
+  const list = mockCheckpointList(scope);
+  let superseded = 0;
+  for (const item of list) {
+    if (item.status === "active" && item.snapshot.activity_id >= seq) {
+      item.status = "superseded";
+      superseded += 1;
+    }
+  }
+  const prev = mockRollbackBefore.get(scope);
+  mockRollbackBefore.set(scope, prev === undefined ? seq : Math.min(prev, seq));
+  const marker: Checkpoint = {
+    id: ++mockCheckpointID,
+    scope,
+    seq: list.reduce((max, item) => Math.max(max, item.seq), 0) + 1,
+    reason: "revert",
+    status: "active",
+    summary: `回滚到消息 #${seq} 之前`,
+    snapshot: { activity_id: Math.max(0, seq - 1), transcript_size: 0 },
+    created_at: new Date().toISOString(),
+  };
+  list.push(marker);
+  return {
+    status: "reverted",
+    hidden: 3,
+    superseded,
+    transcript_truncated: true,
+    checkpoint: marker,
+    ...(scope.startsWith("task-") ? { reopened: [4, 5] } : {}),
+  };
+}
+
 // ── 关联流量证据(finding traffic) ─────────────────────────────────────────────
 // 后端把请求/响应快照独立存到 evidence 表,前端详情页用 FindingTrafficPanel 展示。
 // demo 里为部分漏洞预置绑定,快照直接引用 mock 抓包(data.traffic.exchanges),
@@ -1604,6 +1642,9 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (seg[0] === "tasks" && seg[2] === "checkpoints" && seg[4] === "revert" && m === "POST") {
     return mockRevertCheckpoint(`task-${seg[1]}`, Number(seg[3]));
   }
+  if (seg[0] === "tasks" && seg[2] === "messages" && seg[4] === "rollback" && m === "POST") {
+    return mockRollbackMessage(`task-${seg[1]}`, Number(seg[3]));
+  }
   if (path === "/active") {
     const id = String(b.id ?? mockActiveTask);
     if (mockTasks.some((item) => item.id === id)) {
@@ -2515,7 +2556,9 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     return { items };
   }
   if (seg[0] === "conversations" && seg[2] === "messages" && seg.length === 3 && m === "GET") {
-    const items = mockRetestMessages[Number(seg[1])] ?? D.conversationMessages[Number(seg[1])] ?? [];
+    const all = mockRetestMessages[Number(seg[1])] ?? D.conversationMessages[Number(seg[1])] ?? [];
+    const hiddenFrom = mockRollbackBefore.get(`conv-${seg[1]}`);
+    const items = hiddenFrom === undefined ? all : all.filter((item) => item.seq < hiddenFrom);
     const running = mockRetests.some(
       (item) => item.conversation_id === Number(seg[1]) && ["pending", "running"].includes(item.status),
     );
@@ -2536,6 +2579,9 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   }
   if (seg[0] === "conversations" && seg[2] === "checkpoints" && seg[4] === "revert" && m === "POST") {
     return mockRevertCheckpoint(`conv-${seg[1]}`, Number(seg[3]));
+  }
+  if (seg[0] === "conversations" && seg[2] === "messages" && seg[4] === "rollback" && m === "POST") {
+    return mockRollbackMessage(`conv-${seg[1]}`, Number(seg[3]));
   }
 
   // ── tools ──

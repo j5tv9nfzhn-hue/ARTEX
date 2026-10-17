@@ -12,6 +12,7 @@ import {
   PaperclipIcon,
   ShieldAlertIcon,
   Terminal,
+  Undo2Icon,
   UserIcon,
   Wrench,
   XIcon,
@@ -566,8 +567,9 @@ type MsgAttachment = { name: string; path: string; size: number };
 
 // parseUserBody splits a user turn's body into text + attachments. The backend stores
 // Detail as JSON {text, attachments} when files were uploaded, else plain text — so we
-// parse defensively and fall back to treating the whole body as text.
-function parseUserBody(body: string): { text: string; attachments: MsgAttachment[] } {
+// parse defensively and fall back to treating the whole body as text. Exported for the
+// message-level rollback (both pages refill the composer with the parsed body).
+export function parseUserBody(body: string): { text: string; attachments: MsgAttachment[] } {
   if (body.startsWith("{")) {
     try {
       const p = JSON.parse(body);
@@ -581,15 +583,29 @@ function parseUserBody(body: string): { text: string; attachments: MsgAttachment
   return { text: body, attachments: [] };
 }
 
+// TranscriptRollback is the message-level rollback hook (chat page + task main
+// agent console): every human turn bubble shows a "roll back to before this
+// message" arrow under it; onRollback is owned by the page (confirm dialog →
+// backend call → message back into the composer → list reload). disabledReason
+// non-empty renders the arrow disabled with that hint (a turn/task is running).
+export interface TranscriptRollback {
+  disabledReason?: string;
+  onRollback: (step: Activity) => void;
+}
+
 function UserRow({
   step,
   intent,
   getDetail,
+  rollback,
 }: {
   step: Activity;
   intent?: boolean;
   getDetail: (seq: number) => Promise<string>;
+  // 消息级回滚（IDE 式气泡箭头）：仅用户轮渲染；disabledReason 非空时禁用并提示。
+  rollback?: TranscriptRollback;
 }) {
+  const tr = useTranslations("checkpoints");
   const Icon = intent ? CrosshairIcon : UserIcon;
   const [ref, inView] = useInView();
   // Optimistic echoes carry their detail inline; persisted rows lazy-load it on scroll.
@@ -612,7 +628,7 @@ function UserRow({
   }, [inView, step.seq, getDetail, step.summary, inline]);
   const { text, attachments } = parseUserBody(full ?? step.summary);
   return (
-    <div ref={ref} className="mt-3 mb-2 flex min-w-0 justify-end gap-2">
+    <div ref={ref} className="group mt-3 mb-2 flex min-w-0 justify-end gap-2">
       <div className="flex min-w-0 max-w-[85%] flex-col items-end gap-1.5">
         {attachments.length > 0 && (
           <div className="flex min-w-0 max-w-full flex-wrap justify-end gap-1.5">
@@ -634,7 +650,22 @@ function UserRow({
             {text}
           </div>
         )}
-        <ActivityTime ts={step.ts} />
+        <div className="flex items-center gap-1">
+          <ActivityTime ts={step.ts} />
+          {rollback && !intent && (
+            <span title={rollback.disabledReason ?? tr("msgRollback.tip")}>
+              <button
+                type="button"
+                onClick={() => rollback.onRollback(step)}
+                disabled={!!rollback.disabledReason}
+                aria-label={tr("msgRollback.tip")}
+                className="text-muted-foreground hover:text-foreground flex size-5 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none group-hover:disabled:opacity-40"
+              >
+                <Undo2Icon className="size-3.5" />
+              </button>
+            </span>
+          )}
+        </div>
       </div>
       <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10">
         <Icon className="size-3.5 text-primary" />
@@ -692,12 +723,14 @@ function ExecView({
   chat,
   fetchDetail,
   focusedSeq,
+  rollback,
 }: {
   activity: Activity[];
   taskId?: string;
   chat?: boolean;
   fetchDetail?: (seq: number) => Promise<string>;
   focusedSeq?: number;
+  rollback?: TranscriptRollback;
 }) {
   const t = useTranslations("transcript");
   const showWorker = new Set(activity.map((a) => a.worker)).size > 1;
@@ -717,7 +750,7 @@ function ExecView({
             <span className="h-px flex-1 bg-border" />
           </div>
         ) : g.type === "user" ? (
-          <UserRow key={"u" + g.key} step={g.step} intent={g.intent} getDetail={getDetail} />
+          <UserRow key={"u" + g.key} step={g.step} intent={g.intent} getDetail={getDetail} rollback={rollback} />
         ) : g.type === "answer" ? (
           <AnswerBlock key={"a" + g.key} step={g.step} getDetail={getDetail} />
         ) : g.type === "tool" ? (
@@ -748,6 +781,7 @@ export function Transcript({
   chat,
   fetchDetail,
   focusedSeq,
+  rollback,
 }: {
   activity: Activity[];
   live?: boolean;
@@ -755,6 +789,7 @@ export function Transcript({
   chat?: boolean;
   fetchDetail?: (seq: number) => Promise<string>;
   focusedSeq?: number;
+  rollback?: TranscriptRollback;
 }) {
   const t = useTranslations("transcript");
   const transcriptRef = React.useRef<HTMLDivElement>(null);
@@ -778,7 +813,14 @@ export function Transcript({
       className="flex flex-col gap-1"
       style={focusPadding ? { paddingBlock: focusPadding } : undefined}
     >
-      <ExecView activity={activity} taskId={taskId} chat={chat} fetchDetail={fetchDetail} focusedSeq={focusedSeq} />
+      <ExecView
+        activity={activity}
+        taskId={taskId}
+        chat={chat}
+        fetchDetail={fetchDetail}
+        focusedSeq={focusedSeq}
+        rollback={rollback}
+      />
       {live && (
         <div className="flex items-center gap-2 pl-2 pt-1 text-xs text-muted-foreground">
           <span className="flex gap-1">

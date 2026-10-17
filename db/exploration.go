@@ -1255,6 +1255,24 @@ RETURNING id`, s.expID, a.NodeID, utf8Clean(a.Worker), utf8Clean(a.Kind), utf8Cl
 	return id, err
 }
 
+// ActivityMeta returns one step's kind/worker and whether it is hidden by a
+// rollback. Restricted to this store's exploration, so a guessed global activity
+// id from another task can never be resolved (found=false). Used by the
+// message-level rollback to validate its target message.
+func (s *ExplorationStore) ActivityMeta(id int64) (kind, worker string, reverted, found bool, err error) {
+	var k, w, rev sql.NullString
+	err = s.db.QueryRow(`
+SELECT kind, worker, reverted_at FROM activity WHERE id=$1 AND exploration_id=$2`, id, s.expID).
+		Scan(&k, &w, &rev)
+	if err == sql.ErrNoRows {
+		return "", "", false, false, nil
+	}
+	if err != nil {
+		return "", "", false, false, err
+	}
+	return k.String, w.String, rev.Valid, true, nil
+}
+
 // ExplorationDiag probes, at the moment of an activity FK violation (23503), why the
 // parent row is unreachable. It reports whether the exploration row still exists, how
 // many task rows reference it (a live task should keep exactly 1 — and RESTRICT on

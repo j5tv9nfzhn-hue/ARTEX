@@ -10,7 +10,13 @@ package server
 // 捕捉点：
 //   会话：用户消息落库后（user_message）、回合结束（turn_complete）、手动停止（interrupt）
 //   任务：准入/恢复（admit）、意图终态（intent_settled）、任务暂停（interrupt）、
-//         压缩被中断/重启恢复（interrupt / compaction_recover）
+//         压缩被中断/重启恢复（interrupt / compaction_recover）、主 Agent 用户消息（user_message）
+//
+// 消息级回滚（pgRollbackConversationMessage / rollbackTaskMessage，气泡下方的回滚
+// 箭头）：隐藏该用户消息及之后的全部步骤、transcript 截断回该回合之前、后续检查点
+// 作废，消息原文由前端回填输入框（本体不删）。边界取「该消息之前最后一个可见活动」
+// 而非「上一个检查点」，因此首条消息也能一路回滚到空时间线，且与被跳过的失败回合
+// 无关。
 //
 // 压缩联动（#27/#28/#37）：平台内可触及的压缩是 agent.Compactor（冷节点 digest）。
 // 任务暂停时显式打断在跑的压缩；中断/重启后的恢复校验利用「AddDigest 事务原子」
@@ -81,6 +87,10 @@ func checkpointReasonLabel(reason string) string {
 }
 
 // --- capture ---
+//
+// 所有落盘都走 sqliteWriteTimeout（见 sqlite_write.go）：检查点是回滚时间线的
+// 事实源，锁竞争时这些写入必须排队等待而不是被更短的 ctx 打断——落盘失败没有
+// 重试，丢失的检查点会直接表现为「回滚时间线上缺了一段」。
 
 // captureConversationCheckpoint appends one checkpoint to a conversation timeline.
 // boundaryActivityID = newest conversation_activities.id INCLUDED in the snapshot
@@ -90,7 +100,7 @@ func (s *Server) captureConversationCheckpoint(c *db.Conversation, reason, summa
 		return nil
 	}
 	path := s.transcriptFile(s.convBusyKey(c.ID))
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 	defer cancel()
 	cp, err := s.m.pg.CaptureCheckpoint(ctx, convCheckpointScope(c.ID), reason, summary, db.CheckpointSnapshot{
 		ActivityID:     boundaryActivityID,
@@ -109,7 +119,7 @@ func (s *Server) captureConversationCheckpointNow(c *db.Conversation, reason, su
 	if s == nil || s.m == nil || s.m.pg == nil || c == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 	defer cancel()
 	maxAct, err := s.m.pg.MaxConversationActivityID(ctx, c.ID)
 	if err != nil {
@@ -144,7 +154,7 @@ func (s *Server) captureTaskCheckpoint(t *Task, reason, summary string, includeG
 	if err != nil || taskID <= 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 	defer cancel()
 	maxAct, err := s.m.pg.MaxExplorationActivityID(ctx, t.ExpID)
 	if err != nil {
@@ -169,6 +179,43 @@ func (s *Server) captureTaskCheckpoint(t *Task, reason, summary string, includeG
 	return cp
 }
 
+// mainAgentTranscriptPath mirrors agent/mainagent.go's session naming: segment 0
+// keeps the legacy "exp<id>-main" transcript file, later segments suffix "-s<seg>".
+func (s *Server) mainAgentTranscriptPath(t *Task, seg int) string {
+	session := fmt.Sprintf("exp%d-main", t.ExpID)
+	if seg > 0 {
+		session = fmt.Sprintf("exp%d-main-s%d", t.ExpID, seg)
+	}
+	return s.transcriptFile(session)
+}
+
+// captureTaskMainMessageCheckpoint appends one checkpoint to a task timeline for
+// a main-agent user turn (reason=user_message): boundary = the human turn's
+// activity id, snapshot transcript = the MAIN agent transcript of that segment,
+// sized before the turn ran. rollbackTaskMessage uses it to truncate the main
+// agent's LLM context back to "just before this message".
+func (s *Server) captureTaskMainMessageCheckpoint(t *Task, seg int, summary string, activityID int64) *db.Checkpoint {
+	if s == nil || s.m == nil || s.m.pg == nil || t == nil {
+		return nil
+	}
+	taskID, err := strconv.ParseInt(t.ID, 10, 64)
+	if err != nil || taskID <= 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
+	defer cancel()
+	path := s.mainAgentTranscriptPath(t, seg)
+	cp, err := s.m.pg.CaptureCheckpoint(ctx, taskCheckpointScope(t.ID), db.CheckpointReasonUserMessage, summary, db.CheckpointSnapshot{
+		ActivityID:     activityID,
+		TranscriptSize: fileSize(path),
+		TranscriptPath: path,
+	})
+	if err != nil {
+		log.Printf("[checkpoints] task %s 主 Agent 消息快照落盘失败: %v", t.ID, err)
+	}
+	return cp
+}
+
 // captureCompactionCheckpoint records a compaction interrupt/recovery on the task
 // timeline, embedding the compaction boundary info in the snapshot.
 func (s *Server) captureCompactionCheckpoint(t *Task, summary string, info map[string]any) *db.Checkpoint {
@@ -179,7 +226,7 @@ func (s *Server) captureCompactionCheckpoint(t *Task, summary string, info map[s
 	if err != nil || taskID <= 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 	defer cancel()
 	maxAct, _ := s.m.pg.MaxExplorationActivityID(ctx, t.ExpID)
 	snap := db.CheckpointSnapshot{ActivityID: maxAct, Compaction: info}
@@ -218,7 +265,7 @@ func (s *Server) compactionObserver(t *Task) func(agent.CompactionEvent) {
 		if s == nil || s.m == nil || s.m.pg == nil {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 		defer cancel()
 		switch ev.Stage {
 		case "start":
@@ -270,7 +317,7 @@ func (s *Server) recoverCompactionState(t *Task) {
 		return
 	}
 	scope := taskCheckpointScope(t.ID)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteWriteTimeout)
 	defer cancel()
 	st, err := s.m.pg.GetCompactionState(ctx, scope)
 	if err != nil || st == nil || st.Phase != db.CompactionPhaseRunning {
@@ -370,6 +417,118 @@ func (s *Server) pgRevertConversationCheckpoint(w http.ResponseWriter, r *http.R
 	})
 }
 
+// --- HTTP: message-level rollback（消息气泡下方的回滚箭头）---
+
+// findUserMessageCheckpoint returns the user_message checkpoint captured for one
+// message (boundary == its activity id): its snapshot records the transcript
+// size right before that turn ran, which is exactly where a "roll back to
+// before this message" truncates. Nil when the checkpoint was pruned/never
+// captured — the caller then skips truncation and logs.
+func findUserMessageCheckpoint(items []db.Checkpoint, seq int64) *db.Checkpoint {
+	for i := range items {
+		if items[i].Reason == db.CheckpointReasonUserMessage && items[i].Snapshot.ActivityID == seq {
+			return &items[i]
+		}
+	}
+	return nil
+}
+
+// supersedeCheckpointsInRegion marks every ACTIVE checkpoint whose snapshot
+// boundary points into the hidden region (activity_id > boundary — it saw steps
+// the rollback just removed) as superseded. Checkpoints at or behind the
+// boundary still describe visible state — including older revert markers whose
+// boundary was explicit — and stay active. Returns the number newly superseded.
+func (s *Server) supersedeCheckpointsInRegion(ctx context.Context, items []db.Checkpoint, boundary int64) (int64, error) {
+	var n int64
+	for _, cp := range items {
+		if cp.Status != db.CheckpointActive || cp.Snapshot.ActivityID <= boundary {
+			continue
+		}
+		ok, err := s.m.pg.SupersedeCheckpoint(ctx, cp.ID)
+		if err != nil {
+			return n, err
+		}
+		if ok {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// pgRollbackConversationMessage rolls a conversation back to the state just
+// before one user message: hide that message and every later step, truncate the
+// transcript back to the size recorded before that turn, supersede the
+// checkpoints pointing into the hidden region and append a revert marker. The
+// message body is NOT deleted — the UI refills the composer with it. The
+// boundary is the newest visible activity BELOW the message, so even the first
+// message rolls back cleanly (to an empty timeline); the revert marker then
+// anchors the new start. Requires the conversation to be idle.
+func (s *Server) pgRollbackConversationMessage(w http.ResponseWriter, r *http.Request) {
+	pg, c, ok := s.convByID(w, r)
+	if !ok {
+		return
+	}
+	seq, ok := pathInt(r, "seq")
+	if !ok || seq <= 0 {
+		writeErr(w, 400, "bad seq")
+		return
+	}
+	kind, reverted, found, err := pg.ConvActivityMeta(c.ID, seq)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if !found || reverted {
+		writeErr(w, 404, "消息不存在或已被回滚隐藏")
+		return
+	}
+	if kind != "user" {
+		writeErr(w, 400, "只能回滚用户消息")
+		return
+	}
+	busyKey := s.convBusyKey(c.ID)
+	s.chatMu.Lock()
+	busy := s.chatBusy[busyKey]
+	s.chatMu.Unlock()
+	if busy {
+		writeErr(w, 409, "当前会话有一轮正在运行，请先停止再回滚")
+		return
+	}
+	boundary, err := pg.MaxVisibleConversationActivityBefore(r.Context(), c.ID, seq)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	checkpoints, err := pg.ListCheckpoints(r.Context(), convCheckpointScope(c.ID), 80)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	hidden, err := pg.HideConversationActivitiesAfter(r.Context(), c.ID, boundary)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	superseded, err := s.supersedeCheckpointsInRegion(r.Context(), checkpoints, boundary)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	truncated := false
+	if cp := findUserMessageCheckpoint(checkpoints, seq); cp != nil {
+		truncated = s.truncateTranscript(cp.Snapshot.TranscriptPath, cp.Snapshot.TranscriptSize)
+	} else {
+		log.Printf("[checkpoints] conv %d 消息 #%d 缺少用户消息检查点，跳过 transcript 截断", c.ID, seq)
+	}
+	marker := s.captureConversationCheckpoint(c, db.CheckpointReasonRevert,
+		fmt.Sprintf("回滚到消息 #%d 之前（隐藏 %d 步）", seq, hidden), boundary)
+	log.Printf("[checkpoints] conv %d 回滚消息 #%d：隐藏 %d 步，作废 %d 个检查点", c.ID, seq, hidden, superseded)
+	writeJSON(w, 200, map[string]any{
+		"status": "reverted", "hidden": hidden, "superseded": superseded,
+		"transcript_truncated": truncated, "checkpoint": marker,
+	})
+}
+
 // --- HTTP: task checkpoints ---
 
 func (s *Server) taskCheckpoints(w http.ResponseWriter, r *http.Request) {
@@ -442,6 +601,96 @@ func (s *Server) revertTaskCheckpoint(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("回滚到检查点 #%d（%s）", ckpt.Seq, checkpointReasonLabel(ckpt.Reason)), false)
 	log.Printf("[checkpoints] task %s 回滚到 #%d：隐藏 %d 步，重排 %d 条意图，作废 %d 个检查点",
 		t.ID, ckpt.Seq, hidden, len(reopened), superseded)
+	writeJSON(w, 200, map[string]any{
+		"status": "reverted", "hidden": hidden, "reopened": reopened,
+		"superseded": superseded, "transcript_truncated": truncated, "checkpoint": marker,
+	})
+}
+
+// rollbackTaskMessage rolls a task's timeline back to the state just before one
+// user message of the main-agent console: hide every step from that message on
+// (worker/planner lanes included — the task-wide "back to this point" the
+// timeline tab performs), reopen unfinished intents so a resume re-claims them,
+// truncate the MAIN agent transcript back to the size recorded before that turn
+// (so the orchestrator no longer sees the retracted message), supersede the
+// checkpoints pointing into the hidden region and append a revert marker.
+// Requires the task not be running and no main-agent turn in flight. Tool side
+// effects, the planner's transcript memory and graph products are NOT rolled
+// back (the confirm dialog states this).
+func (s *Server) rollbackTaskMessage(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.taskByPath(w, r)
+	if !ok {
+		return
+	}
+	seq, ok := pathInt(r, "seq")
+	if !ok || seq <= 0 {
+		writeErr(w, 400, "bad seq")
+		return
+	}
+	kind, _, reverted, found, err := t.Store.ActivityMeta(seq)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if !found || reverted {
+		writeErr(w, 404, "消息不存在或已被回滚隐藏")
+		return
+	}
+	if kind != "user" {
+		writeErr(w, 400, "只能回滚用户消息")
+		return
+	}
+	if s.occupiesConcurrencySlot(t) {
+		writeErr(w, 409, "任务正在运行，请先暂停后再回滚")
+		return
+	}
+	s.chatMu.Lock()
+	busy := s.chatBusy[t.ID]
+	s.chatMu.Unlock()
+	if busy {
+		writeErr(w, 409, "主 Agent 正在运行，请先停止再回滚")
+		return
+	}
+	boundary, err := s.m.pg.MaxVisibleExplorationActivityBefore(r.Context(), t.ExpID, seq)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	checkpoints, err := s.m.pg.ListCheckpoints(r.Context(), taskCheckpointScope(t.ID), 80)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	hidden, err := s.m.pg.HideExplorationActivitiesAfter(r.Context(), t.ExpID, boundary)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	reopened, err := s.m.pg.ReopenInterruptedIntents(r.Context(), t.ExpID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	superseded, err := s.supersedeCheckpointsInRegion(r.Context(), checkpoints, boundary)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	truncated := false
+	if cp := findUserMessageCheckpoint(checkpoints, seq); cp != nil {
+		truncated = s.truncateTranscript(cp.Snapshot.TranscriptPath, cp.Snapshot.TranscriptSize)
+	} else {
+		log.Printf("[checkpoints] task %s 消息 #%d 缺少主 Agent 消息检查点，跳过 transcript 截断", t.ID, seq)
+	}
+	if hidden > 0 || len(reopened) > 0 {
+		s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
+			Summary: fmt.Sprintf("时间线已回滚到消息 #%d 之前：隐藏 %d 个步骤，重排 %d 条未完成意图（恢复任务后继续执行）。",
+				seq, hidden, len(reopened))})
+	}
+	marker := s.captureTaskCheckpoint(t, db.CheckpointReasonRevert,
+		fmt.Sprintf("回滚到消息 #%d 之前（隐藏 %d 步）", seq, hidden), false)
+	log.Printf("[checkpoints] task %s 回滚消息 #%d：隐藏 %d 步，重排 %d 条意图，作废 %d 个检查点",
+		t.ID, seq, hidden, len(reopened), superseded)
 	writeJSON(w, 200, map[string]any{
 		"status": "reverted", "hidden": hidden, "reopened": reopened,
 		"superseded": superseded, "transcript_truncated": truncated, "checkpoint": marker,

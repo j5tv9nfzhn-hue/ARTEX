@@ -861,6 +861,17 @@
     "graphCount": "图：{nodes} 节点 / {edges} 边",
     "loadError": "加载失败：{msg}",
     "loading": "加载中…",
+    "msgRollback": {
+      "busyMain": "主 Agent 正在运行，停止后才能回滚",
+      "busyTurn": "当前回合正在运行，停止后才能回滚",
+      "descConversation": "该消息及之后的所有步骤将从会话中隐藏（不删除，仍可审计），消息原文会回到输入框。",
+      "descTask": "该消息及之后的全部步骤（含 Worker/规划器执行记录）将从任务时间线隐藏（不删除，仍可审计），执行中/已暂停的意图重排回待执行，消息原文会回到输入框。",
+      "doneConversation": "已回滚：隐藏 {hidden} 个步骤，消息已回到输入框。",
+      "doneTask": "已回滚：隐藏 {hidden} 个步骤，重排 {reopened} 条未完成意图，消息已回到输入框。",
+      "failed": "回滚失败：{msg}",
+      "tip": "回滚到此消息之前",
+      "title": "回滚到该消息之前？"
+    },
     "reasonAdmit": "任务准入",
     "reasonCompactionRecover": "压缩恢复",
     "reasonInterrupt": "中断",

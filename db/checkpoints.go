@@ -297,21 +297,61 @@ ORDER BY d.id`, s.expID, KindDigest, StateDigestActive, RelCovers)
 	return issues, empty.Err()
 }
 
-// MaxExplorationActivityID returns the newest activity id of an exploration (0
-// when none) — the boundary value a task checkpoint snapshots.
+// MaxExplorationActivityID returns the newest VISIBLE activity id of an
+// exploration (0 when none) — the boundary value a task checkpoint snapshots.
+// Steps hidden by an earlier rollback are excluded: the boundary must describe
+// the visible timeline, otherwise a checkpoint captured right after a rollback
+// would claim hidden steps as included.
 func (d *DB) MaxExplorationActivityID(ctx context.Context, explorationID int64) (int64, error) {
 	var id sql.NullInt64
 	err := d.QueryRowContext(ctx,
-		`SELECT MAX(id) FROM activity WHERE exploration_id=$1`, explorationID).Scan(&id)
+		`SELECT MAX(id) FROM activity WHERE exploration_id=$1 AND reverted_at IS NULL`, explorationID).Scan(&id)
 	return id.Int64, err
 }
 
-// MaxConversationActivityID returns the newest conversation step id (0 when none).
+// MaxConversationActivityID returns the newest visible conversation step id (0
+// when none). Same visibility rule as MaxExplorationActivityID.
 func (d *DB) MaxConversationActivityID(ctx context.Context, convID int64) (int64, error) {
 	var id sql.NullInt64
 	err := d.QueryRowContext(ctx,
-		`SELECT MAX(id) FROM conversation_activities WHERE conversation_id=$1`, convID).Scan(&id)
+		`SELECT MAX(id) FROM conversation_activities WHERE conversation_id=$1 AND reverted_at IS NULL`, convID).Scan(&id)
 	return id.Int64, err
+}
+
+// MaxVisibleConversationActivityBefore returns the newest VISIBLE conversation
+// step id strictly below beforeID (0 when none) — the boundary a message-level
+// rollback snapshots ("the state just before that message").
+func (d *DB) MaxVisibleConversationActivityBefore(ctx context.Context, convID, beforeID int64) (int64, error) {
+	var id sql.NullInt64
+	err := d.QueryRowContext(ctx,
+		`SELECT MAX(id) FROM conversation_activities WHERE conversation_id=$1 AND id<$2 AND reverted_at IS NULL`,
+		convID, beforeID).Scan(&id)
+	return id.Int64, err
+}
+
+// MaxVisibleExplorationActivityBefore is MaxVisibleConversationActivityBefore
+// for a task's exploration activity stream.
+func (d *DB) MaxVisibleExplorationActivityBefore(ctx context.Context, explorationID, beforeID int64) (int64, error) {
+	var id sql.NullInt64
+	err := d.QueryRowContext(ctx,
+		`SELECT MAX(id) FROM activity WHERE exploration_id=$1 AND id<$2 AND reverted_at IS NULL`,
+		explorationID, beforeID).Scan(&id)
+	return id.Int64, err
+}
+
+// SupersedeCheckpoint marks one checkpoint superseded. Used by the message-level
+// rollback, which supersedes exactly the checkpoints whose boundary points into
+// the hidden region (a seq-range cutoff would also wrongly catch older revert
+// markers whose boundary lies before the cut). Reports whether the row changed.
+func (d *DB) SupersedeCheckpoint(ctx context.Context, id int64) (bool, error) {
+	res, err := d.ExecContext(ctx, `
+UPDATE checkpoints SET status=$1 WHERE id=$2 AND status<>$1`,
+		CheckpointSuperseded, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // ExplorationGraphCounts returns the node/edge/intent counters captured into task
