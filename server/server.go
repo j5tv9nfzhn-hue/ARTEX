@@ -106,6 +106,11 @@ const (
 // Server exposes the ARTEX backend over a JSON HTTP API for the shadcn/ui
 // frontend.
 type Server struct {
+	reOnce    sync.Once
+	reInitErr error
+	reLive    sync.Map // session id -> *reLiveSession (one retained MCP client per lease)
+	reLocks   sync.Map // provider id -> *sync.Mutex
+
 	m      *Manager
 	engine *Engine
 	ctx    context.Context
@@ -794,6 +799,8 @@ func (s *Server) chatAgentRef() *agent.ChatAgent {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.reRoutes(mux)
+	s.retentionRoutes(mux)
 	s.registerSideRoutes(mux)
 
 	// Auth routes — exempt from JWT check (handled in requireAuth)
@@ -1628,6 +1635,7 @@ func truncateReply(s string) string {
 }
 
 type createTaskReq struct {
+	AnalysisDomain       string   `json:"analysis_domain,omitempty"`
 	Name                 string   `json:"name,omitempty"` // 可选任务名称;省略/空=未命名
 	CategoryID           *int64   `json:"category_id,omitempty"`
 	Description          string   `json:"description"`
@@ -1651,6 +1659,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: "+err.Error())
 		return
 	}
+	domain, domainErr := db.NormalizeAnalysisDomain(req.AnalysisDomain)
+	if domainErr != nil {
+		writeErr(w, 400, domainErr.Error())
+		return
+	}
+	req.AnalysisDomain = domain
 	if strings.TrimSpace(req.Description) == "" {
 		req.Description = "未命名任务"
 	}
@@ -1706,7 +1720,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		tokenBudget = 0
 	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
-		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
+		AnalysisDomain: req.AnalysisDomain,
+		Name:           strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
 		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds,
 		TokenBudget:     tokenBudget,
@@ -1863,6 +1878,10 @@ func (s *Server) llmHost() string {
 }
 
 func (s *Server) seed(t *Task, text string) {
+	// Software descriptions and strings can contain URLs; they are not Web targets.
+	if t.AnalysisDomain == db.AnalysisDomainSoftwareRE {
+		return
+	}
 	scheme, host, port, ok := parseTarget(text)
 	if !ok {
 		log.Printf("[seed] task %s: 未能从 %q 解析出目标 host/IP，不创建站点（请手动配置 scope）", t.ID, text)
@@ -4133,6 +4152,25 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 	t := s.m.ResolveTask(r.URL.Query().Get("task"))
 	if t == nil {
 		writeErr(w, 404, "no active task")
+		return
+	}
+	if t.AnalysisDomain == db.AnalysisDomainSoftwareRE {
+		facts, moreFacts, err := t.Store.ListByKindPage(db.KindFact, 0, 200)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		goals, moreGoals, err := t.Store.ListByKindPage(db.KindGoal, 0, 100)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		md := report.SoftwareMarkdown(report.SoftwareInput{
+			Title: t.Description, Goal: t.Goal, GeneratedAt: time.Now(),
+			Facts: facts, Goals: goals, Truncated: moreFacts || moreGoals,
+		})
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		_, _ = w.Write([]byte(md))
 		return
 	}
 	findings, _ := t.Store.ListByKind(db.KindFinding, 1000) // 纯漏洞（事实是独立的 KindFact，不进报告）

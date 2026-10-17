@@ -345,7 +345,7 @@ export default function MCPPage() {
               <div key={t.name} className="py-2.5">
                 <code className="font-mono text-sm">{t.name}</code>
                 {t.description && (
-                  <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">{t.description}</p>
+                  <p className="mt-0.5 text-muted-foreground text-xs leading-relaxed">{t.description}</p>
                 )}
               </div>
             ))}
@@ -358,39 +358,47 @@ export default function MCPPage() {
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">MCP</h1>
+        <h1 className="font-semibold text-xl tracking-tight">MCP</h1>
         <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <button
           type="button"
           onClick={openAdd}
-          className="text-foreground/70 border-foreground/70 hover:bg-muted/60 hover:shadow-sm flex min-h-[116px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed transition"
+          className="flex min-h-[124px] flex-col items-center justify-center gap-2 rounded-xl border border-border/80 border-dashed text-muted-foreground transition hover:border-primary/50 hover:bg-muted/40 hover:text-foreground hover:shadow-sm"
         >
           <PlusIcon className="size-6" />
-          <span className="text-sm">{t("addCard")}</span>
+          <span className="font-medium text-sm">{t("addCard")}</span>
         </button>
 
         {servers.map((s) => (
           <Card
             key={s.id}
             onClick={() => openEdit(s)}
-            className="hover:border-primary/60 cursor-pointer gap-3 transition hover:shadow-sm"
+            className="min-w-0 cursor-pointer gap-3 overflow-hidden transition hover:border-primary/60 hover:shadow-sm"
           >
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <ServerIcon className="text-muted-foreground size-4 shrink-0" />
-                <CardTitle className="truncate text-base">{s.name}</CardTitle>
-                <Badge variant="outline" className="uppercase">
-                  {s.transport}
-                </Badge>
+            <CardHeader className="pb-1">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <ServerIcon className="size-4 shrink-0 text-primary/80" />
+                  <CardTitle className="min-w-0 truncate text-base">{s.name}</CardTitle>
+                  <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] uppercase">
+                    {s.transport}
+                  </Badge>
+                </div>
                 {/* biome-ignore lint/a11y/noStaticElementInteractions: 此容器仅阻止向父卡片传播点击，本身不是交互元素；内部 Switch 和删除按钮均可由键盘操作。 */}
                 {/* biome-ignore lint/a11y/useKeyWithClickEvents: 仅阻止点击传播，无需额外键盘处理器。 */}
-                <div className="ml-auto flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                <div className="ml-auto flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                   <Switch checked={s.enabled} onCheckedChange={() => toggleEnabled(s)} aria-label={t("enableAria")} />
-                  <Button size="icon" variant="outline" aria-label={t("deleteAria")} onClick={() => removeServer(s)}>
-                    <Trash2Icon className="text-destructive" />
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    aria-label={t("deleteAria")}
+                    onClick={() => removeServer(s)}
+                  >
+                    <Trash2Icon className="size-4" />
                   </Button>
                 </div>
               </div>

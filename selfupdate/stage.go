@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -96,6 +97,7 @@ func Stage(ctx context.Context, c *http.Client, rel *Release, currentVersion str
 	if err := extractBinary(zipPath, binPath); err != nil {
 		return err
 	}
+	_ = extractSkills(zipPath, filepath.Join(p.Dir, "skills"))
 	if err := smokeTest(binPath); err != nil {
 		return fmt.Errorf("新版本无法在当前系统运行：%w", err)
 	}
@@ -280,6 +282,48 @@ func extractBinary(zipPath, dst string) error {
 		return f.Sync()
 	}
 	return fmt.Errorf("在发行包中找不到 %s", want)
+}
+
+// extractSkills 从发布包 zip 中增量补齐缺失的内置技能文件（不覆盖用户已有修改）。
+func extractSkills(zipPath, dstSkillsDir string) error {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+	for _, entry := range zr.File {
+		if entry.FileInfo().IsDir() {
+			continue
+		}
+		norm := strings.ReplaceAll(entry.Name, "\\", "/")
+		_, after, ok := strings.Cut(norm, "/skills/")
+		if !ok {
+			if strings.HasPrefix(norm, "skills/") {
+				after = strings.TrimPrefix(norm, "skills/")
+				ok = true
+			}
+		}
+		if !ok || after == "" || strings.Contains(after, "..") {
+			continue
+		}
+		target := filepath.Join(dstSkillsDir, filepath.FromSlash(after))
+		if _, err := os.Stat(target); err == nil {
+			continue // preserve existing skill file
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			continue
+		}
+		rc, err := entry.Open()
+		if err != nil {
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(rc, 2<<20))
+		_ = rc.Close()
+		if err == nil && len(data) > 0 {
+			_ = os.WriteFile(target, data, 0o644)
+		}
+	}
+	return nil
 }
 
 // checkWritable 提前确认目录可写。没有这一步，非 root 运行、或二进制被放在系统

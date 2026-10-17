@@ -1,0 +1,82 @@
+[
+  {
+    "path": "_headers",
+    "sha256": "07e799cbff5548eaf4bb10a372ee264fd754f0bc0b41cdd61661c8682607e87b"
+  },
+  {
+    "path": "404.html",
+    "sha256": "391ed1c97de7718ee327ad5b48bde2c684d7f6e9127a0ff3c4207377fceb6691"
+  },
+  {
+    "path": "architecture/index.html",
+    "sha256": "16105f0021b1637423665295b5a105a553ac2ebba1d3c8ac42cecdcafffc5b98"
+  },
+  {
+    "path": "assets/favicon.svg",
+    "sha256": "61e7bd21ab2ad3a9cb3441dcd65ac380cc4fdc58a33ff4b3eb9bfd794a940dce"
+  },
+  {
+    "path": "assets/Manrope-LICENSE.txt",
+    "sha256": "d826ab6583b12c26807d8716a545bdbbb672df04f48608a364ba9efdbe501c30"
+  },
+  {
+    "path": "assets/manrope.woff2",
+    "sha256": "a30ddcd349703aff7464c34bef3fffdff405ee50c113440d7c8693c02d210972"
+  },
+  {
+    "path": "assets/search.json",
+    "sha256": "5a25bbf1a17139a11d140186804502e13d7582221c5f0ac654b786ab01e742cb"
+  },
+  {
+    "path": "assets/site.css",
+    "sha256": "320b815e7cd6f237bf32b5636713e6764b00c483a4e56e3ca175d88fb626aba0"
+  },
+  {
+    "path": "assets/site.js",
+    "sha256": "8eb52cee899d72a77a0a7fa338f7c4089418d4f6ded2c70214bcf6f112c60c88"
+  },
+  {
+    "path": "assets/theme.js",
+    "sha256": "4f66f6f1e573d0f2d9ac0764054fd597d9f7731697dc95cbf9275aaa01f337a4"
+  },
+  {
+    "path": "docs/index.html",
+    "sha256": "6f7709be55a00c13ae066df3f3ee61c664d2938494ea7067084482d840f972b6"
+  },
+  {
+    "path": "index.html",
+    "sha256": "c8a38cf5d56334b70351520a1c3b0315a3df012e8b2f34358a07bcc4dfdfb861"
+  },
+  {
+    "path": "platform/index.html",
+    "sha256": "2d94ddb1ae13b0e69fe389faa610acceac4b130cc3459c7066611e56e51eb5f2"
+  },
+  {
+    "path": "platform/network/index.html",
+    "sha256": "83fd60986f244a1a9fd5310d18d8bc154ff6ca5ae2d8e8fa7d3a5576d68db1aa"
+  },
+  {
+    "path": "platform/reverse/index.html",
+    "sha256": "dc65e5d542822af3df4791ff2160de1ddba6582ddca869476fc0a4bc87a3f7a1"
+  },
+  {
+    "path": "robots.txt",
+    "sha256": "16ceb5ee3e0dc13aa9adf31a3ebbe45a1d965b8c2b9f72eaf84e5911e140ed95"
+  },
+  {
+    "path": "routes.json",
+    "sha256": "7b9d2c3f37f0d25b0b024fb17b8d0ca830b6044ea724bc8d8b80a3a0d74ee41f"
+  },
+  {
+    "path": "trust/index.html",
+    "sha256": "a40e499942a97317e842b422a057070bce2bc79bb9c5f03e01d24c3df7696099"
+  },
+  {
+    "path": "updates/index.html",
+    "sha256": "5541846761e071b3c748c280edbb26a0d5e20ac023f15bd413cbb09760a13851"
+  },
+  {
+    "path": "workflows/index.html",
+    "sha256": "aae7c70ba54b7d47c3193cbbc4504d7f35d885e87436520f9a5a5bf44377ec36"
+  }
+]

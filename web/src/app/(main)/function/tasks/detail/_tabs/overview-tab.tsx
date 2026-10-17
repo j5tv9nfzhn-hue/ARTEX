@@ -47,8 +47,8 @@ import type {
 
 // 紧凑 token 数量：12345 → 12.3k，2000000 → 2M。
 function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + "M";
-  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
   return String(n);
 }
 
@@ -78,7 +78,7 @@ function fmtCost(n: number): string {
 // 缓存命中率 = 缓存读取 / 输入；InputTokens 已包含 cache_read 子集，比例为 0~100%。
 function cacheHitRate(cacheRead: number, input: number): string {
   if (input <= 0) return "—";
-  return Math.round((cacheRead / input) * 100) + "%";
+  return `${Math.round((cacheRead / input) * 100)}%`;
 }
 
 // 单条测试范围的展示值：域名、网段或公司。
@@ -109,7 +109,7 @@ function StatCard({
         </CardDescription>
         <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
       </CardHeader>
-      {sub && <CardContent className="text-xs text-muted-foreground">{sub}</CardContent>}
+      {sub && <CardContent className="text-muted-foreground text-xs">{sub}</CardContent>}
     </Card>
   );
 }
@@ -488,583 +488,48 @@ export function OverviewTab({ taskId }: { taskId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 创建时的原始任务描述、目标放在顶部，便于随时查看。 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <TargetIcon className="size-4 text-primary" /> {t("desc.title")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <div className="text-xs font-medium text-muted-foreground">{t("desc.descLabel")}</div>
-            <p className="text-sm whitespace-pre-wrap break-words">{task?.description?.trim() || "—"}</p>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <div className="text-xs font-medium text-muted-foreground">{t("desc.goalLabel")}</div>
-            <p className="text-sm whitespace-pre-wrap break-words">{task?.goal?.trim() || "—"}</p>
-          </div>
-        </CardContent>
-      </Card>
       {/**
-       * 目标管理支持查询、添加、修改、删除。添加、修改通知 Planner 并恢复任务；
-       * 删除只通知 Planner，不恢复。目标是最终可验证成果，而非执行步骤或侦察动作。
+       * blocked 意图可能因错误或拦截中止，如 LLM 网络问题。
+       * 批量重跑设为 open，Worker 从头执行，已写入图的数据保留。
+       * 任务为终态或暂停时会自动恢复。
        */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <ListChecksIcon className="size-4 text-primary" /> {t("goals.title")}
-            <span className="text-muted-foreground text-xs font-normal">
-              {t("goals.hint", { count: goals.length })}
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {/* 添加表单。 */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="h-7 min-w-56 flex-1 text-sm"
-              placeholder={t("goals.addPlaceholder")}
-              value={goalText}
-              onChange={(e) => setGoalText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void addGoal();
-              }}
-              disabled={goalBusy}
-            />
-            <Input
-              className="h-7 w-32 text-sm"
-              placeholder={t("goals.vulnPlaceholder")}
-              value={goalVuln}
-              onChange={(e) => setGoalVuln(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void addGoal();
-              }}
-              disabled={goalBusy}
-            />
-            <Button size="sm" variant="outline" disabled={goalBusy || !goalText.trim()} onClick={() => void addGoal()}>
-              <PlusIcon className="size-3.5" /> {t("add")}
-            </Button>
-            {goalErr && <span className="text-xs text-red-500">{goalErr}</span>}
-          </div>
-          {/* 目标列表。 */}
-          {goals.length > 0 ? (
-            <div className="flex flex-col gap-1.5">
-              {goals.map((g) =>
-                editingGoalId === g.id ? (
-                  <div key={g.id} className="flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5">
-                    <Input
-                      className="h-7 min-w-56 flex-1 text-sm"
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void saveEditGoal(g);
-                        if (e.key === "Escape") cancelEditGoal();
-                      }}
-                      disabled={goalBusy}
-                      autoFocus
-                    />
-                    <Input
-                      className="h-7 w-32 text-sm"
-                      placeholder={t("goals.vulnPlaceholder")}
-                      value={editVuln}
-                      onChange={(e) => setEditVuln(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void saveEditGoal(g);
-                        if (e.key === "Escape") cancelEditGoal();
-                      }}
-                      disabled={goalBusy}
-                    />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      disabled={goalBusy || !editText.trim()}
-                      onClick={() => void saveEditGoal(g)}
-                    >
-                      <CheckIcon className="size-3.5 text-emerald-500" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      disabled={goalBusy}
-                      onClick={cancelEditGoal}
-                    >
-                      <XIcon className="size-3.5" />
-                    </Button>
-                  </div>
-                ) : (
-                  <div key={g.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm">
-                    <StatusBadge domain="goal" value={g.state} />
-                    <span className="min-w-0 flex-1 break-words">{g.text}</span>
-                    {g.vulnclass && (
-                      <span className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 text-xs">
-                        {g.vulnclass}
-                      </span>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      disabled={goalBusy}
-                      onClick={() => startEditGoal(g)}
-                    >
-                      <PencilIcon className="size-3.5" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      disabled={goalBusy}
-                      onClick={() => void removeGoal(g)}
-                    >
-                      <Trash2Icon className="size-3.5 text-red-500" />
-                    </Button>
-                  </div>
-                ),
-              )}
-            </div>
-          ) : (
-            <p className="text-muted-foreground text-sm">{t("goals.empty")}</p>
-          )}
-        </CardContent>
-      </Card>
-      {/**
-       * 行为约束：allow=允许、deny=禁止。下一轮将约束注入 Planner、Worker 系统提示，
-       * 各角色是否注入由系统设置控制。修改不会立即中断运行，下一轮自然读取。
-       */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <ShieldAlertIcon className="size-4 text-amber-500" /> {t("constraints.title")}
-            <span className="text-muted-foreground text-xs font-normal">
-              {t("constraints.hint", { count: constraints.length })}
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {/* 添加表单。 */}
-          <div className="flex flex-wrap items-center gap-2">
-            <NativeSelect
-              size="sm"
-              value={conKind}
-              onChange={(e) => setConKind(e.target.value as TaskConstraint["kind"])}
-            >
-              <NativeSelectOption value="deny">{t("constraints.deny")}</NativeSelectOption>
-              <NativeSelectOption value="allow">{t("constraints.allow")}</NativeSelectOption>
-            </NativeSelect>
-            <Input
-              className="h-7 min-w-56 flex-1 text-sm"
-              placeholder={t("constraints.addPlaceholder")}
-              value={conText}
-              onChange={(e) => setConText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void addConstraint();
-              }}
-              disabled={conBusy}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={conBusy || !conText.trim()}
-              onClick={() => void addConstraint()}
-            >
-              <PlusIcon className="size-3.5" /> {t("add")}
-            </Button>
-            {conErr && <span className="text-xs text-red-500">{conErr}</span>}
-          </div>
-          {/* 约束列表。 */}
-          {constraints.length > 0 ? (
-            <div className="flex flex-col gap-1.5">
-              {constraints.map((c) =>
-                editingConId === c.id ? (
-                  <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5">
-                    <NativeSelect
-                      size="sm"
-                      value={editConKind}
-                      onChange={(e) => setEditConKind(e.target.value as TaskConstraint["kind"])}
-                    >
-                      <NativeSelectOption value="deny">{t("constraints.deny")}</NativeSelectOption>
-                      <NativeSelectOption value="allow">{t("constraints.allow")}</NativeSelectOption>
-                    </NativeSelect>
-                    <Input
-                      className="h-7 min-w-56 flex-1 text-sm"
-                      value={editConText}
-                      onChange={(e) => setEditConText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void saveEditConstraint(c);
-                        if (e.key === "Escape") cancelEditConstraint();
-                      }}
-                      disabled={conBusy}
-                      autoFocus
-                    />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      disabled={conBusy || !editConText.trim()}
-                      onClick={() => void saveEditConstraint(c)}
-                    >
-                      <CheckIcon className="size-3.5 text-emerald-500" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      disabled={conBusy}
-                      onClick={cancelEditConstraint}
-                    >
-                      <XIcon className="size-3.5" />
-                    </Button>
-                  </div>
-                ) : (
-                  <div key={c.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm">
-                    <span
-                      className={`shrink-0 rounded px-1.5 py-0.5 text-xs ${
-                        c.kind === "allow"
-                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                          : "bg-red-500/15 text-red-600 dark:text-red-400"
-                      }`}
-                    >
-                      {c.kind === "allow" ? t("constraints.allow") : t("constraints.deny")}
-                    </span>
-                    <span className="min-w-0 flex-1 break-words">{c.text}</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      disabled={conBusy}
-                      onClick={() => startEditConstraint(c)}
-                    >
-                      <PencilIcon className="size-3.5" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      disabled={conBusy}
-                      onClick={() => void removeConstraint(c)}
-                    >
-                      <Trash2Icon className="size-3.5 text-red-500" />
-                    </Button>
-                  </div>
-                ),
-              )}
-            </div>
-          ) : (
-            <p className="text-muted-foreground text-sm">{t("constraints.empty")}</p>
-          )}
-        </CardContent>
-      </Card>
-      <TaskInterceptRulesCard taskId={taskId} />
-      {coverage && coverage.enabled && coverage.scope_rows > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <TargetIcon className="size-4 text-emerald-500" /> {t("coverage.title")}
-              <span className="text-muted-foreground text-xs font-normal">{t("coverage.rough")}</span>
+      {blocked.length > 0 && (
+        <Card className="border-red-500/30">
+          <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangleIcon className="size-4 text-red-500" /> {t("blocked.title")}
+              <span className="font-normal text-muted-foreground text-xs">
+                {t("blocked.hint", { count: blocked.length })}
+              </span>
             </CardTitle>
+            <Button size="sm" variant="outline" disabled={rerunning.has("__all__")} onClick={() => void rerunAll()}>
+              <RefreshCwIcon className={`size-3.5 ${rerunning.has("__all__") ? "animate-spin" : ""}`} />
+              {t("blocked.rerunAll")}
+            </Button>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex items-baseline gap-3">
-              <span className="text-2xl font-semibold tabular-nums">
-                {coverage.pct != null ? Math.round(coverage.pct * 100) + "%" : "—"}
-              </span>
-              <span className="text-muted-foreground text-sm">
-                {t("coverage.testedOf", { tested: coverage.tested, total: coverage.denominator })}
-              </span>
-            </div>
-            {coverage.pct != null && <Progress value={Math.round(coverage.pct * 100)} />}
-            {coverage.by_type.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 text-xs">
-                {coverage.by_type.map((b) => (
-                  <span key={b.type} className="bg-muted rounded px-1.5 py-0.5">
-                    <span className="text-muted-foreground">{b.type}</span>{" "}
-                    <span className="tabular-nums font-medium">
-                      {b.tested}/{b.total}
-                    </span>
-                  </span>
-                ))}
+          <CardContent className="flex flex-col gap-2">
+            {blocked.slice(0, 20).map((i) => (
+              <div key={i.id} className="flex items-center gap-2 text-sm">
+                <StatusBadge domain="intent" value={i.state} />
+                <span className="min-w-0 flex-1 truncate">{i.payload}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2 text-xs"
+                  disabled={rerunning.has(i.id)}
+                  onClick={() => void rerunOne(i.id)}
+                >
+                  <RefreshCwIcon className={`size-3 ${rerunning.has(i.id) ? "animate-spin" : ""}`} />
+                  {t("blocked.rerun")}
+                </Button>
               </div>
+            ))}
+            {blocked.length > 20 && (
+              <p className="text-muted-foreground text-xs">{t("blocked.truncated", { rest: blocked.length - 20 })}</p>
             )}
           </CardContent>
         </Card>
       )}
-      {/* LLM token 用量按模型分组，来自 llm_usage 计量账本，不依赖是否开启 LLM 录制。 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <CoinsIcon className="size-4 text-amber-500" /> {t("tokens.title")}
-            <span className="text-muted-foreground text-xs font-normal">
-              {t("tokens.hint", { calls: tokenTotals.calls })}
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {/* 任务级 Token 预算:按 llm_usage 累计 input+output 计量,与后端预算闸同口径;
-              达到预算时后端自动暂停任务。这里的编辑是「调高预算后恢复」的回环入口,0=不限。 */}
-          <div className="bg-muted/40 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border px-3 py-2">
-            <span className="text-muted-foreground text-sm">{t("tokens.budgetLabel")}</span>
-            {budgetEditing ? (
-              <>
-                <Input
-                  type="number"
-                  min={0}
-                  step={1}
-                  autoFocus
-                  className="h-7 w-28 text-sm"
-                  value={budgetInput}
-                  disabled={budgetSaving}
-                  onChange={(e) => setBudgetInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void saveBudget();
-                    if (e.key === "Escape") setBudgetEditing(false);
-                  }}
-                />
-                <span className="text-muted-foreground text-xs">k</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7"
-                  disabled={budgetSaving}
-                  onClick={() => void saveBudget()}
-                >
-                  <CheckIcon className="size-3.5" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7"
-                  disabled={budgetSaving}
-                  onClick={() => setBudgetEditing(false)}
-                >
-                  <XIcon className="size-3.5" />
-                </Button>
-              </>
-            ) : (
-              <>
-                <span className="text-sm font-semibold tabular-nums">
-                  {budget > 0 ? fmtTokens(budget) : t("tokens.budgetUnlimited")}
-                </span>
-                {budget > 0 && (
-                  <span
-                    className={
-                      budgetPct >= 100
-                        ? "text-destructive text-xs tabular-nums"
-                        : "text-muted-foreground text-xs tabular-nums"
-                    }
-                  >
-                    {t("tokens.budgetUsage", { used: fmtTokens(budgetUsed), pct: budgetPct })}
-                  </span>
-                )}
-                <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={startBudgetEdit}>
-                  <PencilIcon className="size-3.5" /> {t("tokens.budgetEdit")}
-                </Button>
-              </>
-            )}
-          </div>
-          {modelTokens.length > 0 || workerTokens.length > 0 ? (
-            <>
-              {modelTokens.length > 0 && (
-                <>
-                  {/* 总计概览。 */}
-                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-                    <span className="tabular-nums">
-                      <span className="text-muted-foreground">{t("tokens.input")} </span>
-                      <span className="font-semibold">{fmtTokens(tokenTotals.input)}</span>
-                    </span>
-                    <span className="tabular-nums">
-                      <span className="text-muted-foreground">{t("tokens.output")} </span>
-                      <span className="font-semibold">{fmtTokens(tokenTotals.output)}</span>
-                    </span>
-                    <span className="tabular-nums">
-                      <span className="text-muted-foreground">{t("tokens.cacheRead")} </span>
-                      <span className="font-semibold">{fmtTokens(tokenTotals.cacheRead)}</span>
-                    </span>
-                    <span className="tabular-nums">
-                      <span className="text-muted-foreground">{t("tokens.cacheHitRate")} </span>
-                      <span className="font-semibold text-emerald-500">
-                        {cacheHitRate(tokenTotals.cacheRead, tokenTotals.input)}
-                      </span>
-                    </span>
-                    {/* 费用(估算)：读时按模型价格表计算，未配价格表/未命中时不显示。 */}
-                    {modelCostTotal > 0 && (
-                      <span className="tabular-nums">
-                        <span className="text-muted-foreground">{t("tokens.costEstimate")} </span>
-                        <span className="font-semibold text-amber-600">{fmtCost(modelCostTotal)}</span>
-                      </span>
-                    )}
-                  </div>
-                  {/* 按模型明细。 */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-muted-foreground border-b text-left text-xs">
-                          <th className="py-1.5 pr-3 font-medium">{t("tokens.colModel")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colCalls")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.input")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.output")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.cacheRead")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colHitRate")}</th>
-                          {showModelCost && <th className="py-1.5 text-right font-medium">{t("tokens.colCost")}</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {modelTokens.map((m) => (
-                          <tr key={m.model} className="border-b last:border-0">
-                            <td className="max-w-[16rem] truncate py-1.5 pr-3 font-mono text-xs" title={m.model}>
-                              {m.model}
-                            </td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums">{m.calls}</td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.input_tokens)}</td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.output_tokens)}</td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.cache_read_tokens)}</td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums text-emerald-500">
-                              {cacheHitRate(m.cache_read_tokens, m.input_tokens)}
-                            </td>
-                            {showModelCost && (
-                              <td className="py-1.5 text-right tabular-nums">
-                                {typeof m.cost === "number" && m.cost > 0 ? fmtCost(m.cost) : "-"}
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-              {/* 按角色(agent 泳道)明细:角色可被单独绑定模型,这一维回答「谁在消耗」。 */}
-              {workerTokens.length > 0 && (
-                <div className="grid gap-2">
-                  <p className="text-muted-foreground text-xs">
-                    {t("tokens.byWorkerTitle")} <span className="opacity-70">{t("tokens.byWorkerHint")}</span>
-                  </p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-muted-foreground border-b text-left text-xs">
-                          <th className="py-1.5 pr-3 font-medium">{t("tokens.colWorker")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colCalls")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.input")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.output")}</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.cacheRead")}</th>
-                          <th className="py-1.5 text-right font-medium">{t("tokens.colHitRate")}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {workerTokens.map((w) => (
-                          <tr key={w.worker} className="border-b last:border-0">
-                            <td className="py-1.5 pr-3 font-mono text-xs">{w.worker}</td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums">{w.calls}</td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(w.input_tokens)}</td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(w.output_tokens)}</td>
-                            <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(w.cache_read_tokens)}</td>
-                            <td className="py-1.5 text-right tabular-nums text-emerald-500">
-                              {cacheHitRate(w.cache_read_tokens, w.input_tokens)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-muted-foreground text-sm">{t("tokens.empty")}</p>
-          )}
-        </CardContent>
-      </Card>
-      {/* 测试范围既是覆盖率分母，也是授权边界，可手工添加、删除。 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <ShieldCheckIcon className="size-4 text-emerald-500" /> {t("scope.title")}
-            <span className="text-muted-foreground text-xs font-normal">
-              {t("scope.hint", { count: scope.length })}
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {/* 添加表单。 */}
-          <div className="flex flex-wrap items-center gap-2">
-            <NativeSelect
-              size="sm"
-              value={scopeKind}
-              onChange={(e) => setScopeKind(e.target.value as TaskScopeRow["kind"])}
-            >
-              <NativeSelectOption value="root_domain">{t("scope.kind.root_domain")}</NativeSelectOption>
-              <NativeSelectOption value="subdomain">{t("scope.kind.subdomain")}</NativeSelectOption>
-              <NativeSelectOption value="ip">{t("scope.kind.ip")}</NativeSelectOption>
-              <NativeSelectOption value="cidr">{t("scope.kind.cidr")}</NativeSelectOption>
-              <NativeSelectOption value="icp">{t("scope.kind.icp")}</NativeSelectOption>
-              <NativeSelectOption value="keyword">{t("scope.kind.keyword")}</NativeSelectOption>
-              <NativeSelectOption value="company">{t("scope.kind.company")}</NativeSelectOption>
-            </NativeSelect>
-            <Input
-              className="h-7 w-56 text-sm"
-              placeholder={
-                scopeKind === "company"
-                  ? t("scope.placeholder.company")
-                  : scopeKind === "ip" || scopeKind === "cidr"
-                    ? t("scope.placeholder.ipCidr")
-                    : scopeKind === "icp"
-                      ? t("scope.placeholder.icp")
-                      : scopeKind === "keyword"
-                        ? t("scope.placeholder.keyword")
-                        : t("scope.placeholder.domain")
-              }
-              value={scopeValueInput}
-              onChange={(e) => setScopeValueInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void addScope();
-              }}
-              disabled={scopeBusy}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={scopeBusy || !scopeValueInput.trim()}
-              onClick={() => void addScope()}
-            >
-              <PlusIcon className="size-3.5" /> {t("add")}
-            </Button>
-            {scopeErr && <span className="text-xs text-red-500">{scopeErr}</span>}
-          </div>
-          {/* 范围列表。 */}
-          {scope.length > 0 ? (
-            <div className="flex flex-col gap-1.5">
-              {scope.map((row) => (
-                <div key={row.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm">
-                  <span className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 text-xs">
-                    {t(`scope.kind.${row.kind}`)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                    {scopeValue(row, (id) => t("scope.companyFallback", { id }))}
-                  </span>
-                  <span className="text-muted-foreground shrink-0 text-xs">{t(`scope.source.${row.source}`)}</span>
-                  {row.task_id.toString() === taskId ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 shrink-0 px-1.5"
-                      onClick={() => void removeScope(row)}
-                    >
-                      <Trash2Icon className="size-3.5 text-red-500" />
-                    </Button>
-                  ) : (
-                    <span className="text-muted-foreground shrink-0 text-xs">{t("scope.inherited")}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-muted-foreground text-sm">{t("scope.empty")}</p>
-          )}
-        </CardContent>
-      </Card>
       {/* Heartbeat */}
       <Card>
         <CardHeader>
@@ -1074,7 +539,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div>
-            <div className="text-xs text-muted-foreground">{t("heartbeat.engineState")}</div>
+            <div className="text-muted-foreground text-xs">{t("heartbeat.engineState")}</div>
             <StatusBadge
               domain="engine"
               value={stats?.engine_mode ?? task?.engine_mode ?? "idle"}
@@ -1083,25 +548,25 @@ export function OverviewTab({ taskId }: { taskId: string }) {
             />
           </div>
           <div>
-            <div className="text-xs text-muted-foreground">{t("heartbeat.runningWorker")}</div>
-            <div className="mt-1 text-lg font-semibold tabular-nums">{running.length}</div>
+            <div className="text-muted-foreground text-xs">{t("heartbeat.runningWorker")}</div>
+            <div className="mt-1 font-semibold text-lg tabular-nums">{running.length}</div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground">{t("heartbeat.lastActivity")}</div>
+            <div className="text-muted-foreground text-xs">{t("heartbeat.lastActivity")}</div>
             <div className="mt-1 inline-flex items-center gap-1 text-sm">
               <ClockIcon className="size-3.5" />
               {task?.last_activity ? new Date(task.last_activity).toLocaleTimeString("zh-CN") : "—"}
             </div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-muted-foreground text-xs">
               {t("heartbeat.goals", { met: task?.goals_met ?? 0, total: task?.goals_total ?? 0 })}
             </div>
             <Progress value={goalsPct} className="mt-2" />
           </div>
           {task?.completed_unix && task.completed_unix > 0 ? (
             <div>
-              <div className="text-xs text-muted-foreground">{t("heartbeat.completedAt")}</div>
+              <div className="text-muted-foreground text-xs">{t("heartbeat.completedAt")}</div>
               <div className="mt-1 inline-flex items-center gap-1 text-sm">
                 <ClockIcon className="size-3.5" />
                 {new Date(task.completed_unix * 1000).toLocaleString("zh-CN")}
@@ -1110,7 +575,34 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           ) : null}
         </CardContent>
       </Card>
-
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <StatCard label={t("stat.pending")} value={open.length} icon={ShieldCheckIcon} sub={t("stat.pendingSub")} />
+        <StatCard label={t("stat.confirmed")} value={taskFindings.length} icon={BugIcon} sub={t("stat.confirmedSub")} />
+        <StatCard label={t("stat.total")} value={intents.length} icon={AlertTriangleIcon} sub={t("stat.totalSub")} />
+        {/* 价值指标：从任务开始到首个漏洞登记的耗时 + 产出速率（漏洞数 ÷ 已运行小时）。 */}
+        <StatCard
+          label={t("stat.firstFinding")}
+          value={task?.first_finding_ms && task.first_finding_ms > 0 ? fmtFirstFindingMS(task.first_finding_ms) : "—"}
+          icon={ClockIcon}
+          sub={t("stat.firstFindingSub")}
+        />
+        <StatCard
+          label={t("stat.perHour")}
+          value={
+            task?.findings_per_hour && task.findings_per_hour > 0 ? (
+              <>
+                {fmtPerHour(task.findings_per_hour)}
+                <span className="ml-1 font-normal text-muted-foreground text-sm">{t("stat.perHourUnit")}</span>
+              </>
+            ) : (
+              "—"
+            )
+          }
+          icon={ActivityIcon}
+          sub={t("stat.perHourSub")}
+        />
+      </div>
       {/* Work set */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card>
@@ -1140,20 +632,20 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <div className="text-2xl font-semibold tabular-nums text-red-600">{taskFindings.length}</div>
-              <div className="text-xs text-muted-foreground">{t("attention.confirmedVuln")}</div>
+              <div className="font-semibold text-2xl text-red-600 tabular-nums">{taskFindings.length}</div>
+              <div className="text-muted-foreground text-xs">{t("attention.confirmedVuln")}</div>
             </div>
             <div>
-              <div className="text-2xl font-semibold tabular-nums text-blue-600">{running.length}</div>
-              <div className="text-xs text-muted-foreground">{t("attention.executing")}</div>
+              <div className="font-semibold text-2xl text-blue-600 tabular-nums">{running.length}</div>
+              <div className="text-muted-foreground text-xs">{t("attention.executing")}</div>
             </div>
             <div>
-              <div className="text-2xl font-semibold tabular-nums">{open.length}</div>
-              <div className="text-xs text-muted-foreground">{t("attention.frontierPending")}</div>
+              <div className="font-semibold text-2xl tabular-nums">{open.length}</div>
+              <div className="text-muted-foreground text-xs">{t("attention.frontierPending")}</div>
             </div>
             <div>
-              <div className="text-2xl font-semibold tabular-nums text-red-600">{blocked.length}</div>
-              <div className="text-xs text-muted-foreground">{t("attention.blockedIntent")}</div>
+              <div className="font-semibold text-2xl text-red-600 tabular-nums">{blocked.length}</div>
+              <div className="text-muted-foreground text-xs">{t("attention.blockedIntent")}</div>
             </div>
           </CardContent>
         </Card>
@@ -1177,77 +669,607 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           </CardContent>
         </Card>
       </div>
-
-      {/**
-       * blocked 意图可能因错误或拦截中止，如 LLM 网络问题。
-       * 批量重跑设为 open，Worker 从头执行，已写入图的数据保留。
-       * 任务为终态或暂停时会自动恢复。
-       */}
-      {blocked.length > 0 && (
-        <Card className="border-red-500/30">
-          <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <AlertTriangleIcon className="size-4 text-red-500" /> {t("blocked.title")}
-              <span className="text-xs font-normal text-muted-foreground">
-                {t("blocked.hint", { count: blocked.length })}
-              </span>
+      {coverage?.enabled && coverage.scope_rows > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <TargetIcon className="size-4 text-emerald-500" /> {t("coverage.title")}
+              <span className="font-normal text-muted-foreground text-xs">{t("coverage.rough")}</span>
             </CardTitle>
-            <Button size="sm" variant="outline" disabled={rerunning.has("__all__")} onClick={() => void rerunAll()}>
-              <RefreshCwIcon className={`size-3.5 ${rerunning.has("__all__") ? "animate-spin" : ""}`} />
-              {t("blocked.rerunAll")}
-            </Button>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {blocked.slice(0, 20).map((i) => (
-              <div key={i.id} className="flex items-center gap-2 text-sm">
-                <StatusBadge domain="intent" value={i.state} />
-                <span className="min-w-0 flex-1 truncate">{i.payload}</span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 shrink-0 px-2 text-xs"
-                  disabled={rerunning.has(i.id)}
-                  onClick={() => void rerunOne(i.id)}
-                >
-                  <RefreshCwIcon className={`size-3 ${rerunning.has(i.id) ? "animate-spin" : ""}`} />
-                  {t("blocked.rerun")}
-                </Button>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex items-baseline gap-3">
+              <span className="font-semibold text-2xl tabular-nums">
+                {coverage.pct != null ? `${Math.round(coverage.pct * 100)}%` : "—"}
+              </span>
+              <span className="text-muted-foreground text-sm">
+                {t("coverage.testedOf", { tested: coverage.tested, total: coverage.denominator })}
+              </span>
+            </div>
+            {coverage.pct != null && <Progress value={Math.round(coverage.pct * 100)} />}
+            {coverage.by_type.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                {coverage.by_type.map((b) => (
+                  <span key={b.type} className="rounded bg-muted px-1.5 py-0.5">
+                    <span className="text-muted-foreground">{b.type}</span>{" "}
+                    <span className="font-medium tabular-nums">
+                      {b.tested}/{b.total}
+                    </span>
+                  </span>
+                ))}
               </div>
-            ))}
-            {blocked.length > 20 && (
-              <p className="text-xs text-muted-foreground">{t("blocked.truncated", { rest: blocked.length - 20 })}</p>
             )}
           </CardContent>
         </Card>
       )}
-
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <StatCard label={t("stat.pending")} value={open.length} icon={ShieldCheckIcon} sub={t("stat.pendingSub")} />
-        <StatCard label={t("stat.confirmed")} value={taskFindings.length} icon={BugIcon} sub={t("stat.confirmedSub")} />
-        <StatCard label={t("stat.total")} value={intents.length} icon={AlertTriangleIcon} sub={t("stat.totalSub")} />
-        {/* 价值指标：从任务开始到首个漏洞登记的耗时 + 产出速率（漏洞数 ÷ 已运行小时）。 */}
-        <StatCard
-          label={t("stat.firstFinding")}
-          value={task?.first_finding_ms && task.first_finding_ms > 0 ? fmtFirstFindingMS(task.first_finding_ms) : "—"}
-          icon={ClockIcon}
-          sub={t("stat.firstFindingSub")}
-        />
-        <StatCard
-          label={t("stat.perHour")}
-          value={
-            task?.findings_per_hour && task.findings_per_hour > 0 ? (
-              <>
-                {fmtPerHour(task.findings_per_hour)}
-                <span className="text-muted-foreground ml-1 text-sm font-normal">{t("stat.perHourUnit")}</span>
-              </>
-            ) : (
-              "—"
-            )
-          }
-          icon={ActivityIcon}
-          sub={t("stat.perHourSub")}
-        />
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
+        <div className="flex flex-col gap-4 xl:col-span-6">
+          {/* 创建时的原始任务描述、目标放在顶部，便于随时查看。 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <TargetIcon className="size-4 text-primary" /> {t("desc.title")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <div className="font-medium text-muted-foreground text-xs">{t("desc.descLabel")}</div>
+                <p className="whitespace-pre-wrap break-words text-sm">{task?.description?.trim() || "—"}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <div className="font-medium text-muted-foreground text-xs">{t("desc.goalLabel")}</div>
+                <p className="whitespace-pre-wrap break-words text-sm">{task?.goal?.trim() || "—"}</p>
+              </div>
+            </CardContent>
+          </Card>
+          {/**
+           * 目标管理支持查询、添加、修改、删除。添加、修改通知 Planner 并恢复任务；
+           * 删除只通知 Planner，不恢复。目标是最终可验证成果，而非执行步骤或侦察动作。
+           */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ListChecksIcon className="size-4 text-primary" /> {t("goals.title")}
+                <span className="font-normal text-muted-foreground text-xs">
+                  {t("goals.hint", { count: goals.length })}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {/* 添加表单。 */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  className="h-7 min-w-56 flex-1 text-sm"
+                  placeholder={t("goals.addPlaceholder")}
+                  value={goalText}
+                  onChange={(e) => setGoalText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void addGoal();
+                  }}
+                  disabled={goalBusy}
+                />
+                <Input
+                  className="h-7 w-32 text-sm"
+                  placeholder={t("goals.vulnPlaceholder")}
+                  value={goalVuln}
+                  onChange={(e) => setGoalVuln(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void addGoal();
+                  }}
+                  disabled={goalBusy}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={goalBusy || !goalText.trim()}
+                  onClick={() => void addGoal()}
+                >
+                  <PlusIcon className="size-3.5" /> {t("add")}
+                </Button>
+                {goalErr && <span className="text-red-500 text-xs">{goalErr}</span>}
+              </div>
+              {/* 目标列表。 */}
+              {goals.length > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  {goals.map((g) =>
+                    editingGoalId === g.id ? (
+                      <div key={g.id} className="flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5">
+                        <Input
+                          className="h-7 min-w-56 flex-1 text-sm"
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void saveEditGoal(g);
+                            if (e.key === "Escape") cancelEditGoal();
+                          }}
+                          disabled={goalBusy}
+                          autoFocus
+                        />
+                        <Input
+                          className="h-7 w-32 text-sm"
+                          placeholder={t("goals.vulnPlaceholder")}
+                          value={editVuln}
+                          onChange={(e) => setEditVuln(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void saveEditGoal(g);
+                            if (e.key === "Escape") cancelEditGoal();
+                          }}
+                          disabled={goalBusy}
+                        />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          disabled={goalBusy || !editText.trim()}
+                          onClick={() => void saveEditGoal(g)}
+                        >
+                          <CheckIcon className="size-3.5 text-emerald-500" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          disabled={goalBusy}
+                          onClick={cancelEditGoal}
+                        >
+                          <XIcon className="size-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div key={g.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm">
+                        <StatusBadge domain="goal" value={g.state} />
+                        <span className="min-w-0 flex-1 break-words">{g.text}</span>
+                        {g.vulnclass && (
+                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs">
+                            {g.vulnclass}
+                          </span>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          disabled={goalBusy}
+                          onClick={() => startEditGoal(g)}
+                        >
+                          <PencilIcon className="size-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          disabled={goalBusy}
+                          onClick={() => void removeGoal(g)}
+                        >
+                          <Trash2Icon className="size-3.5 text-red-500" />
+                        </Button>
+                      </div>
+                    ),
+                  )}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">{t("goals.empty")}</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+        <div className="flex flex-col gap-4 xl:col-span-6">
+          {/**
+           * 行为约束：allow=允许、deny=禁止。下一轮将约束注入 Planner、Worker 系统提示，
+           * 各角色是否注入由系统设置控制。修改不会立即中断运行，下一轮自然读取。
+           */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ShieldAlertIcon className="size-4 text-amber-500" /> {t("constraints.title")}
+                <span className="font-normal text-muted-foreground text-xs">
+                  {t("constraints.hint", { count: constraints.length })}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {/* 添加表单。 */}
+              <div className="flex flex-wrap items-center gap-2">
+                <NativeSelect
+                  size="sm"
+                  value={conKind}
+                  onChange={(e) => setConKind(e.target.value as TaskConstraint["kind"])}
+                >
+                  <NativeSelectOption value="deny">{t("constraints.deny")}</NativeSelectOption>
+                  <NativeSelectOption value="allow">{t("constraints.allow")}</NativeSelectOption>
+                </NativeSelect>
+                <Input
+                  className="h-7 min-w-56 flex-1 text-sm"
+                  placeholder={t("constraints.addPlaceholder")}
+                  value={conText}
+                  onChange={(e) => setConText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void addConstraint();
+                  }}
+                  disabled={conBusy}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={conBusy || !conText.trim()}
+                  onClick={() => void addConstraint()}
+                >
+                  <PlusIcon className="size-3.5" /> {t("add")}
+                </Button>
+                {conErr && <span className="text-red-500 text-xs">{conErr}</span>}
+              </div>
+              {/* 约束列表。 */}
+              {constraints.length > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  {constraints.map((c) =>
+                    editingConId === c.id ? (
+                      <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5">
+                        <NativeSelect
+                          size="sm"
+                          value={editConKind}
+                          onChange={(e) => setEditConKind(e.target.value as TaskConstraint["kind"])}
+                        >
+                          <NativeSelectOption value="deny">{t("constraints.deny")}</NativeSelectOption>
+                          <NativeSelectOption value="allow">{t("constraints.allow")}</NativeSelectOption>
+                        </NativeSelect>
+                        <Input
+                          className="h-7 min-w-56 flex-1 text-sm"
+                          value={editConText}
+                          onChange={(e) => setEditConText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void saveEditConstraint(c);
+                            if (e.key === "Escape") cancelEditConstraint();
+                          }}
+                          disabled={conBusy}
+                          autoFocus
+                        />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          disabled={conBusy || !editConText.trim()}
+                          onClick={() => void saveEditConstraint(c)}
+                        >
+                          <CheckIcon className="size-3.5 text-emerald-500" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          disabled={conBusy}
+                          onClick={cancelEditConstraint}
+                        >
+                          <XIcon className="size-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div key={c.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm">
+                        <span
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-xs ${
+                            c.kind === "allow"
+                              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                              : "bg-red-500/15 text-red-600 dark:text-red-400"
+                          }`}
+                        >
+                          {c.kind === "allow" ? t("constraints.allow") : t("constraints.deny")}
+                        </span>
+                        <span className="min-w-0 flex-1 break-words">{c.text}</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          disabled={conBusy}
+                          onClick={() => startEditConstraint(c)}
+                        >
+                          <PencilIcon className="size-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          disabled={conBusy}
+                          onClick={() => void removeConstraint(c)}
+                        >
+                          <Trash2Icon className="size-3.5 text-red-500" />
+                        </Button>
+                      </div>
+                    ),
+                  )}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">{t("constraints.empty")}</p>
+              )}
+            </CardContent>
+          </Card>
+          {/* 测试范围既是覆盖率分母，也是授权边界，可手工添加、删除。 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ShieldCheckIcon className="size-4 text-emerald-500" /> {t("scope.title")}
+                <span className="font-normal text-muted-foreground text-xs">
+                  {t("scope.hint", { count: scope.length })}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {/* 添加表单。 */}
+              <div className="flex flex-wrap items-center gap-2">
+                <NativeSelect
+                  size="sm"
+                  value={scopeKind}
+                  onChange={(e) => setScopeKind(e.target.value as TaskScopeRow["kind"])}
+                >
+                  <NativeSelectOption value="root_domain">{t("scope.kind.root_domain")}</NativeSelectOption>
+                  <NativeSelectOption value="subdomain">{t("scope.kind.subdomain")}</NativeSelectOption>
+                  <NativeSelectOption value="ip">{t("scope.kind.ip")}</NativeSelectOption>
+                  <NativeSelectOption value="cidr">{t("scope.kind.cidr")}</NativeSelectOption>
+                  <NativeSelectOption value="icp">{t("scope.kind.icp")}</NativeSelectOption>
+                  <NativeSelectOption value="keyword">{t("scope.kind.keyword")}</NativeSelectOption>
+                  <NativeSelectOption value="company">{t("scope.kind.company")}</NativeSelectOption>
+                </NativeSelect>
+                <Input
+                  className="h-7 w-56 text-sm"
+                  placeholder={t(
+                    (
+                      {
+                        company: "scope.placeholder.company",
+                        ip: "scope.placeholder.ipCidr",
+                        cidr: "scope.placeholder.ipCidr",
+                        icp: "scope.placeholder.icp",
+                        keyword: "scope.placeholder.keyword",
+                        root_domain: "scope.placeholder.domain",
+                        subdomain: "scope.placeholder.domain",
+                      } as const
+                    )[scopeKind],
+                  )}
+                  value={scopeValueInput}
+                  onChange={(e) => setScopeValueInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void addScope();
+                  }}
+                  disabled={scopeBusy}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={scopeBusy || !scopeValueInput.trim()}
+                  onClick={() => void addScope()}
+                >
+                  <PlusIcon className="size-3.5" /> {t("add")}
+                </Button>
+                {scopeErr && <span className="text-red-500 text-xs">{scopeErr}</span>}
+              </div>
+              {/* 范围列表。 */}
+              {scope.length > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  {scope.map((row) => (
+                    <div key={row.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm">
+                      <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs">
+                        {t(`scope.kind.${row.kind}`)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                        {scopeValue(row, (id) => t("scope.companyFallback", { id }))}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground text-xs">{t(`scope.source.${row.source}`)}</span>
+                      {row.task_id.toString() === taskId ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 shrink-0 px-1.5"
+                          onClick={() => void removeScope(row)}
+                        >
+                          <Trash2Icon className="size-3.5 text-red-500" />
+                        </Button>
+                      ) : (
+                        <span className="shrink-0 text-muted-foreground text-xs">{t("scope.inherited")}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">{t("scope.empty")}</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
+        <div className="flex flex-col gap-4 xl:col-span-5">
+          <TaskInterceptRulesCard taskId={taskId} />
+        </div>
+        <div className="flex flex-col gap-4 xl:col-span-7">
+          {/* LLM token 用量按模型分组，来自 llm_usage 计量账本，不依赖是否开启 LLM 录制。 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <CoinsIcon className="size-4 text-amber-500" /> {t("tokens.title")}
+                <span className="font-normal text-muted-foreground text-xs">
+                  {t("tokens.hint", { calls: tokenTotals.calls })}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {/* 任务级 Token 预算:按 llm_usage 累计 input+output 计量,与后端预算闸同口径;
+              达到预算时后端自动暂停任务。这里的编辑是「调高预算后恢复」的回环入口,0=不限。 */}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border bg-muted/40 px-3 py-2">
+                <span className="text-muted-foreground text-sm">{t("tokens.budgetLabel")}</span>
+                {budgetEditing ? (
+                  <>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      autoFocus
+                      className="h-7 w-28 text-sm"
+                      value={budgetInput}
+                      disabled={budgetSaving}
+                      onChange={(e) => setBudgetInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void saveBudget();
+                        if (e.key === "Escape") setBudgetEditing(false);
+                      }}
+                    />
+                    <span className="text-muted-foreground text-xs">k</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      disabled={budgetSaving}
+                      onClick={() => void saveBudget()}
+                    >
+                      <CheckIcon className="size-3.5" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7"
+                      disabled={budgetSaving}
+                      onClick={() => setBudgetEditing(false)}
+                    >
+                      <XIcon className="size-3.5" />
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-sm tabular-nums">
+                      {budget > 0 ? fmtTokens(budget) : t("tokens.budgetUnlimited")}
+                    </span>
+                    {budget > 0 && (
+                      <span
+                        className={
+                          budgetPct >= 100
+                            ? "text-destructive text-xs tabular-nums"
+                            : "text-muted-foreground text-xs tabular-nums"
+                        }
+                      >
+                        {t("tokens.budgetUsage", { used: fmtTokens(budgetUsed), pct: budgetPct })}
+                      </span>
+                    )}
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={startBudgetEdit}>
+                      <PencilIcon className="size-3.5" /> {t("tokens.budgetEdit")}
+                    </Button>
+                  </>
+                )}
+              </div>
+              {modelTokens.length > 0 || workerTokens.length > 0 ? (
+                <>
+                  {modelTokens.length > 0 && (
+                    <>
+                      {/* 总计概览。 */}
+                      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+                        <span className="tabular-nums">
+                          <span className="text-muted-foreground">{t("tokens.input")} </span>
+                          <span className="font-semibold">{fmtTokens(tokenTotals.input)}</span>
+                        </span>
+                        <span className="tabular-nums">
+                          <span className="text-muted-foreground">{t("tokens.output")} </span>
+                          <span className="font-semibold">{fmtTokens(tokenTotals.output)}</span>
+                        </span>
+                        <span className="tabular-nums">
+                          <span className="text-muted-foreground">{t("tokens.cacheRead")} </span>
+                          <span className="font-semibold">{fmtTokens(tokenTotals.cacheRead)}</span>
+                        </span>
+                        <span className="tabular-nums">
+                          <span className="text-muted-foreground">{t("tokens.cacheHitRate")} </span>
+                          <span className="font-semibold text-emerald-500">
+                            {cacheHitRate(tokenTotals.cacheRead, tokenTotals.input)}
+                          </span>
+                        </span>
+                        {/* 费用(估算)：读时按模型价格表计算，未配价格表/未命中时不显示。 */}
+                        {modelCostTotal > 0 && (
+                          <span className="tabular-nums">
+                            <span className="text-muted-foreground">{t("tokens.costEstimate")} </span>
+                            <span className="font-semibold text-amber-600">{fmtCost(modelCostTotal)}</span>
+                          </span>
+                        )}
+                      </div>
+                      {/* 按模型明细。 */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b text-left text-muted-foreground text-xs">
+                              <th className="py-1.5 pr-3 font-medium">{t("tokens.colModel")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colCalls")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.input")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.output")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.cacheRead")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colHitRate")}</th>
+                              {showModelCost && (
+                                <th className="py-1.5 text-right font-medium">{t("tokens.colCost")}</th>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {modelTokens.map((m) => (
+                              <tr key={m.model} className="border-b last:border-0">
+                                <td className="max-w-[16rem] truncate py-1.5 pr-3 font-mono text-xs" title={m.model}>
+                                  {m.model}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">{m.calls}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.input_tokens)}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.output_tokens)}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">
+                                  {fmtTokens(m.cache_read_tokens)}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right text-emerald-500 tabular-nums">
+                                  {cacheHitRate(m.cache_read_tokens, m.input_tokens)}
+                                </td>
+                                {showModelCost && (
+                                  <td className="py-1.5 text-right tabular-nums">
+                                    {typeof m.cost === "number" && m.cost > 0 ? fmtCost(m.cost) : "-"}
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                  {/* 按角色(agent 泳道)明细:角色可被单独绑定模型,这一维回答「谁在消耗」。 */}
+                  {workerTokens.length > 0 && (
+                    <div className="grid gap-2">
+                      <p className="text-muted-foreground text-xs">
+                        {t("tokens.byWorkerTitle")} <span className="opacity-70">{t("tokens.byWorkerHint")}</span>
+                      </p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b text-left text-muted-foreground text-xs">
+                              <th className="py-1.5 pr-3 font-medium">{t("tokens.colWorker")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.colCalls")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.input")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.output")}</th>
+                              <th className="py-1.5 pr-3 text-right font-medium">{t("tokens.cacheRead")}</th>
+                              <th className="py-1.5 text-right font-medium">{t("tokens.colHitRate")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {workerTokens.map((w) => (
+                              <tr key={w.worker} className="border-b last:border-0">
+                                <td className="py-1.5 pr-3 font-mono text-xs">{w.worker}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">{w.calls}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(w.input_tokens)}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(w.output_tokens)}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">
+                                  {fmtTokens(w.cache_read_tokens)}
+                                </td>
+                                <td className="py-1.5 text-right text-emerald-500 tabular-nums">
+                                  {cacheHitRate(w.cache_read_tokens, w.input_tokens)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-muted-foreground text-sm">{t("tokens.empty")}</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );
@@ -1369,7 +1391,7 @@ function TaskInterceptRulesCard({ taskId }: { taskId: string }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <ShieldCheckIcon className="size-4 text-sky-500" /> {t("rule.title")}
-          <span className="text-muted-foreground text-xs font-normal">{t("rule.hint", { count: rules.length })}</span>
+          <span className="font-normal text-muted-foreground text-xs">{t("rule.hint", { count: rules.length })}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -1406,7 +1428,7 @@ function TaskInterceptRulesCard({ taskId }: { taskId: string }) {
           <Button size="sm" variant="outline" disabled={busy || !newPattern.trim()} onClick={() => void add()}>
             <PlusIcon className="size-3.5" /> {t("add")}
           </Button>
-          {err && <span className="text-xs text-red-500">{err}</span>}
+          {err && <span className="text-red-500 text-xs">{err}</span>}
         </div>
         {/* 规则列表。 */}
         {rules.length > 0 ? (
@@ -1481,10 +1503,10 @@ function TaskInterceptRulesCard({ taskId }: { taskId: string }) {
                   >
                     {r.action === "allow" ? t("rule.allow") : t("rule.block")}
                   </span>
-                  <span className="text-muted-foreground shrink-0 text-xs">{t(`rule.kind.${r.kind}`)}</span>
-                  <code className="bg-muted min-w-0 flex-1 truncate rounded px-1.5 py-0.5 text-xs">{r.pattern}</code>
+                  <span className="shrink-0 text-muted-foreground text-xs">{t(`rule.kind.${r.kind}`)}</span>
+                  <code className="min-w-0 flex-1 truncate rounded bg-muted px-1.5 py-0.5 text-xs">{r.pattern}</code>
                   {r.note && (
-                    <span className="text-muted-foreground max-w-[120px] shrink-0 truncate text-xs">{r.note}</span>
+                    <span className="max-w-[120px] shrink-0 truncate text-muted-foreground text-xs">{r.note}</span>
                   )}
                   <Switch checked={r.enabled} onCheckedChange={() => void toggle(r)} />
                   <Button

@@ -336,7 +336,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 1. **完整态势已附在本提示下方**（graph_overview 的注入紧凑版：列表截为最新一窗、正文有上限，完整内容随时按需调工具）：task（原始标题+目标/根节点）、资产计数、goals+状态、open/running/recent_done 意图、sites_without_endpoints（无端点的站点，提示可能待探的方向）、facts（探索事实数，与漏洞是两类）、recent_facts（{id,summary,confidence?}）。
    - **范围**：探索节点（goals/意图/facts/findings）只含本任务；**资产图全局共享**（多任务同一份，资产计数是全局在范围内的、非本任务独有）——出现非本任务相关的资产时忽略。
    - **血缘**：每个意图带 parents（上游：派生自哪些事实/意图）和 yields（下游：产生了哪些事实/发现），recent_facts 每条带 from_intent；据此理解"哪些事实来自哪个方向、能否综合出新方向"。
-   - **否定/存疑观察**（recent_facts 里"端口关闭/不可注入"等）是 worker 的观察、不是定论：采信前先 node_detail(id) 看 evidence——evidence 扎实、confidence=observed 且手段已穷尽的才视为该方向暂时封住；evidence 缺失、只是"看起来像/只探一次"、或 confidence=inferred 的，按【尚未探明】处理，若在范围内且无其它意图覆盖，默认派一条复核意图去证实或推翻（**同一否定方向至多复核一次**；复核后仍为否定、且证据合理，就尊重该结论、不再派）。
+   - **否定/存疑观察与止损**：采信前先 node_detail(id) 核对原始 evidence。重复 400/403/422/500、固定长度或未命中仅说明当前方法未验证假设，不能证明具体技术栈、ORM、全局防护或漏洞不存在。记录已测上下文、观察和未验证范围；机制解释标为 inferred。没有新证据时不要重复派发同类低收益意图，必要时在授权范围内采用其他方法。tactical_kb 仅提供真实 mode 的只读历史检索与本地静态经验卡片，不是在线全球知识库。
    - **要更深细节才按需调**：list_facts（分页，最新在前，默认 20，可 q 过滤、before 翻页，带 total/has_more）、list_findings（全部漏洞）、node_detail(id)（完整证据/详情；列表/recent_facts 只给摘要）、list_assets（pull：q 搜索、type/company_id/task_id 过滤、分页，或 id/ids 直取）、asset_neighbors。资产全局共享，别默认拉全量。
 
 2. **判目标（核心职责）**：goals 字段已含目标与状态；对已被某发现/事实证明的未达成目标，调 prove_goal(goal_id, evidence_id, reason) 标 met。**当你标记的恰是最后一个未完成目标时，系统自动判定整个任务完成**——收官只由逐个 prove_goal 驱动，没有别的"一键完成"手段。
@@ -360,7 +360,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
    **串行利用链：分步派，别拆成并行。** 强依赖串行链（①→②→③，后一步依赖前一步的实际产出）：不要一次性并行下发（下游拿不到还不存在的前置只会重复/空转）；用 TodoWrite 把整条链记成待办（每步一条），本轮只派"前置已满足"的那步（通常第一步），待它产出 fact 后下次唤醒（提示会带上待办清单）再派下一步并把已满足的标 completed。"同一件事"别拆两条（"确认触发点"和"触发触发点"是同一步）；只有【平行、互不依赖】的维度（如枚举多个不相关端点）才用多意图并行。
 
 5. **提交**：用【一次】add_intent 批量提交筛出的新方向（intents 数组，最多 4 个最高价值的，不要逐条多次调）：
-   - **summary**：一句话自然语言描述该方向（测试目标完整地址 + 做什么 + 为什么），不套固定分类；去重主要靠它与已有意图比对。
+   - **summary**：一句话自然语言描述该方向（测试目标完整地址 + 做什么 + 为什么 + **建议调用的 Skill/MCP**，例如「调用 Skill(api-recon) 枚举 ...」「调用 Skill(web-vuln-tactics) 验证 ...」「调用 Skill(playwright-cli) / Playwright MCP 渲染 ...」「调用 Skill(scopesentry-mcp) 拉取 ...」），不套固定分类；去重主要靠它与已有意图比对。
    - **asset_ids**：本方向要测试/攻击的目标资产 id（尽量传，0/1/多个，来自 list_assets）——只要方向围绕具体资产（站点/接口/参数/主机）就务必传，用于覆盖去重、连入资产链路，跨多资产就都传；纯全局侦察无具体资产才留空。
    - **parent_ids**：本方向由哪些上游节点综合得出（可选，0/1/多个）——多个事实结合产生一个意图就都传，派生自某上游意图/发现也传其 id，顶层全新方向留空。
 
@@ -401,7 +401,11 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
 	base := append(tsx.DropCoverageTools(tsx.PlannerTools()), actool.DefaultTools()...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
+	isRE := softwareRE(ts)
 	tools, def, cleanup := AugmentTools(ctx, "planner", base)
+	if isRE {
+		tools, def = softwareRETools(tools, def)
+	}
 	defer cleanup()
 	// 关键态势（刚完成的意图 + 预取的完整图）改放【本轮 user 输入】(见下方 input)，system
 	// 只留静态规划正文。move-out 让 system 每轮稳定、更利于缓存；代价是若单轮变长，态势可能
@@ -418,12 +422,23 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	taskDir := ensureRunDir(p.workDir, taskID, 0)
 	ctx = intercept.WithReviewContext(ctx, taskDir, intercept.ReviewBackground{})
 	sysBody := plannerSystem(goal, p.workDir, taskDir)
+	if isRE {
+		sysBody = softwareREPlanner + "\n\n任务目标：" + goal + softwareREArtifactSpec(taskDir) + langDirective(resolveOutputLang())
+	}
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
 	}
 	// 共享环境上下文（批次 6，与 worker 同一份探测快照）。
 	if brief := p.envBrief(); brief != "" {
 		sysBody += "\n\n" + brief
+	}
+	if hint := func() string {
+		if isRE {
+			return softwareREHint()
+		}
+		return BuildTacticalRoutingHint(goal+"\n"+situational, tools, def)
+	}(); hint != "" {
+		sysBody += "\n\n" + hint
 	}
 	system, boundary := deferredSystem(sysBody, def)
 	// planner 无自身墙钟预算;有 deadline 时把 MaxDuration 夹逼到剩余,让在跑的规划轮在

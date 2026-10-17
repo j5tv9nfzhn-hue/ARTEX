@@ -40,6 +40,7 @@ func jsonResult(v any) (actool.Result, error) {
 func (s *Server) hostTools() ([]actool.CoreTool, map[string][]string) {
 	tools := append(s.m.HostTools(), s.orchestrationTools()...)
 	tools = append(tools, s.findingRetestTools()...)
+	tools = append(tools, s.softwareAnalysisTools()...)
 	tools = append(tools, s.platformTools()...) // 平台操作工具(建改 skill/工具/MCP，给 Auto 用)
 	custom, err := s.customTools()
 	if err != nil {
@@ -242,6 +243,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 	return wrTool("spawn_task",
 		"新建一个子任务并启动探索引擎，返回 task_id。用于把一件事(如一道题/一个目标)派成独立任务。parent_ref 可选：填当前编排关联的父任务 id 做父子关联。",
 		objSchema(map[string]any{
+			"analysis_domain":        map[string]any{"type": "string", "enum": []string{"web_security", "software_re"}, "description": "任务类型；省略时继承父任务，无父任务则为 web_security"},
 			"description":            strParam("任务描述(简短标题)"),
 			"goal":                   strParam("任务目标(要达成什么)"),
 			"parent_ref":             strParam("可选：父任务 id(做父子关联)"),
@@ -253,6 +255,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 		}, "description", "goal"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
+				AnalysisDomain       string          `json:"analysis_domain"`
 				Description          string          `json:"description"`
 				Goal                 string          `json:"goal"`
 				ParentRef            string          `json:"parent_ref"`
@@ -262,7 +265,19 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 				PlanHeartbeatSeconds int             `json:"plan_heartbeat_seconds"`
 				SeedFirstIntent      bool            `json:"seed_first_intent"`
 			}
-			_ = json.Unmarshal(in, &a)
+			if err := json.Unmarshal(in, &a); err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			if a.AnalysisDomain == "" && a.ParentRef != "" {
+				if parent, ok := s.m.Task(a.ParentRef); ok {
+					a.AnalysisDomain = parent.AnalysisDomain
+				}
+			}
+			domain, err := db.NormalizeAnalysisDomain(a.AnalysisDomain)
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			a.AnalysisDomain = domain
 			if strings.TrimSpace(a.Description) == "" {
 				a.Description = "未命名任务"
 			}
@@ -306,6 +321,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 				llmIDs = []int64{*pin}
 			}
 			t, err := s.m.CreateTaskWithOptions(a.Description, a.Goal, db.TaskCreateOptions{
+				AnalysisDomain:       a.AnalysisDomain,
 				SourceTaskIDs:        sourceIDs,
 				LLMProfileIDs:        llmIDs,
 				TimeoutSeconds:       a.TimeoutSeconds,
@@ -476,6 +492,13 @@ func (s *Server) deriveTaskStatus(t *Task) string {
 // are bindable per-agent (default: bound to nobody — opt-in for orchestration
 // agents). First-insert only, like the traffic seeds.
 func (s *Server) seedOrchestrationTools() {
+	for _, tool := range s.softwareAnalysisTools() {
+		schema, err := json.Marshal(tool.InputSchema())
+		if err == nil {
+			_ = s.m.pg.SeedTool(tool.Name(), tool.Description(), schema, json.RawMessage(`["worker","planner","mainagent"]`))
+		}
+	}
+
 	// task-op + platform tools default-bind to the built-in Auto agent (它天生用来
 	// 操作平台)。SeedTool 首插入生效;老库已 seed 的行由 seedAutoDefaultBindings 补绑。
 	autoAgents, _ := json.Marshal([]string{"auto"})
@@ -501,9 +524,11 @@ func (s *Server) seedOrchestrationTools() {
 	s.seedAutoReportFindingBinding()
 	s.unbindGoalMetDefault()
 	s.reseedGoalsPrompt()             // goals 提示词加入「抽操作约束」步 → 旧库追加一版新默认(一次性)
-	s.reseedMainAgentPrompt()         // mainagent 提示词加入「目标达成后 add_intent 反问是否建目标」(一次性)
-	s.reseedPlannerPrompt()           // planner 提示词:重写「0 意图」正当理由 + 加量化验收核对(一次性)
-	s.reseedWorkerPrompt()            // worker 提示词:加否定结论证据门槛(一次性)
+	s.reseedMainAgentPrompt()         // mainagent 提示词加入「目标达成后 add_intent 反问是否建目标」与 Skill/MCP 路由(一次性)
+	s.reseedPlannerPrompt()           // planner 提示词:重写「0 意图」正当理由 + 量化验收核对 + Skill/MCP 标注(一次性)
+	s.reseedWorkerPrompt()            // worker 提示词:原生 Go 工具集 + 3-Strike 止损 + Skill/MCP 主动调用(一次性)
+	s.reseedPentestAndAutoPrompts()   // pentest/auto 提示词:加入 Skill/tactical_kb/MCP 主动调用规约(一次性)
+	s.seedDefaultSkillVisibility()    // 7 个内置专家技能包补齐默认 agent 可见性绑定(一次性)
 	s.seedReporterAgent()             // 预置“报告撰写” Agent、工具绑定与 finding 触发器，一次性初始化。
 	s.upgradeReporterTriggerMessage() // 老库补迁移:让 reporter 回传 evidence_version(一次性)
 	s.seedFindingTrafficTools()       // 增加可选证据参数及只读证据工具，保留用户配置
@@ -519,6 +544,23 @@ func (s *Server) seedOrchestrationTools() {
 // reaches an old DB otherwise. Preserves each tool's agent binding + enabled flag.
 // Bump the flag whenever these tools' schemas/descriptions change in code.
 func (s *Server) refreshBuiltinToolSchemas() {
+	// Old default record_fact was worker/mainagent only; extend exactly that default,
+	// without overriding operator-customized bindings or the enabled switch.
+	if _, err := s.m.pg.Exec(`UPDATE tools SET agents=json_insert(agents,'$[#]','planner')
+ WHERE key='record_fact' AND system AND json_array_length(agents)=2
+ AND EXISTS (SELECT 1 FROM json_each(agents) WHERE value='worker')
+ AND EXISTS (SELECT 1 FROM json_each(agents) WHERE value='mainagent')`); err != nil {
+		log.Printf("[tools] planner fact binding migration failed: %v", err)
+	}
+
+	// Additive schema upgrade: preserve operator descriptions, bindings and all existing properties.
+	if _, err := s.m.pg.Exec(`UPDATE tools SET schema=json_set(CASE WHEN json_valid(schema) THEN schema ELSE '{}' END,
+ '$.properties.analysis_domain',json($1)) WHERE key='spawn_task'
+ AND json_type(CASE WHEN json_valid(schema) THEN schema ELSE '{}' END,'$.properties.analysis_domain') IS NULL`,
+		`{"type":"string","enum":["web_security","software_re"],"description":"Task domain; omitted inherits parent, otherwise web_security"}`); err != nil {
+		log.Printf("[tools] spawn_task analysis_domain schema migration failed: %v", err)
+	}
+
 	const flag = "tool_schema_refresh_v7_list_facts_paging"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
@@ -604,7 +646,7 @@ func (s *Server) reseedGoalsPrompt() {
 // 保留在历史里,用户若自定义过可从版本记录找回。settings flag 守卫 → 只做一次。全新库无需处理
 // (SeedPromptIfEmpty 已 seed 最新默认)。与 reseedGoalsPrompt 完全同构。
 func (s *Server) reseedMainAgentPrompt() {
-	const flag = "mainagent_prompt_goalless_intent_v1"
+	const flag = "mainagent_prompt_goalless_intent_v2"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -625,17 +667,17 @@ func (s *Server) reseedMainAgentPrompt() {
 		log.Printf("[prompts] mainagent 提示词重刷为新默认失败: %v", err)
 		return
 	}
-	log.Printf("[prompts] mainagent 提示词已追加新默认版本(加入目标达成后反问建目标,一次性)")
+	log.Printf("[prompts] mainagent 提示词已追加新默认版本(加入目标达成后反问建目标+Skill/MCP路由,一次性)")
 }
 
 // reseedPlannerPrompt 把 planner 提示词刷成【当前代码默认】——默认正文做了精简重构,并把「克制」降级为
 // 仅去重、新增「深度优先于覆盖度」「硬底线:目标未达成且无在跑意图必须产出」、给否定结论复核加上界。
-// 每次默认有实质变更就 bump 下面的 flag(当前 v2)让存量旧库再刷一次。SeedPromptIfEmpty 首插入only,旧库已有版本收不到,故用版本管理
+// 每次默认有实质变更就 bump 下面的 flag(当前 v3)让存量旧库再刷一次。SeedPromptIfEmpty 首插入only,旧库已有版本收不到,故用版本管理
 // 【追加一个新版本】并切过去(ResetPromptToDefault),旧版本仍保留在历史里,用户若自定义过可从版本记录
 // 找回。settings flag 守卫 → 只做一次。全新库无需处理(SeedPromptIfEmpty 已 seed 最新默认)。与
 // reseedGoalsPrompt 完全同构。
 func (s *Server) reseedPlannerPrompt() {
-	const flag = "planner_prompt_compact_realistic_v2"
+	const flag = "planner_prompt_compact_realistic_v3"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -656,16 +698,13 @@ func (s *Server) reseedPlannerPrompt() {
 		log.Printf("[prompts] planner 提示词重刷为新默认失败: %v", err)
 		return
 	}
-	log.Printf("[prompts] planner 提示词已追加新默认版本(精简重构+克制降级去重+深度优先+否定复核上界,一次性)")
+	log.Printf("[prompts] planner 提示词已追加新默认版本(精简重构+技术性证伪上界+Skill/MCP标注,一次性)")
 }
 
-// reseedWorkerPrompt 把 worker 提示词刷成【当前代码默认】——默认正文 record_fact 段删掉了「否定类结论
-// 写观察+试探性读法」整句、并把 confidence(observed/inferred)与「是否穷尽本意图手段」解耦(这些易误导规划者),
-// 同时把 facts 数组分条收紧为「彼此完全独立、无法归并」的极少数例外。bump flag 至 v3 让存量旧库再刷一次。
-// SeedPromptIfEmpty 首插入only,旧库已有版本收不到,故用版本管理【追加一个新版本】并切过去,旧版本仍保留在历史里可找回。
-// settings flag 守卫 → 只做一次。全新库无需处理。与 reseedGoalsPrompt 完全同构。
+// reseedWorkerPrompt 把 worker 提示词刷成【当前代码默认】——包含原生 Go 渗透工具集、3-Strike 止损纪律、
+// 以及第一轮主动触发 Skill / tactical_kb / MCP 扩展工具规约。bump flag 至 v5 让存量旧库再刷一次。
 func (s *Server) reseedWorkerPrompt() {
-	const flag = "worker_prompt_compact_v4"
+	const flag = "worker_prompt_compact_v5"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -686,7 +725,50 @@ func (s *Server) reseedWorkerPrompt() {
 		log.Printf("[prompts] worker 提示词重刷为新默认失败: %v", err)
 		return
 	}
-	log.Printf("[prompts] worker 提示词已追加新默认版本(查上下文段收敛为 list_assets/list_findings,去掉 list_facts/node_detail/asset_neighbors,一次性)")
+	log.Printf("[prompts] worker 提示词已追加新默认版本(原生Go工具集+3-Strike止损+Skill/MCP主动触发,一次性)")
+}
+
+// reseedPentestAndAutoPrompts 把 pentest 与 auto 提示词刷成【当前代码默认】（含第一轮主动触发
+// Skill / tactical_kb / MCP 扩展工具规约），让存量旧库自动升级。
+func (s *Server) reseedPentestAndAutoPrompts() {
+	const flag = "pentest_auto_prompt_skill_mcp_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
+	seeds := agent.BuiltinPromptSeeds()
+	for _, key := range []string{"pentest", "auto"} {
+		a, err := s.m.pg.GetAgentByKey(key)
+		if err != nil || a == nil {
+			continue
+		}
+		tmpl := seeds[key]
+		if tmpl == "" {
+			continue
+		}
+		if cur, err := s.m.pg.CurrentPrompt(a.ID); err == nil && cur == tmpl {
+			continue
+		}
+		if _, err := s.m.pg.ResetPromptToDefault(a.ID, tmpl); err != nil {
+			log.Printf("[prompts] %s 提示词重刷为新默认失败: %v", key, err)
+		}
+	}
+}
+
+// seedDefaultSkillVisibility 为存量旧库补齐 7 个内置专家技能包对核心 Agent 的默认可见性绑定。
+func (s *Server) seedDefaultSkillVisibility() {
+	const flag = "builtin_skills_visibility_v2"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
+	skills := []string{
+		"api-recon", "playwright-cli", "scopesentry-mcp",
+		"web-vuln-tactics", "reverse-engineering", "exploit-kb-patterns", "expert-triage-pivot",
+	}
+	for _, sk := range skills {
+		s.bindDefaultSkillVisibility(sk)
+	}
 }
 
 // reporterToolCallMessage 必须无条件要求先读一次 get_finding_traffic 再写报告。

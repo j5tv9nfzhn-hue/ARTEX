@@ -145,8 +145,12 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 	// prompt never asks for a tool that isn't present, and it owns the output-language
 	// tail last so a DB-edited body can't drop it. Description rides in the user
 	// message, NOT the {{.EngagementDescription}} var, so a prompt can't inject it twice.
-	withScope := as != nil && taskID > 0
+	isRE := softwareRE(ts)
+	withScope := as != nil && taskID > 0 && !isRE
 	sys := goalsSystem(dataDir, withScope)
+	if isRE {
+		sys = softwareREGoals + "\n目标拆解阶段仅提取约束和交付目标，不调用样本检查或执行分析。" + langDirective(resolveOutputLang())
+	}
 	// set_constraints 始终可用(不依赖 asset store):正文已含「先抽操作约束再拆目标」这步
 	// (可在 agent 编辑页改措辞),这里只需接上工具。
 	tools := []actool.CoreTool{tsx.setGoals(), tsx.setConstraints()}

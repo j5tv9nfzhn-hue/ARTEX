@@ -493,6 +493,7 @@ END;
 
 
 CREATE TABLE IF NOT EXISTS tasks (
+    analysis_domain TEXT NOT NULL DEFAULT 'web_security' CHECK (analysis_domain IN ('web_security','software_re')),
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     name           TEXT NOT NULL DEFAULT '',
     category_id    BIGINT REFERENCES task_categories(id) ON DELETE SET NULL,
@@ -1499,3 +1500,118 @@ CREATE TABLE IF NOT EXISTS compaction_state (
     started_at    TIMESTAMP,
     updated_at    TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
 );
+
+
+-- Software reverse-engineering domain. Evidence is retained independently of LLM transcripts.
+CREATE TABLE IF NOT EXISTS re_samples (
+ sha256 TEXT PRIMARY KEY CHECK(length(sha256)=64),
+ name TEXT NOT NULL,
+ size INTEGER NOT NULL CHECK(size>=0 AND size<=134217728),
+ metadata TEXT NOT NULL CHECK(json_valid(metadata)),
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS re_task_samples (
+ task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT,
+ sample_sha TEXT NOT NULL REFERENCES re_samples(sha256) ON DELETE RESTRICT,
+ PRIMARY KEY(task_id,sample_sha)
+);
+CREATE TABLE IF NOT EXISTS re_providers (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ mcp_id INTEGER NOT NULL UNIQUE REFERENCES mcp_servers(id) ON DELETE RESTRICT,
+ name TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('rea','ghidra','ida')),
+ config TEXT NOT NULL CHECK(json_valid(config)),
+ catalog TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(catalog)),
+ catalog_hash TEXT NOT NULL DEFAULT '',
+ discovery TEXT NOT NULL DEFAULT 'unverified',
+ message TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS re_sessions (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT,
+ sample_sha TEXT NOT NULL,
+ provider_id INTEGER NOT NULL REFERENCES re_providers(id) ON DELETE RESTRICT,
+ state TEXT NOT NULL CHECK(state IN ('opening','ready','busy','closing','closed','failed','interrupted')),
+ message TEXT NOT NULL DEFAULT '',
+ snapshot TEXT NOT NULL CHECK(json_valid(snapshot)),
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ UNIQUE(id,sample_sha),
+ FOREIGN KEY(task_id,sample_sha) REFERENCES re_task_samples(task_id,sample_sha) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS re_provider_active_lease ON re_sessions(provider_id)
+ WHERE state IN ('opening','ready','busy','closing','interrupted');
+CREATE INDEX IF NOT EXISTS re_sessions_task ON re_sessions(task_id,id DESC);
+CREATE TABLE IF NOT EXISTS re_evidence (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ session_id INTEGER NOT NULL,
+ sample_sha TEXT NOT NULL,
+ operation TEXT NOT NULL,
+ tool TEXT NOT NULL,
+ input TEXT NOT NULL CHECK(json_valid(input)),
+ output TEXT NOT NULL,
+ output_sha TEXT NOT NULL,
+ retained_sha TEXT NOT NULL,
+ diagnostic TEXT NOT NULL DEFAULT '',
+ is_error BOOLEAN NOT NULL DEFAULT false,
+ truncated BOOLEAN NOT NULL DEFAULT false,
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ UNIQUE(id,session_id),
+ FOREIGN KEY(session_id,sample_sha) REFERENCES re_sessions(id,sample_sha) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS re_evidence_session ON re_evidence(session_id,id DESC);
+CREATE TABLE IF NOT EXISTS re_entities (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ session_id INTEGER NOT NULL,
+ evidence_id INTEGER NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('functions','xrefs','callgraph','types')),
+ identity TEXT NOT NULL,
+ name TEXT NOT NULL DEFAULT '',
+ module TEXT NOT NULL DEFAULT '',
+ address TEXT NOT NULL DEFAULT '',
+ address_kind TEXT NOT NULL DEFAULT '',
+ payload TEXT NOT NULL CHECK(json_valid(payload)),
+ UNIQUE(session_id,kind,identity),
+ FOREIGN KEY(evidence_id,session_id) REFERENCES re_evidence(id,session_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS re_entities_session ON re_entities(session_id,kind,id DESC);
+
+-- Append-only source evidence; derived entities may be refreshed, original records may not.
+CREATE TRIGGER IF NOT EXISTS re_evidence_no_update BEFORE UPDATE ON re_evidence
+BEGIN
+ SELECT RAISE(ABORT,'software evidence is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS re_evidence_no_delete BEFORE DELETE ON re_evidence
+BEGIN
+ SELECT RAISE(ABORT,'software evidence is append-only');
+END;
+
+
+-- Manual-only retention control plane. No startup or timer executes deletion.
+-- Plans contain only bounded ID selections; tokens are persisted as SHA-256.
+CREATE TABLE IF NOT EXISTS retention_plans (
+ token_hash TEXT PRIMARY KEY CHECK(length(token_hash)=64),
+ policy_json TEXT NOT NULL CHECK(json_valid(policy_json)),
+ selections_json TEXT NOT NULL CHECK(json_valid(selections_json)),
+ state TEXT NOT NULL CHECK(state IN ('preview','executing','used','invalidated')),
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ expires_at TEXT NOT NULL,
+ used_at TEXT
+);
+CREATE TABLE IF NOT EXISTS retention_audit (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ action TEXT NOT NULL,
+ plan_hash TEXT NOT NULL DEFAULT '',
+ actor TEXT NOT NULL,
+ detail TEXT NOT NULL CHECK(json_valid(detail))
+);
+CREATE TRIGGER IF NOT EXISTS retention_audit_no_update BEFORE UPDATE ON retention_audit
+BEGIN
+ SELECT RAISE(ABORT,'retention audit is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS retention_audit_no_delete BEFORE DELETE ON retention_audit
+BEGIN
+ SELECT RAISE(ABORT,'retention audit is append-only');
+END;

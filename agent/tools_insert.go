@@ -655,6 +655,10 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.searchAllWorkerTraces(), t.getWorkerTrace(),
 		// node_detail：worker 拿到 intent_id/节点 id 后可查该节点完整详情（配合上面的回看）。
 		t.nodeDetail(),
+		// 原生 Go 渗透测试执行工具：直接在进程内完成 HTTP 发包、受控并发 Fuzz、编解码/加解密/JWT、
+		// 结构化数据提取与端口/Banner 探测，消除临时 .py 脚本与跨平台 Shell 转义开销。
+		t.httpRequestTool(), t.httpFuzzTool(), t.httpSequenceTool(), t.webReconTool(),
+		t.binaryInspectTool(), t.codecCryptoTool(), t.extractDataTool(), t.netProbeTool(), t.dnsProbeTool(), t.tacticalKBTool(),
 		// 以下工具仍【不给】worker，只留给 planner/main（读上下文、跨 work 复盘是规划职责，
 		// worker 只做单条意图的执行与写回）：list_facts / list_companies / list_worker_traces。
 	}
@@ -663,7 +667,7 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 // MainAgentTools returns the human-interface tool set.
 func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 	return []actool.CoreTool{
-		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
+		t.binaryInspectTool(), t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
 		t.expandDigest(), // cold-digest §6.1
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.addHint(), t.addIntent(),
 		// steer_work：人可对某条正在运行的意图(work)实时注入纠偏指令（不打断、不丢进展）。

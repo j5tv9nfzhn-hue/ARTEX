@@ -51,6 +51,7 @@ func (t *Traffic) ExportHosts(hosts []string, dir string) (int64, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "blobs"), 0o700); err != nil {
 		return 0, err
 	}
+	t.waitPendingRecords()
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
 	unique := uniqueArchiveHosts(hosts)

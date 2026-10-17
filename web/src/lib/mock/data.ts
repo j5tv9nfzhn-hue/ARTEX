@@ -3247,7 +3247,17 @@ export function agentDetail(key: string): AgentDetail {
     prompt: `你是 ARTEX 的「${a.name}」。\n目标：{{.Goal}}\n资产概览：{{.AssetSummary}}\n路线提示：{{.RouteHint}}\n请基于以上信息推进探索，并通过工具把结果写回图。`,
     variables: promptVars,
     versions: promptVersions,
-    visibility: { mcp: [1, 2], skill: ["api-recon", "playwright-cli"] },
+    visibility: {
+      mcp: [1, 2],
+      skill: [
+        "api-recon",
+        "playwright-cli",
+        "web-vuln-tactics",
+        "reverse-engineering",
+        "exploit-kb-patterns",
+        "expert-triage-pivot",
+      ],
+    },
     // 可绑定的 LLM 配置候选（「默认模型」下拉 + 备用链编辑器共用），带能力字段。
     llm_profiles: llmProfiles.map((p) => ({
       id: Number(p.id),
@@ -3331,12 +3341,52 @@ export const skills: SkillItem[] = [
     last_used: "2026-08-19T21:40:00Z",
   },
   {
-    name: "scopesentry",
+    name: "scopesentry-mcp",
     description: "从 ScopeSentry 导入资产并合并到公司范围，批量导入资产时使用。",
-    files: ["SKILL.md", "assets/mapping.md"],
+    mcps: ["ScopeSentry"],
+    files: ["SKILL.md"],
     calls: 0,
     tasks: 0,
     usage_agents: [],
+  },
+  {
+    name: "web-vuln-tactics",
+    description:
+      "Web 核心漏洞深度挖掘与绕过专家手册（BOLA/IDOR 越权矩阵、登录/MFA/OAuth 状态机绕过、并发条件竞争 Race）。",
+    files: ["SKILL.md"],
+    calls: 18,
+    tasks: 5,
+    usage_agents: ["worker", "pentest"],
+    last_used: "2026-08-20T10:05:00Z",
+  },
+  {
+    name: "reverse-engineering",
+    description:
+      "全栈逆向工程专家手册（前端 JS/Webpack/SourceMap 拆包、API 签名 sign/nonce/AES 逆向、归档包静态逆向）。",
+    files: ["SKILL.md"],
+    calls: 11,
+    tasks: 4,
+    usage_agents: ["worker", "pentest"],
+    last_used: "2026-08-20T09:45:00Z",
+  },
+  {
+    name: "exploit-kb-patterns",
+    description:
+      "全球高危漏洞报告模式与历史战果复用知识库（HackerOne/Bugcrowd 高危范式与 tactical_kb 跨任务检索规范）。",
+    files: ["SKILL.md"],
+    calls: 15,
+    tasks: 5,
+    usage_agents: ["planner", "worker"],
+    last_used: "2026-08-20T10:12:00Z",
+  },
+  {
+    name: "expert-triage-pivot",
+    description: "专家级假设证伪、3-Strike 死胡同止损与漏洞真实性五问门禁手册。",
+    files: ["SKILL.md"],
+    calls: 9,
+    tasks: 4,
+    usage_agents: ["planner", "worker"],
+    last_used: "2026-08-20T10:15:00Z",
   },
 ];
 

@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Autumn-27/artex/db"
@@ -392,29 +395,45 @@ func (s *Server) runScriptTool(ctx context.Context, key string, execRaw json.Raw
 	return actool.Text(actool.Capture(tc, body)), nil
 }
 
-// execPython writes the code to a temp .py under workDir/.tools, runs it via interp
-// with the params JSON on stdin + scalar params mirrored to TOOL_<NAME> env, and
-// returns combined stdout+stderr (with a timeout/exit note). Standalone + testable.
+// customPythonSem bounds concurrent custom-script Python subprocesses across all
+// workers so bursty script-tool calls cannot saturate CPU cores on 2C/4T hosts.
+var customPythonSem = make(chan struct{}, 4)
+
+// execPython caches the script by content hash under workDir/.tools (avoiding
+// per-call temp-file creation/deletion and Windows Defender real-time scan storms),
+// runs it via interp -B with params JSON on stdin + scalar params mirrored to
+// TOOL_<NAME> env, and returns combined stdout+stderr (with a timeout/exit note).
 func execPython(ctx context.Context, interp, key, code string, params map[string]any, workDir string, sessionEnv []string, timeout time.Duration) (string, error) {
 	toolsDir := filepath.Join(workDir, ".tools")
 	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp(toolsDir, key+"-*.py")
-	if err != nil {
-		return "", err
+	sum := sha256.Sum256([]byte(code))
+	safeKey := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return '_'
+	}, key)
+	if safeKey == "" {
+		safeKey = "script"
 	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if _, err := f.WriteString(code); err != nil {
-		f.Close()
-		return "", err
+	tmp := filepath.Join(toolsDir, fmt.Sprintf("%s-%s.py", safeKey, hex.EncodeToString(sum[:8])))
+	if _, err := os.Stat(tmp); os.IsNotExist(err) {
+		if err := os.WriteFile(tmp, []byte(code), 0o600); err != nil {
+			return "", err
+		}
 	}
-	f.Close()
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	c := exec.CommandContext(runCtx, interp, tmp)
+	select {
+	case customPythonSem <- struct{}{}:
+		defer func() { <-customPythonSem }()
+	case <-runCtx.Done():
+		return "... [超时终止] ...", nil
+	}
+	c := exec.CommandContext(runCtx, interp, "-B", tmp)
 	c.Dir = workDir
 	// UTF-8 默认值放会话 env 之前：会话显式配置同名变量时后者覆盖。
 	c.Env = append(os.Environ(), childUTF8Env()...)
@@ -477,8 +496,10 @@ func (s *Server) runHTTPTool(ctx context.Context, execRaw json.RawMessage, param
 	return actool.Text(actool.Capture(tc, string(b))), nil
 }
 
-// httpProxyTransport builds a Transport for the http tool's proxy config, or nil
-// (direct). use_recording_proxy routes through the recording proxy + trusts its CA.
+var customHTTPTransportPool sync.Map
+
+// httpProxyTransport returns a pooled Transport for the http tool's proxy config,
+// or nil (direct). use_recording_proxy routes through the recording proxy + trusts its CA.
 func (s *Server) httpProxyTransport(spec httpExec) *http.Transport {
 	proxyStr := strings.TrimSpace(spec.Proxy)
 	var caFile string
@@ -491,11 +512,20 @@ func (s *Server) httpProxyTransport(spec httpExec) *http.Transport {
 	if proxyStr == "" {
 		return nil
 	}
+	cacheKey := proxyStr + "|" + caFile
+	if v, ok := customHTTPTransportPool.Load(cacheKey); ok {
+		return v.(*http.Transport)
+	}
 	pu, err := url.Parse(proxyStr)
 	if err != nil {
 		return nil
 	}
-	tr := &http.Transport{Proxy: http.ProxyURL(pu)}
+	tr := &http.Transport{
+		Proxy:               http.ProxyURL(pu),
+		MaxIdleConns:        64,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     30 * time.Second,
+	}
 	if caFile != "" {
 		if pem, err := os.ReadFile(caFile); err == nil {
 			pool := x509.NewCertPool()
@@ -504,7 +534,8 @@ func (s *Server) httpProxyTransport(spec httpExec) *http.Transport {
 			}
 		}
 	}
-	return tr
+	actual, _ := customHTTPTransportPool.LoadOrStore(cacheKey, tr)
+	return actual.(*http.Transport)
 }
 
 // ---------- helpers ----------

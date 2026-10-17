@@ -23,6 +23,7 @@ type DeferredInfo struct {
 	FindingGuidance string            // derived from the final permitted tools, including DB overrides
 	Deferred        []string          // all MCP tool names (schema withheld)
 	GlobalNames     []string          // MCP names to list in the system-prompt block
+	MCPCatalog      string            // structured Chinese descriptions + parameter hints for active global MCP tools
 	Unlock          *actool.UnlockSet // shared call-gate; nil when no MCP tools
 	UnlockSkill     func(skillName string)
 }
@@ -65,8 +66,9 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 		out = ToolResolve(ctx, agentKey, out)
 	}
 	out, def.FindingGuidance = findingWorkflowTools(agentKey, out)
+	lb := newLoopBreaker()
 	for i, t := range out {
-		out[i] = guardPanic(t)
+		out[i] = guardPanicWithBreaker(t, lb)
 	}
 	return out, def, cleanup
 }
@@ -83,7 +85,18 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 //   - 兜底超时：无 deadline 的运行给一个宽松上限，防工具把整条运行钉死。
 func guardPanic(t actool.CoreTool) actool.CoreTool { return &guardedTool{CoreTool: t} }
 
-type guardedTool struct{ actool.CoreTool }
+func guardPanicWithBreaker(t actool.CoreTool, lb *loopBreaker) actool.CoreTool {
+	if g, ok := t.(*guardedTool); ok {
+		// Reusing a tool must not reuse or mutate another run's breaker state.
+		return &guardedTool{CoreTool: g.CoreTool, breaker: lb}
+	}
+	return &guardedTool{CoreTool: t, breaker: lb}
+}
+
+type guardedTool struct {
+	actool.CoreTool
+	breaker *loopBreaker
+}
 
 // toolFallbackTimeout 是无 deadline 运行（没有墙钟预算的对话轮/规划轮）下单个工具
 // 调用的兜底上限。多数工具自身另有更短的超时（Bash 默认 120s、上限 600s；自定义
@@ -120,6 +133,12 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 		callCtx, cancel = context.WithTimeout(ctx, toolFallbackTimeout)
 		defer cancel()
 	}
+	release, blocked := g.breaker.before(callCtx, name, in)
+	if blocked != nil {
+		metrics.ObserveToolError(name, metrics.StageExec)
+		return *blocked, nil
+	}
+	defer release()
 	res, err = g.CoreTool.Call(callCtx, in, tc)
 	if err != nil || res.IsError {
 		stage := metrics.StageExec
@@ -127,6 +146,9 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 			stage = metrics.StageTimeout
 		}
 		metrics.ObserveToolError(name, stage)
+	}
+	if g.breaker != nil {
+		res = g.breaker.inspect(name, in, res, err)
 	}
 	return res, err
 }

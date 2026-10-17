@@ -6,11 +6,14 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import {
+  ActivityIcon,
   ArchiveIcon,
   ArrowLeftIcon,
   BrainIcon,
   CheckIcon,
   CircleAlertIcon,
+  CrosshairIcon,
+  FlameIcon,
   PauseIcon,
   PlayIcon,
   ShieldAlertIcon,
@@ -49,6 +52,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
 import type { LLMProfile, Task } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 import { AssetsTab } from "./_tabs/assets-tab";
 import { BroadcastTab } from "./_tabs/broadcast-tab";
@@ -60,20 +64,22 @@ import { OverviewTab } from "./_tabs/overview-tab";
 import { ReportTab } from "./_tabs/report-tab";
 import { RetestsTab } from "./_tabs/retests-tab";
 import { SessionsTab } from "./_tabs/sessions-tab";
+import { SoftwareRETab } from "./_tabs/software-re-tab";
 import { TimelineTab } from "./_tabs/timeline-tab";
 
-const TAB_VALUES = [
-  "sessions",
-  "overview",
-  "graph",
-  "broadcast",
-  "findings",
-  "retests",
-  "assets",
-  "coverage",
-  "intercept",
-  "timeline",
-  "report",
+// Tactical tab clusters: preserves all 11 tabs and their URL/value contracts while
+// grouping them visually by operational mental model (Command | Findings | Surface | Governance).
+const SOFTWARE_RE_TAB_CLUSTERS = [
+  ["software", "sessions", "overview", "graph"],
+  ["report"],
+  ["intercept", "timeline"],
+] as const;
+
+const TAB_CLUSTERS = [
+  ["sessions", "overview", "graph"],
+  ["findings", "retests", "report"],
+  ["assets", "coverage", "broadcast"],
+  ["intercept", "timeline"],
 ] as const;
 
 function taskProfileIDs(task: Task): string[] {
@@ -169,10 +175,11 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
         <Button
           size="sm"
           variant={exhausted ? "destructive" : "outline"}
+          className="h-7 gap-1.5 rounded-lg px-2.5 text-xs"
           aria-label={t("controlAria")}
           title={currentTitle}
         >
-          <BrainIcon data-icon="inline-start" />
+          <BrainIcon className="size-3.5 text-primary" data-icon="inline-start" />
           <span className="hidden max-w-36 truncate lg:inline">{currentLabel}</span>
           {backupCount > 0 && <span className="hidden text-muted-foreground xl:inline">+{backupCount}</span>}
         </Button>
@@ -206,7 +213,7 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
           <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>
             {t("close")}
           </Button>
-          <Button type="button" size="sm" onClick={save} disabled={saving}>
+          <Button type="button" size="sm" onClick={() => void save()} disabled={saving}>
             {saving && <Spinner data-icon="inline-start" />}
             {saveLabel}
           </Button>
@@ -248,10 +255,10 @@ function TaskDetailInner() {
           // Polling is best-effort; the next interval retries automatically.
         });
     void load();
-    const t = setInterval(load, 5000);
+    const timer = setInterval(load, 5000);
     return () => {
       alive = false;
-      clearInterval(t);
+      clearInterval(timer);
     };
   }, [id]);
 
@@ -260,9 +267,9 @@ function TaskDetailInner() {
     if (taskLoadInFlight.current === id) return;
     taskLoadInFlight.current = id;
     Promise.all([api.task(id), api.stats(id).catch(() => null)])
-      .then(([task, s]) => {
+      .then(([taskResp, s]) => {
         if (taskLoadInFlight.current !== id) return;
-        const base = { ...task };
+        const base = { ...taskResp };
         const at = s?.active_task;
         if (at) {
           base.in_flight = at.in_flight;
@@ -351,43 +358,117 @@ function TaskDetailInner() {
     controlIcon = <PlayIcon data-icon="inline-start" />;
     controlLabel = t("control.resume");
   }
+
+  const totalFindings =
+    (task.findings?.critical ?? 0) +
+    (task.findings?.high ?? 0) +
+    (task.findings?.medium ?? 0) +
+    (task.findings?.low ?? 0);
+  const inFlightCount = task.in_flight ?? 0;
+  const goalsTotal = task.goals_total ?? 0;
+  const goalsMet = task.goals_met ?? 0;
+
   const archiveTrigger = (
     <Button
       size="icon-sm"
       variant="ghost"
+      className="size-7"
       disabled={!canArchive || archiving}
       aria-label={canArchive ? t("archive.triggerAria") : archiveDisabledReason}
     >
-      {archiving ? <Spinner /> : <ArchiveIcon />}
+      {archiving ? <Spinner /> : <ArchiveIcon className="size-3.5" />}
     </Button>
   );
 
   return (
     <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col gap-0">
-      {/* Top fixed area */}
-      <header className="sticky top-0 z-10 flex flex-col gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur lg:px-6">
-        <div className="flex items-center gap-2">
+      {task.analysis_domain === "software_re" && (
+        <Alert className="rounded-none border-x-0 border-t-0">
+          <BrainIcon className="size-4" />
+          <AlertTitle>{t("analysisDomain.title")}</AlertTitle>
+          <AlertDescription>{t("analysisDomain.hint")}</AlertDescription>
+        </Alert>
+      )}
+      {/* Unified Mission Control Header */}
+      <header className="sticky top-0 z-10 flex flex-col gap-2 border-border/80 border-b bg-background/90 px-4 py-2 backdrop-blur-md lg:px-6">
+        <div className="flex flex-wrap items-center gap-2">
           <SidebarTrigger className="-ml-1" />
-          <Button asChild variant="ghost" size="icon" className="size-7">
+          <Button asChild variant="ghost" size="icon-sm" className="size-7 rounded-lg">
             <Link href="/function/tasks">
-              <ArrowLeftIcon />
+              <ArrowLeftIcon className="size-4" />
             </Link>
           </Button>
-          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold" title={task.name || task.description}>
-            {task.name || task.description}
-          </h1>
-          <code className="hidden rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline">
-            {task.id}
-          </code>
-          <Separator orientation="vertical" className="mx-1 hidden h-4 sm:block" />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <h1 className="min-w-0 truncate font-semibold text-sm tracking-tight" title={task.name || task.description}>
+              {task.name || task.description}
+            </h1>
+            <code className="hidden shrink-0 rounded-md border border-border/60 bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline">
+              #{task.id}
+            </code>
+            <Badge variant="outline">
+              {t(task.analysis_domain === "software_re" ? "analysisDomain.software" : "analysisDomain.web")}
+            </Badge>
+            <StatusBadge domain={terminal ? "task" : "engine"} value={terminal ? task.status : engineMode} dot />
+          </div>
+
+          {/* Live Mission Pulse Pills (Quick-Switch Telemetry) */}
+          <div className="hidden items-center gap-1.5 md:flex">
+            {task.analysis_domain !== "software_re" && (
+              <button
+                type="button"
+                onClick={() => setTab("findings")}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 font-medium text-xs tabular-nums transition-colors",
+                  totalFindings > 0
+                    ? "border-rose-500/35 bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 dark:text-rose-400"
+                    : "border-border/70 bg-muted/40 text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+                title={t("tabs.findings")}
+              >
+                <FlameIcon className="size-3.5" />
+                <span>{t("tabs.findings")}</span>
+                <span className="font-semibold">{totalFindings}</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setTab("graph")}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 font-medium text-xs tabular-nums transition-colors",
+                inFlightCount > 0
+                  ? "border-sky-500/35 bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 dark:text-sky-400"
+                  : "border-border/70 bg-muted/40 text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+              title={t("tabs.graph")}
+            >
+              <ActivityIcon className="size-3.5" />
+              <span>Worker</span>
+              <span className="font-semibold">{inFlightCount}</span>
+            </button>
+
+            {goalsTotal > 0 && (
+              <button
+                type="button"
+                onClick={() => setTab("overview")}
+                className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/70 bg-muted/40 px-2.5 font-medium text-muted-foreground text-xs tabular-nums transition-colors hover:bg-accent hover:text-foreground"
+                title={t("tabs.overview")}
+              >
+                <CrosshairIcon className="size-3.5 text-primary" />
+                <span>
+                  {goalsMet}/{goalsTotal}
+                </span>
+              </button>
+            )}
+          </div>
+
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
           <TaskLLMControl task={task} profiles={profiles} onUpdated={load} />
-          <StatusBadge domain={terminal ? "task" : "engine"} value={terminal ? task.status : engineMode} dot />
+
           {interceptPendingCount > 0 && (
-            // 等待审批的显式提示：批次 C 的通知只覆盖"事件发生"那一刻，这里补一条
-            // 常驻状态，点击跳到与通知同一落点的审批记录页。
             <Link
               href="/system/intercept/approvals"
-              className="focus-visible:ring-ring shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2"
+              className="shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title={t("header.pendingApprovalsTitle", { n: interceptPendingCount })}
             >
               <Badge
@@ -395,7 +476,6 @@ function TaskDetailInner() {
                 className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
               >
                 <ShieldAlertIcon className="size-3.5" />
-                {/* 窄屏只留计数，避免头行横向溢出；完整文案在 sm 起展示。 */}
                 <span className="hidden sm:inline">{t("header.pendingApprovals", { n: interceptPendingCount })}</span>
                 <span className="sm:hidden">×{interceptPendingCount}</span>
               </Badge>
@@ -423,31 +503,65 @@ function TaskDetailInner() {
               <TooltipContent>{archiveDisabledReason}</TooltipContent>
             </Tooltip>
           )}
-          <Button size="sm" variant={controlVariant} onClick={togglePause} disabled={terminal}>
+          <Button
+            size="sm"
+            variant={controlVariant}
+            className="h-7 rounded-lg px-2.5 text-xs"
+            onClick={() => void togglePause()}
+            disabled={terminal}
+          >
             {controlIcon}
             {controlLabel}
           </Button>
         </div>
-        <p className="truncate text-xs text-muted-foreground">{task.goal}</p>
-        {/* Tabs */}
-        <div className="no-scrollbar min-w-0 overflow-x-auto">
-          <TabsList variant="default" className="min-w-max">
-            {TAB_VALUES.map((value) => (
-              <TabsTrigger key={value} value={value}>
-                {t(`tabs.${value}`)}
-                {value === "intercept" && interceptPendingCount > 0 && (
-                  <span className="ml-1.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-none text-white">
-                    {interceptPendingCount > 99 ? "99+" : interceptPendingCount}
-                  </span>
-                )}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+
+        {/* Sub-row: Compact target goal pill + Clustered Tactical Tabs */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="no-scrollbar min-w-0 flex-1 overflow-x-auto">
+            <TabsList variant="default" className="h-8 min-w-max gap-0.5 bg-muted/55 p-0.5">
+              {(task.analysis_domain === "software_re" ? SOFTWARE_RE_TAB_CLUSTERS : TAB_CLUSTERS).map(
+                (cluster, clusterIdx) => (
+                  <React.Fragment key={cluster[0]}>
+                    {clusterIdx > 0 && <span className="mx-1 h-4 w-px shrink-0 self-center bg-border/80" />}
+                    {cluster.map((value) => (
+                      <TabsTrigger key={value} value={value} className="h-7 px-2.5 text-xs">
+                        {t(`tabs.${value}`)}
+                        {value === "findings" && totalFindings > 0 && (
+                          <span className="ml-1.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500/20 px-1 font-mono font-semibold text-[10px] text-rose-600 leading-none dark:text-rose-400">
+                            {totalFindings > 99 ? "99+" : totalFindings}
+                          </span>
+                        )}
+                        {value === "intercept" && interceptPendingCount > 0 && (
+                          <span className="ml-1.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 font-semibold text-[10px] text-white leading-none">
+                            {interceptPendingCount > 99 ? "99+" : interceptPendingCount}
+                          </span>
+                        )}
+                      </TabsTrigger>
+                    ))}
+                  </React.Fragment>
+                ),
+              )}
+            </TabsList>
+          </div>
+          {task.goal && (
+            <div
+              className="hidden max-w-md items-center gap-1.5 truncate rounded-lg border border-border/60 bg-muted/35 px-2.5 py-1 text-muted-foreground text-xs xl:flex"
+              title={task.goal}
+            >
+              <CrosshairIcon className="size-3 shrink-0 text-primary" />
+              <span className="truncate">{task.goal}</span>
+            </div>
+          )}
         </div>
       </header>
 
       {/* Tab content */}
-      <div className="flex-1 p-4 lg:p-6">
+      <div className={cn("flex-1", tab === "sessions" ? "p-2.5 lg:p-4" : "p-4 lg:p-6")}>
+        {task.analysis_domain === "software_re" && (
+          <TabsContent value="software" className="mt-0">
+            <SoftwareRETab key={id} taskId={id} />
+          </TabsContent>
+        )}
         <TabsContent value="sessions" className="mt-0">
           <SessionsTab taskId={id} />
         </TabsContent>
@@ -479,7 +593,7 @@ function TaskDetailInner() {
           <TimelineTab taskId={id} onReverted={load} />
         </TabsContent>
         <TabsContent value="report" className="mt-0">
-          <ReportTab taskId={id} />
+          <ReportTab taskId={id} analysisDomain={task.analysis_domain} />
         </TabsContent>
       </div>
     </Tabs>

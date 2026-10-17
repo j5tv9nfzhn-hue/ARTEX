@@ -1,0 +1,9 @@
+{
+  "name": "artex-official-website",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ARTEX independent static multi-page website. No backend connection.",
+  "scripts": {"preview": "node tools/serve.mjs", "test": "node tests/browser.mjs", "measure": "node tests/measure.mjs"},
+  "devDependencies": {"@playwright/test": "^1.56.0", "@axe-core/playwright": "^4.10.2", "@fontsource-variable/manrope": "^5.2.0", "lighthouse": "12.8.2"}
+}

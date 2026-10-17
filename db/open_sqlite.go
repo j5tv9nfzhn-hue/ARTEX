@@ -107,6 +107,7 @@ var sqliteColumnAdds = []struct {
 	column string
 	alter  string
 }{
+	{"tasks", "analysis_domain", `ALTER TABLE tasks ADD COLUMN analysis_domain TEXT NOT NULL DEFAULT 'web_security' CHECK (analysis_domain IN ('web_security','software_re'))`},
 	{
 		"llm_profiles",
 		"input_modalities",

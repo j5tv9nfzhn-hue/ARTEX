@@ -182,6 +182,7 @@ package_binary() {
     chmod +x "$package_root/start.sh"
   fi
   cp -R skills "$package_root/"
+  rm -f "$package_root/skills/embed.go"
   cp config.example.json "$package_root/"
   if [ -f README.md ]; then cp README.md "$package_root/"; fi
   (cd "$ARTEX_PACKAGE_DIR" && zip -q -r -9 "$(basename "$archive")" "$(basename "$package_root")")
@@ -224,6 +225,12 @@ build_target() {
     ./cmd/artex
 
   compress_binary "$output" "$goos"
+  if [ -d "skills" ]; then
+    out_dir="$(dirname "$output")"
+    rm -rf "$out_dir/skills"
+    cp -R skills "$out_dir/skills"
+    rm -f "$out_dir/skills/embed.go"
+  fi
   if command -v file >/dev/null 2>&1; then file "$output"; fi
   if [ "$ARTEX_PACKAGE" = "1" ]; then package_binary "$output" "$goos" "$goarch"; fi
   ok "编译完成：$output"

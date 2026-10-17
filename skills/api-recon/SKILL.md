@@ -1,6 +1,6 @@
 ---
 name: api-recon
-description: 收集网站API接口时调用该skill。
+description: Web 与前端 API 接口侦察专家规程（全面发现后端 REST/GraphQL 接口、Swagger/OpenAPI 文档、Webpack/Vite 打包路由、隐藏管理端点与参数面）。在需要对目标站点进行接口测绘、枚举 API 路由或分析前端 JS 接口调用时调用。
 ---
 
 # API Recon（前端接口侦察）
@@ -92,14 +92,14 @@ description: 收集网站API接口时调用该skill。
 
 | 步骤 | 必须 | 禁止 |
 |---|---|---|
-| Phase 0 完成后 | 下一条 Bash = `python3 OUTDIR/harvest_static.py <URL> OUTDIR` | curl/grep/Read 主 entry `index-*.js`（通常 >500KB） |
-| 门禁 A | 复制脚本 → 按需小改 → **立刻运行** | 先手工提取 API 再决定是否 harvest |
-| Phase 1 完成前 | `wc -l` 校验产出；404 改 harvest 重试 | 手写 extract 脚本；对未下载 URL 反复 grep |
-| Phase 1b 起 | grep 仅 `OUTDIR/js/*.js` | 用主 bundle 代替 harvest |
+| Phase 0 完成后 | 优先直接调用原生工具 `web_recon(mode="spa_harvest", url="<URL>", outdir="OUTDIR")`（或回退 `harvest_static.py`） | curl/grep/Read 主 entry `index-*.js`（通常 >500KB） |
+| 门禁 A | 优先调原生 `web_recon`（零 Python 子进程开销）；仅特殊非标方言需改正则时复制脚本 | 先手工提取 API 再决定是否 harvest |
+| Phase 1 完成前 | 校验产出计数；404 调整参数重试 | 手写 extract 脚本；对未下载 URL 反复 grep |
+| Phase 1b 起 | 用原生 `Grep` 或 `extract_data` 仅扫 `OUTDIR/js/*.js` | 用主 bundle 代替 harvest |
 
-- ✅ 复制 `harvest_static.py` → （可选）改 regex → **立即运行**
+- ✅ 直接调用原生 `web_recon(mode="spa_harvest", url=..., outdir=...)` → **立即产出全套静态文件**
 - ❌ curl 主 bundle → grep 多次 → 写临时 extract → 最后才 harvest
-- **MPA**：Phase 0 后下一条 Bash = `python3 OUTDIR/spider_mpa.py ...`
+- **MPA**：Phase 0 后直接调用原生 `web_recon(mode="mpa_spider", url="<URL>", outdir="OUTDIR")`（自动产出 `pages.txt`、`forms.json`、`inline_apis.txt`）
 
 ---
 

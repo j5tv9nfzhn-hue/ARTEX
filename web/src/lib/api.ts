@@ -73,6 +73,15 @@ import type {
   NotificationMeta,
   PromptVar,
   PromptVersion,
+  REDataPage,
+  REEntity,
+  REEvidence,
+  REMCPCandidate,
+  REOverview,
+  REProvider,
+  REProviderConfig,
+  RESample,
+  RESession,
   ReliabilityMetrics,
   SessionTokenUsage,
   Settings,
@@ -134,7 +143,7 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
     ...init,
     headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(typeof init?.body === "string" ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers as Record<string, string> | undefined),
     },
@@ -271,6 +280,7 @@ export const api = {
     get<{ tasks: Task[]; active: string }>("/tasks").then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
   task: (id: string) => get<Task>(`/tasks/${encodeURIComponent(id)}`),
   createTask: (input: {
+    analysisDomain?: "web_security" | "software_re";
     name?: string;
     categoryId?: number;
     description: string;
@@ -288,6 +298,7 @@ export const api = {
     interceptRules?: AssetInterceptRuleInput[];
   }) =>
     post<Task>("/tasks", {
+      analysis_domain: input.analysisDomain ?? "web_security",
       name: input.name ?? "",
       category_id: input.categoryId ?? null,
       description: input.description,
@@ -475,6 +486,36 @@ export const api = {
   // 某资产在本任务里关联的意图 / 事实 / 发现（覆盖图节点抽屉用）。
   taskAssetRefs: (id: string, assetId: number) => get<CoverageAssetRefs>(`/tasks/${id}/asset-refs?asset_id=${assetId}`),
 
+  reOverview: (id: string) => get<REOverview>(`/tasks/${encodeURIComponent(id)}/re`),
+  reLibrary: () => get<{ samples: RESample[]; limit: number }>("/re/samples"),
+  reMCPCandidates: () => get<{ servers: REMCPCandidate[] }>("/re/mcp-candidates"),
+  reSaveProvider: (input: { id?: number; mcp_id: number; name: string; kind: string; config: REProviderConfig }) =>
+    post<{ id: number }>("/re/providers", input),
+  reDiscover: (id: number) => post<REProvider>(`/re/providers/${id}/discover`, {}),
+  reUpload: (id: string, file: File) => {
+    const data = new FormData();
+    data.append("file", file);
+    return http<RESample>(`/tasks/${encodeURIComponent(id)}/re/samples`, { method: "POST", body: data });
+  },
+  reAttach: (id: string, sha: string) =>
+    post<{ ok: boolean }>(`/tasks/${encodeURIComponent(id)}/re/attach`, { sample_sha: sha }),
+  reOpen: (id: string, sha: string, provider: number) =>
+    post<RESession>(`/tasks/${encodeURIComponent(id)}/re/sessions`, { sample_sha: sha, provider_id: provider }),
+  reQuery: (id: string, session: number, input: { operation: string; address: string; query: string; limit: number }) =>
+    post<{ evidence_id: number; state: string; is_error: boolean; truncated: boolean; normalized_count: number }>(
+      `/tasks/${encodeURIComponent(id)}/re/sessions/${session}/query`,
+      input,
+    ),
+  reControl: (id: string, session: number, action: "close" | "cancel" | "release", confirmed = false) =>
+    post<{ ok: boolean }>(`/tasks/${encodeURIComponent(id)}/re/sessions/${session}/control`, { action, confirmed }),
+  reData: (id: string, session: number, kind: string, before = 0) =>
+    get<REDataPage<REEntity | REEvidence>>(
+      `/tasks/${encodeURIComponent(id)}/re/sessions/${session}/data?kind=${encodeURIComponent(kind)}&before=${before}`,
+    ),
+  reEvidence: (id: string, evidence: number) =>
+    get<REEvidence>(`/tasks/${encodeURIComponent(id)}/re/evidence/${evidence}`),
+  reObservation: (id: string, evidence: number, summary: string) =>
+    post<{ node_id: number }>(`/tasks/${encodeURIComponent(id)}/re/observations`, { evidence_id: evidence, summary }),
   // ---- workspace file manager (workDir) ----
   workspaceList: (path = "") => get<WorkspaceListing>(`/workspace/list?path=${encodeURIComponent(path)}`),
   workspaceRead: (path: string) => get<WorkspaceFile>(`/workspace/read?path=${encodeURIComponent(path)}`),

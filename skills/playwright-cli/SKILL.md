@@ -1,7 +1,8 @@
 ---
 name: playwright-cli
-description: Automate browser interactions, test web pages and work with Playwright tests.
+description: 浏览器自动化与前端动态交互测试规程（驱动真实无头浏览器完成 SPA 动态渲染、复杂登录态获取、DOM/Cookie/Storage 提取与 XSS/前端状态验证，同时关联解锁 browser MCP 工具）。在静态 HTTP 请求无法渲染页面、需执行浏览器交互或调用 browser MCP 时调用。
 allowed-tools: Bash(playwright-cli:*) Bash(npx:*) Bash(npm:*)
+mcps: [browser]
 ---
 
 # Browser Automation with playwright-cli

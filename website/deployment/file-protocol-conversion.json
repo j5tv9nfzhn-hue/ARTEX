@@ -1,0 +1,222 @@
+{
+  "checked_at": "2026-10-17T13:50:18.810Z",
+  "goal": "官网源码可脱离本地服务直接双击打开（file://），部署行为保持等价",
+  "site_root": "C:\\Users\\Administrator\\Desktop\\ARTEX\\website\\site",
+  "html_files_touched": 11,
+  "content_pages_relinked": 10,
+  "page_depth_attributes": {
+    "index.html": "data-root=\"\"",
+    "一级页面（platform/ 等）": "data-root=\"..\"",
+    "二级页面（platform/network/ 等）": "data-root=\"../..\"",
+    "404.html": "data-root-abs=\"1\"（保留根路径，仅线上未知路由兜底）"
+  },
+  "search_index": {
+    "from": "assets/search.json",
+    "to": "assets/search.js",
+    "entries": 10,
+    "loader": "<script defer> + window.ARTEX_SEARCH（原 fetch 方案在 file:// 受 CORS 限制）"
+  },
+  "changed_files": [
+    {
+      "path": "404.html",
+      "before_sha256": "391ed1c97de7718ee327ad5b48bde2c684d7f6e9127a0ff3c4207377fceb6691",
+      "after_sha256": "331240434d17727af26b823e4406601a7bafbc22c73fb450ac644f3886cd213b"
+    },
+    {
+      "path": "architecture/index.html",
+      "before_sha256": "a10d9029f7e128e295c891f3097dcbaba4df12d678060956d6bcbd65696ead7f",
+      "after_sha256": "ed16861ebb33247dac216e71ca02828c0189f8603d77279d028ef2bb4885547e"
+    },
+    {
+      "path": "assets/site.css",
+      "before_sha256": "320b815e7cd6f237bf32b5636713e6764b00c483a4e56e3ca175d88fb626aba0",
+      "after_sha256": "b179a436512f63f542fda3e9a5ee993c0d7aff7d8e7842a47c0a5cdc0ed86e08"
+    },
+    {
+      "path": "assets/site.js",
+      "before_sha256": "8eb52cee899d72a77a0a7fa338f7c4089418d4f6ded2c70214bcf6f112c60c88",
+      "after_sha256": "4398acd6473c1cc90b4eed29849a9a8f263a699c3397b6a04fb392b75ee949b2"
+    },
+    {
+      "path": "benchmarks/index.html",
+      "before_sha256": "1c437412a35750dd52f3876a90ffc3475db148d620842db6a0e8c962f189e728",
+      "after_sha256": "d9a2c18fa0eb0a002d9e4c65e1658f7be9e9d9122718317146d8dcd95e3b324b"
+    },
+    {
+      "path": "docs/index.html",
+      "before_sha256": "960e69577eb822cbbb04d0859cc196f5099a971c7c552cbe64a311f8cfa78b36",
+      "after_sha256": "16b47fe833a1d7c0c6f8a9694d738f00b5304a45b6fd0b0d8e4cee9d2fb9643a"
+    },
+    {
+      "path": "index.html",
+      "before_sha256": "1e017864f688431feaba06b930c90596feeb2730b42f514efb153dae1e3ef0c7",
+      "after_sha256": "3cbd67920c8e05fc2038d591968a53a49b47b0e4e704a8604bdf2cd419083b39"
+    },
+    {
+      "path": "platform/index.html",
+      "before_sha256": "02706d48090f0dce4af8b12c0a6894cd5d3cd4acd56fb1d098d1694e21b49f75",
+      "after_sha256": "15e4cdeeffb551eebe04ae7b404c49c06d0875986cc100c76b3872565c70812b"
+    },
+    {
+      "path": "platform/network/index.html",
+      "before_sha256": "2fd7a7f4da3d64caab81665cea0767ccdebe4e3350796f52ea2a5964f672ef81",
+      "after_sha256": "a47707aa72a1eee3cdde55b79b9328fc9c4dd74b92bb9c76d4b41635a6597f18"
+    },
+    {
+      "path": "platform/reverse/index.html",
+      "before_sha256": "4c23558a5bed2857c2535a2e13b4af0b7c7692e22e0fac3ad7480deef09fcab6",
+      "after_sha256": "6cbabf3d4541d49dc51c5a6d64ddf6ddb669de4eb34cdb443f299ce73160f945"
+    },
+    {
+      "path": "trust/index.html",
+      "before_sha256": "dd0e828b63783ce689dae1592ae33b682b38c51f6606d4003d9141ae6e44cea8",
+      "after_sha256": "dd198d5f97396a14954b7815d16379a6ed77ef9fb5f796c3088441c4d2c6f010"
+    },
+    {
+      "path": "updates/index.html",
+      "before_sha256": "0c77e0e61091979da029e270c2248eeff9967fe1a15ea4b9351884637e08e271",
+      "after_sha256": "2f93ed638a1c8b00740ddf5e793a9ffea9bdba60d691111580e6f25852a88d7f"
+    },
+    {
+      "path": "workflows/index.html",
+      "before_sha256": "2ac121d9a81de900fe19d48e1391be9820506ea2f75b01e338330860122ca469",
+      "after_sha256": "aead02b7f6a758c3d8cc88d30081ecf59a1e50396816cc50fe622a094c93fc18"
+    }
+  ],
+  "added_files": [
+    "assets/search.js"
+  ],
+  "removed_files": [
+    "assets/search.json"
+  ],
+  "unchanged_files": 15,
+  "deployment_delta_vs_published": [
+    {
+      "path": "404.html",
+      "published_sha256": "391ed1c97de7718ee327ad5b48bde2c684d7f6e9127a0ff3c4207377fceb6691",
+      "current_sha256": "331240434d17727af26b823e4406601a7bafbc22c73fb450ac644f3886cd213b"
+    },
+    {
+      "path": "architecture/index.html",
+      "published_sha256": "a10d9029f7e128e295c891f3097dcbaba4df12d678060956d6bcbd65696ead7f",
+      "current_sha256": "ed16861ebb33247dac216e71ca02828c0189f8603d77279d028ef2bb4885547e"
+    },
+    {
+      "path": "assets/search.json",
+      "published_sha256": "5a25bbf1a17139a11d140186804502e13d7582221c5f0ac654b786ab01e742cb",
+      "current_sha256": null
+    },
+    {
+      "path": "assets/site.css",
+      "published_sha256": "320b815e7cd6f237bf32b5636713e6764b00c483a4e56e3ca175d88fb626aba0",
+      "current_sha256": "b179a436512f63f542fda3e9a5ee993c0d7aff7d8e7842a47c0a5cdc0ed86e08"
+    },
+    {
+      "path": "assets/site.js",
+      "published_sha256": "8eb52cee899d72a77a0a7fa338f7c4089418d4f6ded2c70214bcf6f112c60c88",
+      "current_sha256": "4398acd6473c1cc90b4eed29849a9a8f263a699c3397b6a04fb392b75ee949b2"
+    },
+    {
+      "path": "benchmarks/index.html",
+      "published_sha256": "1c437412a35750dd52f3876a90ffc3475db148d620842db6a0e8c962f189e728",
+      "current_sha256": "d9a2c18fa0eb0a002d9e4c65e1658f7be9e9d9122718317146d8dcd95e3b324b"
+    },
+    {
+      "path": "docs/index.html",
+      "published_sha256": "960e69577eb822cbbb04d0859cc196f5099a971c7c552cbe64a311f8cfa78b36",
+      "current_sha256": "16b47fe833a1d7c0c6f8a9694d738f00b5304a45b6fd0b0d8e4cee9d2fb9643a"
+    },
+    {
+      "path": "index.html",
+      "published_sha256": "1e017864f688431feaba06b930c90596feeb2730b42f514efb153dae1e3ef0c7",
+      "current_sha256": "3cbd67920c8e05fc2038d591968a53a49b47b0e4e704a8604bdf2cd419083b39"
+    },
+    {
+      "path": "platform/index.html",
+      "published_sha256": "02706d48090f0dce4af8b12c0a6894cd5d3cd4acd56fb1d098d1694e21b49f75",
+      "current_sha256": "15e4cdeeffb551eebe04ae7b404c49c06d0875986cc100c76b3872565c70812b"
+    },
+    {
+      "path": "platform/network/index.html",
+      "published_sha256": "2fd7a7f4da3d64caab81665cea0767ccdebe4e3350796f52ea2a5964f672ef81",
+      "current_sha256": "a47707aa72a1eee3cdde55b79b9328fc9c4dd74b92bb9c76d4b41635a6597f18"
+    },
+    {
+      "path": "platform/reverse/index.html",
+      "published_sha256": "4c23558a5bed2857c2535a2e13b4af0b7c7692e22e0fac3ad7480deef09fcab6",
+      "current_sha256": "6cbabf3d4541d49dc51c5a6d64ddf6ddb669de4eb34cdb443f299ce73160f945"
+    },
+    {
+      "path": "trust/index.html",
+      "published_sha256": "dd0e828b63783ce689dae1592ae33b682b38c51f6606d4003d9141ae6e44cea8",
+      "current_sha256": "dd198d5f97396a14954b7815d16379a6ed77ef9fb5f796c3088441c4d2c6f010"
+    },
+    {
+      "path": "updates/index.html",
+      "published_sha256": "0c77e0e61091979da029e270c2248eeff9967fe1a15ea4b9351884637e08e271",
+      "current_sha256": "2f93ed638a1c8b00740ddf5e793a9ffea9bdba60d691111580e6f25852a88d7f"
+    },
+    {
+      "path": "workflows/index.html",
+      "published_sha256": "2ac121d9a81de900fe19d48e1391be9820506ea2f75b01e338330860122ca469",
+      "current_sha256": "aead02b7f6a758c3d8cc88d30081ecf59a1e50396816cc50fe622a094c93fc18"
+    },
+    {
+      "path": "assets/search.js",
+      "published_sha256": null,
+      "current_sha256": "95cd7ec5d4cd3378f67879fc5963268009ba98d4aef7fa44a737c298b6f6ed6e"
+    }
+  ],
+  "verification": {
+    "leftover_root_absolute_attrs_in_content_pages": 0,
+    "all_relative_targets_exist": true,
+    "node_check_passed": [
+      "site/assets/site.js",
+      "site/assets/search.js",
+      "site/assets/theme.js",
+      "tools/serve.mjs",
+      "tests/browser.mjs",
+      "tests/measure.mjs"
+    ],
+    "python_ast_deploy_once": true,
+    "http_preview_smoke": "200：/、/platform/、/platform/index.html、/platform/network/、/docs/、/assets/search.js、/assets/site.js、/assets/site.css、/reports/lighthouse-mobile.html；/missing-page/ 返回 404",
+    "file_protocol_chrome_headless": {
+      "browser": "本机 Google Chrome（headless，--dump-dom，默认 file:// 策略）",
+      "home": {
+        "sheets": 1,
+        "bodyBg": "rgb(239, 239, 232)",
+        "theme": "light",
+        "localStorage": "ok",
+        "searchIndex": 10,
+        "dialogOpen": true,
+        "resultCount": 4,
+        "internalLinks": "相对路径（index.html、platform/index.html 等）",
+        "manrope": true
+      },
+      "platform": {
+        "sheets": 1,
+        "root": "..",
+        "searchIndex": 10,
+        "dialogOpen": true,
+        "resultCount": 4,
+        "manrope": true
+      },
+      "note": "探针页为临时文件，验证后已删除；站点保持 29 个文件"
+    }
+  },
+  "untouched": [
+    "site/reports/*（Lighthouse 原始报告）",
+    "canonical / og:url / sitemap（仍指向正式域名）",
+    "_headers / robots.txt / routes.json"
+  ],
+  "notes": [
+    "404.html 保持根路径绝对链接，仅用于线上未知路由兜底；file:// 下请从 site/index.html 进入。",
+    "页脚、导航、正文链接与资源全部改为相对路径；无构建步骤。",
+    "reports/measured-manifest.json（含 site 内副本）记录发布前测量时的文件清单，本次源码变更后已与当前源码不再对应；重测需 npm ci + Playwright。",
+    "未重新部署：线上仍是转换前版本，字节未变化。",
+    "本地未执行 npm ci、构建或完整测试套件；仅做静态校验、HTTP 冒烟与本机 headless Chrome 的 file:// 探针。"
+  ],
+  "redeployed": false,
+  "git_add_commit_push": false,
+  "production_url": "https://artex-official-website.pages.dev/"
+}

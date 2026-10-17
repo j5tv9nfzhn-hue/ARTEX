@@ -503,3 +503,8 @@ flowchart LR
 - 上游演示：[artex-demo.vercel.app](https://artex-demo.vercel.app/)。
 
 上述远端在 2026-10 被记录为无法公开访问；保留链接用于来源归属与历史对照，不保证当前可访问，也不以此断言永久删除。
+
+
+## 独立官网源码
+
+对外静态官网统一维护于 [`website/`](website/README.md)，与产品控制台 `web/` 分离。目录说明、无构建的静态化维护与 Cloudflare 发布边界见[官网维护说明](docs/website-maintenance.md)。

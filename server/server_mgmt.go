@@ -1023,16 +1023,17 @@ func (s *Server) pgSaveMCP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	// On initial add, auto-discover + cache the tool list so the UI shows it right
-	// away (bounded so a slow/broken server can't hang the request). Skipped on
-	// plain updates (e.g. enable toggles) to avoid re-spawning the server each time.
-	if isNew && m.Enabled {
+	// On initial add, or when enabling a server that has no cached tools yet,
+	// auto-discover + cache the tool list so the UI shows it right away.
+	if m.Enabled {
 		m.ID = id
-		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-		if derr := s.discoverAndCacheMCP(ctx, &m); derr != nil {
-			log.Printf("[mcp] %s 添加后工具发现失败: %v", m.Name, derr)
+		if cached, cerr := pg.MCPToolsDetailed(id); isNew || (cerr == nil && len(cached) == 0) {
+			ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+			if derr := s.discoverAndCacheMCP(ctx, &m); derr != nil {
+				log.Printf("[mcp] %s 添加后工具发现失败: %v", m.Name, derr)
+			}
+			cancel()
 		}
-		cancel()
 	}
 	writeJSON(w, 200, map[string]any{"id": id})
 }
@@ -1282,7 +1283,28 @@ func (s *Server) fsCreateSkill(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	s.bindDefaultSkillVisibility(body.Name)
 	writeJSON(w, 201, map[string]any{"name": body.Name})
+}
+
+// bindDefaultSkillVisibility ensures newly created/uploaded skills with zero
+// visibility bindings are bound to core execution/planning agents by default.
+func (s *Server) bindDefaultSkillVisibility(skillName string) {
+	if s == nil || s.m == nil || s.m.pg == nil || skillName == "" {
+		return
+	}
+	if existing, err := s.m.pg.SkillAgents(skillName); err != nil || len(existing) > 0 {
+		return
+	}
+	agents, err := s.m.pg.ListAgents()
+	if err != nil {
+		return
+	}
+	for _, a := range agents {
+		if isDefaultMCPAgent(a.Key) {
+			_ = s.m.pg.ToggleSkillVisibility(a.ID, skillName, true)
+		}
+	}
 }
 
 // fsUpdateSkillMeta rewrites the SKILL.md frontmatter fields that are safe to
@@ -1585,6 +1607,7 @@ func (s *Server) fsUploadSkill(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, errMgmtSkillInstallFail+err.Error())
 		return
 	}
+	s.bindDefaultSkillVisibility(name)
 	writeJSON(w, 201, map[string]any{"name": name, "files": entries})
 }
 

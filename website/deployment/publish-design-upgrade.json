@@ -1,0 +1,31 @@
+{
+  "record": "website-publish-design-upgrade",
+  "event": "官网 v3 升级版首发上线（file:// 转换 + 视觉升级 v3 + 显影优先级修复 + GitHub 仓库入口）",
+  "published_at": "2026-10-17T14:36:44.241Z",
+  "project": "artex-official-website",
+  "branch": "main",
+  "wrangler_version": "4.131.2",
+  "deployment_url": "https://6fae4b04.artex-official-website.pages.dev/",
+  "production_url": "https://artex-official-website.pages.dev/",
+  "authorized_by": "用户指示「部署官网」（2026-10-17）",
+  "upload": {
+    "files": 28,
+    "newly_uploaded": 15,
+    "deduplicated": 13,
+    "headers_file": "单独上传",
+    "deploy_script_exit_code": 0
+  },
+  "hash_basis": "发布字节与 deployment/design-upgrade-2026-10.json 的 after 哈希一致（发布前未再修改 site/）；上一版已发布哈希保留于 deployment/published-file-hashes.json 作为历史基准",
+  "live_checks": {
+    "checked_with": "curl.exe（浏览器 UA，本机直连 Cloudflare；服务器返回 200/404 与响应头正常）",
+    "routes_200": "10 个内容页 + robots.txt + sitemap.xml + 6 个资源文件，共 18 条路由全部 200",
+    "unknown_route": "返回 404 与自定义 404 页面（根路径资源引用正常）",
+    "content_markers": "线上首页与架构页均含 github-button、footer-repo、marquee-track、data-fig；线上 assets/site.css 含 .footer-repo 样式与显影优先级修复（).in{opacity:1）",
+    "headers": "文档响应含 CSP / X-Content-Type-Options / Referrer-Policy / Permissions-Policy；/assets/* 为 public, max-age=3600；/reports/*.html 规范化为无扩展名路径并以附件下载（308 → 200，Content-Disposition: attachment）"
+  },
+  "untouched": "未绑定或修改自定义域名与 DNS；未覆盖既有项目或资源；未部署 ARTEX 后端；源码仓库未提交/推送（推送需先恢复本机代理）",
+  "notes": [
+    "wrangler 输出 git 工作区有未提交改动的警告（仅提示，不影响目录直传部署）",
+    "本机 headless Chromium 对远程 URL 的 dump-dom 输出异常（对 file:// 本地截图不受影响），线上核查改用 curl"
+  ]
+}

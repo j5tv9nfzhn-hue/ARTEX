@@ -191,7 +191,13 @@ ON CONFLICT DO NOTHING`, r.kind, r.pattern, r.note); err != nil {
 // declares `mcps: ScopeSentry`, which only takes effect once it's made visible and
 // that MCP is enabled/configured.
 var builtinSkillVisibility = map[string][]string{
-	"api-recon": {"auto", "pentest", "worker"},
+	"api-recon":           {"auto", "pentest", "worker", "planner", "mainagent"},
+	"playwright-cli":      {"auto", "pentest", "worker", "planner", "mainagent"},
+	"scopesentry-mcp":     {"auto", "pentest", "worker", "planner", "mainagent"},
+	"web-vuln-tactics":    {"auto", "pentest", "worker", "planner", "mainagent"},
+	"reverse-engineering": {"auto", "pentest", "worker", "planner", "mainagent"},
+	"exploit-kb-patterns": {"auto", "pentest", "worker", "planner", "mainagent"},
+	"expert-triage-pivot": {"auto", "pentest", "worker", "planner", "mainagent"},
 }
 
 // seedBuiltinSkillVisibility binds the shipped built-in skills to their default

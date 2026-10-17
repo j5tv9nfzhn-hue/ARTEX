@@ -57,7 +57,8 @@ type Worker struct {
 	model           string
 	workDir         string
 	proxyAddr       string
-	proxyCACert     string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
+	proxyCACert     string // recording proxy's CA cert path (for WebFetch HTTPS verify)
+	trafficStore    TrafficDirectStore
 	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
 	tx              *transcript.Store // raw LLM conversation persistence (nil = off)
 	window          int               // context window in tokens (for compaction)
@@ -165,6 +166,10 @@ func (w *Worker) SetRunTimeout(run time.Duration) {
 	w.runTimeout = run
 }
 
+func (w *Worker) SetTrafficStore(ts TrafficDirectStore) {
+	w.trafficStore = ts
+}
+
 // settleWrapUpPrompt is injected by the SDK settlement phase when a worker hits its
 // turn/time budget: stop probing, write back what was found, then end with a
 // plain-text one-liner (which becomes this run's displayed result).
@@ -248,7 +253,7 @@ const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 **边界（红线）**：
 1. **只做你领到的这一条意图**。**探本意图时若瞥见本意图之外值得深挖的线索**（报错泄露的路径、可能与其它资产联动的点、疑似另一条利用链的入口），**在 fact 的 summary 里点一句交给规划者**。
-2. 初次受阻（payload 被过滤 / 404 / 注入无回显）不代表已探透——把本意图的所有绕过手段走完再输出结论；
+2. **专家定性与 3-Strike 止损铁律（严禁盲目穷举耗尽轮次）**：初次受阻时先根据响应码与报错结构定性后端机制（如 FastAPI 422 string_type 强类型校验、ORM 参数化固定 500、网关统一 401/403）。每个可疑参数/端点最多测试 **3 个正交探针**；若连续 3 次返回同质化负面响应或收到 [⚡ 专家战术熔断提醒]，**必须立即停止同类 Payload 变体**，将防御特征记入 record_fact 并立即切换正交维度（如跨账号越权 http_sequence(mode=\"bola\")、并发竞争 mode=\"race\"）或直接输出证伪结论收尾（快速证伪也是高价值产出）；
 3. 只在授权范围内操作。系统提示顶部若附【操作约束】，那是最高优先级红线：每条命令/探测执行前先自检，违反即不做（哪怕它落在你领到的意图里）。
 
 **边发现边写回**（写进图才算数，脑子/文字里的不算；每得一个结果立刻写，别攒到最后被步数耗尽丢掉）。三种写回，别串图：
@@ -256,6 +261,19 @@ const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 - **探索结论/事实 → record_fact（探索图，传 intent_id）**：都用它。**多个观察汇总成【一条】事实**（summary 一句总结 + detail写对总结的拓展，依靠真实的执行过程），不要一个属性一条、一意图通常只一条，拆碎会让图谱无限膨胀——**默认就写一条，能并进 detail 的都并进去**；仅当确有【彼此完全独立、无法归并】的结论时才用 facts 数组分条，这是极少数例外，不是常规。**只写增量**：只记这次【新得到】的，别把已有事实换措辞重记（只印证已有、无新增就不必记）。**只写真实看到的**：给 evidence（一行：命令+最能证明的一两行输出，简洁，细节在 detail）、标 confidence（observed=直接看到 / inferred=据现象推断）。
 - **确认漏洞 → report_finding（探索图，含 PoC，传 intent_id）**：**只有你本次真实触发过、拿到可复现证据（请求/响应或命令输出）才用**。严禁把"版本/指纹匹配到 CVE""参数看起来可注入""外部漏洞库/更新日志/代码 diff 推断"当已确认，也不要用查 CVE 库或对比补丁版本替代实际触发。触发不了但有嫌疑 → 用 record_fact 记一条 inferred 事实（嫌疑点+为何未触发）交规划者，别硬记成 finding。
 
+**执行工具优先级（原生 Go 工具优先，严禁编写临时 Python 脚本做常规探测）**：
+- **单步 HTTP/HTTPS 发包与上传 → http_request**：直接构造任意方法、Header(含 Host)、Cookie、表单(form)、multipart 文件上传与正则提取，自动落库返回 exchange_id，避免 PowerShell/Bash 引号与 & 截断问题。
+- **多步有状态会话链 / 并发条件竞争 / 时间盲注 / 响应差分 → http_sequence**：多步自动维护 CookieJar 并跨步提取 CSRF/Token 变量替换 {{var}}（mode="chain"）、微秒级同步屏障齐射测试并发条件竞争/双花（mode=\"race\"）、时间盲注基线测速（mode="timing"）、双响应行级差分与相似度对比（mode="diff"），**严禁编写 Python requests.Session / threading.Barrier / time.sleep / difflib 脚本**。
+- **并发目录/参数/IDOR 探测 → http_fuzz**：用 {{FUZZ}} 占位符配合 payloads、wordlist_file 或 range_spec（如 1-500、0-999:1:4）完成受控并发探测与软 404 自动过滤，**严禁编写 Python ThreadPoolExecutor/asyncio/requests 并发爆破脚本**。
+- **SPA/MPA 前端接口收割与权限树逆向 → web_recon**：直接支持 spa_harvest（拉取 HTML + 递归解析 Webpack/Vite chunk manifest + 下载全量 JS 提取路由与 API）、mpa_spider（同源多页 BFS 爬虫）、route_map、perm_tree，**100% 原生替代 harvest_static.py / spider_mpa.py / extract_route_map.py / build_perm_tree.py**。
+- **编解码/哈希/加解密/JWT → codec_crypto**：Base64/Hex/URL/HTML/Gzip/Zlib、MD5/SHA/HMAC、AES(CBC/ECB/GCM)/XOR、JWT 解码/签名/alg=none 伪造/弱口令爆破一律直接调 codec_crypto，**不要调 python -c 单行脚本**。
+- **数据提取与压缩包免解压分析 → extract_data / Grep / Glob / Read**：提取正则、GJSON 路径、HTML 链接与表单参数、JS 路由与敏感密钥，以及 .zip/.tar.gz/.jar 压缩包列表(archive_list)与提取(archive_extract)一律调 extract_data；本地文件定位与内容检索直接调原生 Glob / Grep / Read。
+- **端口连通、协议 Banner 与 DNS/子域枚举 → net_probe / dns_probe**：TCP/TLS 端口扫描、证书 SANs 提取与原始 Socket 载荷交互调 net_probe；跨平台 DNS 全记录查询(A/AAAA/CNAME/TXT/MX/NS/PTR)与带泛解析过滤的子域枚举调 dns_probe。
+- **专家技能包 (Skill)、战术知识库 (tactical_kb) 与外部 MCP (ExecuteExtraTool) 主动触发（第一轮必查）**：
+  1. **动手前先调 Skill**：本轮领到意图后，若涉及 Web 漏洞利用 (web-vuln-tactics)、REST/GraphQL/Swagger 接口枚举 (api-recon)、SPA 前端渲染/登录态/DOM XSS (playwright-cli)、ScopeSentry 外网测绘与资产同步 (scopesentry-mcp，调用后自动解锁 ScopeSentry MCP)、二进制/APK/固件/JS 逆向与源码审计 (reverse-engineering)、CVE/Nday 组件指纹与 PoC 匹配 (exploit-kb-patterns) 或连续受阻/403/WAF 分诊转向 (expert-triage-pivot)，**必须在第一轮优先调用 Skill({"name":"<技能名>"}) 加载标准化专家 SOP**！
+  2. **跨任务记忆召回 (tactical_kb)**：动手前或遇阻时，调 tactical_kb 检索跨任务已确认漏洞 (past_findings)、历史资产 (past_assets)、高危模式 (vuln_patterns) 或技能全文 (skill_search)。
+  3. **一步直调 MCP 扩展工具 (ExecuteExtraTool)**：若系统提示词底部列出了已挂载的 MCP 工具（如 mcp__Playwright__*、mcp__ScopeSentry__*），无需繁琐搜索，直接调用 ExecuteExtraTool({"tool_name":"<工具全名>","params":{...}}) 一步执行！
+- **Bash 仅作兜底**：仅在确需调用外部二进制工具（如 sqlmap、nmap、nuclei 等）或目标系统交互命令时使用 Bash。
 
 完成本意图后用一句话总结你做了什么、写回了哪些事实。`
 
@@ -275,14 +293,19 @@ func workerTrafficBlock(recording bool) string {
 // pentest agent's prompt — intermediate artifacts must land in the shared work
 // dir, never /tmp. Guaranteed present regardless of how the DB body is edited.
 func artifactSpec(dir string) string {
-	return "\n\n**中间产物输出规约**：脚本、payload、抓到的响应体、临时数据等一切中间产物，**一律写到本任务工作目录 " + dir + "**（相对路径即写在这里，也可用该绝对路径）——**不要写 /tmp、不要用其它绝对路径**。"
+	return "\n\n**中间产物输出规约**：脚本、payload、抓到的响应体、临时数据等一切中间产物，**一律写到本任务工作目录 " + dir + "**（相对路径即写在这里，也可用该绝对路径）——**不要写 /tmp、不要用其它绝对路径**。\n" +
+		"**专家知识库与止损督导规约**：规划或执行前可调 `tactical_kb`（检索跨任务历史漏洞 `past_findings`、历史资产 `past_assets`、高危模式 `vuln_patterns`、技能包检索 `skill_search`）及 `Skill` 工具；发现 Worker 在强类型校验（HTTP 422）或静态错误（固定 500/403）上重复打转时，立即用 `steer_work` 或 `kill_work` 止损转向。"
 }
 
 // workerArtifactSpec is the worker's 段 [C]: its per-intent run dir is pre-created
 // by the engine (ensureRunDir), so it just writes relative paths there — no manual
 // mkdir, no cross-worker name collisions.
 func workerArtifactSpec(runDir string) string {
-	return "\n\n**中间产物输出规约**：脚本、payload、抓到的响应体、临时数据等一切中间产物，**一律写到本次意图的专属工作目录 " + runDir + "**（已自动建好，直接用相对路径写在这里即可，无需再手动建目录）——**不要写 /tmp、不要用其它绝对路径**。"
+	return "\n\n**中间产物输出规约**：常规发包、多步链/BOLA/并发竞争、并发探测、前端/源码收割、编解码、提取与历史战果检索请直接使用内置 Go 原生工具（http_request / http_sequence / http_fuzz / web_recon / codec_crypto / extract_data / net_probe / dns_probe / tactical_kb / Grep / Glob），不要落盘写临时 .py 脚本；确需保存的字典、payload、抓到的响应体或临时数据等一切中间产物，**一律写到本次意图的专属工作目录 " + runDir + "**（已自动建好，直接用相对路径写在这里即可，无需再手动建目录）——**不要写 /tmp、不要用其它绝对路径**。\n" +
+		"**专家认知与 3-Strike 止损纪律（代码级强制）**：\n" +
+		"1. 【先查经验与主动触发 Skill/MCP】进入具体攻击面或遇复杂鉴权/加密逆向/受阻时，第一轮优先调用 `Skill`（加载 `web-vuln-tactics` / `api-recon` / `playwright-cli` / `scopesentry-mcp` / `reverse-engineering` / `exploit-kb-patterns` / `expert-triage-pivot`）与 `tactical_kb`；若已挂载 MCP 工具，直接用 `ExecuteExtraTool({\"tool_name\":\"...\",\"params\":{...}})` 一步调用。\n" +
+		"2. 【3-Strike 熔断】同一端点/参数连续 3 次收到同质化负面响应（如 FastAPI `422 string_type`、恒定长度 `500`、固定 `403`）或触发 `[⚡ 专家战术熔断提醒]` 时，**严禁发送第 4 次同类变体**！立即调 `record_fact` 记录防御特征并转向正交维度（如双会话越权 `http_sequence(mode=\"bola\")`、并发 `mode=\"race\"`）或直接输出证伪结论结束本轮，严禁死磕至超时(exhausted)。\n" +
+		"3. 【上报五问门禁】调用 `report_finding` 前必须确认已突破真实权限边界且响应含非公开业务数据/状态变更；框架默认行为或不同错误码差分（如不存在返回 500 vs 过期返回 400）一律只记 `record_fact`。"
 }
 
 // ensureRunDir builds and creates an agent's working directory under base:
@@ -425,9 +448,13 @@ func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int
 }
 
 func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
+	runDir := ensureRunDir(w.workDir, taskID, intent.ID)
 	tsx := NewToolSet(ts, name)
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)
+	tsx.SetProxy(w.proxyAddr, w.proxyCACert)
+	tsx.SetWorkDir(runDir)
+	tsx.SetTrafficStore(w.trafficStore)
 	coverageEnabled := as == nil || as.CoverageEnabled(taskID)
 	tsx.SetCoverageEnabled(coverageEnabled)
 	if as != nil {
@@ -436,30 +463,29 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	tsx.SetOwnerNode(intent.ID)         // assets this worker discovers anchor to its intent → visible to the task
 	tsx.SetEnrich(enr)                  // async DNS/HTTP auto-completion for assets this worker writes
 	tsx.SetNotifyFinding(notifyFinding) // report_finding 落库时当场唤醒 planner，带上「哪个意图+finding」
-	// base = built-in worker tools ∪ host tools (traffic) ∪ default tools (incl. Bash);
+	// base = built-in worker tools ∪ host tools (traffic) ∪ default tools (incl. Bash/Glob/Grep);
 	// then augment with the agent's visible skills/MCP. During the SDK settlement
-	// phase, Bash is hidden via Settlement.DisabledTools (no local gating needed).
+	// phase, active probing tools are hidden via Settlement.DisabledTools.
 	base := append(tsx.WorkerTools(), w.extraTools...)
-	// worker 刻意不给 MultiEdit/Glob/Grep：文件精改用 Edit、检索走 Bash(grep/find)，
-	// 收敛工具面、减少低价值调用。其余 SDK 默认工具(Read/Write/Edit/LS/Bash/Sleep)照常。
-	base = append(base, defaultToolsExcept("MultiEdit", "Glob", "Grep")...)
+	// 保留原生 Go 的 Glob 与 Grep 给 worker，并用 WrapCrossPlatformBash 装饰 Bash 工具
+	// （提供进程内 Coreutils 原语、外部安全二进制直调及跨 Worker 全局进程信号量保护）。
+	defTools := WrapCrossPlatformBash(defaultToolsExcept("MultiEdit"), runDir, proxyEnv(w.proxyAddr, w.proxyCACert))
+	base = append(base, defTools...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts), IntentID: intent.ID})
+	isRE := softwareRE(ts)
 	tools, def, cleanup := AugmentTools(ctx, "worker", base)
+	if isRE {
+		tools, def = softwareRETools(tools, def)
+	}
 	defer cleanup()
-
-	// 意图是 worker 的【唯一职责、贯穿整个 run 的不变量】→ 连同启动指令、意图锚定的目标资产
-	// 原始数据一起放进 system prompt：system 每次 run 都重新拼一遍、绝不会被 compaction 压掉，
-	// 长 run 里意图永远在场，续跑时也不依赖 transcript 历史是否留住那条首消息。代价是 system
-	// 混入 per-intent 易变数据、失去跨意图缓存复用；这是刻意的取舍（意图丢失比省 token 严重得多）。
-	// 与 planner「态势块放 user turn」分叉是有意的：planner 本身是产意图的那个、没有单一 mandate，
-	// worker 有。仅【全局态势 overview】留在启动 user 消息里——它可降级、容忍 stale，压掉无碍。
-	// 本次意图的专属工作目录 <workDir>/tasks/<taskID>/i<intentID>，引擎侧先建好。
-	runDir := ensureRunDir(w.workDir, taskID, intent.ID)
 	// The run-wide intent is not the current tool action. Do not forward it or
 	// inherit a parent run's background into the action reviewer.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
 	overview := renderWorkerGraphOverview(tsx.graphOverviewForPrompt(workerPromptCaps))
 	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
+	if isRE {
+		sysBody = softwareREWorker + softwareREArtifactSpec(runDir) + langDirective(resolveOutputLang())
+	}
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}
@@ -494,14 +520,23 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			"\n…（意图块超长已截断；完整资产用 list_assets / asset_neighbors 查。）"
 	}
 	sysBody += intentBlock
+	if hint := func() string {
+		if isRE {
+			return softwareREHint()
+		}
+		return BuildTacticalRoutingHint(intentBlock, tools, def)
+	}(); hint != "" {
+		sysBody += "\n\n" + hint
+	}
 	sysBody += "\n\n开始执行上面这条意图：只做它、只产生事实、assets、finding、做完即停。"
 	system, boundary := deferredSystem(sysBody, def)
 	// 任务级 deadline(经 ctx 注入)夹逼本 run 的墙钟预算 + 决定收尾词(见 taskclock.go)。
 	tc := taskClockFrom(ctx)
 	maxDur, clamped := clampMaxDuration(tc.DeadlineUnix, w.runTimeout)
-	settle := wrapupSettlement("worker", []string{"Bash"})
+	settleDisabled := []string{"Bash", "http_request", "http_fuzz", "http_sequence", "web_recon", "net_probe", "dns_probe"}
+	settle := wrapupSettlement("worker", settleDisabled)
 	if tc.DeadlineUnix > 0 {
-		settle = wrapupSettlementForTask("worker", []string{"Bash"}, clamped)
+		settle = wrapupSettlementForTask("worker", settleDisabled, clamped)
 	}
 	opts := agentcore.Options{
 		Provider:        w.prov,

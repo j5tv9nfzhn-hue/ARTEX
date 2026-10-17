@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Autumn-27/artex/skills"
 )
 
 // Database is the storage config. ARTEX runs on SQLite only, so the single
@@ -167,6 +169,7 @@ func SkillDir() string {
 		d = filepath.Join(BaseDir(), "skills")
 	}
 	_ = os.MkdirAll(d, 0o755)
+	_ = skills.EnsureBundled(d)
 	return d
 }
 

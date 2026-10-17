@@ -1,0 +1,47 @@
+{
+  "project": "artex-official-website",
+  "url": "https://artex-official-website.pages.dev",
+  "deployment_url": "https://d30b1127.artex-official-website.pages.dev",
+  "checked_at": "2026-10-17T13:15:34.876Z",
+  "wrangler_version": "4.131.2",
+  "existing_project_overwritten": false,
+  "custom_domain_changed": false,
+  "backend_deployed": false,
+  "git_commit_or_push": false,
+  "route_checks": {
+    "combinations": 22,
+    "status_failures": 0,
+    "canonical_failures": 0,
+    "page_errors": 0,
+    "overflows": 0,
+    "axe_violations_in_scanned_states": 0
+  },
+  "final_download_and_interaction_checks": [
+    {
+      "name": "18 public routes and resources, report header deduplicated",
+      "passed": true
+    },
+    {
+      "name": "Actual Lighthouse report download",
+      "passed": true,
+      "filename": "lighthouse-mobile.html"
+    },
+    {
+      "name": "Production search",
+      "passed": true
+    },
+    {
+      "name": "Production workflow interaction",
+      "passed": true
+    },
+    {
+      "name": "Theme and mobile navigation",
+      "passed": true
+    },
+    {
+      "name": "Final immutable deployment URL",
+      "passed": true
+    }
+  ],
+  "http_client_limitation": "Python urllib blocked by Cloudflare 1010; Chromium accesses succeeded. Security configuration not weakened."
+}

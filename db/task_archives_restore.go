@@ -328,6 +328,12 @@ func restoreExplorationStub(tx *sql.Tx, raw json.RawMessage, expID int64) error 
 }
 
 func restoreTaskStub(tx *sql.Tx, row map[string]any, taskID, remaining int64) error {
+	value, _ := row["analysis_domain"].(string)
+	domain, err := NormalizeAnalysisDomain(value)
+	if err != nil {
+		return err
+	}
+	row["analysis_domain"] = domain
 	// The three ? in extra are, in order: the archived paused flag, the remaining
 	// seconds for the >0 test, and the same value again as the interval offset.
 	// The literals (false / '' / NULL) and the boolean test behave identically on
@@ -350,6 +356,7 @@ func restoreTaskStub(tx *sql.Tx, row map[string]any, taskID, remaining int64) er
 		{Name: "timeout_seconds"},
 		{Name: "plan_heartbeat_seconds"},
 		{Name: "coverage_enabled"},
+		{Name: "analysis_domain"},
 		{Name: "pinned_at", Type: "TIMESTAMP"},
 		{Name: "first_run_at", Type: "TIMESTAMP"},
 		{Name: "completed_at", Type: "TIMESTAMP"},

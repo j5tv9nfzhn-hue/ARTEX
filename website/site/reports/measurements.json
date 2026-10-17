@@ -1,0 +1,78 @@
+{
+  "completed": true,
+  "measuredAt": "2026-10-17T12:59:11.764Z",
+  "environment": "linux x64 sandbox; Node v20.20.2; local loopback HTTP; gzip enabled; no Cloudflare or ARTEX backend",
+  "browser": {
+    "pages": 11,
+    "combinations": 44,
+    "violations": 0,
+    "errors": 0,
+    "overflows": 0,
+    "failedInteractions": 0,
+    "brokenLinks": 0
+  },
+  "browserVersion": "156.0.8078.4",
+  "lighthouseVersion": "12.8.2",
+  "lighthouse": {
+    "mobile": {
+      "performance": 100,
+      "accessibility": 100,
+      "bestPractices": 100,
+      "seo": 100,
+      "lcpMs": 1350.17205,
+      "cls": 0,
+      "tbtMs": 0,
+      "fcpMs": 900.1720499999999,
+      "fetchTime": "2026-10-17T12:59:14.147Z",
+      "formFactor": "mobile",
+      "throttling": {
+        "rttMs": 150,
+        "throughputKbps": 1638.4,
+        "requestLatencyMs": 562.5,
+        "downloadThroughputKbps": 1474.5600000000002,
+        "uploadThroughputKbps": 675,
+        "cpuSlowdownMultiplier": 4
+      },
+      "screenEmulation": {
+        "mobile": true,
+        "width": 412,
+        "height": 823,
+        "deviceScaleFactor": 1.75,
+        "disabled": false
+      },
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+      "warnings": []
+    },
+    "desktop": {
+      "performance": 100,
+      "accessibility": 100,
+      "bestPractices": 100,
+      "seo": 100,
+      "lcpMs": 355,
+      "cls": 0,
+      "tbtMs": 0,
+      "fcpMs": 355,
+      "fetchTime": "2026-10-17T12:59:22.921Z",
+      "formFactor": "desktop",
+      "throttling": {
+        "rttMs": 40,
+        "throughputKbps": 10240,
+        "requestLatencyMs": 0,
+        "downloadThroughputKbps": 0,
+        "uploadThroughputKbps": 0,
+        "cpuSlowdownMultiplier": 1
+      },
+      "screenEmulation": {
+        "mobile": false,
+        "width": 1350,
+        "height": 940,
+        "deviceScaleFactor": 1,
+        "disabled": false
+      },
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+      "warnings": []
+    }
+  },
+  "subjectHash": "9d9b0b5d733eeb96a06b0905d208ab04ed2966f96ae17e8844c2a1dcbf4b4954",
+  "browserMeasuredAt": "2026-10-17T12:59:48.599Z"
+}

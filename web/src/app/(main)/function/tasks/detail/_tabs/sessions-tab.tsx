@@ -392,21 +392,26 @@ function SessionItem({
     !deleted &&
     // pending = 待领(open)意图;连同运行中/已暂停都允许删除。
     (s.status === "running" || s.status === "paused" || s.status === "pending");
+  let leftBorderClass = "border-l-transparent hover:bg-accent/45";
+  if (active) {
+    leftBorderClass = "border-l-primary bg-accent text-accent-foreground shadow-2xs";
+  } else if (s.live) {
+    leftBorderClass = "border-l-emerald-500/70 hover:bg-accent/45";
+  } else if (s.status === "blocked") {
+    leftBorderClass = "border-l-amber-500/70 hover:bg-accent/45";
+  }
   return (
     <div
-      className={cn(
-        "group/session flex w-full items-center rounded-md transition-colors",
-        active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
-      )}
+      className={cn("group/session flex w-full items-center rounded-lg border-l-2 transition-colors", leftBorderClass)}
     >
       <button
         type="button"
         onClick={onClick}
-        className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1.5 text-left text-sm"
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5 text-left text-sm"
       >
         {icon ?? <span className="size-3.5 shrink-0" />}
         {s.intent_id && (
-          <span className="shrink-0 rounded bg-muted px-1 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+          <span className="shrink-0 rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground tabular-nums">
             #{s.intent_id}
           </span>
         )}
@@ -416,7 +421,7 @@ function SessionItem({
           </Badge>
         )}
         <span
-          className={cn("min-w-0 flex-1 truncate text-sm font-medium", deleted && "text-muted-foreground line-through")}
+          className={cn("min-w-0 flex-1 truncate font-medium text-sm", deleted && "text-muted-foreground line-through")}
         >
           {displayTitle}
         </span>
@@ -427,12 +432,12 @@ function SessionItem({
         )}
         {hasPending && <ShieldAlertIcon className="size-3.5 shrink-0 text-amber-500" />}
         {!active && unread ? (
-          <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-blue-500/15 px-1 text-[10px] font-medium tabular-nums text-blue-600 dark:text-blue-400">
+          <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-blue-500/15 px-1 font-medium text-[10px] text-blue-600 tabular-nums dark:text-blue-400">
             {unread > 99 ? "99+" : unread}
           </span>
         ) : null}
         {s.live && (
-          <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
+          <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400">
             <LiveDot className="size-1" />
             {t("item.live")}
           </span>
@@ -487,12 +492,12 @@ function WorkerAssetBadge({ assets }: { assets: IntentAsset[] }) {
           {displayAssets.map((asset) => (
             <div key={`${asset.intent_id}-${asset.asset_id}`} className="min-w-0">
               <div className="break-all font-mono text-xs">{asset.label.trim() || `#${asset.asset_id}`}</div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
+              <div className="mt-0.5 text-muted-foreground text-xs">
                 {t(`asset.type.${asset.type}`)} ·{" "}
                 {t.has(`asset.source.${asset.source}`) ? t(`asset.source.${asset.source}`) : asset.source}
                 {asset.inherited ? ` · ${t("asset.sourceTask", { id: asset.source_task_id })}` : ""}
               </div>
-              <div className="mt-0.5 [overflow-wrap:anywhere] text-xs">{asset.source_summary}</div>
+              <div className="mt-0.5 text-xs [overflow-wrap:anywhere]">{asset.source_summary}</div>
             </div>
           ))}
         </div>
@@ -544,6 +549,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   // 下方的会话记录会被挤到只剩标题与输入框。折叠后记录区拿到几乎全部高度，
   // 点标题栏可展开选会话，选完自动收起。桌面端不受影响（lg 起始终展开）。
   const [listOpen, setListOpen] = React.useState(false);
+  const [workerFilter, setWorkerFilter] = React.useState<"all" | "running" | "paused" | "blocked">("all");
   // Per-session lazily-loaded caches, keyed by session_key (main | plan | intent:<id>).
   const [store, setStore] = React.useState<SessionStore>({});
   // Worker sessions derived from exploration intents (paged past the old 300 cap).
@@ -1699,21 +1705,21 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         沿用 13rem 会白白吃掉 3rem 的记录高度。 */}
       <div
         className={cn(
-          "grid h-[calc(100svh-10rem)] min-h-0 grid-cols-1 gap-4",
+          "grid h-[calc(100svh-9.5rem)] min-h-0 grid-cols-1 overflow-hidden rounded-xl border border-border/80 bg-card shadow-xs",
           listOpen ? "grid-rows-[minmax(0,40svh)_minmax(0,1fr)]" : "grid-rows-[auto_minmax(0,1fr)]",
-          "lg:h-[calc(100svh-13rem)] lg:grid-cols-[18rem_1fr] lg:grid-rows-[minmax(0,1fr)]",
+          "lg:h-[calc(100svh-10.5rem)] lg:grid-cols-[18.5rem_1fr] lg:grid-rows-[minmax(0,1fr)]",
         )}
       >
-        {/* Left: session list */}
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
-          <div className="border-b px-3 py-2">
+        {/* Left: session fleet rail */}
+        <div className="flex min-h-0 flex-col overflow-hidden border-border/75 bg-sidebar/40 max-lg:border-b lg:border-r">
+          <div className="border-b px-3 py-2.5">
             <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => setListOpen((open) => !open)}
                 aria-expanded={listOpen}
                 aria-controls="session-list-panel"
-                className="flex min-w-0 flex-1 items-center gap-1 text-left text-xs font-medium text-muted-foreground lg:pointer-events-none"
+                className="flex min-w-0 flex-1 items-center gap-1 text-left font-medium text-muted-foreground text-xs lg:pointer-events-none"
               >
                 <ChevronDownIcon
                   className={cn("size-3.5 shrink-0 transition-transform lg:hidden", !listOpen && "-rotate-90")}
@@ -1725,7 +1731,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                       · {activeDisplayTitle}
                     </span>
                     {hiddenUnread > 0 && (
-                      <span className="inline-flex min-w-4 shrink-0 items-center justify-center rounded-full bg-blue-500/15 px-1 text-[10px] font-medium tabular-nums text-blue-600 lg:hidden dark:text-blue-400">
+                      <span className="inline-flex min-w-4 shrink-0 items-center justify-center rounded-full bg-blue-500/15 px-1 font-medium text-[10px] text-blue-600 tabular-nums lg:hidden dark:text-blue-400">
                         {hiddenUnread > 99 ? "99+" : hiddenUnread}
                       </span>
                     )}
@@ -1757,7 +1763,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             {taskTokens && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                  <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1 text-muted-foreground text-xs">
                     <span>{t("taskTotal")}</span>
                     <span>·</span>
                     <TokenMetrics
@@ -1782,20 +1788,29 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             id="session-list-panel"
             type="auto"
             className={cn(
-              "min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!",
+              "[&_[data-slot=scroll-area-viewport]>div]:block! min-h-0 flex-1",
               !listOpen && "max-lg:hidden",
             )}
           >
             <div className="flex w-full flex-col gap-3 p-2">
               {(["mainagent", "planner", "system", "worker"] as const).map((role) => {
-                const items = grouped[role];
-                if (!items.length) return null;
+                const rawItems = grouped[role];
+                if (!rawItems.length) return null;
+                const items =
+                  role === "worker" && workerFilter !== "all"
+                    ? rawItems.filter((s) => s.id === activeId || s.status === workerFilter)
+                    : rawItems;
                 const Meta = roleMeta[role];
                 return (
                   <div key={role} className="flex flex-col gap-0.5">
-                    <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground">
-                      <Meta.icon className="size-3.5" />
-                      {t(`role.${role}`)}
+                    <div className="flex items-center gap-1.5 px-2 py-1 font-semibold text-muted-foreground text-xs tracking-tight">
+                      <Meta.icon className="size-3.5 text-primary/80" />
+                      <span>{t(`role.${role}`)}</span>
+                      {role === "worker" && (
+                        <span className="ml-auto rounded-full bg-muted px-1.5 py-0.2 font-mono text-[10px] text-muted-foreground tabular-nums">
+                          {rawItems.length}
+                        </span>
+                      )}
                       {role === "mainagent" && (
                         <button
                           type="button"
@@ -1803,7 +1818,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                           disabled={creatingMain}
                           title={t("newMain.title")}
                           aria-label={t("newMain.aria")}
-                          className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent/60 hover:text-foreground disabled:opacity-50"
+                          className="ml-auto flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:opacity-50"
                         >
                           {creatingMain ? (
                             <Loader2Icon className="size-3.5 animate-spin" />
@@ -1814,6 +1829,31 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         </button>
                       )}
                     </div>
+                    {role === "worker" && rawItems.length > 3 && (
+                      <div className="mb-1 flex flex-wrap items-center gap-1 px-2">
+                        {(["all", "running", "paused", "blocked"] as const).map((fKey) => {
+                          const count =
+                            fKey === "all" ? rawItems.length : rawItems.filter((item) => item.status === fKey).length;
+                          if (fKey !== "all" && count === 0 && workerFilter !== fKey) return null;
+                          return (
+                            <button
+                              key={fKey}
+                              type="button"
+                              onClick={() => setWorkerFilter(fKey)}
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] transition-colors",
+                                workerFilter === fKey
+                                  ? "border-primary/40 bg-primary/15 font-semibold text-primary"
+                                  : "border-border/60 bg-muted/40 text-muted-foreground hover:bg-accent",
+                              )}
+                            >
+                              <span>{fKey === "all" ? "ALL" : fKey.toUpperCase()}</span>
+                              <span className="tabular-nums opacity-80">{count}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     {items.map((s) => {
                       const meta = s.role === "worker" ? sessionMeta.get(s.id) : undefined;
                       return (
@@ -1844,7 +1884,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         type="button"
                         onClick={loadOlderIntents}
                         disabled={loadingOlderIntents}
-                        className="mt-0.5 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent/50"
+                        className="mt-0.5 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-muted-foreground text-xs hover:bg-accent/50"
                       >
                         {loadingOlderIntents ? (
                           <Loader2Icon className="size-3.5 animate-spin" />
@@ -1858,7 +1898,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                 );
               })}
               {mainLoaded && !workerSessions.length && (
-                <div className="px-2 py-1 text-xs text-muted-foreground">{t("worker.noRunning")}</div>
+                <div className="px-2 py-1 text-muted-foreground text-xs">{t("worker.noRunning")}</div>
               )}
             </div>
           </ScrollArea>
@@ -1869,15 +1909,15 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           side={side}
           label={active.role === "worker" ? `Worker #${active.intent_id} · ${activeDisplayTitle}` : activeDisplayTitle}
         >
-          <div className="flex min-h-0 flex-1 min-w-0 flex-col overflow-hidden rounded-lg border bg-card">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2 sm:px-4 sm:py-2.5">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-b bg-background/35 px-3.5 py-2 backdrop-blur-xs sm:px-4 sm:py-2.5">
               {(() => {
                 const isWorker = active.role === "worker";
                 const meta = isWorker ? sessionMeta.get(active.id) : undefined;
                 // Worker: the intent moved into the transcript as a message, so the
                 // header shows a stable generic label (intent JSON stays on hover).
                 const title = isWorker ? t("worker.execSession") : active.title;
-                const titleEl = <span className="min-w-0 truncate text-sm font-medium">{title}</span>;
+                const titleEl = <span className="min-w-0 truncate font-medium text-sm">{title}</span>;
                 return meta?.json ? (
                   <Tooltip>
                     <TooltipTrigger asChild>{titleEl}</TooltipTrigger>
@@ -1925,7 +1965,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                 <Badge variant="outline">{t("header.sourceTask", { id: active.source_task_id })}</Badge>
               )}
               {active.live && (
-                <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
+                <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400">
                   <LiveDot className="size-1" />
                   {t("sse.live")}
                 </span>
@@ -1935,7 +1975,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   {t("header.olderHistoryLabel")}
                 </span>
               )}
-              <div className="ml-auto flex min-w-0 max-w-full items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground max-sm:w-full max-sm:flex-wrap">
+              <div className="ml-auto flex min-w-0 max-w-full items-center justify-end gap-x-3 gap-y-1 text-muted-foreground text-xs max-sm:w-full max-sm:flex-wrap">
                 {tokenTotal.any && (
                   <Tooltip>
                     {/* 手机端用短标签（入/缓/出）：长标签会把这一行撑成两行，进一步压缩记录区。 */}
@@ -1980,7 +2020,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               const dm = active.role === "worker" ? sessionMeta.get(active.id) : undefined;
               if (!dm?.deleted) return null;
               return (
-                <div className="flex items-start gap-2 border-b border-destructive/30 bg-destructive/5 px-4 py-2.5 text-xs">
+                <div className="flex items-start gap-2 border-destructive/30 border-b bg-destructive/5 px-4 py-2.5 text-xs">
                   <Trash2Icon className="mt-0.5 size-3.5 shrink-0 text-destructive" />
                   <div className="min-w-0">
                     <span className="font-medium text-destructive">{t("deletedNotice.heading")}</span>
@@ -2009,21 +2049,21 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             to block so wide/unbreakable steps (long commands, code, URLs) can't blow
             out the width and defeat the truncation below — the transcript wraps to
             the panel instead of overflowing horizontally. */}
-            <ScrollArea type="auto" className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!">
-              <div className="min-w-0 max-w-full p-4" ref={contentRef}>
+            <ScrollArea type="auto" className="[&_[data-slot=scroll-area-viewport]>div]:block! min-h-0 min-w-0 flex-1">
+              <div className="mx-auto min-w-0 max-w-5xl p-4 md:px-6" ref={contentRef}>
                 {activeState?.loadingMore && (
-                  <div className="flex items-center justify-center gap-2 pb-2 text-xs text-muted-foreground">
+                  <div className="flex items-center justify-center gap-2 pb-2 text-muted-foreground text-xs">
                     <Loader2Icon className="size-3.5 animate-spin" />
                     {t("transcript.loadingMore")}
                   </div>
                 )}
                 {showLoader ? (
-                  <div className="flex items-center gap-2 pl-9 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 pl-9 text-muted-foreground text-xs">
                     <Loader2Icon className="size-3.5 animate-spin" />
                     {t("transcript.loadingActivity")}
                   </div>
                 ) : activeState?.error ? (
-                  <div className="flex items-center gap-2 pl-9 text-xs text-red-500">
+                  <div className="flex items-center gap-2 pl-9 text-red-500 text-xs">
                     <CircleXIcon className="size-3.5" />
                     {t("transcript.loadError", { error: activeState.error })}
                     <Button
@@ -2061,96 +2101,98 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               </div>
             </ScrollArea>
             {isMain ? (
-              <div className="border-t p-3">
-                {attachments.length > 0 && (
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {attachments.map((a) => (
-                      <div
-                        key={a.path}
-                        className="flex items-center gap-1.5 rounded-md border bg-muted/50 px-2 py-1 text-xs"
-                        title={a.path}
-                      >
-                        <PaperclipIcon className="size-3 shrink-0 text-primary" />
-                        <span className="max-w-[160px] truncate">{a.name}</span>
-                        <span className="text-muted-foreground">{fmtBytes(a.size)}</span>
-                        <button
-                          type="button"
-                          className="ml-0.5 text-muted-foreground hover:text-foreground"
-                          onClick={() => setAttachments((p) => p.filter((x) => x.path !== a.path))}
-                          title={t("composer.attachmentRemove")}
+              <div className="border-t px-3 py-2.5 md:px-6">
+                <div className="mx-auto w-full max-w-5xl">
+                  {attachments.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1.5">
+                      {attachments.map((a) => (
+                        <div
+                          key={a.path}
+                          className="flex items-center gap-1.5 rounded-md border bg-muted/50 px-2 py-1 text-xs"
+                          title={a.path}
                         >
-                          <XIcon className="size-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => void pickFiles(e.target.files)}
-                />
-                <InputGroup className="min-h-9 has-disabled:opacity-100">
-                  <MentionTextarea
-                    inputGroup
-                    rows={1}
-                    aria-label={t("composer.mainAria")}
-                    placeholder={mainBusy ? t("composer.mainBusyPlaceholder") : t("composer.mainPlaceholder")}
-                    value={input}
-                    disabled={sending}
-                    onValueChange={setInput}
-                    onKeyDown={(e) => {
-                      if (!shouldSubmitOnKey(e, sendMode)) return;
-                      e.preventDefault();
-                      send();
-                    }}
-                    className="max-h-36 min-h-9 overflow-y-auto"
+                          <PaperclipIcon className="size-3 shrink-0 text-primary" />
+                          <span className="max-w-[160px] truncate">{a.name}</span>
+                          <span className="text-muted-foreground">{fmtBytes(a.size)}</span>
+                          <button
+                            type="button"
+                            className="ml-0.5 text-muted-foreground hover:text-foreground"
+                            onClick={() => setAttachments((p) => p.filter((x) => x.path !== a.path))}
+                            title={t("composer.attachmentRemove")}
+                          >
+                            <XIcon className="size-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => void pickFiles(e.target.files)}
                   />
-                  <InputGroupAddon align="block-end">
-                    <InputGroupButton
-                      size="icon-xs"
-                      variant="ghost"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={mainBusy || uploading}
-                      title={t("composer.uploadTitle")}
-                      aria-label={t("composer.uploadTitle")}
-                    >
-                      {uploading ? <Loader2Icon className="animate-spin" /> : <PaperclipIcon />}
-                    </InputGroupButton>
-                    {mainBusy && isBtwCommand(input) && (
-                      <InputGroupButton size="icon-xs" onClick={send} aria-label={t("composer.sideQuestion")}>
-                        <ArrowUpIcon />
-                      </InputGroupButton>
-                    )}
-                    {mainBusy ? (
+                  <InputGroup className="min-h-9 has-disabled:opacity-100">
+                    <MentionTextarea
+                      inputGroup
+                      rows={1}
+                      aria-label={t("composer.mainAria")}
+                      placeholder={mainBusy ? t("composer.mainBusyPlaceholder") : t("composer.mainPlaceholder")}
+                      value={input}
+                      disabled={sending}
+                      onValueChange={setInput}
+                      onKeyDown={(e) => {
+                        if (!shouldSubmitOnKey(e, sendMode)) return;
+                        e.preventDefault();
+                        send();
+                      }}
+                      className="max-h-36 min-h-9 overflow-y-auto"
+                    />
+                    <InputGroupAddon align="block-end">
                       <InputGroupButton
-                        className="ml-auto"
                         size="icon-xs"
-                        variant="destructive"
-                        onClick={stop}
-                        disabled={stopping}
-                        title={t("composer.stopTitle")}
-                        aria-label={t("composer.stopTitle")}
+                        variant="ghost"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={mainBusy || uploading}
+                        title={t("composer.uploadTitle")}
+                        aria-label={t("composer.uploadTitle")}
                       >
-                        {stopping ? <Loader2Icon className="animate-spin" /> : <SquareIcon />}
+                        {uploading ? <Loader2Icon className="animate-spin" /> : <PaperclipIcon />}
                       </InputGroupButton>
-                    ) : (
-                      <InputGroupButton
-                        className="ml-auto"
-                        size="icon-xs"
-                        variant="default"
-                        onClick={send}
-                        disabled={(!input.trim() && attachments.length === 0) || sending}
-                        title={t("composer.sendTitle")}
-                        aria-label={t("composer.sendTitle")}
-                      >
-                        {sending ? <Loader2Icon className="animate-spin" /> : <ArrowUpIcon />}
-                      </InputGroupButton>
-                    )}
-                  </InputGroupAddon>
-                </InputGroup>
+                      {mainBusy && isBtwCommand(input) && (
+                        <InputGroupButton size="icon-xs" onClick={send} aria-label={t("composer.sideQuestion")}>
+                          <ArrowUpIcon />
+                        </InputGroupButton>
+                      )}
+                      {mainBusy ? (
+                        <InputGroupButton
+                          className="ml-auto"
+                          size="icon-xs"
+                          variant="destructive"
+                          onClick={stop}
+                          disabled={stopping}
+                          title={t("composer.stopTitle")}
+                          aria-label={t("composer.stopTitle")}
+                        >
+                          {stopping ? <Loader2Icon className="animate-spin" /> : <SquareIcon />}
+                        </InputGroupButton>
+                      ) : (
+                        <InputGroupButton
+                          className="ml-auto"
+                          size="icon-xs"
+                          variant="default"
+                          onClick={send}
+                          disabled={(!input.trim() && attachments.length === 0) || sending}
+                          title={t("composer.sendTitle")}
+                          aria-label={t("composer.sendTitle")}
+                        >
+                          {sending ? <Loader2Icon className="animate-spin" /> : <ArrowUpIcon />}
+                        </InputGroupButton>
+                      )}
+                    </InputGroupAddon>
+                  </InputGroup>
+                </div>
               </div>
             ) : active.role === "worker" &&
               !active.inherited &&
@@ -2179,7 +2221,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   <InputGroupAddon align="block-end">
                     <span
                       className={cn(
-                        "px-1 text-[10px] tabular-nums text-muted-foreground",
+                        "px-1 text-[10px] text-muted-foreground tabular-nums",
                         workerMessageCharCount(workerMessage) > MAX_WORKER_MESSAGE_CHARS && "text-destructive",
                       )}
                     >
@@ -2281,7 +2323,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>{t("steer.title", { id: steerTarget?.intent_id ?? "" })}</DialogTitle>
-              <DialogDescription className="break-words whitespace-normal">{t("steer.desc")}</DialogDescription>
+              <DialogDescription className="whitespace-normal break-words">{t("steer.desc")}</DialogDescription>
             </DialogHeader>
             <Textarea
               value={steerText}
@@ -2292,7 +2334,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               disabled={steerSending}
               aria-invalid={workerMessageCharCount(steerText) > MAX_WORKER_MESSAGE_CHARS}
             />
-            <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
+            <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs">
               <span>{t("steer.hint")}</span>
               <span
                 className={cn(
@@ -2340,7 +2382,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           <AlertDialogContent className="max-w-[min(32rem,calc(100vw-2rem))]">
             <AlertDialogHeader>
               <AlertDialogTitle>{t("deleteDialog.title", { id: cancelIntent?.intent_id ?? "" })}</AlertDialogTitle>
-              <AlertDialogDescription className="break-words whitespace-normal">
+              <AlertDialogDescription className="whitespace-normal break-words">
                 {deleteMode === "hard"
                   ? t.rich("deleteDialog.hardDesc", { s: (c) => <strong>{c}</strong> })
                   : t.rich("deleteDialog.softDesc", { s: (c) => <strong>{c}</strong> })}
@@ -2357,7 +2399,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   )}
                 >
                   <div className="font-medium">{t("deleteDialog.softLabel")}</div>
-                  <div className="text-xs text-muted-foreground">{t("deleteDialog.softHint")}</div>
+                  <div className="text-muted-foreground text-xs">{t("deleteDialog.softHint")}</div>
                 </button>
                 <button
                   type="button"
@@ -2368,11 +2410,11 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   )}
                 >
                   <div className="font-medium">{t("deleteDialog.hardLabel")}</div>
-                  <div className="text-xs text-muted-foreground">{t("deleteDialog.hardHint")}</div>
+                  <div className="text-muted-foreground text-xs">{t("deleteDialog.hardHint")}</div>
                 </button>
               </div>
               <div className="grid gap-2">
-                <label htmlFor="cancel-reason" className="text-sm font-medium">
+                <label htmlFor="cancel-reason" className="font-medium text-sm">
                   {t("deleteDialog.reasonLabel")}
                 </label>
                 <Textarea
@@ -2403,7 +2445,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           <AlertDialogContent className="max-w-[min(32rem,calc(100vw-2rem))]">
             <AlertDialogHeader>
               <AlertDialogTitle>{t("newSession.title")}</AlertDialogTitle>
-              <AlertDialogDescription className="break-words whitespace-normal">
+              <AlertDialogDescription className="whitespace-normal break-words">
                 {t("newSession.desc")}
               </AlertDialogDescription>
             </AlertDialogHeader>

@@ -96,6 +96,10 @@ const mainAgentDefaultTmpl = `你是一个授权渗透测试系统的"主 agent"
    - 人想"增/改测试约束（允许/禁止某类操作，如『仅测当前端口』『禁止爆破』『只做被动侦察』）" → 用 set_constraints 登记（type=allow 允许 / type=deny 禁止）。约束会在下一轮规划时注入 planner/worker 的提示词以框定探索边界；也可在总览「约束管理」里增删改。
 3. 用人话简洁回复，说明你做了什么。
 
+4. **主动触发技能 (Skill) 与外部 MCP 能力**：
+   - 遇到具体渗透方向（Web 漏洞、API 侦察、SPA 浏览器交互、ScopeSentry 测绘、逆向审计、受阻研判），主动调用 Skill 加载对应战法 SOP，或在用 add_intent / steer_work 下发意图时明确点名让 Worker 调用该技能（如 web-vuln-tactics、api-recon、playwright-cli、scopesentry-mcp、reverse-engineering、exploit-kb-patterns、expert-triage-pivot）。
+   - 若系统提示词底部列出了已挂载的 MCP 工具，无需繁琐搜索，直接调用 ExecuteExtraTool({"tool_name":"<工具全名>","params":{...}}) 一步执行。
+
 当前任务目标：{{.Goal}}
 
 不要编造发现；只根据工具返回的真实数据回答。`
@@ -126,12 +130,28 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
 	base := append(tsx.DropCoverageTools(tsx.MainAgentTools()), actool.DefaultTools()...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
+	isRE := softwareRE(ts)
 	tools, def, cleanup := AugmentTools(ctx, "mainagent", base)
+	if isRE {
+		tools, def = softwareRETools(tools, def)
+	}
 	defer cleanup()
 	// 本任务的工作目录 <workDir>/tasks/<taskID>，先建好。
 	mainDir := ensureRunDir(m.workDir, taskID, 0)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
-	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir), def)
+	mainSys := mainAgentSystem(goal, m.workDir, mainDir)
+	if isRE {
+		mainSys = softwareREMain + "\n\n任务目标：" + goal + softwareREArtifactSpec(mainDir) + langDirective(resolveOutputLang())
+	}
+	if hint := func() string {
+		if isRE {
+			return softwareREHint()
+		}
+		return BuildTacticalRoutingHint(goal+"\n"+message, tools, def)
+	}(); hint != "" {
+		mainSys += "\n\n" + hint
+	}
+	system, boundary := deferredSystem(mainSys, def)
 	opts := agentcore.Options{
 		Provider:        m.prov,
 		SystemPrompt:    system,

@@ -31,24 +31,33 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 		var extra []actool.CoreTool
 
 		// --- skills: load visible skills into reg (used for the Skill meta-tool
-		// and to know which MCP servers are skill-gated). ---
+		// and to know which MCP servers are skill-gated). Skills with zero explicit
+		// agent_visibility bindings on disk are also visible by default to core agents. ---
 		var reg *skill.Registry
-		if names, _ := pg.AgentSkillNames(a.ID); len(names) > 0 {
+		if allReg, err := skill.LoadDir(skillDir); err == nil && allReg != nil {
+			names, _ := pg.AgentSkillNames(a.ID)
 			nameSet := make(map[string]bool, len(names))
 			for _, n := range names {
 				nameSet[n] = true
 			}
-			if allReg, err := skill.LoadDir(skillDir); err == nil && allReg != nil {
-				reg = skill.NewRegistry()
-				for _, s := range allReg.List() {
-					// match by directory name (Base of Dir), not by skill display Name
-					if s.Dir != "" && nameSet[filepath.Base(s.Dir)] {
-						reg.Add(s)
+			reg = skill.NewRegistry()
+			for _, s := range allReg.List() {
+				if s.Dir == "" {
+					continue
+				}
+				dirName := filepath.Base(s.Dir)
+				visible := nameSet[dirName]
+				if !visible && isDefaultMCPAgent(a.Key) {
+					if sa, serr := pg.SkillAgents(dirName); serr == nil && len(sa) == 0 {
+						visible = true
 					}
 				}
-				if len(reg.List()) == 0 {
-					reg = nil
+				if visible {
+					reg.Add(s)
 				}
+			}
+			if len(reg.List()) == 0 {
+				reg = nil
 			}
 		}
 		// A server named by any visible skill's `mcps:` is skill-gated: its tools
@@ -64,10 +73,13 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 
 		// --- mcp: connect enabled servers that are directly visible to this agent
 		// OR skill-gated (named in a visible skill's mcps field). Directly-visible
-		// and NOT gated → global (unlocked from session start). Skill-gated →
-		// deferred until that skill is invoked (regardless of direct visibility).
+		// (or enabled with zero explicit agent bindings on a core execution role) →
+		// global (unlocked from session start, even if a skill also references it).
+		// Strictly skill-gated (!directVisible && skillGated) → deferred until that
+		// skill is invoked.
 		var closers []io.Closer
 		serverTools := map[string][]string{} // server name → its tool names
+		toolSummaries := map[string]string{} // tool name → one-line description + param hint
 		var allNames, globalNames []string
 		globalSet := map[string]bool{}
 		{
@@ -75,10 +87,20 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 			want := idSet(mcpIDs)
 			all, _ := pg.ListMCP()
 			for _, m := range all {
+				// Managed RE providers must not also be opened by per-run generic MCP clients.
+				managed, managedErr := pg.REMCPManaged(m.ID)
+				if managedErr != nil || managed {
+					continue
+				}
 				if !m.Enabled {
 					continue
 				}
 				directVisible := want[m.ID]
+				if !directVisible && isDefaultMCPAgent(a.Key) {
+					if ra, rerr := pg.ResourceAgents("mcp", m.ID); rerr == nil && len(ra) == 0 {
+						directVisible = true
+					}
+				}
 				skillGated := gated[m.Name]
 				if !directVisible && !skillGated {
 					continue // neither directly visible nor referenced by a visible skill
@@ -94,16 +116,24 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 					log.Printf("[mcp] %s tools/list 失败: %v", m.Name, err)
 					continue
 				}
+				if len(m.Tools) == 0 && len(ts) > 0 {
+					cached := make([]db.MCPTool, 0, len(ts))
+					for _, t := range ts {
+						cached = append(cached, db.MCPTool{Name: t.Name(), Description: t.Description()})
+					}
+					_ = pg.SaveMCPTools(m.ID, cached)
+				}
 				for _, t := range ts {
 					extra = append(extra, t)
 					allNames = append(allNames, t.Name())
 					serverTools[m.Name] = append(serverTools[m.Name], t.Name())
-					if directVisible && !skillGated {
-						// directly visible and not gated → available from session start
+					toolSummaries[t.Name()] = formatMCPToolSummary(t)
+					if directVisible {
+						// directly visible → available and unlocked from session start
 						globalNames = append(globalNames, t.Name())
 						globalSet[t.Name()] = true
 					}
-					// skill-gated tools stay out of globalNames; unlocked via unlockSkill()
+					// strictly skill-gated tools stay out of globalNames; unlocked via unlockSkill()
 				}
 			}
 		}
@@ -115,6 +145,7 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 			if reg == nil {
 				return
 			}
+			skillName = canonicalVisibleSkillName(reg, skillName)
 			if s, ok := reg.Get(skillName); ok {
 				for _, srv := range s.MCPs {
 					unlock.Add(serverTools[srv]...)
@@ -123,19 +154,31 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 		}
 
 		// Skill meta-tool: on load, unlock the skill's MCPs and reveal their names
-		// (the ones not already in the global block).
+		// plus compact parameter hints so the model can invoke ExecuteExtraTool immediately.
 		if reg != nil {
 			reg.OnInvoke = func(s skill.Skill) string {
 				unlockSkill(s.Name)
 				var reveal []string
+				var catalogLines []string
 				for _, srv := range s.MCPs {
 					for _, n := range serverTools[srv] {
 						if !globalSet[n] {
 							reveal = append(reveal, n)
 						}
+						if sum := toolSummaries[n]; sum != "" {
+							catalogLines = append(catalogLines, sum)
+						}
 					}
 				}
-				return actool.RenderDeferredToolsBlock(reveal)
+				blk := actool.RenderDeferredToolsBlock(reveal)
+				if len(catalogLines) > 0 {
+					guide := "【本技能关联的 MCP 工具已解锁 · 可直接通过 ExecuteExtraTool 一步调用】：\n" + strings.Join(catalogLines, "\n")
+					if blk != "" {
+						return blk + "\n\n" + guide
+					}
+					return guide
+				}
+				return blk
 			}
 			// Attribution for the usage ledger: ToolAugment only gets (ctx, agentKey),
 			// so the run's task/session ids ride in on the ctx (agent.RunInfo). Read it
@@ -172,11 +215,77 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 		def := agent.DeferredInfo{
 			Deferred:    allNames,
 			GlobalNames: globalNames,
+			MCPCatalog:  buildMCPCatalogBlock(globalNames, toolSummaries),
 			Unlock:      unlock,
 			UnlockSkill: unlockSkill,
 		}
 		return extra, def, cleanup
 	}
+}
+
+func isDefaultMCPAgent(agentKey string) bool {
+	switch agentKey {
+	case "worker", "pentest", "auto", "mainagent", "planner":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatMCPToolSummary(t actool.CoreTool) string {
+	desc := strings.TrimSpace(strings.ReplaceAll(t.Description(), "\n", " "))
+	if len(desc) > 180 {
+		desc = desc[:180] + "…"
+	}
+	schema := t.InputSchema()
+	var reqParams, optParams []string
+	reqSet := map[string]bool{}
+	if reqRaw, ok := schema["required"].([]any); ok {
+		for _, r := range reqRaw {
+			if s, ok := r.(string); ok {
+				reqSet[s] = true
+			}
+		}
+	} else if reqStrs, ok := schema["required"].([]string); ok {
+		for _, s := range reqStrs {
+			reqSet[s] = true
+		}
+	}
+	if props, ok := schema["properties"].(map[string]any); ok {
+		for k := range props {
+			if reqSet[k] {
+				reqParams = append(reqParams, k+"*")
+			} else {
+				optParams = append(optParams, k)
+			}
+		}
+	}
+	paramsHint := ""
+	allP := append(reqParams, optParams...)
+	if len(allP) > 0 {
+		paramsHint = " | 参数(*必填): " + strings.Join(allP, ", ")
+	}
+	if desc == "" {
+		desc = "MCP 扩展工具"
+	}
+	return "- `" + t.Name() + "`: " + desc + paramsHint
+}
+
+func buildMCPCatalogBlock(globalNames []string, summaries map[string]string) string {
+	var lines []string
+	for _, n := range globalNames {
+		if s := summaries[n]; s != "" {
+			lines = append(lines, s)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "【已挂载 MCP 扩展工具速查与主动调用规约】\n" +
+		"当前会话已挂载并解锁以下外部 MCP 能力工具。当任务涉及对应场景（如驱动无头浏览器渲染 SPA/提取登录态/验证 XSS、查询或操作 ScopeSentry 等外部扫描平台、调用自定义安全工具）时，**请优先主动调用对应的 MCP 工具**：\n" +
+		"1. 【一步直调（推荐）】若下方列出的参数已明确，无需先调 SearchExtraTools，可直接调用 ExecuteExtraTool({\"tool_name\":\"<下方工具全名>\",\"params\":{...}}) 一步执行！\n" +
+		"2. 【按需查 Schema】仅当某复杂对象参数结构不明确时，先调 SearchExtraTools({\"query\":\"select:<工具全名>\"}) 获取完整 JSON Schema，再调 ExecuteExtraTool。\n" +
+		strings.Join(lines, "\n")
 }
 
 func idSet(ids []int64) map[int64]bool {

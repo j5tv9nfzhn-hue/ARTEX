@@ -1,0 +1,198 @@
+{
+  "base": "https://artex-official-website.pages.dev",
+  "snapshot": "https://d30b1127.artex-official-website.pages.dev",
+  "checkedAt": "2026-10-17T13:15:34.876Z",
+  "errors": [],
+  "checks": [
+    {
+      "name": "18 public routes and resources, report header deduplicated",
+      "passed": true
+    },
+    {
+      "name": "Actual Lighthouse report download",
+      "passed": true,
+      "filename": "lighthouse-mobile.html"
+    },
+    {
+      "name": "Production search",
+      "passed": true
+    },
+    {
+      "name": "Production workflow interaction",
+      "passed": true
+    },
+    {
+      "name": "Theme and mobile navigation",
+      "passed": true
+    },
+    {
+      "name": "Final immutable deployment URL",
+      "passed": true
+    }
+  ],
+  "resources": [
+    {
+      "path": "/",
+      "status": 200,
+      "bytes": 18889,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/platform/",
+      "status": 200,
+      "bytes": 8493,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/platform/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/platform/network/",
+      "status": 200,
+      "bytes": 8245,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/platform/network/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/platform/reverse/",
+      "status": 200,
+      "bytes": 10289,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/platform/reverse/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/workflows/",
+      "status": 200,
+      "bytes": 11523,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/workflows/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/architecture/",
+      "status": 200,
+      "bytes": 9156,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/architecture/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/benchmarks/",
+      "status": 200,
+      "bytes": 10067,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/benchmarks/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/docs/",
+      "status": 200,
+      "bytes": 8978,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/docs/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/updates/",
+      "status": 200,
+      "bytes": 7132,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/updates/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/trust/",
+      "status": 200,
+      "bytes": 7906,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/trust/",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/assets/site.css",
+      "status": 200,
+      "bytes": 45422,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/assets/site.css",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/assets/site.js",
+      "status": 200,
+      "bytes": 9452,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/assets/site.js",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/assets/search.json",
+      "status": 200,
+      "bytes": 1529,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/assets/search.json",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/reports/measurements.json",
+      "status": 200,
+      "bytes": 2262,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/reports/measurements.json",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/reports/browser.json",
+      "status": 200,
+      "bytes": 12517,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/reports/browser.json",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/reports/lighthouse-mobile.html",
+      "status": 200,
+      "bytes": 698536,
+      "disposition": "attachment",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/reports/lighthouse-mobile",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/reports/lighthouse-desktop.html",
+      "status": 200,
+      "bytes": 720123,
+      "disposition": "attachment",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/reports/lighthouse-desktop",
+      "sitemapCorrect": null
+    },
+    {
+      "path": "/sitemap.xml",
+      "status": 200,
+      "bytes": 833,
+      "disposition": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "url": "https://artex-official-website.pages.dev/sitemap.xml",
+      "sitemapCorrect": true
+    }
+  ],
+  "passed": true
+}

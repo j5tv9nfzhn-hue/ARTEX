@@ -67,6 +67,8 @@ func parseSkillFrontmatter(t *testing.T, path string) skillFrontmatter {
 			fm.description = strings.TrimSpace(value)
 		case "allowed-tools":
 			// Anthropic Agent Skills extension; passed through, not our concern.
+		case "mcps", "mcp", "license", "compatibility":
+			// norma/skill supported frontmatter keys (e.g. mcps gates skill-bound MCP servers).
 		default:
 			t.Fatalf("frontmatter 出现未知键 %q", strings.TrimSpace(key))
 		}

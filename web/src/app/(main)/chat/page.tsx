@@ -83,7 +83,7 @@ function fmtTokens(n: number): string {
 }
 
 // fmtDuration renders an elapsed milliseconds span compactly (90s → 1m30s).
-function fmtDuration(ms: number): string {
+function _fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -142,15 +142,15 @@ function groupByAgent(conversations: Conversation[], agentByKey: Map<string, Age
 function LiveBadge() {
   const t = useTranslations("chat");
   return (
-    <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
+    <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400">
       <LiveDot className="size-1" />
       {t("live")}
     </span>
   );
 }
 
-// Composer is the shared bottom input (textarea grows to a cap, Enter sends,
-// Shift+Enter newlines) — the same affordance across DraftChat and ChatView.
+// Composer is the shared Two-Deck Composer Dock (Deck 1: 100%-width adaptive textarea;
+// Deck 2: Agent selector pill, attachment button, inline LLM profile selector, Todo popover, and Send/Stop action).
 function Composer({
   value,
   onChange,
@@ -158,6 +158,7 @@ function Composer({
   disabled,
   placeholder,
   leftSlot,
+  bottomSlot,
   running,
   onStop,
   stopDisabled,
@@ -173,6 +174,7 @@ function Composer({
   disabled: boolean;
   placeholder: string;
   leftSlot?: React.ReactNode;
+  bottomSlot?: React.ReactNode;
   running?: boolean;
   onStop?: () => void;
   stopDisabled?: boolean;
@@ -194,109 +196,119 @@ function Composer({
     onSend();
   }
   return (
-    <div className="border-t p-3">
-      {atts.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {atts.map((a) => (
-            <div
-              key={a.path}
-              className="flex items-center gap-1.5 rounded-md border bg-muted/50 px-2 py-1 text-xs"
-              title={a.path}
-            >
-              <PaperclipIcon className="size-3 shrink-0 text-primary" />
-              <span className="max-w-[160px] truncate">{a.name}</span>
-              <span className="text-muted-foreground">{fmtBytes(a.size)}</span>
-              {onRemoveAttachment && (
-                <button
-                  type="button"
-                  className="ml-0.5 text-muted-foreground hover:text-foreground"
-                  onClick={() => onRemoveAttachment(a.path)}
-                  title={t("composer.removeAttachment")}
-                >
-                  <XIcon className="size-3" />
-                </button>
-              )}
-            </div>
-          ))}
+    <div className="px-3 pt-1.5 pb-3 md:px-6">
+      <div className="mx-auto flex w-full max-w-4xl flex-col rounded-2xl border border-border/85 bg-background/75 p-2.5 shadow-xs transition-all focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
+        {atts.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5 px-1">
+            {atts.map((a) => (
+              <div
+                key={a.path}
+                className="flex items-center gap-1.5 rounded-lg border bg-muted/60 px-2.5 py-1 text-xs"
+                title={a.path}
+              >
+                <PaperclipIcon className="size-3 shrink-0 text-primary" />
+                <span className="max-w-[180px] truncate font-medium">{a.name}</span>
+                <span className="text-muted-foreground">{fmtBytes(a.size)}</span>
+                {onRemoveAttachment && (
+                  <button
+                    type="button"
+                    className="ml-0.5 text-muted-foreground hover:text-foreground"
+                    onClick={() => onRemoveAttachment(a.path)}
+                    title={t("composer.removeAttachment")}
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Deck 1: Full-width adaptive textarea so placeholder is never truncated */}
+        <div className="flex min-w-0 flex-1">
+          <MentionTextarea
+            className="max-h-40 min-h-11 w-full min-w-0 flex-1 resize-none border-0 bg-transparent px-1.5 py-1 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
+            rows={1}
+            placeholder={placeholder}
+            value={value}
+            disabled={disabled && !(running && allowBtw)}
+            onValueChange={onChange}
+            onKeyDown={onKeyDown}
+          />
         </div>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        {leftSlot ? <div className="w-full sm:w-auto">{leftSlot}</div> : null}
-        {onPickFiles && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                // FileList 与 input 实时绑定，必须先复制为数组再清空 value。
-                // 否则异步 onPickFiles（如先创建草稿对话）恢复执行时会收到空列表。
-                const picked = Array.from(e.target.files ?? []);
-                e.target.value = ""; // allow re-picking the same file
-                if (picked.length > 0) onPickFiles(picked);
-              }}
-            />
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={disabled || uploading}
-              title={t("composer.uploadFile")}
-            >
-              {uploading ? <Loader2Icon className="size-4 animate-spin" /> : <PaperclipIcon className="size-4" />}
-            </Button>
-          </>
-        )}
-        <MentionTextarea
-          className="max-h-40 min-h-10 min-w-0 flex-1 resize-none"
-          rows={1}
-          placeholder={placeholder}
-          value={value}
-          disabled={disabled && !(running && allowBtw)}
-          onValueChange={onChange}
-          onKeyDown={onKeyDown}
-        />
-        {running && allowBtw && isBtwCommand(value) && (
-          <Button
-            size="icon"
-            onClick={onSend}
-            aria-label={t("composer.sendSideQuestion")}
-            title={t("composer.sendSideQuestion")}
-          >
-            <ArrowUpIcon />
-          </Button>
-        )}
-        {running ? (
-          // while a run is in flight the send button becomes a stop button —
-          // aborts just this session (the trigger queue keeps going).
-          <Button
-            size="icon"
-            variant="destructive"
-            onClick={onStop}
-            disabled={stopDisabled}
-            title={t("composer.stopRun")}
-          >
-            <Square className="size-3.5 fill-current" />
-          </Button>
-        ) : (
-          <Button
-            size="icon"
-            onClick={onSend}
-            disabled={disabled || (!value.trim() && atts.length === 0)}
-            title={t("composer.sendMessage")}
-            aria-label={t("composer.sendMessage")}
-          >
-            <ArrowUpIcon />
-          </Button>
-        )}
+        {/* Deck 2: Integrated control bar (Agent pill, paperclip, LLM profile popover, Todo, Send/Stop) */}
+        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 border-border/50 border-t pt-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {leftSlot ? <div className="shrink-0">{leftSlot}</div> : null}
+            {onPickFiles && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files ?? []);
+                    e.target.value = "";
+                    if (picked.length > 0) onPickFiles(picked);
+                  }}
+                />
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled || uploading}
+                  title={t("composer.uploadFile")}
+                >
+                  {uploading ? <Loader2Icon className="size-4 animate-spin" /> : <PaperclipIcon className="size-4" />}
+                </Button>
+              </>
+            )}
+            {bottomSlot}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {running && allowBtw && isBtwCommand(value) && (
+              <Button
+                size="icon-sm"
+                className="rounded-xl"
+                onClick={onSend}
+                aria-label={t("composer.sendSideQuestion")}
+                title={t("composer.sendSideQuestion")}
+              >
+                <ArrowUpIcon />
+              </Button>
+            )}
+            {running ? (
+              <Button
+                size="icon-sm"
+                variant="destructive"
+                className="rounded-xl"
+                onClick={onStop}
+                disabled={stopDisabled}
+                title={t("composer.stopRun")}
+              >
+                <Square className="size-3.5 fill-current" />
+              </Button>
+            ) : (
+              <Button
+                size="icon-sm"
+                className="rounded-xl"
+                onClick={onSend}
+                disabled={disabled || (!value.trim() && atts.length === 0)}
+                title={t("composer.sendMessage")}
+                aria-label={t("composer.sendMessage")}
+              >
+                <ArrowUpIcon />
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-// LLMProfileRow shows the active LLM config below the composer and lets the user
-// switch it via a Popover. `selected` is the profile id or null for default.
+// LLMProfileRow renders as a sleek inline capsule inside the Composer toolbar deck.
 function LLMProfileRow({
   profiles,
   selected,
@@ -320,24 +332,22 @@ function LLMProfileRow({
   const label = current ? current.name : defaultLabel;
 
   return (
-    <div className="flex min-w-0 shrink-0 items-center gap-1 px-1 pt-0.5 pb-1">
-      <ZapIcon className="text-muted-foreground/50 size-3 shrink-0" />
-      <span className="truncate text-muted-foreground/70 text-xs" title={label}>
-        {label}
-      </span>
+    <div className="flex min-w-0 items-center gap-1.5">
       <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
             disabled={disabled}
-            className="flex shrink-0 items-center gap-0.5 text-primary text-xs hover:underline disabled:pointer-events-none disabled:opacity-40"
+            title={`${label} · ${t("llmProfile.change")}`}
+            className="inline-flex h-7 min-w-0 max-w-56 items-center gap-1.5 rounded-lg border border-border/70 bg-muted/50 px-2.5 text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
           >
-            {t("llmProfile.change")}
-            <ChevronDownIcon className="size-3" />
+            <ZapIcon className="size-3 shrink-0 text-primary" />
+            <span className="truncate">{label}</span>
+            <ChevronDownIcon className="size-3 shrink-0 opacity-70" />
           </button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-64 p-1">
-          <p className="text-muted-foreground px-2 py-1 text-[11px] font-medium">{t("llmProfile.select")}</p>
+          <p className="px-2 py-1 font-medium text-[11px] text-muted-foreground">{t("llmProfile.select")}</p>
           {/* default option */}
           <button
             type="button"
@@ -352,7 +362,7 @@ function LLMProfileRow({
           >
             <span className="text-sm">{defaultLabel}</span>
             {activeDefault && (
-              <span className="text-muted-foreground text-[11px]">
+              <span className="text-[11px] text-muted-foreground">
                 {activeDefault.format} · {activeDefault.model}
               </span>
             )}
@@ -371,7 +381,7 @@ function LLMProfileRow({
               )}
             >
               <span className="text-sm">{p.name}</span>
-              <span className="text-muted-foreground text-[11px]">
+              <span className="text-[11px] text-muted-foreground">
                 {p.format} · {p.model}
               </span>
             </button>
@@ -444,7 +454,10 @@ function DraftChat({
 
   const agentPicker = (
     <Select value={agentKey} onValueChange={setAgentKey}>
-      <SelectTrigger className="w-full sm:w-40">
+      <SelectTrigger
+        size="sm"
+        className="h-7 w-auto min-w-28 gap-1.5 rounded-lg border-border/70 bg-muted/50 px-2.5 text-xs"
+      >
         <SelectValue placeholder={t("agentPicker.placeholder")} />
       </SelectTrigger>
       <SelectContent>
@@ -496,14 +509,16 @@ function DraftChat({
         disabled={sending || uploading || !agentKey}
         placeholder={t("composer.placeholder")}
         leftSlot={agentPicker}
+        bottomSlot={
+          <LLMProfileRow
+            profiles={profiles}
+            selected={llmProfileId}
+            onChange={setLlmProfileId}
+            disabled={sending || uploading}
+          />
+        }
         onPickFiles={pickFiles}
         uploading={uploading}
-      />
-      <LLMProfileRow
-        profiles={profiles}
-        selected={llmProfileId}
-        onChange={setLlmProfileId}
-        disabled={sending || uploading}
       />
     </>
   );
@@ -837,18 +852,22 @@ function ChatView({
 
   return (
     <SideQuestionWorkspace side={side} label={agent?.name ?? conv.agent_key} composerLayout="inline">
-      {/* header: which agent + live + token meta */}
-      <div className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-2.5">
-        <Bot className="text-muted-foreground size-4 shrink-0" />
-        <span className="min-w-0 max-w-48 truncate text-sm font-medium">{agent?.name ?? conv.agent_key}</span>
-        <span className="text-muted-foreground hidden shrink-0 font-mono text-xs sm:inline">{conv.agent_key}</span>
+      {/* header: unified agent workbench bar + live + token meta */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-b bg-background/35 px-4 py-2.5 backdrop-blur-xs">
+        <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
+          <Bot className="size-3.5" />
+        </div>
+        <span className="min-w-0 max-w-48 truncate font-semibold text-sm">{agent?.name ?? conv.agent_key}</span>
+        <span className="hidden shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
+          {conv.agent_key}
+        </span>
         {agent && !agent.builtin && (
           <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
             {t("custom")}
           </Badge>
         )}
         {agent?.description && (
-          <span className="text-muted-foreground min-w-0 truncate text-xs">{agent.description}</span>
+          <span className="min-w-0 truncate text-muted-foreground text-xs">{agent.description}</span>
         )}
         {running && <LiveBadge />}
         <SideQuestionButton side={side} />
@@ -857,14 +876,20 @@ function ChatView({
           id={String(conv.id)}
           onReverted={() => setReloadToken((token) => token + 1)}
         />
-        <div className="text-muted-foreground ml-auto flex min-w-0 max-w-full items-center justify-end gap-x-3 gap-y-1 text-xs max-sm:w-full max-sm:flex-wrap">
+        <div className="ml-auto flex min-w-0 max-w-full items-center justify-end gap-x-2 gap-y-1 text-muted-foreground text-xs max-sm:w-full max-sm:flex-wrap">
           {tokenTotal.turns > 0 && (
-            <span title={t("turnsTooltip")} className="tabular-nums">
+            <span
+              title={t("turnsTooltip")}
+              className="rounded-md border bg-muted/60 px-2 py-0.5 text-[11px] tabular-nums"
+            >
               {t("turnsCount", { turns: tokenTotal.turns })}
             </span>
           )}
           {tokenTotal.any && (
-            <span title={t("tokensTooltip")} className="min-w-0 truncate tabular-nums">
+            <span
+              title={t("tokensTooltip")}
+              className="min-w-0 truncate rounded-md border bg-muted/60 px-2 py-0.5 text-[11px] tabular-nums"
+            >
               {t("tokensLine", {
                 input: fmtTokens(tokenTotal.i),
                 cache: fmtTokens(tokenTotal.cr),
@@ -877,15 +902,15 @@ function ChatView({
 
       <ApprovalExecutionFocus focus={approvalFocus} history={focusHistory} />
 
-      {/* messages */}
-      <ScrollArea type="auto" className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!">
-        <div className="min-w-0 max-w-full px-4 py-3" ref={contentRef}>
+      {/* messages: centered comfortable reading column */}
+      <ScrollArea type="auto" className="[&_[data-slot=scroll-area-viewport]>div]:block! min-h-0 min-w-0 flex-1">
+        <div className="mx-auto min-w-0 max-w-4xl px-4 py-4 md:px-6" ref={contentRef}>
           {messages.length === 0 && !running ? (
             <EmptyState illustration="chat" title={t("emptyStart", { agent: agent?.name ?? conv.agent_key })} />
           ) : (
             <>
               {hasMore && (
-                <div className="text-muted-foreground/70 pb-2 text-center text-[11px]">{t("loadEarlierHint")}</div>
+                <div className="pb-2 text-center text-[11px] text-muted-foreground/70">{t("loadEarlierHint")}</div>
               )}
               <Transcript
                 activity={messages}
@@ -917,13 +942,15 @@ function ChatView({
         onPickFiles={pickFiles}
         onRemoveAttachment={(path) => setAttachments((p) => p.filter((x) => x.path !== path))}
         uploading={uploading}
-      />
-      <LLMProfileRow
-        profiles={profiles}
-        selected={currentProfileId}
-        onChange={changeProfile}
-        disabled={running || sending}
-        rightSlot={<TodoPopover seq={latestTodoSeq} fetchDetail={fetchDetail} />}
+        bottomSlot={
+          <LLMProfileRow
+            profiles={profiles}
+            selected={currentProfileId}
+            onChange={changeProfile}
+            disabled={running || sending}
+            rightSlot={<TodoPopover seq={latestTodoSeq} fetchDetail={fetchDetail} />}
+          />
+        }
       />
       <MessageRollbackDialog
         open={rollbackTarget !== null}
@@ -991,8 +1018,10 @@ const ConversationItem = React.memo(function ConversationItem({
   return (
     <div
       className={cn(
-        "group flex min-w-0 items-center gap-1 rounded-md pr-1 transition-colors",
-        active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
+        "group flex min-w-0 items-center gap-1 rounded-lg border-l-2 pr-1 transition-colors",
+        active
+          ? "border-l-primary bg-accent font-medium text-accent-foreground shadow-2xs"
+          : "border-l-transparent hover:bg-accent/45",
       )}
     >
       {selectionMode && (
@@ -1019,7 +1048,7 @@ const ConversationItem = React.memo(function ConversationItem({
               onCancelRename();
             }
           }}
-          className="border-input bg-background min-w-0 flex-1 rounded-md border px-2 py-1 text-sm"
+          className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm"
         />
       ) : (
         <button
@@ -1030,7 +1059,7 @@ const ConversationItem = React.memo(function ConversationItem({
           className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left"
         >
           <div className="flex min-w-0 items-center gap-1.5">
-            {pinned && <PinIcon className="text-primary size-3 shrink-0" aria-label={t("item.pinnedAria")} />}
+            {pinned && <PinIcon className="size-3 shrink-0 text-primary" aria-label={t("item.pinnedAria")} />}
             <div className="truncate text-sm">{conv.title || t("untitledConversation")}</div>
             {conv.running ? (
               <Badge variant="secondary" className="shrink-0 gap-1" title={t("item.runningTooltip")}>
@@ -1039,7 +1068,7 @@ const ConversationItem = React.memo(function ConversationItem({
               </Badge>
             ) : null}
           </div>
-          <div className="text-muted-foreground flex min-w-0 items-center gap-1 text-[11px]">
+          <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
             {showAgent && (
               <>
                 <Bot className="size-3 shrink-0" />
@@ -1064,7 +1093,7 @@ const ConversationItem = React.memo(function ConversationItem({
           <Button
             variant="ghost"
             size="icon-sm"
-            className="text-muted-foreground shrink-0"
+            className="shrink-0 text-muted-foreground"
             aria-label={t("item.manageAria", { title: conv.title || t("untitledConversation") })}
           >
             <MoreHorizontalIcon />
@@ -1462,12 +1491,12 @@ export default function ChatPage() {
   return (
     <div
       data-content-padding="false"
-      className="flex h-[calc(100svh-3rem)] min-w-0 flex-col overflow-hidden p-3 sm:p-4 md:h-[calc(100svh-4rem)] md:p-6"
+      className="flex h-[calc(100svh-3rem)] min-w-0 flex-col overflow-hidden p-2 sm:p-3 md:h-[calc(100svh-3.5rem)] md:p-4"
     >
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(10rem,15rem)_minmax(0,1fr)] gap-3 md:grid-cols-[18rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] md:gap-4">
-        {/* left: conversation list */}
-        <div className="bg-card flex flex-col overflow-hidden rounded-lg border">
-          <div className="flex flex-col gap-2 border-b p-2">
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(10rem,14rem)_minmax(0,1fr)] overflow-hidden rounded-xl border border-border/80 bg-card shadow-xs md:grid-cols-[17.5rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]">
+        {/* left: conversation fleet rail */}
+        <div className="flex flex-col overflow-hidden border-border/75 bg-sidebar/40 max-md:border-b md:border-r">
+          <div className="flex flex-col gap-2 border-b p-2.5">
             <Button size="sm" className="w-full" onClick={() => selectConversation(null)}>
               <PlusIcon /> {t("newConversation")}
             </Button>
@@ -1500,7 +1529,7 @@ export default function ChatPage() {
                     aria-label={t("selectAllAria")}
                     disabled={filteredConversations.length === 0 || bulkDeleting}
                   />
-                  <span className="text-muted-foreground min-w-0 flex-1 text-xs tabular-nums">
+                  <span className="min-w-0 flex-1 text-muted-foreground text-xs tabular-nums">
                     {selectedConversationCount > 0
                       ? t("selectedCount", { count: selectedConversationCount })
                       : conversationCountLabel}
@@ -1522,7 +1551,7 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div className="flex items-center gap-2 px-1">
-                  <span className="text-muted-foreground min-w-0 flex-1 text-xs tabular-nums">
+                  <span className="min-w-0 flex-1 text-muted-foreground text-xs tabular-nums">
                     {conversationCountLabel}
                   </span>
                   <Button
@@ -1541,7 +1570,7 @@ export default function ChatPage() {
           <ScrollArea
             key={agentFilter === null ? "all" : `agent:${agentFilter}`}
             type="auto"
-            className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!"
+            className="[&_[data-slot=scroll-area-viewport]>div]:block! min-h-0 min-w-0 flex-1"
           >
             <div className="flex min-w-0 flex-col gap-0.5 p-2">
               {filteredConversations.length === 0 && (
@@ -1623,7 +1652,7 @@ export default function ChatPage() {
         </div>
 
         {/* right: chat view */}
-        <div className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border">
+        <div className="flex min-w-0 flex-col overflow-hidden bg-card">
           {selected ? (
             <ChatView
               key={selected.id}
@@ -1635,7 +1664,7 @@ export default function ChatPage() {
               onConvUpdated={reloadConvs}
             />
           ) : sourceRequested ? (
-            <div role="status" className="p-6 text-sm text-muted-foreground">
+            <div role="status" className="p-6 text-muted-foreground text-sm">
               {convsLoaded ? t("deletedConversation") : t("loadingConversation")}
             </div>
           ) : (

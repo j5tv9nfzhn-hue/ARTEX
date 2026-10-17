@@ -42,6 +42,16 @@ import { ApiError, api } from "@/lib/api";
 import type { Agent, MCPServer, MissingSkill, SkillCall, SkillItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+const BUILTIN_SKILL_NAMES = new Set([
+  "api-recon",
+  "playwright-cli",
+  "scopesentry-mcp",
+  "web-vuln-tactics",
+  "reverse-engineering",
+  "exploit-kb-patterns",
+  "expert-triage-pivot",
+]);
+
 function fmtTime(ts: string | undefined, never: string) {
   if (!ts) return never;
   return new Date(ts).toLocaleString("zh-CN", {
@@ -65,8 +75,8 @@ function buildTree(entries: string[]): TreeNode[] {
   const root: TreeNode[] = [];
   const dirMap = new Map<string, TreeNode>();
 
-  function ensureDir(dirPath: string, parentNodes: TreeNode[]): TreeNode[] {
-    if (dirMap.has(dirPath)) return dirMap.get(dirPath)!.children;
+  function ensureDir(dirPath: string, _parentNodes: TreeNode[]): TreeNode[] {
+    if (dirMap.has(dirPath)) return dirMap.get(dirPath)?.children;
     const parts = dirPath.split("/");
     let nodes = root;
     let cur = "";
@@ -77,7 +87,7 @@ function buildTree(entries: string[]): TreeNode[] {
         nodes.push(d);
         dirMap.set(cur, d);
       }
-      nodes = dirMap.get(cur)!.children;
+      nodes = dirMap.get(cur)?.children;
     }
     return nodes;
   }
@@ -98,7 +108,7 @@ function buildTree(entries: string[]): TreeNode[] {
           nodes.push(d);
           dirMap.set(cur, d);
         }
-        nodes = dirMap.get(cur)!.children;
+        nodes = dirMap.get(cur)?.children;
       }
       const fname = parts[parts.length - 1];
       if (fname) nodes.push({ name: fname, path: entry, type: "file", children: [] });
@@ -196,7 +206,7 @@ function SkillsOverview({
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <div>
-        <h2 className="text-base font-semibold">{t("overviewTitle")}</h2>
+        <h2 className="font-semibold text-base">{t("overviewTitle")}</h2>
         <p className="text-muted-foreground text-sm">{t("overviewDesc")}</p>
       </div>
 
@@ -204,18 +214,18 @@ function SkillsOverview({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {stats.map((s) => (
           <div key={s.label} className="rounded-lg border p-3">
-            <p className="text-2xl font-semibold tabular-nums">{s.value}</p>
-            <p className="text-xs font-medium">{s.label}</p>
-            {s.hint && <p className="text-muted-foreground mt-0.5 text-[11px]">{s.hint}</p>}
+            <p className="font-semibold text-2xl tabular-nums">{s.value}</p>
+            <p className="font-medium text-xs">{s.label}</p>
+            {s.hint && <p className="mt-0.5 text-[11px] text-muted-foreground">{s.hint}</p>}
           </div>
         ))}
       </div>
 
       {/* 调用排行 */}
       <div className="space-y-2">
-        <Label className="text-xs text-muted-foreground">{t("ranking")}</Label>
+        <Label className="text-muted-foreground text-xs">{t("ranking")}</Label>
         {agg.ranked.length === 0 ? (
-          <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-center text-xs">
+          <p className="rounded-lg border border-dashed p-4 text-center text-muted-foreground text-xs">
             {t("rankingEmpty")}
           </p>
         ) : (
@@ -236,7 +246,7 @@ function SkillsOverview({
                     style={{ width: `${agg.topCalls > 0 ? (s.calls / agg.topCalls) * 100 : 0}%` }}
                   />
                 </span>
-                <span className="w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                <span className="w-16 shrink-0 text-right text-muted-foreground text-xs tabular-nums">
                   {t("callsCount", { count: s.calls })}
                 </span>
               </button>
@@ -248,7 +258,7 @@ function SkillsOverview({
       <div className="grid gap-6 sm:grid-cols-2">
         {/* 最近调用 */}
         <div className="space-y-2">
-          <Label className="text-xs text-muted-foreground">{t("recent")}</Label>
+          <Label className="text-muted-foreground text-xs">{t("recent")}</Label>
           {agg.recent.length === 0 ? (
             <p className="text-muted-foreground text-xs">{t("recentEmpty")}</p>
           ) : (
@@ -263,7 +273,7 @@ function SkillsOverview({
                   <span className="min-w-0 flex-1 truncate font-mono text-xs" title={s.name}>
                     {s.name}
                   </span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                  <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
                     {fmtTime(s.last_used, t("neverCalled"))}
                   </span>
                 </button>
@@ -274,7 +284,7 @@ function SkillsOverview({
 
         {/* 未使用（可清理 / 需曝光） */}
         <div className="space-y-2">
-          <Label className="text-xs text-muted-foreground">
+          <Label className="text-muted-foreground text-xs">
             {t("unusedSkills")}
             {agg.neverUsed.length > 0 && <span className="ml-1 font-normal">({agg.neverUsed.length})</span>}
           </Label>
@@ -286,7 +296,7 @@ function SkillsOverview({
                 <button key={s.name} type="button" onClick={() => onSelect(s.name)} title={s.name}>
                   <Badge
                     variant="outline"
-                    className="max-w-[12rem] cursor-pointer truncate font-mono text-xs font-normal hover:bg-muted"
+                    className="max-w-[12rem] cursor-pointer truncate font-mono font-normal text-xs hover:bg-muted"
                   >
                     {s.name}
                   </Badge>
@@ -828,7 +838,7 @@ export default function SkillsPage() {
     <div data-content-padding="false" className="flex flex-1 flex-col overflow-hidden">
       <div className="flex items-center gap-3 border-b px-4 py-2.5 lg:px-6">
         <div className="flex flex-col gap-0.5">
-          <h1 className="text-sm font-semibold leading-tight">{t("title")}</h1>
+          <h1 className="font-semibold text-sm leading-tight">{t("title")}</h1>
           <p className="text-muted-foreground text-xs">{t("subtitle")}</p>
         </div>
         {/* 缺口清单：agent 点名调用、但库里没有的 skill —— 直接是该补什么的依据。 */}
@@ -841,17 +851,17 @@ export default function SkillsPage() {
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-80">
-              <p className="mb-2 text-xs text-muted-foreground">{t("missingHint")}</p>
+              <p className="mb-2 text-muted-foreground text-xs">{t("missingHint")}</p>
               <div className="space-y-1">
                 {missing.map((m) => (
                   <div key={m.skill} className="flex items-center gap-2 text-sm">
                     <code className="min-w-0 flex-1 truncate font-mono text-xs" title={m.skill}>
                       {m.skill}
                     </code>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
                       {t("callsCount", { count: m.calls })}
                     </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
+                    <span className="shrink-0 text-muted-foreground text-xs">
                       {fmtTime(m.last_used, t("neverCalled"))}
                     </span>
                   </div>
@@ -891,7 +901,7 @@ export default function SkillsPage() {
           {/* Radix viewport wraps children in a display:table div that grows with
               content — force it to block so long names truncate instead of
               widening the rows past the sidebar. */}
-          <ScrollArea className="flex-1 [&>[data-slot=scroll-area-viewport]>div]:!block">
+          <ScrollArea className="[&>[data-slot=scroll-area-viewport]>div]:!block flex-1">
             <div className="p-1">
               {skills.map((s) => {
                 const isOpen = expanded.has(s.name);
@@ -934,7 +944,7 @@ export default function SkillsPage() {
                       </span>
                       {s.calls > 0 && (
                         <span
-                          className="shrink-0 rounded bg-muted px-1 text-[10px] tabular-nums text-muted-foreground"
+                          className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground tabular-nums"
                           title={t("callCountTitle", { count: s.calls, last: fmtTime(s.last_used, t("neverCalled")) })}
                         >
                           {s.calls}
@@ -1016,18 +1026,28 @@ export default function SkillsPage() {
           {selected && selected.path === null && selectedSkill && (
             <div className="max-w-5xl space-y-5">
               <div>
-                <h2 className="font-mono text-base font-semibold">{selectedSkill.name}</h2>
+                <h2 className="font-mono font-semibold text-base">{selectedSkill.name}</h2>
                 {selectedSkill.description && (
-                  <p className="mt-1 text-sm text-muted-foreground">{selectedSkill.description}</p>
+                  <p className="mt-1 text-muted-foreground text-sm">{selectedSkill.description}</p>
                 )}
                 <div className="mt-2 flex flex-wrap gap-2">
+                  {BUILTIN_SKILL_NAMES.has(selectedSkill.name) && (
+                    <Badge variant="secondary" className="font-normal text-xs">
+                      Built-in
+                    </Badge>
+                  )}
+                  {selectedSkill.mcps?.map((m) => (
+                    <Badge key={m} variant="outline" className="font-mono font-normal text-xs">
+                      MCP: {m}
+                    </Badge>
+                  ))}
                   {selectedSkill.license && (
-                    <Badge variant="outline" className="text-xs font-normal">
+                    <Badge variant="outline" className="font-normal text-xs">
                       License: {selectedSkill.license}
                     </Badge>
                   )}
                   {selectedSkill.compatibility && (
-                    <Badge variant="secondary" className="text-xs font-normal">
+                    <Badge variant="secondary" className="font-normal text-xs">
                       {selectedSkill.compatibility}
                     </Badge>
                   )}
@@ -1040,41 +1060,41 @@ export default function SkillsPage() {
               <div className="flex flex-col gap-6 lg:flex-row-reverse lg:items-start">
                 {/* ── 右侧：调用统计 ── */}
                 <div className="space-y-2 lg:w-80 lg:shrink-0">
-                  <Label className="text-xs text-muted-foreground">{t("callStats")}</Label>
+                  <Label className="text-muted-foreground text-xs">{t("callStats")}</Label>
                   <div className="grid grid-cols-3 gap-2">
                     <div className="rounded-md border p-2">
-                      <p className="text-lg font-semibold tabular-nums">{selectedSkill.calls}</p>
-                      <p className="text-xs text-muted-foreground">{t("totalCalls")}</p>
+                      <p className="font-semibold text-lg tabular-nums">{selectedSkill.calls}</p>
+                      <p className="text-muted-foreground text-xs">{t("totalCalls")}</p>
                     </div>
                     <div className="rounded-md border p-2">
-                      <p className="text-lg font-semibold tabular-nums">{selectedSkill.tasks}</p>
-                      <p className="text-xs text-muted-foreground">{t("coveredTasks")}</p>
+                      <p className="font-semibold text-lg tabular-nums">{selectedSkill.tasks}</p>
+                      <p className="text-muted-foreground text-xs">{t("coveredTasks")}</p>
                     </div>
                     <div className="rounded-md border p-2">
                       <p
-                        className="truncate text-sm font-medium"
+                        className="truncate font-medium text-sm"
                         title={fmtTime(selectedSkill.last_used, t("neverCalled"))}
                       >
                         {fmtTime(selectedSkill.last_used, t("neverCalled"))}
                       </p>
-                      <p className="text-xs text-muted-foreground">{t("recent")}</p>
+                      <p className="text-muted-foreground text-xs">{t("recent")}</p>
                     </div>
                   </div>
                   {selectedSkill.usage_agents.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1">
-                      <span className="text-xs text-muted-foreground">{t("callers")}</span>
+                      <span className="text-muted-foreground text-xs">{t("callers")}</span>
                       {selectedSkill.usage_agents.map((k) => (
-                        <Badge key={k} variant="secondary" className="text-xs font-normal">
+                        <Badge key={k} variant="secondary" className="font-normal text-xs">
                           {k}
                         </Badge>
                       ))}
                     </div>
                   )}
                   {usageLoading ? (
-                    <p className="text-xs text-muted-foreground">{t("loadingCalls")}</p>
+                    <p className="text-muted-foreground text-xs">{t("loadingCalls")}</p>
                   ) : usageCalls.length > 0 ? (
                     <div className="rounded-md border">
-                      <div className="border-b px-2 py-1 text-xs text-muted-foreground">
+                      <div className="border-b px-2 py-1 text-muted-foreground text-xs">
                         {t("recentCallsCount", { count: usageCalls.length })}
                       </div>
                       <div className="max-h-56 overflow-y-auto">
@@ -1083,7 +1103,7 @@ export default function SkillsPage() {
                             key={`${c.ts}-${i}`}
                             className="flex items-center gap-2 border-b px-2 py-1 text-xs last:border-b-0"
                           >
-                            <span className="tabular-nums text-muted-foreground">
+                            <span className="text-muted-foreground tabular-nums">
                               {fmtTime(c.ts, t("neverCalled"))}
                             </span>
                             <Badge variant="outline" className="font-normal">
@@ -1097,19 +1117,19 @@ export default function SkillsPage() {
                       </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-muted-foreground">{t("noCallsYet")}</p>
+                    <p className="text-muted-foreground text-xs">{t("noCallsYet")}</p>
                   )}
                 </div>
 
                 {/* ── 左侧：关联 MCP + 可见性 ── */}
                 <div className="space-y-5 lg:min-w-0 lg:flex-1">
                   <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">
+                    <Label className="text-muted-foreground text-xs">
                       {t("linkedMcp")}
                       <span className="ml-1 font-normal">{t("linkedMcpHint")}</span>
                     </Label>
                     {mcpOptions.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">{t("noMcp")}</p>
+                      <p className="text-muted-foreground text-xs">{t("noMcp")}</p>
                     ) : (
                       <div className="flex flex-wrap gap-x-4 gap-y-2">
                         {mcpOptions.map((m) => (
@@ -1126,7 +1146,7 @@ export default function SkillsPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">{t("visibility")}</Label>
+                    <Label className="text-muted-foreground text-xs">{t("visibility")}</Label>
                     <div className="space-y-2">
                       {agents.map((a) => (
                         <label key={a.key} className="flex cursor-pointer items-center gap-2 text-sm">
@@ -1137,7 +1157,7 @@ export default function SkillsPage() {
                           {a.name}
                         </label>
                       ))}
-                      {agents.length === 0 && <span className="text-xs text-muted-foreground">{t("noAgents")}</span>}
+                      {agents.length === 0 && <span className="text-muted-foreground text-xs">{t("noAgents")}</span>}
                     </div>
                   </div>
                 </div>
@@ -1147,7 +1167,7 @@ export default function SkillsPage() {
 
           {selected && selected.path !== null && (
             <div className="flex h-full flex-col gap-2">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2 text-muted-foreground text-xs">
                 <span className="font-medium text-foreground">{selected.skill}</span>
                 <span>/</span>
                 <span className="font-mono">{selected.path}</span>
@@ -1156,7 +1176,7 @@ export default function SkillsPage() {
                 </Button>
               </div>
               {fileLoading ? (
-                <p className="text-xs text-muted-foreground">{t("loading")}</p>
+                <p className="text-muted-foreground text-xs">{t("loading")}</p>
               ) : (
                 <Textarea
                   className="flex-1 resize-none font-mono text-xs"
@@ -1221,7 +1241,7 @@ export default function SkillsPage() {
               <TabsTrigger value="mcp">
                 {t("linkedMcp")}
                 {newMcps.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none text-primary-foreground">
+                  <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground leading-none">
                     {newMcps.length}
                   </span>
                 )}
@@ -1229,7 +1249,7 @@ export default function SkillsPage() {
               <TabsTrigger value="visibility">
                 {t("tabVisibility")}
                 {newVisibility.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none text-primary-foreground">
+                  <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground leading-none">
                     {newVisibility.length}
                   </span>
                 )}
@@ -1239,7 +1259,7 @@ export default function SkillsPage() {
             {/* 基本信息 */}
             <TabsContent
               value="basic"
-              className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4 pt-4 data-[state=inactive]:hidden"
+              className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-4 data-[state=inactive]:hidden"
             >
               <div className="grid gap-1.5">
                 <Label htmlFor="sk-name">
@@ -1286,7 +1306,7 @@ export default function SkillsPage() {
               </div>
               <div className="flex min-h-0 flex-1 flex-col gap-1.5">
                 <Label htmlFor="sk-inst">
-                  {t("bodyLabel")} <span className="text-muted-foreground text-xs font-normal">{t("bodyHint")}</span>
+                  {t("bodyLabel")} <span className="font-normal text-muted-foreground text-xs">{t("bodyHint")}</span>
                 </Label>
                 <Textarea
                   id="sk-inst"
@@ -1299,10 +1319,10 @@ export default function SkillsPage() {
             </TabsContent>
 
             {/* 关联 MCP */}
-            <TabsContent value="mcp" className="overflow-y-auto px-4 pb-4 pt-4 data-[state=inactive]:hidden">
-              <p className="mb-3 text-xs text-muted-foreground">{t("mcpSheetHint")}</p>
+            <TabsContent value="mcp" className="overflow-y-auto px-4 pt-4 pb-4 data-[state=inactive]:hidden">
+              <p className="mb-3 text-muted-foreground text-xs">{t("mcpSheetHint")}</p>
               {mcpOptions.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{t("noMcp")}</p>
+                <p className="text-muted-foreground text-xs">{t("noMcp")}</p>
               ) : (
                 <div className="flex flex-col gap-2">
                   {mcpOptions.map((m) => (
@@ -1321,10 +1341,10 @@ export default function SkillsPage() {
             </TabsContent>
 
             {/* 可见性 */}
-            <TabsContent value="visibility" className="overflow-y-auto px-4 pb-4 pt-4 data-[state=inactive]:hidden">
-              <p className="mb-3 text-xs text-muted-foreground">{t("visSheetHint")}</p>
+            <TabsContent value="visibility" className="overflow-y-auto px-4 pt-4 pb-4 data-[state=inactive]:hidden">
+              <p className="mb-3 text-muted-foreground text-xs">{t("visSheetHint")}</p>
               {agents.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{t("noAgents")}</p>
+                <p className="text-muted-foreground text-xs">{t("noAgents")}</p>
               ) : (
                 <div className="flex flex-col gap-2">
                   {agents.map((a) => (

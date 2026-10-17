@@ -56,7 +56,10 @@ type ToolSet struct {
 	cs              *db.CompanyStore // company store (optional)
 	ts              *db.ExplorationStore
 	worker          string
-	taskID          int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
+	taskID          int64  // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
+	proxyAddr       string // recording MITM or egress proxy URL for built-in HTTP tools
+	proxyCACert     string // recording MITM CA cert path for built-in HTTP tools
+	workDir         string // per-run working directory for built-in file/wordlist tools
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
 	// zero value (all existing ToolSet constructions) means ENABLED — matching the
 	// DB default (true). When true: graphOverviewData drops the coverage block, the
@@ -107,7 +110,12 @@ type ToolSet struct {
 	// the planner having to spot it folded into the graph overview. Wired for the main
 	// agent + cross-task orchestration; nil elsewhere → falls back to the bare notify.
 	notifyHint func(texts []string)
+	// trafficStore 供原生渗透工具（http_request / http_fuzz / extract_data）旁路直写或读取流量库。
+	trafficStore TrafficDirectStore
 }
+
+// SetTrafficStore wires the direct traffic store (see ToolSet.trafficStore).
+func (t *ToolSet) SetTrafficStore(ts TrafficDirectStore) { t.trafficStore = ts }
 
 // SetNotifyGoal wires the goal-add trigger callback (see ToolSet.notifyGoal). Set only
 // by the main-agent chat, so runtime-added goals are announced to the planner by name.
@@ -167,6 +175,19 @@ func NewToolSet(ts *db.ExplorationStore, worker string) *ToolSet {
 // SetTaskID sets the PG task id on this ToolSet so that report_finding can
 // dual-write to the standalone findings table (which survives task deletion).
 func (t *ToolSet) SetTaskID(id int64) { t.taskID = id }
+
+// SetProxy wires the recording MITM / egress proxy and CA certificate path into
+// built-in Go native HTTP tools (http_request / http_fuzz).
+func (t *ToolSet) SetProxy(addr, caCert string) {
+	t.proxyAddr = strings.TrimSpace(addr)
+	t.proxyCACert = strings.TrimSpace(caCert)
+}
+
+// SetWorkDir wires the agent's per-run working directory into built-in Go native
+// tools (http_fuzz wordlist_file / extract_data file_path).
+func (t *ToolSet) SetWorkDir(dir string) {
+	t.workDir = strings.TrimSpace(dir)
+}
 
 // SetCoverageEnabled records whether this task has the asset-coverage feature on
 // (default enabled). Passing false makes graphOverviewData omit the coverage block
@@ -2032,7 +2053,8 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 // PlannerTools is the read + intent-generation + goal-judgement tool set.
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
 	return []actool.CoreTool{
-		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
+		t.binaryInspectTool(), t.recordFact(),
+		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),

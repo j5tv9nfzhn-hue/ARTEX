@@ -1,0 +1,3 @@
+name = "artex-official-website"
+pages_build_output_dir = "./site"
+# No account_id, secrets or production domain. Deployment requires separate approval.

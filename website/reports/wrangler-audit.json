@@ -1,0 +1,18 @@
+{
+  "checkedOn": "2026-10-17",
+  "method": "User-designated remote MCP; existing CLI only",
+  "wrangler": "4.131.2",
+  "node": "v24.20.0",
+  "commandLocated": true,
+  "whoami": {
+    "auth_status": "authenticated",
+    "exit_code": 0,
+    "timed_out": false,
+    "account_details_omitted": true
+  },
+  "existingArtexWranglerConfigMatches": 0,
+  "projectDeploymentPermissions": "not verified",
+  "deploymentsCreated": 0,
+  "dnsChanges": 0,
+  "credentialValuesInspected": false
+}

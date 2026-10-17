@@ -1,0 +1,366 @@
+{
+  "base": "https://artex-official-website.pages.dev",
+  "checkedAt": "2026-10-17T13:12:46.587Z",
+  "cases": [
+    {
+      "route": "/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/platform/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/platform/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/platform/network/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/platform/network/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/platform/reverse/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/platform/reverse/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/workflows/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/workflows/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/architecture/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/architecture/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/benchmarks/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/benchmarks/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/docs/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/docs/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/updates/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/updates/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/trust/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/trust/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/missing-example/",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "status": 404,
+      "errors": [],
+      "overflow": false,
+      "canonical": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/platform/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/platform/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/platform/network/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/platform/network/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/platform/reverse/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/platform/reverse/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/workflows/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/workflows/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/architecture/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/architecture/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/benchmarks/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/benchmarks/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/docs/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/docs/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/updates/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/updates/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/trust/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 200,
+      "errors": [],
+      "overflow": false,
+      "canonical": "https://artex-official-website.pages.dev/trust/",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    },
+    {
+      "route": "/missing-example/",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "status": 404,
+      "errors": [],
+      "overflow": false,
+      "canonical": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "nosniff": "nosniff",
+      "violations": []
+    }
+  ],
+  "checks": [
+    {
+      "name": "Search under production CSP",
+      "passed": true
+    },
+    {
+      "name": "Workflow gate",
+      "passed": true
+    },
+    {
+      "name": "Theme and mobile navigation",
+      "passed": true
+    },
+    {
+      "name": "Same-origin assets and raw measurement downloads",
+      "passed": false,
+      "error": "page.evaluate: TypeError: Failed to fetch\n    at eval (eval at evaluate (:370:30), <anonymous>:1:277)\n    at Array.map (<anonymous>)\n    at eval (eval at evaluate (:370:30), <anonymous>:1:246)\n    at UtilityScript.evaluate (<anonymous>:372:16)\n    at UtilityScript.<anonymous> (<anonymous>:1:44)"
+    }
+  ],
+  "rawClientLimitation": "Python urllib was blocked with Cloudflare 1010; browser navigation used instead. No security settings were changed.",
+  "summary": {
+    "routes": 10,
+    "combinations": 22,
+    "errors": 0,
+    "overflows": 0,
+    "axeViolations": 0,
+    "failedChecks": 1,
+    "statusFailures": 0,
+    "canonicalFailures": 0
+  }
+}

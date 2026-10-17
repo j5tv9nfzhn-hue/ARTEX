@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
@@ -29,30 +30,57 @@ func deferredSystem(sysText string, def DeferredInfo) (system []string, boundary
 		boundary = len(system) // b >= len → 整段 system 一个缓存块
 		return system, boundary
 	}
+	if def.MCPCatalog != "" {
+		block += "\n\n" + def.MCPCatalog
+	}
 	system = []string{sysText, block}
 	boundary = len(system) // b >= len → whole system prompt cached (SDK guard)
 	return system, boundary
 }
 
-// seedUnlockFromHistory replays prior Skill() invocations in the conversation so
-// their skill-gated MCPs are re-unlocked on a resumed session (design doc C2). The
-// main agent builds a fresh session each turn; its in-memory unlock set would
-// otherwise reset, leaving the model able to see a skill-revealed tool name yet
-// unable to call it. No-op when unlockSkill is nil (no deferred tools).
+// seedUnlockFromHistory restores only successfully completed Skill calls.
+// Failed, pending, unpaired calls never grant skill-gated MCP access.
 func seedUnlockFromHistory(msgs []llm.Message, unlockSkill func(string)) {
 	if unlockSkill == nil {
 		return
 	}
+	pending := map[string]string{}
 	for _, m := range msgs {
-		for _, b := range m.ToolUses() {
-			if b.Name != "Skill" {
-				continue
+		for _, block := range m.Content {
+			if block.Type == llm.BlockToolUse && block.Name == "Skill" && block.ID != "" {
+				var in struct {
+					Name   string `json:"name"`
+					Skill  string `json:"skill"`
+					Legacy string `json:"skill_name"`
+				}
+				if json.Unmarshal(block.Input, &in) != nil {
+					continue
+				}
+				chosen := ""
+				conflict := false
+				for _, raw := range []string{in.Name, in.Skill, in.Legacy} {
+					n := strings.TrimSpace(raw)
+					if n == "" {
+						continue
+					}
+					if chosen != "" && CanonicalSkillAlias(chosen) != CanonicalSkillAlias(n) {
+						conflict = true
+					}
+					if chosen == "" {
+						chosen = n
+					}
+				}
+				if chosen != "" && !conflict {
+					pending[block.ID] = chosen
+				}
 			}
-			var in struct {
-				Name string `json:"name"`
-			}
-			if json.Unmarshal(b.Input, &in) == nil && in.Name != "" {
-				unlockSkill(in.Name)
+			if block.Type == llm.BlockToolResult {
+				if name, ok := pending[block.ToolUseID]; ok {
+					delete(pending, block.ToolUseID)
+					if !block.IsError {
+						unlockSkill(name)
+					}
+				}
 			}
 		}
 	}

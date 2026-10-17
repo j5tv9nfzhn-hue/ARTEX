@@ -280,6 +280,7 @@ func renderEnvBrief(env envSnapshot, warnings []string) string {
 	fmt.Fprintf(&b, "\n- 本机逻辑 CPU %d 核。CPU 密集型命令（穷举、爆破、大规模 fuzz）：自限并发（进程/线程数 ≤ %d，"+
 		"禁止无上限 multiprocessing），预计超过 1 分钟的命令用 run_in_background 后台执行、不再需要时立即 TaskStop；"+
 		"避免多个 worker 同时跑满 CPU——平台服务与数据库会被拖慢。", runtime.NumCPU(), cpuBoundConcurrencyCap())
+	b.WriteString("\n- 原生工具优先：常规 HTTP 发包、并发目录/参数/IDOR 探测、编解码/加解密/JWT、正则/JSON/HTML/JS 提取、端口探测与本地检索，优先调用内置 Go 原生工具（http_request / http_fuzz / codec_crypto / extract_data / net_probe / Grep / Glob / Read），禁止为此编写临时 .py 脚本或用 Bash 跑 Python 并发循环。")
 	if len(warnings) > 0 {
 		fmt.Fprintf(&b, "\n- ⚠ 环境契约警告：%s", strings.Join(warnings, "；"))
 	}

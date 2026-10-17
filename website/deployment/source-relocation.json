@@ -1,0 +1,32 @@
+{
+  "checked_at": "2026-10-17T13:20:12.285390+00:00",
+  "old_path": "C:\\Users\\Administrator\\Desktop\\ARTEX-Website",
+  "new_path": "C:\\Users\\Administrator\\Desktop\\ARTEX\\website",
+  "move_method": "same-volume Path.rename; no merge or overwrite",
+  "old_path_exists": false,
+  "files_before": 82,
+  "files_after_move": 82,
+  "move_byte_hashes_equal": true,
+  "post_move_documentation_and_script_changes": {
+    "README.md": {
+      "before": "65c30c85b16b182c684eab8f455cb81c6e3e4b67f21d07b97612c67056a3a0de",
+      "after": "26100924d3e2aaee3223be7d194be1e42d5c77ab8ba4688ecd0bc7e159739804"
+    },
+    "deployment/deploy_once.py": {
+      "before": "257c6c392d7e5bc3640f253f01690346e3b4373b9d2d98d56d7493d9df643689",
+      "after": "b6cb341f6a077c1de65d34a0e5c2dae4b59b5f6c9d17d2317722e01e196fcf56"
+    }
+  },
+  "changed_existing_main_repository_files": [
+    "README.md"
+  ],
+  "new_maintenance_document": "docs/website-maintenance.md",
+  "main_tracked_files_compared": 845,
+  "main_other_tracked_bytes_unchanged": true,
+  "published_dist_bytes_unchanged": true,
+  "builds_or_tests_run": false,
+  "redeployed": false,
+  "git_add_commit_push": false,
+  "production_url": "https://artex-official-website.pages.dev/",
+  "historical_artifacts_preserved": true
+}

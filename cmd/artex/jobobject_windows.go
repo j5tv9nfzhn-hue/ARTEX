@@ -45,20 +45,64 @@ func guardProcessTree() error {
 	return nil
 }
 
-// newKillOnCloseJob 创建「最后一个句柄关闭时终止全部成员」的 Job。
+// jobObjectCpuRateControlInformation 对应 Win32 JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
+// (JobObjectInfoClass = 15)：限制整个 Job 进程树（含派生出的 powershell/python 子树）
+// 的最大 CPU 占比，始终为宿主机内核、SQLite 写盘与 HTTP 管理服务保留算力余量。
+type jobObjectCpuRateControlInformation struct {
+	ControlFlags uint32
+	CpuRate      uint32
+}
+
+const (
+	jobObjectLimitPriorityClass           = 0x00000020
+	jobObjectLimitDieOnUnhandledException = 0x00000400
+	belowNormalPriorityClass              = 0x00004000
+	jobObjectInfoClassCpuRateControl      = 15
+	jobObjectCpuRateControlEnable         = 0x00000001
+	jobObjectCpuRateControlHardCap        = 0x00000004
+)
+
+// newKillOnCloseJob 创建「最后一个句柄关闭时终止全部成员」的 Job，并启用异常静默退出、
+// BELOW_NORMAL_PRIORITY_CLASS 优先级降级与尽力而为的进程树硬性 CPU 占比上限（50%）。
 func newKillOnCloseJob() (windows.Handle, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return 0, err
 	}
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
-	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+		jobObjectLimitDieOnUnhandledException | jobObjectLimitPriorityClass
+	info.BasicLimitInformation.PriorityClass = belowNormalPriorityClass
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
-		_ = windows.CloseHandle(job)
-		return 0, err
+		// 某些受限容器不允许设置 PriorityClass，回退为仅设置 KILL_ON_JOB_CLOSE
+		info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+			jobObjectLimitDieOnUnhandledException
+		info.BasicLimitInformation.PriorityClass = 0
+		if _, err2 := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
+			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err2 != nil {
+			_ = windows.CloseHandle(job)
+			return 0, err2
+		}
 	}
+	applyJobCPURateCap(job, 50)
 	return job, nil
+}
+
+func applyJobCPURateCap(job windows.Handle, percent uint32) {
+	if percent == 0 || percent >= 100 {
+		return
+	}
+	rateInfo := jobObjectCpuRateControlInformation{
+		ControlFlags: jobObjectCpuRateControlEnable | jobObjectCpuRateControlHardCap,
+		CpuRate:      percent * 100,
+	}
+	_, _ = windows.SetInformationJobObject(
+		job,
+		jobObjectInfoClassCpuRateControl,
+		uintptr(unsafe.Pointer(&rateInfo)),
+		uint32(unsafe.Sizeof(rateInfo)),
+	)
 }
 
 // assignPIDToJob 把指定 pid 的进程放进 Job。子进程一旦进入 Job，之后派生的进程自动

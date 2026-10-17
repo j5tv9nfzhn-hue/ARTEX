@@ -1,0 +1,648 @@
+{
+  "measuredAt": "2026-10-17T12:59:48.599Z",
+  "browserVersion": "156.0.8078.4",
+  "routes": [
+    "/",
+    "/platform/",
+    "/platform/network/",
+    "/platform/reverse/",
+    "/workflows/",
+    "/architecture/",
+    "/benchmarks/",
+    "/docs/",
+    "/updates/",
+    "/trust/",
+    "/missing-example/"
+  ],
+  "cases": [
+    {
+      "route": "/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/network/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/reverse/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/workflows/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/architecture/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/benchmarks/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/docs/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/updates/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/trust/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/missing-example/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "status": 404,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/network/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/reverse/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/workflows/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/architecture/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/benchmarks/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/docs/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/updates/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/trust/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/missing-example/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "status": 404,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/network/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/reverse/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/workflows/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/architecture/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/benchmarks/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/docs/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/updates/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/trust/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/missing-example/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "status": 404,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/network/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/platform/reverse/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/workflows/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/architecture/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/benchmarks/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/docs/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/updates/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/trust/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 200,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    },
+    {
+      "route": "/missing-example/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "status": 404,
+      "overflow": false,
+      "headingCount": 1,
+      "errors": [],
+      "violations": []
+    }
+  ],
+  "interactions": [
+    {
+      "name": "品牌视角切换",
+      "passed": true
+    },
+    {
+      "name": "主题切换与跨路由持久化",
+      "passed": true
+    },
+    {
+      "name": "命令搜索与键盘导航",
+      "passed": true
+    },
+    {
+      "name": "搜索无结果反馈",
+      "passed": true
+    },
+    {
+      "name": "交接检查点与重置",
+      "passed": true
+    },
+    {
+      "name": "能力筛选",
+      "passed": true
+    },
+    {
+      "name": "FAQ 展开",
+      "passed": true
+    },
+    {
+      "name": "动效偏好持久化",
+      "passed": true
+    },
+    {
+      "name": "移动端导航",
+      "passed": true
+    },
+    {
+      "name": "文档复制按钮可操作",
+      "passed": true
+    },
+    {
+      "name": "未知路由返回真实 404",
+      "passed": true
+    }
+  ],
+  "linkFailures": [],
+  "environment": "Linux sandbox; local Node HTTP preview; Chromium; no ARTEX backend or Cloudflare connection",
+  "summary": {
+    "pages": 11,
+    "combinations": 44,
+    "violations": 0,
+    "errors": 0,
+    "overflows": 0,
+    "failedInteractions": 0,
+    "brokenLinks": 0
+  }
+}

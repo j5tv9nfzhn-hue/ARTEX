@@ -13,7 +13,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/utils";
 
-export function ReportTab({ taskId }: { taskId: string }) {
+export function ReportTab({
+  taskId,
+  analysisDomain,
+}: {
+  taskId: string;
+  analysisDomain?: "web_security" | "software_re";
+}) {
+  const softwareRE = analysisDomain === "software_re";
   const t = useTranslations("taskDetail.report");
   const [report, setReport] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
@@ -67,7 +74,7 @@ export function ReportTab({ taskId }: { taskId: string }) {
   } else {
     content = (
       <div className="rounded-md border border-dashed">
-        <EmptyState illustration="flag" title={t("empty")} />
+        <EmptyState illustration="flag" title={t(softwareRE ? "softwareEmpty" : "empty")} />
       </div>
     );
   }
@@ -76,7 +83,7 @@ export function ReportTab({ taskId }: { taskId: string }) {
     <Card>
       <CardHeader className="flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2 text-sm">
-          <FileTextIcon className="size-4" /> {t("title")}
+          <FileTextIcon className="size-4" /> {t(softwareRE ? "softwareTitle" : "title")}
         </CardTitle>
         <div className="flex gap-2">
           {report && (

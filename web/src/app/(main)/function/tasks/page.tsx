@@ -169,8 +169,8 @@ const MAX_SOURCE_TASKS = 8;
 
 // fmtTokens renders a compact token count (1234 → 1.2k, 2_000_000 → 2M).
 function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + "M";
-  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
   return String(n);
 }
 
@@ -824,7 +824,7 @@ export default function TasksPage() {
           <CardContent className="flex flex-col gap-4 px-0 pt-6">
             <div className="flex flex-wrap items-center gap-2 px-4 lg:px-6">
               <div className="relative w-full sm:max-w-xs">
-                <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+                <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder={t("filter.searchPlaceholder")}
                   value={query}
@@ -836,7 +836,7 @@ export default function TasksPage() {
                     type="button"
                     onClick={() => setQuery("")}
                     aria-label={t("filter.clearSearch")}
-                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
+                    className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     <XIcon className="size-4" />
                   </button>
@@ -988,7 +988,7 @@ export default function TasksPage() {
                     <TableHead className="text-center">{t("table.goalProgress")}</TableHead>
                     <TableHead className="text-center" title={t("table.findingsTitle")}>
                       {t("table.findings")}{" "}
-                      <span className="text-muted-foreground font-normal">{t("table.findingsSub")}</span>
+                      <span className="font-normal text-muted-foreground">{t("table.findingsSub")}</span>
                     </TableHead>
                     <TableHead className="text-center" title={t("table.outputTitle")}>
                       {t("table.output")}
@@ -1240,17 +1240,17 @@ const TaskRow = React.memo(function TaskRow({
         />
       </TableCell>
       <TableCell>
-        <code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">{task.id}</code>
+        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{task.id}</code>
       </TableCell>
       <TableCell className="font-medium">
         <div className="flex max-w-xs items-center gap-2">
           <TaskNameEditor task={task} onRename={onRename} />
           {task.active && <StarIcon className="size-4 shrink-0 fill-amber-400 text-amber-400" />}
-          {taskIsPinned(task) && <PinIcon className="text-primary size-4 shrink-0" aria-label={t("row.pinnedBadge")} />}
+          {taskIsPinned(task) && <PinIcon className="size-4 shrink-0 text-primary" aria-label={t("row.pinnedBadge")} />}
           {task.pending_approvals && task.pending_approvals > 0 ? (
             <Link
               href="/system/intercept/approvals"
-              className="focus-visible:ring-ring shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2"
+              className="shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title={t("row.pendingApprovalsTitle", { n: task.pending_approvals })}
             >
               <Badge
@@ -1264,7 +1264,7 @@ const TaskRow = React.memo(function TaskRow({
           ) : null}
         </div>
       </TableCell>
-      <TableCell className="text-muted-foreground max-w-40">
+      <TableCell className="max-w-40 text-muted-foreground">
         <Link
           href={`/function/tasks/detail?id=${encodeURIComponent(task.id)}`}
           className="block truncate rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1273,13 +1273,13 @@ const TaskRow = React.memo(function TaskRow({
           {task.description}
         </Link>
       </TableCell>
-      <TableCell className="text-muted-foreground max-w-40 truncate" title={task.goal}>
+      <TableCell className="max-w-40 truncate text-muted-foreground" title={task.goal}>
         {task.goal}
       </TableCell>
       <TableCell>
         <StatusBadge domain="task" value={task.status} dot />
       </TableCell>
-      <TableCell className="text-muted-foreground text-center text-xs tabular-nums">
+      <TableCell className="text-center text-muted-foreground text-xs tabular-nums">
         {typeof task.goals_total === "number" && task.goals_total > 0 ? (
           `${task.goals_met}/${task.goals_total}`
         ) : (
@@ -1293,7 +1293,7 @@ const TaskRow = React.memo(function TaskRow({
           if (!f || total === 0) return <span className="text-muted-foreground">0</span>;
           const seg = (n: number, cls: string) => <span className={n > 0 ? cls : "text-muted-foreground"}>{n}</span>;
           return (
-            <span className="font-medium whitespace-nowrap" title={t("table.findingsTitle")}>
+            <span className="whitespace-nowrap font-medium" title={t("table.findingsTitle")}>
               {seg(f.critical, severityTextClass("critical"))}
               <span className="text-muted-foreground">/</span>
               {seg(f.high, severityTextClass("high"))}
@@ -1315,14 +1315,14 @@ const TaskRow = React.memo(function TaskRow({
           return (
             <div className="flex flex-col items-center gap-0.5" title={t("row.outputTitle")}>
               {perHour > 0 ? (
-                <span className="font-medium whitespace-nowrap">
+                <span className="whitespace-nowrap font-medium">
                   {fmtPerHour(perHour)} {t("row.perHourUnit")}
                 </span>
               ) : (
                 <span className="text-muted-foreground">—</span>
               )}
               {firstMs > 0 && (
-                <span className="text-muted-foreground text-[10px] whitespace-nowrap">
+                <span className="whitespace-nowrap text-[10px] text-muted-foreground">
                   {t("row.firstFinding", { time: fmtFirstFindingMS(firstMs) })}
                 </span>
               )}
@@ -1332,15 +1332,15 @@ const TaskRow = React.memo(function TaskRow({
       </TableCell>
       <TableCell className="text-center text-xs tabular-nums">
         {task.in_flight && task.in_flight > 0 ? (
-          <span className="text-foreground font-medium">{task.in_flight}</span>
+          <span className="font-medium text-foreground">{task.in_flight}</span>
         ) : (
           <span className="text-muted-foreground">0</span>
         )}
       </TableCell>
-      <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap tabular-nums">
+      <TableCell className="whitespace-nowrap text-right text-muted-foreground text-xs tabular-nums">
         {fmtDateTime(task.created_unix)}
       </TableCell>
-      <TableCell className="text-right text-xs whitespace-nowrap tabular-nums">
+      <TableCell className="whitespace-nowrap text-right text-xs tabular-nums">
         {(() => {
           const secs = taskDuration(task, nowSec);
           if (secs <= 0) return <span className="text-muted-foreground">—</span>;
@@ -1352,7 +1352,7 @@ const TaskRow = React.memo(function TaskRow({
         })()}
       </TableCell>
       <TableCell
-        className="text-right text-xs whitespace-nowrap tabular-nums"
+        className="whitespace-nowrap text-right text-xs tabular-nums"
         title={
           task.tokens
             ? t("row.tokenTitle", {
@@ -1469,6 +1469,7 @@ function TaskNameEditor({ task, onRename }: { task: Task; onRename: (task: Task,
       >
         {task.name?.trim() ? task.name : <span className="text-muted-foreground">{t("row.unnamed")}</span>}
       </Link>
+      {task.analysis_domain === "software_re" && <Badge variant="outline">{t("analysisDomain.software")}</Badge>}
       <Button
         type="button"
         variant="ghost"
@@ -2007,7 +2008,7 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
                         <span className="truncate font-medium">
                           {archive.task_name || archive.task_description || t("taskRef", { id: archive.task_id })}
                         </span>
-                        <span className="text-muted-foreground truncate text-xs">
+                        <span className="truncate text-muted-foreground text-xs">
                           #{archive.task_id} · {archive.task_description}
                         </span>
                       </div>
@@ -2018,7 +2019,7 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
                     <TableCell className="text-muted-foreground">
                       {archive.category_name || t("archive.uncategorized")}
                     </TableCell>
-                    <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
+                    <TableCell className="whitespace-nowrap text-muted-foreground text-xs">
                       {archiveDate(archive.archived_at || archive.requested_at)}
                     </TableCell>
                     <TableCell
@@ -2435,9 +2436,9 @@ function BulkDeleteTasksDialog({
           <AlertDialogTitle>{t("bulkDelete.title", { count: ids.length })}</AlertDialogTitle>
           <AlertDialogDescription>{t("bulkDelete.description")}</AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="text-muted-foreground flex flex-wrap gap-1 text-xs">
+        <div className="flex flex-wrap gap-1 text-muted-foreground text-xs">
           {ids.slice(0, 30).map((id) => (
-            <code key={id} className="bg-muted rounded px-1.5 py-0.5 font-mono">
+            <code key={id} className="rounded bg-muted px-1.5 py-0.5 font-mono">
               #{id}
             </code>
           ))}
@@ -2521,10 +2522,10 @@ function SourceTaskPicker({
               <ComboboxItem key={taskID} value={taskID} disabled={atLimit && !value.includes(taskID)}>
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
+                    <p className="truncate font-medium text-sm">
                       #{taskID} · {task?.description ?? t("sourcePicker.unknownTask")}
                     </p>
-                    {task?.goal && <p className="text-muted-foreground truncate text-xs">{task.goal}</p>}
+                    {task?.goal && <p className="truncate text-muted-foreground text-xs">{task.goal}</p>}
                   </div>
                   {task && <StatusBadge domain="task" value={task.status} />}
                 </div>
@@ -2655,7 +2656,7 @@ function CategoryPicker({
               {t("categoryPicker.create", { name: trimmed })}
             </button>
           ) : (
-            <div className="px-2 py-2 text-sm text-muted-foreground">{t("categoryPicker.hint")}</div>
+            <div className="px-2 py-2 text-muted-foreground text-sm">{t("categoryPicker.hint")}</div>
           ))}
       </ComboboxContent>
     </Combobox>
@@ -2741,12 +2742,12 @@ function CompanyPicker({
                     <span className="min-w-0 flex-1 truncate font-medium">
                       {company?.name ?? t("companyPicker.fallback", { id: companyID })}
                     </span>
-                    <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                    <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
                       {t("companyPicker.assetCount", { count: company?.asset_count ?? 0 })}
                     </span>
                   </div>
                   {company && (
-                    <span className="text-muted-foreground truncate text-xs" title={companyScopeSummary(t, company)}>
+                    <span className="truncate text-muted-foreground text-xs" title={companyScopeSummary(t, company)}>
                       {companyScopeSummary(t, company)}
                     </span>
                   )}
@@ -2808,7 +2809,7 @@ function DraggableCategoryTask({ task, disabled, moving }: { task: Task; disable
 
   return (
     <Item ref={setNodeRef} variant="outline" size="sm" className={cn(isDragging && "opacity-40")}>
-      <ItemMedia className="group-has-data-[slot=item-description]/item:self-center group-has-data-[slot=item-description]/item:translate-y-0">
+      <ItemMedia className="group-has-data-[slot=item-description]/item:translate-y-0 group-has-data-[slot=item-description]/item:self-center">
         {moving ? (
           <Spinner />
         ) : (
@@ -2816,7 +2817,7 @@ function DraggableCategoryTask({ task, disabled, moving }: { task: Task; disable
             type="button"
             size="icon-xs"
             variant="ghost"
-            className="touch-none cursor-grab active:cursor-grabbing"
+            className="cursor-grab touch-none active:cursor-grabbing"
             disabled={disabled}
             {...listeners}
             {...attributes}
@@ -2848,7 +2849,7 @@ function CategoryTaskDragPreview({ task }: { task: Task }) {
   const t = useTranslations("tasksPage");
   return (
     <Item variant="outline" size="sm" className="w-80 bg-background shadow-lg">
-      <ItemMedia className="group-has-data-[slot=item-description]/item:self-center group-has-data-[slot=item-description]/item:translate-y-0">
+      <ItemMedia className="group-has-data-[slot=item-description]/item:translate-y-0 group-has-data-[slot=item-description]/item:self-center">
         <GripVerticalIcon className="size-4 text-muted-foreground" />
       </ItemMedia>
       <ItemContent className="min-w-0">
@@ -3236,6 +3237,7 @@ function CreateTaskSheet({
   const [heartbeatMin, setHeartbeatMin] = React.useState("10"); // planner 心跳(分钟);默认10,下限10(与后端一致)
   const [tokenBudgetK, setTokenBudgetK] = React.useState(""); // 任务级 token 预算(千 token);空 = 跟随系统默认(default_task_token_budget),0 = 显式不限
   const [seedFirstIntent, setSeedFirstIntent] = React.useState(false); // 创建时下发种子意图,worker 免等首轮 planner 直接开跑;默认关闭,走标准先规划再执行
+  const [analysisDomain, setAnalysisDomain] = React.useState<"web_security" | "software_re">("web_security");
   const [coverageEnabled, setCoverageEnabled] = React.useState(true); // 资产覆盖度功能;默认开。关闭=不计算/展示覆盖度、不累积范围、隐藏范围类工具(company 关联不受影响)
   const [interceptRules, setInterceptRules] = React.useState<AssetInterceptRuleInput[]>([]); // 任务级资产拦截规则(仅本任务生效,不进全局表)
   // 方式1 文件上传:建任务前把文件暂存到 drafts/<draftId>/uploads/,拿回绝对路径追加进描述。
@@ -3301,6 +3303,7 @@ function CreateTaskSheet({
       const timeoutSec = Math.max(0, Math.floor(Number(timeoutMin) || 0)) * 60;
       const heartbeatSec = Math.max(10, Math.floor(Number(heartbeatMin) || 10)) * 60; // 下限 10min，与后端归一一致
       await api.createTask({
+        analysisDomain,
         name: name.trim(),
         categoryId: categoryID,
         description: description.trim(),
@@ -3311,7 +3314,7 @@ function CreateTaskSheet({
         timeoutSeconds: timeoutSec,
         seedFirstIntent,
         planHeartbeatSeconds: heartbeatSec,
-        coverageEnabled,
+        coverageEnabled: analysisDomain === "software_re" ? false : coverageEnabled,
         tokenBudget: budgetProvided ? Math.floor(Number(budgetTrim) * 1000) : undefined,
         interceptRules: interceptRules
           .map((r) => ({ ...r, pattern: r.pattern.trim() }))
@@ -3331,6 +3334,7 @@ function CreateTaskSheet({
       setTokenBudgetK("");
       setSeedFirstIntent(false);
       setCoverageEnabled(true);
+      setAnalysisDomain("web_security");
       setInterceptRules([]);
       setUploadCount(0);
       draftIdRef.current = "";
@@ -3364,22 +3368,42 @@ function CreateTaskSheet({
 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid gap-5">
-            <TaskTemplateControls
-              description={description}
-              goal={goal}
-              categoryID={categoryID}
-              interceptRules={interceptRules}
-              selectedTemplateID={selectedTemplateID}
-              onSelectedTemplateIDChange={setSelectedTemplateID}
-              onApply={(template) => {
-                setDescription(template.description);
-                setGoal(template.goal);
-                setCategoryID(template.category_id ?? undefined);
-                setInterceptRules(template.intercept_rules ?? []);
-                setUploadCount(0);
-              }}
-              portalContainer={sheetContentRef}
-            />
+            <Field>
+              <FieldLabel htmlFor="analysis-domain">{t("analysisDomain.label")}</FieldLabel>
+              <Select
+                value={analysisDomain}
+                onValueChange={(v) => setAnalysisDomain(v === "software_re" ? "software_re" : "web_security")}
+              >
+                <SelectTrigger id="analysis-domain">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="web_security">{t("analysisDomain.web")}</SelectItem>
+                  <SelectItem value="software_re">{t("analysisDomain.software")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                {t(analysisDomain === "software_re" ? "analysisDomain.softwareHint" : "analysisDomain.webHint")}
+              </FieldDescription>
+            </Field>
+            {analysisDomain === "web_security" && (
+              <TaskTemplateControls
+                description={description}
+                goal={goal}
+                categoryID={categoryID}
+                interceptRules={interceptRules}
+                selectedTemplateID={selectedTemplateID}
+                onSelectedTemplateIDChange={setSelectedTemplateID}
+                onApply={(template) => {
+                  setDescription(template.description);
+                  setGoal(template.goal);
+                  setCategoryID(template.category_id ?? undefined);
+                  setInterceptRules(template.intercept_rules ?? []);
+                  setUploadCount(0);
+                }}
+                portalContainer={sheetContentRef}
+              />
+            )}
             <div className="grid gap-2">
               <Label htmlFor="name">{t("create.nameLabel")}</Label>
               <Input
@@ -3482,10 +3506,10 @@ function CreateTaskSheet({
 
             {/* 高级参数默认折叠:超时/心跳/首个意图,展开才占空间,常用路径保持清爽。 */}
             <Collapsible>
-              <CollapsibleTrigger className="group flex w-full items-center gap-2 border-t pt-4 text-sm font-medium">
-                <ChevronRightIcon className="text-muted-foreground size-4 transition-transform group-data-[state=open]:rotate-90" />
+              <CollapsibleTrigger className="group flex w-full items-center gap-2 border-t pt-4 font-medium text-sm">
+                <ChevronRightIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
                 {t("create.advanced")}
-                <span className="text-muted-foreground ml-auto text-xs font-normal">{t("create.advancedSub")}</span>
+                <span className="ml-auto font-normal text-muted-foreground text-xs">{t("create.advancedSub")}</span>
               </CollapsibleTrigger>
               <CollapsibleContent className="grid gap-5 pt-5">
                 <div className="grid gap-2">
@@ -3542,7 +3566,8 @@ function CreateTaskSheet({
                   <label htmlFor="coverage-enabled" className="flex items-center gap-2 text-sm">
                     <Checkbox
                       id="coverage-enabled"
-                      checked={coverageEnabled}
+                      checked={analysisDomain !== "software_re" && coverageEnabled}
+                      disabled={analysisDomain === "software_re"}
                       onCheckedChange={(v) => setCoverageEnabled(!!v)}
                     />
                     {t("create.coverageLabel")}

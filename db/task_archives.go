@@ -240,6 +240,13 @@ func (d *DB) QueueTaskArchive(taskID int64) (*TaskArchive, error) {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	var hasREData bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM re_task_samples WHERE task_id=$1)`, taskID).Scan(&hasREData); err != nil {
+		return nil, err
+	}
+	if hasREData {
+		return nil, fmt.Errorf("%w: 软件样本/会话尚未纳入归档格式，已阻止不完整归档", ErrTaskArchiveIneligible)
+	}
 	var name, description, goal, status, categoryName string
 	var categoryID *int64
 	var paused, queued bool

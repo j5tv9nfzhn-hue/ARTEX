@@ -124,7 +124,13 @@ func (s *Server) applySkillFile(skill, file, content string) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return stageerr.Wrap(stageerr.StagePersist, "创建技能子目录失败", err)
 	}
-	return stageerr.Wrap(stageerr.StagePersist, "写入技能文件失败", fsutil.WriteFileAtomic(full, []byte(content), 0o644))
+	if err := fsutil.WriteFileAtomic(full, []byte(content), 0o644); err != nil {
+		return stageerr.Wrap(stageerr.StagePersist, "写入技能文件失败", err)
+	}
+	if clean == "SKILL.md" {
+		s.bindDefaultSkillVisibility(skill)
+	}
+	return nil
 }
 
 // proposeOrWrite 是技能写入的唯一入口。

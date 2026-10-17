@@ -31,29 +31,30 @@ func rawString(raw json.RawMessage) string {
 
 // ---- Task (frontend "Task") ---- created_at as RFC3339, plus a derived status.
 type TaskDTO struct {
-	ID            string             `json:"id"`
-	ExplorationID int64              `json:"exploration_id"`
-	Name          string             `json:"name"` // 可选任务名称;空=未命名
-	CategoryID    *int64             `json:"category_id,omitempty"`
-	CategoryName  string             `json:"category_name,omitempty"`
-	Pinned        bool               `json:"pinned"`
-	PinnedAt      string             `json:"pinned_at,omitempty"`
-	Description   string             `json:"description"`
-	Goal          string             `json:"goal"`
-	Status        string             `json:"status"` // created | running | paused | done | failed
-	CreatedAt     string             `json:"created_at"`
-	CreatedUnix   int64              `json:"created_unix"`       // created_at as unix seconds (for run-duration calc)
-	CompletedAt   string             `json:"completed_at"`       // RFC3339 finish time (done/failed); "" if unfinished
-	CompletedUnix int64              `json:"completed_unix"`     // completed_at as unix seconds (0 if unfinished)
-	LastActivity  int64              `json:"last_activity_unix"` // unix seconds of the last activity (0 if none)
-	Paused        bool               `json:"paused"`
-	Queued        bool               `json:"queued"`
-	Tokens        TokenTotalDTO      `json:"tokens"`       // whole-task token consumption
-	TokenBudget   int                `json:"token_budget"` // 任务级 token 预算(0=不限);用尽自动暂停
-	GoalsTotal    int                `json:"goals_total"`
-	GoalsMet      int                `json:"goals_met"`
-	InFlight      int                `json:"in_flight"` // 运行中 Worker 数（state=running 的意图）
-	Findings      FindingSeverityDTO `json:"findings"`  // 该任务已登记的漏洞数（findings 表，按严重度分档）
+	AnalysisDomain string             `json:"analysis_domain"`
+	ID             string             `json:"id"`
+	ExplorationID  int64              `json:"exploration_id"`
+	Name           string             `json:"name"` // 可选任务名称;空=未命名
+	CategoryID     *int64             `json:"category_id,omitempty"`
+	CategoryName   string             `json:"category_name,omitempty"`
+	Pinned         bool               `json:"pinned"`
+	PinnedAt       string             `json:"pinned_at,omitempty"`
+	Description    string             `json:"description"`
+	Goal           string             `json:"goal"`
+	Status         string             `json:"status"` // created | running | paused | done | failed
+	CreatedAt      string             `json:"created_at"`
+	CreatedUnix    int64              `json:"created_unix"`       // created_at as unix seconds (for run-duration calc)
+	CompletedAt    string             `json:"completed_at"`       // RFC3339 finish time (done/failed); "" if unfinished
+	CompletedUnix  int64              `json:"completed_unix"`     // completed_at as unix seconds (0 if unfinished)
+	LastActivity   int64              `json:"last_activity_unix"` // unix seconds of the last activity (0 if none)
+	Paused         bool               `json:"paused"`
+	Queued         bool               `json:"queued"`
+	Tokens         TokenTotalDTO      `json:"tokens"`       // whole-task token consumption
+	TokenBudget    int                `json:"token_budget"` // 任务级 token 预算(0=不限);用尽自动暂停
+	GoalsTotal     int                `json:"goals_total"`
+	GoalsMet       int                `json:"goals_met"`
+	InFlight       int                `json:"in_flight"` // 运行中 Worker 数（state=running 的意图）
+	Findings       FindingSeverityDTO `json:"findings"`  // 该任务已登记的漏洞数（findings 表，按严重度分档）
 	// FirstFindingMS 首个 finding 相对任务开始（first_run_at，未运行过退回 created_at）的
 	// 毫秒数；0 = 尚未产出 finding。仅作价值展示，不参与引擎判定。
 	FirstFindingMS int64 `json:"first_finding_ms,omitempty"`
@@ -130,6 +131,7 @@ func taskDTO(t *Task, status string) TaskDTO {
 	}
 	profileIDs := append(make([]int64, 0, len(llmState.ProfileIDs)), llmState.ProfileIDs...)
 	return TaskDTO{
+		AnalysisDomain:     t.AnalysisDomain,
 		ID:                 t.ID,
 		ExplorationID:      t.ExpID,
 		Name:               lifecycle.Name,

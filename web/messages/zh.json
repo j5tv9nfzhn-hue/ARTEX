@@ -2415,6 +2415,7 @@
       "logs": "日志",
       "mcp": "MCP",
       "notify": "通知推送",
+      "retention": "数据保留",
       "settings": "系统配置",
       "skills": "Skill",
       "sync": "资产同步",
@@ -3312,6 +3313,12 @@
     }
   },
   "taskDetail": {
+    "analysisDomain": {
+      "web": "网站安全",
+      "software": "软件逆向",
+      "title": "软件逆向 · 静态分析优先",
+      "hint": "已加入哈希样本库、受管静态分析会话与函数/调用关系/证据工作台。请先配置并审核实际 MCP 工具映射；工具目录就绪不等于引擎和目标兼容。动态执行、远程样本同步与自动会话恢复未启用。"
+    },
     "archive": {
       "cancel": "取消",
       "confirm": "确认归档",
@@ -3720,6 +3727,8 @@
       }
     },
     "report": {
+      "softwareTitle": "软件逆向分析记录报告",
+      "softwareEmpty": "尚无可读取的软件分析报告，请稍后重新打开此页",
       "copy": "复制",
       "copyError": "复制失败，请手动选择文本复制",
       "copySuccess": "已复制 Markdown",
@@ -3741,6 +3750,7 @@
       "selectTitle": "选择漏洞"
     },
     "tabs": {
+      "software": "软件分析",
       "assets": "测试资产",
       "broadcast": "播报板",
       "coverage": "资产覆盖图",
@@ -3814,6 +3824,13 @@
     }
   },
   "tasksPage": {
+    "analysisDomain": {
+      "label": "任务类型",
+      "web": "网站安全",
+      "software": "软件逆向",
+      "softwareHint": "以软件功能、算法、类型和协议理解为目标，默认静态只读。可上传样本或填写路径；深度反编译需要另行配置 REA / Ghidra / IDA 等分析工具。关闭网站资产覆盖度。",
+      "webHint": "保留现有网站 / API 安全评估与资产探索工作流。"
+    },
     "archive": {
       "allStates": "全部状态",
       "colActions": "操作",
@@ -4475,5 +4492,251 @@
     "upload": "上传",
     "uploadFailed": "上传失败：{msg}",
     "uploaded": "已上传 {n} 个文件"
+  },
+  "softwareRE": {
+    "title": "软件分析工作台",
+    "subtitle": "样本 → 独占分析会话 → 函数 / 调用关系 → 可追溯证据",
+    "refresh": "刷新",
+    "loading": "读取中…",
+    "upload": "登记样本",
+    "samples": "样本库",
+    "sampleHint": "单文件最多 128 MiB；按 SHA-256 去重。原文件名仅为标签，样本不会执行。",
+    "emptySamples": "尚未登记样本。上传文件，或关联库中已有样本。",
+    "attach": "关联已有样本",
+    "chooseSample": "选择样本",
+    "chooseProvider": "选择已审核的 Provider",
+    "open": "打开静态会话",
+    "sessions": "分析会话",
+    "chooseSession": "选择会话",
+    "sessionHint": "每个 Provider 同时仅持有一个会话；ready 仅表示连接与打开操作成功，不代表全部分析完成。",
+    "noProvider": "尚无 Provider；在下方配置已有 MCP。",
+    "noSession": "尚无分析会话。",
+    "operation": "查询操作",
+    "address": "地址（按 Provider 的地址约定）",
+    "query": "名称或查询关键词",
+    "run": "执行静态查询",
+    "close": "关闭会话",
+    "cancel": "请求取消",
+    "release": "人工释放租约",
+    "releaseConfirm": "确认外部分析已经停止；释放后允许新的会话使用该 Provider。不能仅凭页面没有响应就确认。",
+    "waiting": "请先选择本任务的分析会话。",
+    "functions": "函数",
+    "callgraph": "调用关系",
+    "xrefs": "交叉引用",
+    "types": "类型",
+    "evidence": "证据",
+    "name": "名称",
+    "location": "模块 / 地址",
+    "sourceEvidence": "来源证据",
+    "emptyRows": "当前页暂无归一化数据。请执行相应查询并配置 rows_path / columns；未经配置的响应仅保存在证据中。",
+    "more": "更早一页",
+    "first": "返回最新",
+    "partialGraph": "仅显示当前页前 24 个节点 / 40 条边，不代表完整程序调用图。点击节点可带入查询地址。",
+    "raw": "证据原文",
+    "noEvidence": "选择一条证据以查看实际输入、输出和哈希。",
+    "originalHash": "完整接收输出 SHA-256",
+    "retainedHash": "保留正文 SHA-256",
+    "outputTruncated": "Provider 输出超限，仅保留前缀；无法从前缀复原完整输出。",
+    "displayTruncated": "页面仅显示前 20,000 字符，可下载已保留的完整记录。",
+    "download": "下载保留的证据记录",
+    "interpretation": "解释 / 待验证结论",
+    "saveObservation": "引用证据写入事实图谱",
+    "observationHint": "操作员解释标记为 inferred；工具输出和推断分开，不能自动视为已验证行为。",
+    "providerSettings": "Provider 配置与实际工具目录",
+    "providerNotice": "复用系统中已配置的 MCP，不自动安装 REA/Ghidra/IDA。登记后由工作台独占管理，请先停止旧的直连分析客户端。当前只支持本地 stdio 打开样本；HTTP/SSE 仅可发现目录。",
+    "newProvider": "新建配置",
+    "editProvider": "编辑配置",
+    "mcp": "已配置的 MCP",
+    "providerName": "Provider 名称",
+    "providerKind": "引擎类型标签",
+    "config": "操作映射 JSON",
+    "configHint": "先保存空映射并读取真实目录，再按实际 schema 填写。input 只支持完整值占位符：{{sample_path}}、{{sample_sha}}、{{provider_session}}、{{address}}、{{query}}、{{limit}}。rows_path 与 columns 使用 GJSON 路径。open 模式需要 open/close；attach 模式必须校验真实样本 SHA-256。",
+    "reviewed": "我已审核映射，仅包含静态分析操作，不执行样本或任意脚本",
+    "saveProvider": "保存配置（重置目录校验）",
+    "discover": "读取实际工具目录",
+    "catalog": "实际工具 schema",
+    "catalogUnknown": "尚未读取实际目录；不得凭工具名称猜参数。",
+    "error": "操作失败：{message}",
+    "saved": "已保存",
+    "queried": "已采集证据 #{id}，归一化 {count} 条；会话状态：{state}",
+    "queryError": "查询未成功，请查看证据 #{id}，并处理受阻会话。",
+    "scope": "当前样本/会话列表各最多 100 项；实体与证据按页读取。带软件样本的任务暂不支持归档/删除，以避免不完整导出。",
+    "kind": "类型",
+    "providerState": "目录状态",
+    "staticOnly": "静态查询；不是执行沙箱",
+    "input": "调用输入",
+    "status": "原始状态",
+    "decompile": "反编译",
+    "identity": "样本身份",
+    "queryStatus": "会话状态查询",
+    "unknown": "未知",
+    "fileSize": "{size} 字节",
+    "copyHash": "样本哈希",
+    "cancelHint": "取消与服务重启后外部状态可能未知，租约保留。确认外部关闭后才可人工释放。"
+  },
+  "retentionPage": {
+    "title": "数据保留",
+    "automaticOff": "自动清理关闭",
+    "manualOnly": "仅人工维护入口",
+    "subtitle": "保守的人工数据维护：先保存策略，再生成有上限的预览，最后单独确认执行。打开页面不会清理数据。",
+    "reload": "重载策略",
+    "reloadTitle": "丢弃尚未保存的修改？",
+    "reloadDescription": "重新读取服务端策略会覆盖当前表单，并使本页预览失效；不会执行清理。",
+    "boundaryTitle": "保护业务引用与历史任务账本",
+    "boundary": "仅筛选无任务/探索身份的超期用量、低级别非安全日志，以及无存活业务引用的超期终态通知。任务、漏洞、证据、样本、审批、会话、流量和原始 LLM 正文不在删除白名单内。",
+    "scopeLimit": "预览不是全库统计或备份。未来新增的 JSON/非结构化关系仍需扩展保护规则；逻辑删除不保证数据库文件立即缩小。",
+    "busy": {
+      "load": "正在读取策略……",
+      "save": "正在保存策略；此操作不会删除业务记录……",
+      "preview": "正在生成候选预览；仅写入计划和审计元数据……",
+      "execute": "人工确认的执行请求正在处理中。请勿离开、刷新或重复提交；最终结果以返回值和审计为准。"
+    },
+    "notice": {
+      "saved": "策略已保存，所有旧预览已失效；如需维护请重新预览。",
+      "changed": "服务端策略在预览前已变化。表单已更新，本次令牌已弃用；核对新策略后再生成预览。",
+      "expired": "预览已过期，确认凭据已从本页移除。请重新预览；本地时钟超前也可能使预览保守失效。",
+      "invalidated": "本页预览已作废。表单编辑、重载、切到后台或重新聚焦后均需重新预览。",
+      "submitted": "已收到提交成功的有效响应。请以下方实际删除/跳过数量为准，不要复用旧预览。",
+      "acknowledged": "已解除本地结果待核对提示；没有重放请求或撤销数据库操作。后续仍需全新预览。"
+    },
+    "error": {
+      "title": "本次请求未获有效确认",
+      "http": "服务端返回 HTTP {status}。后端可能尚未部署、数据库未就绪，或策略/预览已失效。",
+      "mock": "演示模式不提供数据维护能力，未发送保留策略请求。请在已获授权的真实后端环境使用。",
+      "network": "连接或身份状态异常。未获得可验证的响应，不能据此推断请求没有生效。",
+      "timeout": "请求取消或超时。取消浏览器等待不等于数据库回滚，请查询审计与服务端日志。",
+      "protocol": "返回结构与当前安全契约不一致，已拒绝将其当作成功或可执行预览。",
+      "recovery": "策略保存异常后须重载策略。执行异常后须核对审计；不会自动重试，也不会使用默认值掩盖错误。"
+    },
+    "policy": {
+      "title": "1 · 保留策略",
+      "description": "0 天为永久保留。输入只接受整数，保存才会生效；保存本身不清理业务数据。",
+      "enabled": "允许人工执行",
+      "enabledHelp": "此开关不是自动清理。关闭时仍可预览；启用并保存后也必须重新预览和逐次确认。",
+      "loading": "正在读取已保存策略，不以默认值冒充当前配置。",
+      "unavailable": "未取得可验证的服务端策略，编辑和维护入口已停用。请重载策略；不要直接迁移或修改运行库。",
+      "save": "保存策略",
+      "unsaved": "有未保存修改，不能生成或执行预览。",
+      "saved": "当前表单与已读取策略一致。",
+      "noDefaults": "尚未取得当前策略。",
+      "invalidate": "每次保存都会使服务端旧预览失效；本页任何编辑也会立即弃用本地预览。"
+    },
+    "field": {
+      "usage_days": {
+        "label": "独立用量保留天数",
+        "help": "0 或 30–3650 天；带任务/探索身份的账本不清理。",
+        "error": "请输入 0 或 30–3650 的整数。"
+      },
+      "log_days": {
+        "label": "低级别日志保留天数",
+        "help": "0 或 7–3650 天；保留安全审计标签和 warn/error。",
+        "error": "请输入 0 或 7–3650 的整数。"
+      },
+      "notification_days": {
+        "label": "终态通知保留天数",
+        "help": "0 或 30–3650 天；缺终态时间或仍有业务引用时保留。",
+        "error": "请输入 0 或 30–3650 的整数。"
+      },
+      "max_rows_per_table": {
+        "label": "每表单次候选上限",
+        "help": "1–500 行；四张白名单表合计最多为此上限的四倍。",
+        "error": "请输入 1–500 的整数。"
+      }
+    },
+    "preview": {
+      "title": "2 · 有上限的候选预览",
+      "description": "仅在点击时请求。不会删除业务数据，但会写入预览计划和审计元数据。",
+      "create": "生成新预览",
+      "saveFirst": "请先保存修改；不能用未保存表单的条件生成预览。",
+      "disabled": "服务端当前不允许人工执行。可以查看预览；若启用并保存，必须重新生成预览。",
+      "selected": "本次共选择 {count} 行",
+      "remaining": "本地预览剩余有效时间",
+      "bounded": "此处是固定候选集合的数量，不是全库超期记录总数。执行时会重新检查年龄、策略及引用。",
+      "more": "至少一张表仍有更多候选，本次不会自动扩展到这些行；下一批必须重新预览并确认。",
+      "review": "核对并确认本次执行",
+      "none": "没有可执行的本地预览。请先取得策略，再手动生成预览。",
+      "expiry": "预览最多有效 15 分钟，最终由后端判定。令牌仅在内存中，离开或刷新不恢复；切到后台或重载后需重新预览。"
+    },
+    "block": {
+      "noPreview": "请先取得有效策略与新预览。",
+      "dirty": "有未保存修改，旧预览不能执行。",
+      "disabled": "服务端策略未允许人工执行。",
+      "changed": "预览策略与当前策略不同，请重新预览。",
+      "expired": "预览已过期，请重新生成。",
+      "empty": "本次没有候选行，不提供空执行入口。"
+    },
+    "counts": {
+      "table": "范围",
+      "selected": "本次候选",
+      "more": "上限状态",
+      "deleted": "实际删除",
+      "skipped": "跳过",
+      "hasMore": "还有更多候选",
+      "noMore": "本次未达到更多标记",
+      "previewCaption": "按表展示本次固定候选数量，不代表全部记录总数。",
+      "resultCaption": "候选数量 = 实际删除 + 跳过；以事务提交的有效结果为准。"
+    },
+    "table": {
+      "llm_usage": "无任务身份的用量",
+      "server_logs": "低级别非安全日志",
+      "notification_deliveries": "无业务引用的终态投递",
+      "notification_events": "无投递子记录的孤立事件"
+    },
+    "confirm": {
+      "title": "3 · 明确确认人工删除",
+      "description": "这是永久删除，不是预演。取消只会关闭确认框；提交后不能通过取消浏览器等待来保证回滚。",
+      "summary": "本次最多处理已预览的 {count} 行，每表上限 {limit} 行。仍被引用或状态改变的候选会跳过；执行不会添加新行。",
+      "type": "请逐字输入下方确认文字（不接受额外空格）",
+      "acknowledge": "我已核对本次范围及上限，并理解删除不可撤销；需要备份的数据已另行备份。",
+      "safety": "令牌不会显示或写入 URL/浏览器存储。本次只使用一个有效预览；任何异常都弃用旧凭据，不自动重试。",
+      "cancel": "取消",
+      "execute": "确认执行本次删除"
+    },
+    "result": {
+      "title": "上次已确认提交的结果",
+      "description": "仅在收到 committed=true 且逐表计数与预览相符的响应后显示；不是预览估算。新预览会清除此展示。",
+      "space": "删除只回收逻辑记录，不执行 VACUUM，也不保证 SQLite 文件立即变小；通知父事件通常需要下一份新预览。"
+    },
+    "uncertain": {
+      "title": "存在需要人工核对的执行请求",
+      "description": "请求已提交或等待已中断，但不能确认最终结果。旧令牌已弃用，新预览/执行暂时停用；请刷新审计并核对服务端日志，不要盲目重复操作。",
+      "limit": "下方仅显示最近 100 条审计，不能自动关联或证明所有请求结果；若仍不明确，请停止操作并联系维护者。解除提示不会重放请求。",
+      "reviewed": "我已核对最新审计，并确认可以继续人工维护",
+      "acknowledge": "解除本地待核对状态"
+    },
+    "audit": {
+      "title": "4 · 维护审计",
+      "description": "进入页面和操作完成后读取，也可手动刷新；不自动轮询或触发清理。时间按浏览器本地时区显示。",
+      "refresh": "刷新审计",
+      "loading": "正在读取审计……",
+      "loadFailed": "最新审计获取失败：{error} 下方如有记录，仅为此前读取的内容，不能用于确认最新结果。",
+      "empty": "已成功读取，暂无审计记录。",
+      "notLoaded": "尚未成功读取审计，不能当作没有记录。",
+      "caption": "最多显示最近 100 条。计划摘要不是确认令牌；本页不提供删除/修改审计入口。",
+      "at": "时间 / 操作者",
+      "action": "事件",
+      "detail": "已知字段摘要",
+      "plan": "计划摘要",
+      "actorLimit": "当前操作者标签为单用户 authenticated_operator，不是多用户实名归属；SQL 追加限制不是对本机高权限改库的防篡改保证。",
+      "otherAction": "其他事件",
+      "countDetail": "{table}：候选 {selected}，删除 {deleted}，跳过 {skipped}",
+      "policyDetail": "人工执行{enabled}；用量 {usage} 天 / 日志 {logs} 天 / 通知 {notifications} 天（0 为永久保留）；每表上限 {maximum}。",
+      "on": "允许",
+      "off": "禁止",
+      "failedDetail": "操作失败已记录；这不替代对先前提交结果的核对。",
+      "unknownDetail": "无可展示的已知摘要字段；未将未知内容当作成功结果。"
+    },
+    "action": {
+      "policy_saved": "策略已保存",
+      "preview_started": "预览事务开始",
+      "preview_created": "预览已生成",
+      "execute_started": "执行事务开始",
+      "execute_committed": "执行已提交",
+      "policy_read_failed": "读取策略失败",
+      "policy_save_failed": "保存策略失败",
+      "preview_failed": "生成预览失败",
+      "execute_failed": "执行请求失败",
+      "audit_read_failed": "读取审计失败"
+    }
   }
 }

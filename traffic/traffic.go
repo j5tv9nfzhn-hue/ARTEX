@@ -95,7 +95,7 @@ const (
 	blobPreview = 8 * 1024
 	// maxIndexBody caps a single body's contribution to the full-text index. Text
 	// is indexed in full below this; binary never reaches the index at all.
-	maxIndexBody = 4 * 1024 * 1024
+	maxIndexBody = 512 * 1024
 	// minTrigram is the shortest term the trigram tokenizer can match; shorter
 	// queries fall back to metadata LIKE.
 	minTrigram = 3
@@ -148,6 +148,11 @@ type Traffic struct {
 	// reaping tracks background reclamation of legacy trees and index space, so
 	// shutdown and tests can wait for it instead of racing it.
 	reaping sync.WaitGroup
+	// recWG, recCh and flushReq implement the asynchronous batch-transaction
+	// recording queue (capacity 256, up to 32 exchanges per SQLite transaction).
+	recWG    sync.WaitGroup
+	recCh    chan *mproxy.Flow
+	flushReq chan struct{}
 	// incrementalVacuum reports whether the index can return freed pages to the
 	// filesystem on its own. False on a database created before this was the
 	// default: PRAGMA incremental_vacuum is a silent no-op there, so deletions
@@ -198,11 +203,19 @@ func Open(dir, addr string) (*Traffic, error) {
 	if err != nil {
 		return nil, err
 	}
-	t := &Traffic{dir: dir, addr: addr, db: db, closed: make(chan struct{})}
+	t := &Traffic{
+		dir:      dir,
+		addr:     addr,
+		db:       db,
+		closed:   make(chan struct{}),
+		recCh:    make(chan *mproxy.Flow, 256),
+		flushReq: make(chan struct{}, 1),
+	}
 	if err := t.initIndex(); err != nil {
 		db.Close()
 		return nil, err
 	}
+	go t.batchFlusher()
 
 	p, err := mproxy.NewProxy(&mproxy.Options{
 		Addr:        addr,
@@ -370,6 +383,7 @@ func (t *Traffic) Close() error {
 	if t.closed != nil {
 		t.closeOnce.Do(func() { close(t.closed) })
 	}
+	t.waitPendingRecords()
 	t.reaping.Wait()
 	return t.db.Close()
 }
@@ -392,11 +406,132 @@ type sink struct {
 	t *Traffic
 }
 
-func (s *sink) Response(f *mproxy.Flow) {
-	if f.Request == nil || f.Response == nil {
+func cloneFlowForRecord(f *mproxy.Flow) *mproxy.Flow {
+	var uCopy *url.URL
+	if f.Request.URL != nil {
+		u := *f.Request.URL
+		if raw := f.Request.Raw(); raw != nil && strings.TrimSpace(raw.Host) != "" {
+			u.Host = raw.Host
+		}
+		uCopy = &u
+	}
+	var reqHeader http.Header
+	if f.Request.Header != nil {
+		reqHeader = f.Request.Header.Clone()
+	}
+	var reqBody []byte
+	if len(f.Request.Body) > 0 {
+		reqBody = append([]byte(nil), f.Request.Body...)
+	}
+	var respHeader http.Header
+	if f.Response.Header != nil {
+		respHeader = f.Response.Header.Clone()
+	}
+	var respBody []byte
+	if len(f.Response.Body) > 0 {
+		respBody = append([]byte(nil), f.Response.Body...)
+	}
+	return &mproxy.Flow{
+		Request: &mproxy.Request{
+			Method: f.Request.Method,
+			URL:    uCopy,
+			Proto:  f.Request.Proto,
+			Header: reqHeader,
+			Body:   reqBody,
+		},
+		Response: &mproxy.Response{
+			StatusCode: f.Response.StatusCode,
+			Header:     respHeader,
+			Body:       respBody,
+		},
+	}
+}
+
+func (t *Traffic) waitPendingRecords() {
+	if t == nil {
 		return
 	}
-	s.t.record(f)
+	if t.flushReq != nil {
+		select {
+		case t.flushReq <- struct{}{}:
+		default:
+		}
+	}
+	t.recWG.Wait()
+}
+
+func (t *Traffic) batchFlusher() {
+	const maxBatch = 32
+	batch := make([]*mproxy.Flow, 0, maxBatch)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		t.recordBatch(batch)
+		t.recWG.Add(-len(batch))
+		for i := range batch {
+			batch[i] = nil
+		}
+		batch = batch[:0]
+	}
+	for {
+		select {
+		case <-t.closed:
+			for {
+				select {
+				case f := <-t.recCh:
+					batch = append(batch, f)
+					if len(batch) >= maxBatch {
+						flush()
+					}
+				default:
+					flush()
+					return
+				}
+			}
+		case f := <-t.recCh:
+			batch = append(batch, f)
+			timer := time.NewTimer(15 * time.Millisecond)
+		drainLoop:
+			for len(batch) < maxBatch {
+				select {
+				case nf := <-t.recCh:
+					batch = append(batch, nf)
+				case <-t.flushReq:
+					break drainLoop
+				case <-t.closed:
+					break drainLoop
+				case <-timer.C:
+					break drainLoop
+				}
+			}
+			timer.Stop()
+			flush()
+		}
+	}
+}
+
+func (s *sink) Response(f *mproxy.Flow) {
+	if f == nil || f.Request == nil || f.Response == nil || f.Request.URL == nil {
+		return
+	}
+	if s.t.stopping() {
+		return
+	}
+	snap := cloneFlowForRecord(f)
+	if s.t.recCh == nil {
+		s.t.record(snap)
+		return
+	}
+	s.t.recWG.Add(1)
+	select {
+	case s.t.recCh <- snap:
+	default:
+		go func() {
+			defer s.t.recWG.Done()
+			s.t.record(snap)
+		}()
+	}
 }
 
 // RequestError fires when a request through an established MITM tunnel fails. If
@@ -433,83 +568,154 @@ func proxyCausedErr(err error) bool {
 	return false
 }
 
+// RecordDirect records an HTTP exchange captured by an in-process native tool
+// (http_request / http_fuzz hits) directly into SQLite without round-tripping
+// through the local MITM loopback proxy, returning the exchange_id.
+func (t *Traffic) RecordDirect(method, rawURL, proto string, reqHeader http.Header, reqBody []byte, status int, respHeader http.Header, respBody []byte) string {
+	if t == nil {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if proto == "" {
+		proto = "HTTP/1.1"
+	}
+	f := &mproxy.Flow{
+		Request: &mproxy.Request{
+			Method: method,
+			URL:    u,
+			Proto:  proto,
+			Header: reqHeader,
+			Body:   reqBody,
+		},
+		Response: &mproxy.Response{
+			StatusCode: status,
+			Header:     respHeader,
+			Body:       respBody,
+		},
+	}
+	ids := t.recordBatch([]*mproxy.Flow{f})
+	if len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
+}
+
 // record persists one exchange entirely in SQLite: metadata, bodies and the
 // full-text index. Nothing is written to a per-request directory — only bodies
 // above maxInlineBody spill to the content-addressed blob store.
 func (t *Traffic) record(f *mproxy.Flow) {
-	// The write lock covers blob + index writes, so DeleteHost (and its blob GC)
-	// can run under the same lock without racing a concurrent record.
+	_ = t.recordBatch([]*mproxy.Flow{f})
+}
+
+type preparedExchange struct {
+	id       string
+	ts       int64
+	host     string
+	method   string
+	tmpl     string
+	url      string
+	status   int
+	ct       string
+	reqLen   int
+	respLen  int
+	reqHead  string
+	respHead string
+	reqB     storedBody
+	respB    storedBody
+}
+
+// recordBatch commits a batch of 1..32 exchanges inside a single SQLite write
+// transaction, amortizing fsync and WAL lock overhead under concurrent load.
+func (t *Traffic) recordBatch(batch []*mproxy.Flow) []string {
+	if len(batch) == 0 {
+		return nil
+	}
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
-	host := f.Request.URL.Hostname()
-	method := f.Request.Method
-	tmpl := db.TemplatePath(f.Request.URL.EscapedPath())
-	n := t.seq.Add(1)
-	now := time.Now()
-	id := fmt.Sprintf("%d-%04d", now.Unix(), n%10000)
 
-	ct := f.Response.Header.Get("Content-Type")
-	url := f.Request.URL.String()
-	reqHead := fmt.Sprintf("%s %s %s\n%s", method, f.Request.URL.RequestURI(), f.Request.Proto, requestHeaderLines(f.Request))
-	respHead := fmt.Sprintf("HTTP %d\n%s", f.Response.StatusCode, headerLines(f.Response.Header))
-	// Bodies are spilled before the transaction opens: blob writes are filesystem
-	// work and must not sit inside the SQLite write lock.
-	reqB := t.spill(f.Request.Body, f.Request.Header.Get("Content-Type"))
-	respB := t.spill(f.Response.Body, ct)
+	now := time.Now().Unix()
+	items := make([]preparedExchange, 0, len(batch))
+	ids := make([]string, 0, len(batch))
+	for _, f := range batch {
+		if f == nil || f.Request == nil || f.Response == nil || f.Request.URL == nil {
+			continue
+		}
+		n := t.seq.Add(1)
+		id := fmt.Sprintf("%d-%04d", now, n%10000)
+		host := f.Request.URL.Hostname()
+		method := f.Request.Method
+		tmpl := db.TemplatePath(f.Request.URL.EscapedPath())
+		ct := f.Response.Header.Get("Content-Type")
+		uStr := f.Request.URL.String()
+		reqHead := fmt.Sprintf("%s %s %s\n%s", method, f.Request.URL.RequestURI(), f.Request.Proto, requestHeaderLines(f.Request))
+		respHead := fmt.Sprintf("HTTP %d\n%s", f.Response.StatusCode, headerLines(f.Response.Header))
+		reqB := t.spill(f.Request.Body, f.Request.Header.Get("Content-Type"))
+		respB := t.spill(f.Response.Body, ct)
+		items = append(items, preparedExchange{
+			id: id, ts: now, host: host, method: method, tmpl: tmpl, url: uStr,
+			status: f.Response.StatusCode, ct: ct,
+			reqLen: len(f.Request.Body), respLen: len(f.Response.Body),
+			reqHead: reqHead, respHead: respHead, reqB: reqB, respB: respB,
+		})
+		ids = append(ids, id)
+	}
+	if len(items) == 0 {
+		return nil
+	}
 
 	tx, err := t.db.Begin()
 	if err != nil {
-		log.Printf("[traffic] 记录 %s 失败（开启事务）：%v", url, err)
-		return
+		log.Printf("[traffic] 批量记录失败（开启事务）：%v", err)
+		return nil
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once committed
 
-	// path stays empty for db-resident exchanges; a non-empty path marks a legacy
-	// row whose bodies still live in the old on-disk tree (see Get).
-	res, err := tx.Exec(`INSERT OR REPLACE INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path)
+	for _, it := range items {
+		res, err := tx.Exec(`INSERT OR REPLACE INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path)
 VALUES(?,?,?,?,?,?,?,?,?,?,'')`,
-		id, now.Unix(), host, method, tmpl, url, f.Response.StatusCode, ct,
-		len(f.Request.Body), len(f.Response.Body))
-	if err != nil {
-		log.Printf("[traffic] 记录 %s 失败（写索引）：%v", url, err)
-		return
-	}
-	rowid, err := res.LastInsertId()
-	if err != nil {
-		log.Printf("[traffic] 记录 %s 失败（取 rowid）：%v", url, err)
-		return
-	}
-
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO exchange_bodies(id,req_head,req_body,req_blob,resp_head,resp_body,resp_blob)
+			it.id, it.ts, it.host, it.method, it.tmpl, it.url, it.status, it.ct,
+			it.reqLen, it.respLen)
+		if err != nil {
+			log.Printf("[traffic] 记录 %s 失败（写索引）：%v", it.url, err)
+			return nil
+		}
+		rowid, err := res.LastInsertId()
+		if err != nil {
+			log.Printf("[traffic] 记录 %s 失败（取 rowid）：%v", it.url, err)
+			return nil
+		}
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO exchange_bodies(id,req_head,req_body,req_blob,resp_head,resp_body,resp_blob)
 VALUES(?,?,?,?,?,?,?)`,
-		id, reqHead, reqB.inline, nullIfEmpty(reqB.hash), respHead, respB.inline, nullIfEmpty(respB.hash)); err != nil {
-		log.Printf("[traffic] 记录 %s 失败（写正文）：%v", url, err)
-		return
-	}
-
-	for _, h := range []string{reqB.hash, respB.hash} {
-		if h == "" {
-			continue
+			it.id, it.reqHead, it.reqB.inline, nullIfEmpty(it.reqB.hash), it.respHead, it.respB.inline, nullIfEmpty(it.respB.hash)); err != nil {
+			log.Printf("[traffic] 记录 %s 失败（写正文）：%v", it.url, err)
+			return nil
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO blob_refs(hash,exchange_id) VALUES(?,?)`, h, id); err != nil {
-			log.Printf("[traffic] 记录 %s 失败（登记 blob 引用）：%v", url, err)
-			return
+		for _, h := range []string{it.reqB.hash, it.respB.hash} {
+			if h == "" {
+				continue
+			}
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO blob_refs(hash,exchange_id) VALUES(?,?)`, h, it.id); err != nil {
+				log.Printf("[traffic] 记录 %s 失败（登记 blob 引用）：%v", it.url, err)
+				return nil
+			}
 		}
-	}
-
-	if t.fts {
-		// The index is fed from memory, so a body that spilled to _blobs is still
-		// fully searchable even though only its preview is stored inline.
-		idx := strings.Join([]string{url, reqHead, reqB.index, respHead, respB.index}, "\n")
-		if _, err := tx.Exec(`INSERT INTO ex_fts(rowid,content) VALUES(?,?)`, rowid, idx); err != nil {
-			log.Printf("[traffic] 记录 %s 失败（写全文索引）：%v", url, err)
-			return
+		if t.fts {
+			idx := strings.Join([]string{it.url, it.reqHead, it.reqB.index, it.respHead, it.respB.index}, "\n")
+			if _, err := tx.Exec(`INSERT INTO ex_fts(rowid,content) VALUES(?,?)`, rowid, idx); err != nil {
+				log.Printf("[traffic] 记录 %s 失败（写全文索引）：%v", it.url, err)
+				return nil
+			}
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("[traffic] 记录 %s 失败（提交）：%v", url, err)
+		log.Printf("[traffic] 批量记录提交失败：%v", err)
+		return nil
 	}
+	return ids
 }
 
 // storedBody is one body after the inline/spill decision: inline is what goes in
@@ -767,6 +973,7 @@ type ExchangeMeta struct {
 
 // Search returns paged exchange metadata (never bodies).
 func (t *Traffic) Search(host string, page, size int) ([]ExchangeMeta, error) {
+	t.waitPendingRecords()
 	if size <= 0 || size > 500 {
 		size = 100
 	}
@@ -860,6 +1067,7 @@ func statusFilter(s string) (cond string, args []any, ok bool) {
 // Also returns the total number of rows matching the filter (for the UI's
 // pagination). Bodies are never included in the rows.
 func (t *Traffic) Page(f PageQuery, page, size int) (rows []ExchangeMeta, total int, err error) {
+	t.waitPendingRecords()
 	if size <= 0 || size > 500 {
 		size = 100
 	}
@@ -951,6 +1159,7 @@ func (t *Traffic) Page(f PageQuery, page, size int) (rows []ExchangeMeta, total 
 // path and are read from the legacy on-disk tree instead, so history stays
 // readable without being migrated.
 func (t *Traffic) Get(id string) (req, resp string, err error) {
+	t.waitPendingRecords()
 	var reqHead, respHead string
 	var reqBody, respBody []byte
 	var reqBlob, respBlob sql.NullString
@@ -1000,6 +1209,7 @@ type HostCount struct {
 // Hosts returns distinct recorded hosts with exchange counts, most recent
 // activity first — powers the page's target picker.
 func (t *Traffic) Hosts() ([]HostCount, error) {
+	t.waitPendingRecords()
 	rows, err := t.db.Query(`SELECT host, COUNT(*) AS n, MAX(ts) AS last FROM exchanges GROUP BY host ORDER BY last DESC`)
 	if err != nil {
 		return nil, err
@@ -1019,6 +1229,7 @@ func (t *Traffic) Hosts() ([]HostCount, error) {
 
 // Count returns total recorded exchanges.
 func (t *Traffic) Count() (int, error) {
+	t.waitPendingRecords()
 	var n int
 	err := t.db.QueryRow(`SELECT COUNT(*) FROM exchanges`).Scan(&n)
 	return n, err
@@ -1031,6 +1242,7 @@ func (t *Traffic) Count() (int, error) {
 // blobs are shared across hosts and so are garbage-collected afterwards rather
 // than deleted by host. Returns rows deleted.
 func (t *Traffic) DeleteHost(host string) (int64, error) {
+	t.waitPendingRecords()
 	like := "%" + host + "%"
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
@@ -1084,6 +1296,7 @@ func (t *Traffic) DeleteHost(host string) (int64, error) {
 // Returns the number of exchanges deleted and how many bytes of index the
 // compaction handed back.
 func (t *Traffic) DeleteAll() (deleted int64, reclaimed int64, err error) {
+	t.waitPendingRecords()
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
 	before := t.indexBytes()
@@ -1425,6 +1638,7 @@ func (t *Traffic) StageDeleteHostsExactForArchive(hosts []string, archiveID, tas
 }
 
 func (t *Traffic) stageDeleteHostsExact(hosts []string, archiveID, taskID int64) (*HostDeleteStage, error) {
+	t.waitPendingRecords()
 	t.wmu.Lock()
 	stage := &HostDeleteStage{traffic: t}
 	fail := func(cause error) (*HostDeleteStage, error) {
@@ -1898,6 +2112,7 @@ func (t *Traffic) legacyBlobRefs(refs map[string]struct{}) error {
 // substring. Default page size is intentionally small (3) to keep tool results
 // lightweight and capped at 10; page is 0-based (page*limit offset).
 func (t *Traffic) query(host, contains, bodyContains string, page, limit int) ([]ExchangeMeta, error) {
+	t.waitPendingRecords()
 	if limit <= 0 {
 		limit = 3
 	}

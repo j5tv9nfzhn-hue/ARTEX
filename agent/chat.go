@@ -123,7 +123,11 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()
 
-	system, boundary := deferredSystem(chatSystem(agentKey, c.workDir, sessionWorkDir), def)
+	chatSys := chatSystem(agentKey, c.workDir, sessionWorkDir)
+	if hint := BuildTacticalRoutingHint(message, tools, def); hint != "" {
+		chatSys += "\n\n" + hint
+	}
+	system, boundary := deferredSystem(chatSys, def)
 	opts := agentcore.Options{
 		Provider:        c.prov,
 		SystemPrompt:    system,

@@ -66,8 +66,6 @@ func platformShellNote() string {
 
 // windowsShellGuidance 是 Windows/PowerShell 的语法引导（#9）。写法上强调「模型
 // 常见错误」而不是罗列完整语法——一句话说明执行器、一组高频对应关系、一条禁用清单。
-const windowsShellGuidance = "当前平台为 Windows：Bash 工具实际以 PowerShell 执行（powershell -NoProfile -NonInteractive -Command），" +
-	"不是 bash。请按 PowerShell 语法组织命令：环境变量 $env:NAME；命令替换 $(...)：管道后接 Where-Object / ForEach-Object / Select-String；" +
-	"文件操作用 Get-ChildItem / Get-Content / Set-Content / Remove-Item -Recurse -Force；内联 python -c 等多行脚本建议先 Set-Content 写文件再执行。" +
-	"不要使用 grep / sed / awk / export / head / tail 等 Unix 专属命令（用 Select-String、Get-Content -TotalCount 代替）；" +
-	"PowerShell 5.1 不支持 &&，需要串联时用 ; 或分行执行。"
+const windowsShellGuidance = "当前平台为 Windows：Bash 工具实际以 PowerShell 执行（powershell -NoProfile -NonInteractive -Command），不是 bash。" +
+	"常规 HTTP 请求、并发目录/参数 Fuzz、编解码/哈希/加解密/JWT、正则/JSON/HTML/JS 提取、端口探测及文件检索，请优先直接调用跨平台内置 Go 原生工具（http_request / http_fuzz / codec_crypto / extract_data / net_probe / Grep / Glob / Read），无需经过 PowerShell，也不要为此编写临时 .py 脚本。" +
+	"确需通过 Bash 调用外部命令行工具时请按 PowerShell 语法书写：环境变量用 $env:NAME；调用 curl 必须写 curl.exe（PowerShell 中 curl 是 Invoke-WebRequest 别名）且含 & 的 URL 必须加双引号；不要使用 grep / sed / awk / export / head / tail 等 Unix 专属命令；PowerShell 5.1 不支持 &&，需要串联时用 ; 或分行执行。"

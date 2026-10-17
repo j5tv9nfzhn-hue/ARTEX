@@ -4,7 +4,10 @@
 export type TaskStatus = "created" | "queued" | "running" | "paused" | "done" | "failed" | "timeout";
 export type EngineMode = "exploring" | "paused" | "stalled" | "idle";
 
+export type AnalysisDomain = "web_security" | "software_re";
+
 export interface Task {
+  analysis_domain?: AnalysisDomain;
   id: string;
   name?: string; // 可选任务名称;空/缺省=未命名,展示时回退到描述
   category_id?: number;
@@ -1757,4 +1760,101 @@ export interface InterceptExecution {
   session: string;
   seq: number;
   items: Activity[];
+}
+
+// Software analysis objects retain explicit sample/session/evidence ownership.
+export interface RESample {
+  sha256: string;
+  name: string;
+  size: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+export interface REOperation {
+  tool: string;
+  input: Record<string, unknown>;
+  rows_path?: string;
+  columns?: Record<string, string>;
+  address_kind?: "rva" | "va" | "file_offset" | "provider";
+}
+export interface REProviderConfig {
+  mode: "open" | "attach";
+  reviewed_static: boolean;
+  session_key_path?: string;
+  identity_hash_path?: string;
+  operations: Record<string, REOperation>;
+}
+export interface RECatalogTool {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+export interface REProvider {
+  id: number;
+  mcp_id: number;
+  name: string;
+  kind: "rea" | "ghidra" | "ida";
+  config: REProviderConfig;
+  catalog: RECatalogTool[];
+  catalog_hash: string;
+  discovery: string;
+  message: string;
+  updated_at: string;
+}
+export interface RESession {
+  id: number;
+  task_id: number;
+  sample_sha: string;
+  provider_id: number;
+  state: "opening" | "ready" | "busy" | "closing" | "closed" | "failed" | "interrupted";
+  message: string;
+  snapshot: REProvider;
+  created_at: string;
+  updated_at: string;
+}
+export interface REEvidence {
+  id: number;
+  session_id: number;
+  sample_sha: string;
+  operation: string;
+  tool: string;
+  input: Record<string, unknown>;
+  output?: string;
+  output_sha: string;
+  retained_sha: string;
+  diagnostic: string;
+  is_error: boolean;
+  truncated: boolean;
+  created_at: string;
+}
+export interface REEntity {
+  id: number;
+  session_id: number;
+  evidence_id: number;
+  kind: string;
+  identity: string;
+  name: string;
+  module: string;
+  address: string;
+  address_kind: string;
+  payload: Record<string, unknown>;
+}
+export interface REOverview {
+  samples: RESample[];
+  providers: REProvider[];
+  sessions: RESession[];
+  limit: number;
+  scope: string;
+}
+export interface REDataPage<T> {
+  items: T[];
+  has_more: boolean;
+  next_before: number;
+}
+export interface REMCPCandidate {
+  id: number;
+  name: string;
+  transport: string;
+  enabled: boolean;
+  cached_tools: string[] | null;
 }

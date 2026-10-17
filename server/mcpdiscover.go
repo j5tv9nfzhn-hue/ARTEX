@@ -65,6 +65,14 @@ func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
 // discoverAndCacheMCP connects to one MCP, lists its tools, and persists the tool
 // names to mcp_tools_cache so the UI shows them without a live connection.
 func (s *Server) discoverAndCacheMCP(ctx context.Context, m *db.MCPServer) error {
+	managed, err := s.m.pg.REMCPManaged(m.ID)
+	if err != nil {
+		return err
+	}
+	if managed {
+		return errors.New("逆向受管 MCP 请从软件分析工作台发现，避免抢占分析会话")
+	}
+
 	cl, err := connectMCP(ctx, m)
 	if err != nil {
 		return err
@@ -96,6 +104,10 @@ func (s *Server) discoverEmptyMCPsOnStartup() {
 		return
 	}
 	for _, m := range servers {
+		managed, managedErr := s.m.pg.REMCPManaged(m.ID)
+		if managedErr != nil || managed {
+			continue
+		}
 		if !m.Enabled || len(m.Tools) > 0 {
 			continue
 		}

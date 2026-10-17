@@ -1,0 +1,155 @@
+{
+  "record": "website-design-upgrade-v3",
+  "date": "2026-10-17",
+  "scope": "独立官网视觉与图像重构（纯静态，无构建，file:// 双击直开保持可用）",
+  "status": "已于 2026-10-17 部署上线（快照 https://6fae4b04.artex-official-website.pages.dev/）。发布记录见 publish-design-upgrade.json。",
+  "direction": {
+    "name": "Instrument Editorial（仪器编辑风）v3",
+    "ideas": [
+      "编辑式大标题：Hero 与页头标题放大，强调色变为酸柠→薄荷渐变墨；加粗技术微标注",
+      "层叠大气层：固定网格 + 颗粒 + 径向光晕（body::before/::after），深浅两套语义 token 同步",
+      "页头幽灵字：page-hero 通过 data-fig 呈现 1px 描边大字（PLATFORM / ARCH / DOCS …）",
+      "轨道式信息图：首页 Hero 替换为「双信号轨道图」（极网格、刻度环、双轨道、核心六边形、扫描扇区、流线、坐标标注），全部内联 SVG、跟随 currentColor",
+      "卡片材质：渐变描边悬停（conic 极光）、指针聚光（--mx/--my）、柔和圆角与投影层级",
+      "动效编排：滚动显影（IntersectionObserver + .in，stagger 70ms）、跑马灯格式带、数字计数、Hero 视差、页头滚动态；支持暂停动效与系统减少动态效果",
+      "仪表细节：等宽微标注、骑缝刻度、脉冲圆点、浮动遥测浮标（TWO DOMAINS）"
+    ],
+    "researchReferences": [
+      "Awwwards Site of the Year 2025（Lando Norris / OFF+BRAND 等）与 2026 SOTD 列表：动能排版、交互编排、深色材质",
+      "CSS Design Awards WOTY 2025（Dropbox Brand / Unseen Studio 等）：模块化品牌系统、弹性微交互",
+      "The FWA FOTD 2026 与获奖档案：滚动叙事、可交互画布",
+      "Awwwards Inspiration 元素库：bento 网格、渐变、编辑式排版条目",
+      "安全/开发工具类获奖参考：NEVERHACK（单色 3D 叙事）、Cipher（深色极简）、HackVector（连接隐喻）",
+      "本站不复制上述项目的资产、截图或代码，也不暗示获奖；仅采用公开可见的通用设计方法。"
+    ]
+  },
+  "implementation": {
+    "newFiles": [],
+    "removedFiles": [],
+    "fileCount": {
+      "before": 29,
+      "after": 29
+    },
+    "note": "不新增任何资源文件；字图全部内联 SVG / CSS / 本地 WOFF2。CSP（script-src self）不变，无内联脚本。",
+    "layers": {
+      "site/assets/site.css": "全量重写为 v3（约 833 个块）：token、大气层、组件、显影系统、动效暂停、响应式与打印",
+      "site/assets/site.js": "追加 v3 交互模块（页头滚动态、显影、聚光、计数、跑马灯、视差），既有功能未改动",
+      "site/assets/theme.js": "预置 js-reveal gating + 2.6s 兜底移除，避免显影逻辑失败时隐藏内容",
+      "site/index.html": "Hero 信息图替换（3926 → 11122 字符）、format-strip 改为跑马灯结构、fieldnotes 02→03、theme-color #0c110d",
+      "site/*/index.html 与 404.html": "page-hero 增加 data-fig 幽灵字标注；theme-color 更新",
+      "site/docs/index.html": "设计说明同步 v3 语言与参考范围"
+    }
+  },
+  "checks": {
+    "note": "入库前轻量静态自检 + 用户报障后的定点调试（headless 截图复核），非完整验收测试。",
+    "items": [
+      "node --check：site.js / theme.js / search.js 通过",
+      "CSS 花括号平衡 833/833；HTML 类名 119 个全部在样式表中有对应选择器（base-tier 为语义钩子，已补样式）",
+      "各页面 div/svg/g 标签配平；未引入根路径（绝对）链接",
+      "file:// 直开依赖（相对路径、window.ARTEX_SEARCH、外置脚本）未改变",
+      "headless Chrome 截图复核：index（明色 / 暗色 / 移动宽度）、architecture、docs、platform/reverse 内容完整显影，无空白区块（运行于 file://）"
+    ]
+  },
+  "hotfixes": [
+    {
+      "date": "2026-10-17",
+      "issue": "用户报障：大量页面只显示背景",
+      "cause": "显影系统 CSS 优先级缺陷——隐藏规则 html.js-reveal :is(...) 因列表中含 .page-hero>.eyebrow 等复合选择器，整体优先级被抬至 (0,3,1)，压过显示规则 html.js-reveal .in 的 (0,2,1)，元素获得 .in 后仍被隐藏",
+      "fix": "显示规则改为与隐藏规则完全相同的 :is(...) 列表 + .in（(0,4,1)），site.css 内单独一处修改；site.js / theme.js 无需变动",
+      "extra": "移除首页 Hero 图内 \"SIGNAL MAP / 02\" 文本（与 FIG. 01 标签视觉重叠）"
+    }
+  ],
+  "followups": [
+    {
+      "date": "2026-10-17",
+      "change": "新增 GitHub 仓库跳转组件（跨页）",
+      "items": [
+        "页头 nav-actions 新增 GitHub 图标按钮 .github-button（复用 .icon-button；内联 SVG 自绘 GitHub mark，17px 光学尺寸与描边图标观感一致）",
+        "页脚 footer-top 与 footer-bottom 之间新增全宽仓库横幅 .footer-repo（mark 芯片 + 标题/副标 + REPOSITORY 微标 + 箭头），悬停极光描边与指针聚光与既有卡片同套机制（.footer-repo 已加入 site.js 聚光选择器列表）",
+        "全部 11 个页面同步，每页 2 处链接，指向 https://github.com/j5tv9nfzhn-hue/ARTEX，新窗口打开（rel=\"noopener noreferrer\"）",
+        "无新增文件、无内联脚本，CSP 与 file:// 双击直开不受影响；≤650px 隐藏 REPOSITORY 微标并收紧内边距",
+        "headless 截图复核：首页（明色整页 / 暗色整页 / 移动端首屏）与架构页整页，页头按钮与页脚横幅均正常渲染"
+      ]
+    }
+  ],
+  "before": {
+    "404.html": "331240434d17727af26b823e4406601a7bafbc22c73fb450ac644f3886cd213b",
+    "architecture/index.html": "ed16861ebb33247dac216e71ca02828c0189f8603d77279d028ef2bb4885547e",
+    "assets/favicon.svg": "61e7bd21ab2ad3a9cb3441dcd65ac380cc4fdc58a33ff4b3eb9bfd794a940dce",
+    "assets/Manrope-LICENSE.txt": "d826ab6583b12c26807d8716a545bdbbb672df04f48608a364ba9efdbe501c30",
+    "assets/manrope.woff2": "a30ddcd349703aff7464c34bef3fffdff405ee50c113440d7c8693c02d210972",
+    "assets/search.js": "95cd7ec5d4cd3378f67879fc5963268009ba98d4aef7fa44a737c298b6f6ed6e",
+    "assets/site.css": "b179a436512f63f542fda3e9a5ee993c0d7aff7d8e7842a47c0a5cdc0ed86e08",
+    "assets/site.js": "4398acd6473c1cc90b4eed29849a9a8f263a699c3397b6a04fb392b75ee949b2",
+    "assets/theme.js": "4f66f6f1e573d0f2d9ac0764054fd597d9f7731697dc95cbf9275aaa01f337a4",
+    "benchmarks/index.html": "d9a2c18fa0eb0a002d9e4c65e1658f7be9e9d9122718317146d8dcd95e3b324b",
+    "docs/index.html": "16b47fe833a1d7c0c6f8a9694d738f00b5304a45b6fd0b0d8e4cee9d2fb9643a",
+    "index.html": "3cbd67920c8e05fc2038d591968a53a49b47b0e4e704a8604bdf2cd419083b39",
+    "platform/index.html": "15e4cdeeffb551eebe04ae7b404c49c06d0875986cc100c76b3872565c70812b",
+    "platform/network/index.html": "a47707aa72a1eee3cdde55b79b9328fc9c4dd74b92bb9c76d4b41635a6597f18",
+    "platform/reverse/index.html": "6cbabf3d4541d49dc51c5a6d64ddf6ddb669de4eb34cdb443f299ce73160f945",
+    "reports/browser.json": "ded1afee538d72d4f9b36177982038489340496022aaa8dd6c6ff437756738f8",
+    "reports/lighthouse-desktop.html": "bf1f47092cea206d52b7ea5c314ba8277889c51e6cf3793ee64c3f6a14b697b7",
+    "reports/lighthouse-desktop.json": "24046b1ff12bb116bfdff4a88e861e6e5bcbf56d404ec667faa790666c11a9f3",
+    "reports/lighthouse-mobile.html": "e3dd97a6231631611d10a9b82b0231d5611dc5b6b9cc278ff84e665208e2063c",
+    "reports/lighthouse-mobile.json": "2ed378722b9f648a5858d26b0cd657944b37aee0003a9d22812b0fcc4dd3cfb7",
+    "reports/measured-manifest.json": "2d9a4bbcfc2d26bb4f32a60bace52f752e2ca21d93306b9835175580061f2127",
+    "reports/measurements.json": "a41a1d42540fc63a938bbc88029df402d52d400ce9392bc996c392b1934076e9",
+    "robots.txt": "16ceb5ee3e0dc13aa9adf31a3ebbe45a1d965b8c2b9f72eaf84e5911e140ed95",
+    "routes.json": "7b9d2c3f37f0d25b0b024fb17b8d0ca830b6044ea724bc8d8b80a3a0d74ee41f",
+    "sitemap.xml": "f756874d5864d46cb39c5130670775199b9521494370d68b644925b0e3979523",
+    "trust/index.html": "dd198d5f97396a14954b7815d16379a6ed77ef9fb5f796c3088441c4d2c6f010",
+    "updates/index.html": "2f93ed638a1c8b00740ddf5e793a9ffea9bdba60d691111580e6f25852a88d7f",
+    "workflows/index.html": "aead02b7f6a758c3d8cc88d30081ecf59a1e50396816cc50fe622a094c93fc18",
+    "_headers": "07874d83400229c102101ed149e5c9d18c697ee82d7d6081f1ae85be841ee9e6"
+  },
+  "after": {
+    "404.html": "cdeec263f9b9d272f36d302cf82a01ac911bf038b93f509dcd3592e14f6f2bed",
+    "_headers": "07874d83400229c102101ed149e5c9d18c697ee82d7d6081f1ae85be841ee9e6",
+    "architecture/index.html": "2df627810b5d184dcdc7badba49b130066982f592bcb8a52bafe8a8f836a2925",
+    "assets/Manrope-LICENSE.txt": "d826ab6583b12c26807d8716a545bdbbb672df04f48608a364ba9efdbe501c30",
+    "assets/favicon.svg": "61e7bd21ab2ad3a9cb3441dcd65ac380cc4fdc58a33ff4b3eb9bfd794a940dce",
+    "assets/manrope.woff2": "a30ddcd349703aff7464c34bef3fffdff405ee50c113440d7c8693c02d210972",
+    "assets/search.js": "95cd7ec5d4cd3378f67879fc5963268009ba98d4aef7fa44a737c298b6f6ed6e",
+    "assets/site.css": "2aecfb39fe0aaac9a94403e8b90cf271ee96f471a382f1414031739e2d77d6bf",
+    "assets/site.js": "5ae93573ada07e4aff6bfca0a336fd149919dd6ca6eb5a617de547ae5e095815",
+    "assets/theme.js": "1549230968a3302bfb792888e465c3821e59e7333190c45426d56c87f3b1e370",
+    "benchmarks/index.html": "8a7bfa59cc832b79b01083cfa16f990dcf1cf96e7e5af597a7e6f4385a377008",
+    "docs/index.html": "bcbc23cb3e3cb1510c930d53332c05f2b240228e7f281891a938c2e232950534",
+    "index.html": "7ac020aa4d069d530666c461f7f5246fb0b984214d223f4679e552c9028b3227",
+    "platform/index.html": "eac414af4e40c3a74c4a4069f8287a8bce263ec16b3cd0e949ed52b0dfa6b808",
+    "platform/network/index.html": "f647447ab6462c587b816b36d8c2e86452fce65ecc113b4b54834fdd86408957",
+    "platform/reverse/index.html": "ab3fb56f716a47b993f005b8f0d5a364c1cc1ae3af2216cb79b8c71222533fe3",
+    "reports/browser.json": "ded1afee538d72d4f9b36177982038489340496022aaa8dd6c6ff437756738f8",
+    "reports/lighthouse-desktop.html": "bf1f47092cea206d52b7ea5c314ba8277889c51e6cf3793ee64c3f6a14b697b7",
+    "reports/lighthouse-desktop.json": "24046b1ff12bb116bfdff4a88e861e6e5bcbf56d404ec667faa790666c11a9f3",
+    "reports/lighthouse-mobile.html": "e3dd97a6231631611d10a9b82b0231d5611dc5b6b9cc278ff84e665208e2063c",
+    "reports/lighthouse-mobile.json": "2ed378722b9f648a5858d26b0cd657944b37aee0003a9d22812b0fcc4dd3cfb7",
+    "reports/measured-manifest.json": "2d9a4bbcfc2d26bb4f32a60bace52f752e2ca21d93306b9835175580061f2127",
+    "reports/measurements.json": "a41a1d42540fc63a938bbc88029df402d52d400ce9392bc996c392b1934076e9",
+    "robots.txt": "16ceb5ee3e0dc13aa9adf31a3ebbe45a1d965b8c2b9f72eaf84e5911e140ed95",
+    "routes.json": "7b9d2c3f37f0d25b0b024fb17b8d0ca830b6044ea724bc8d8b80a3a0d74ee41f",
+    "sitemap.xml": "f756874d5864d46cb39c5130670775199b9521494370d68b644925b0e3979523",
+    "trust/index.html": "285b5cdacf5f850d26638f9377bfa54d29cea33689d03a72b77664ef024b9423",
+    "updates/index.html": "b3a91f5bcbe30ca5c712c9a39a87a1669b60a8fcfdee7dd3b8ac3109d0f23146",
+    "workflows/index.html": "027f36522a296919168948065af7e2e7617ae065fc4a07ec0e4ecc3f14b073ff"
+  },
+  "changed": [
+    "404.html",
+    "architecture/index.html",
+    "assets/site.css",
+    "assets/site.js",
+    "assets/theme.js",
+    "benchmarks/index.html",
+    "docs/index.html",
+    "index.html",
+    "platform/index.html",
+    "platform/network/index.html",
+    "platform/reverse/index.html",
+    "trust/index.html",
+    "updates/index.html",
+    "workflows/index.html"
+  ],
+  "added": [],
+  "removed": []
+}
