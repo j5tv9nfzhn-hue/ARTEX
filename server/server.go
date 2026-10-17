@@ -390,8 +390,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 // including the side-question checkpoint publisher installed during startup.
 func (s *Server) restoreTaskRuntimes() {
 	m := s.m
-	// reload tasks persisted on disk so the task list survives a restart, and
-	// restore persisted paused state (so a task paused before restart stays paused).
+	// reload tasks persisted on disk so the task list survives a restart; every
+	// non-terminal task is loaded paused (a restart never auto-resumes runs).
 	for _, t := range m.LoadExisting() {
 		lifecycle := t.lifecycleSnapshot()
 		// clear stale 'running' intents from a prior crash/restart (no live worker
@@ -401,8 +401,21 @@ func (s *Server) restoreTaskRuntimes() {
 		}
 		// 批次 6 / #37：重启后的压缩恢复一致性校验（上次进程中断在压缩中）。
 		s.recoverCompactionState(t)
+		// 重启默认不自动恢复运行：未终态任务一律以暂停态载入（无论上次是运行、
+		// 排队还是已暂停），待用户在任务页手动恢复。否则上游 LLM 等外部依赖暂
+		// 不可用时，重启会自动拉起 Planner/Worker 造成连续报错风暴。
+		pauseCause := agent.AbortPausedOnReload
+		if !isTerminalStatus(lifecycle.Status) && !lifecycle.Paused {
+			if err := m.ApplyTaskPauseReason(t.ID, agent.AbortPausedOnStartup.Short); err != nil {
+				log.Printf("[engine] task %s 重启默认暂停落库失败，沿用持久化状态载入: %v", t.ID, err)
+			} else {
+				lifecycle.Paused = true
+				pauseCause = agent.AbortPausedOnStartup
+				log.Printf("[engine] task %s 重启后以暂停态载入（默认不自动恢复运行，待手动恢复）", t.ID)
+			}
+		}
 		if lifecycle.Paused {
-			s.engine.Pause(t.ID, agent.AbortPausedOnReload)
+			s.engine.Pause(t.ID, pauseCause)
 		}
 		// 任务级超时:为每个未终态、带 timeout 的任务起 deadline 协调器,独立于 planner/worker
 		// loop——非活跃任务重启后也能在到点后被收尾(deadline 已过则立即走收尾时序)。
