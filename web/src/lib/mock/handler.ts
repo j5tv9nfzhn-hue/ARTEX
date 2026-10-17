@@ -2569,7 +2569,12 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     const a = msgs.find((x) => x.seq === Number(seg[3]));
     return { detail: a?.detail ?? a?.summary ?? "" };
   }
-  if (seg[0] === "conversations" && seg[2] === "messages" && m === "POST") return { status: "ok" };
+  // 注意放在发送兜底之前:兜底只吃长度 3 的「发消息」POST,否则会吞掉
+  // /messages/{seq}/rollback（早期版本曾因此让 mock 回滚静默失效）。
+  if (seg[0] === "conversations" && seg[2] === "messages" && seg[4] === "rollback" && m === "POST") {
+    return mockRollbackMessage(`conv-${seg[1]}`, Number(seg[3]));
+  }
+  if (seg[0] === "conversations" && seg[2] === "messages" && seg.length === 3 && m === "POST") return { status: "ok" };
   if (seg[0] === "conversations" && seg[2] === "stop") {
     stopMockRetest(Number(seg[1]));
     return { status: "stopped" };
@@ -2579,9 +2584,6 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   }
   if (seg[0] === "conversations" && seg[2] === "checkpoints" && seg[4] === "revert" && m === "POST") {
     return mockRevertCheckpoint(`conv-${seg[1]}`, Number(seg[3]));
-  }
-  if (seg[0] === "conversations" && seg[2] === "messages" && seg[4] === "rollback" && m === "POST") {
-    return mockRollbackMessage(`conv-${seg[1]}`, Number(seg[3]));
   }
 
   // ── tools ──

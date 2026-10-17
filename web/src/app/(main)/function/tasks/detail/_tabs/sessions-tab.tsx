@@ -1614,8 +1614,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       setAttachments(body.attachments.map((a) => ({ name: a.name, path: a.path, size: a.size })));
       setRollbackTarget(null);
       // 缓存里含被隐藏步骤，merge 无法移除——整店清空，当前会话立即重载，其它会话
-      // 在打开时惰性重载。
-      setStore({});
+      // 在打开时惰性重载。MOCK 演示没有后端可重载（loadSession 空转），清店只会
+      // 卡在「加载活动流…」，因此演示态保留原列表。
+      if (!MOCK) setStore({});
       loadSession(activeKey);
       toast.success(tc("msgRollback.doneTask", { hidden: result.hidden, reopened: result.reopened?.length ?? 0 }));
     } catch (e) {
