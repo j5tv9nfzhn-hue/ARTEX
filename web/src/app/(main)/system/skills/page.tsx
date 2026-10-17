@@ -76,18 +76,20 @@ function buildTree(entries: string[]): TreeNode[] {
   const dirMap = new Map<string, TreeNode>();
 
   function ensureDir(dirPath: string, _parentNodes: TreeNode[]): TreeNode[] {
-    if (dirMap.has(dirPath)) return dirMap.get(dirPath)?.children;
+    const existing = dirMap.get(dirPath);
+    if (existing) return existing.children;
     const parts = dirPath.split("/");
     let nodes = root;
     let cur = "";
     for (const part of parts) {
       cur = cur ? `${cur}/${part}` : part;
-      if (!dirMap.has(cur)) {
-        const d: TreeNode = { name: part, path: cur, type: "dir", children: [] };
-        nodes.push(d);
-        dirMap.set(cur, d);
+      let dir = dirMap.get(cur);
+      if (!dir) {
+        dir = { name: part, path: cur, type: "dir", children: [] };
+        nodes.push(dir);
+        dirMap.set(cur, dir);
       }
-      nodes = dirMap.get(cur)?.children;
+      nodes = dir.children;
     }
     return nodes;
   }
@@ -103,12 +105,13 @@ function buildTree(entries: string[]): TreeNode[] {
       let cur = "";
       for (let i = 0; i < parts.length - 1; i++) {
         cur = cur ? `${cur}/${parts[i]}` : parts[i];
-        if (!dirMap.has(cur)) {
-          const d: TreeNode = { name: parts[i], path: cur, type: "dir", children: [] };
-          nodes.push(d);
-          dirMap.set(cur, d);
+        let dir = dirMap.get(cur);
+        if (!dir) {
+          dir = { name: parts[i], path: cur, type: "dir", children: [] };
+          nodes.push(dir);
+          dirMap.set(cur, dir);
         }
-        nodes = dirMap.get(cur)?.children;
+        nodes = dir.children;
       }
       const fname = parts[parts.length - 1];
       if (fname) nodes.push({ name: fname, path: entry, type: "file", children: [] });
