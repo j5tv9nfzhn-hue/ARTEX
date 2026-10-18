@@ -1323,10 +1323,14 @@ export const api = {
     overwrite?: boolean;
   }): Promise<ReportImportResult> => {
     if (MOCK) {
-      return mockHandle("POST", "/skills/import-report", {
-        ...opts,
-        files: opts.files?.map((f) => ({ filename: f.name, content: "" })) ?? [],
-      }) as Promise<ReportImportResult>;
+      return mockHandle<ReportImportResult>(
+        "POST",
+        "/skills/import-report",
+        JSON.stringify({
+          ...opts,
+          files: opts.files?.map((f) => ({ filename: f.name, content: "" })) ?? [],
+        }),
+      );
     }
     const fd = new FormData();
     if (opts.name) fd.append("name", opts.name);

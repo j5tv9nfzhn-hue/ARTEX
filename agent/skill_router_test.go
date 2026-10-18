@@ -110,7 +110,7 @@ func TestGuardedToolNormalizesAndCoercesInput(t *testing.T) {
 		},
 	})
 
-	decorated := DecorateTool(inner, "", nil)
+	decorated := guardPanic(DecorateTool(inner, "", nil))
 	rawAware, ok := decorated.(interface{ AcceptsRawInput() bool })
 	if !ok || !rawAware.AcceptsRawInput() {
 		t.Fatalf("expected guardedTool to implement AcceptsRawInput() == true")

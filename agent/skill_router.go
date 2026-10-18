@@ -139,6 +139,12 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		}
 	}
 	hasMCP := len(def.GlobalNames) > 0 || len(def.Deferred) > 0
+	for _, t := range tools {
+		if strings.HasPrefix(t.Name(), "mcp__") {
+			hasMCP = true
+			break
+		}
+	}
 	if !hasSkillTool && !hasTacticalKB && !hasMCP {
 		return ""
 	}
@@ -175,7 +181,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		matched = combined
 	}
 
-	// Collect active MCP server names from def.GlobalNames and gated MCPs from def.Deferred
+	// Collect active MCP server names from def.GlobalNames and gated MCPs from def.Deferred / tools
 	activeServers := map[string]bool{}
 	for _, name := range def.GlobalNames {
 		if srv := extractMCPServerName(name); srv != "" {
@@ -185,6 +191,11 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 	gatedServers := map[string]bool{}
 	for _, name := range def.Deferred {
 		if srv := extractMCPServerName(name); srv != "" && !activeServers[srv] {
+			gatedServers[srv] = true
+		}
+	}
+	for _, t := range tools {
+		if srv := extractMCPServerName(t.Name()); srv != "" && !activeServers[srv] {
 			gatedServers[srv] = true
 		}
 	}

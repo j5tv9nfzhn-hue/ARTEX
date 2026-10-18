@@ -1435,7 +1435,7 @@ func (s *Server) toolDistillReportSkill() actool.CoreTool {
 				}
 				raw, err := os.ReadFile(fp)
 				if err != nil {
-					return actool.Errorf("读取报告文件 %s 失败: %v", fp, err), nil
+					return actool.Errorf(fmt.Sprintf("读取报告文件 %s 失败: %v", fp, err)), nil
 				}
 				files = append(files, ReportImportFile{
 					Filename: filepath.Base(fp),
