@@ -255,6 +255,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	// the console setup token (or apply ARTEX_ADMIN_PASSWORD) before any request.
 	s.bootstrapAuth()
 	s.initSideQuestions()
+	// AI 自我进化沉淀：任务终态/删除时把可复用的路径、证据与失败模式整理成技能。
+	// 钩子按调用时的设置决定「只生成提议」还是「直接落盘」，无需重启。
+	s.installSkillCuratorHooks()
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
 	// 之后每次保存策略再推一次（saveLLMRetryPolicy）。
 	s.applyRetryPolicy()
@@ -1042,8 +1045,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/skills", s.fsCreateSkill)
 	mux.HandleFunc("POST /api/skills/upload", s.fsUploadSkill)
 	mux.HandleFunc("DELETE /api/skills/{name}", s.fsDeleteSkill)
-	mux.HandleFunc("GET /api/skills/missing", s.fsMissingSkills)   // 未命中(想调但不存在)的 skill 名
-	mux.HandleFunc("GET /api/skills/{name}/usage", s.fsSkillUsage) // 单个 skill 的最近调用
+	mux.HandleFunc("GET /api/skills/missing", s.fsMissingSkills)                     // 未命中(想调但不存在)的 skill 名
+	mux.HandleFunc("GET /api/skills/gaps", s.fsSkillGaps)                                    // 结构化技能缺口与审计依据
+	mux.HandleFunc("GET /api/skills/proposals", s.fsListSkillProposals)                      // 待审阅/已批准/已否决技能提议列表
+	mux.HandleFunc("POST /api/skills/proposals/{id}/review", s.fsReviewSkillProposal)         // 审阅技能提议(批准/否决/修订后批准)
+	mux.HandleFunc("POST /api/skills/proposals/batch-review", s.fsBatchReviewSkillProposals) // 批量审阅技能提议
+	mux.HandleFunc("POST /api/skills/proposals/merge", s.fsMergeSkillProposals)              // 多份提议合并提炼为通用技能
+	mux.HandleFunc("POST /api/skills/distill", s.fsDistillTaskSkill)                         // 手动将指定任务沉淀为复盘技能
+	mux.HandleFunc("GET /api/system/verification-capabilities", s.sysVerificationCapabilities) // 人机验证协议与可选指纹 helper 就绪快照
+	mux.HandleFunc("GET /api/skills/{name}/usage", s.fsSkillUsage)                   // 单个 skill 的最近调用
 	mux.HandleFunc("PUT /api/skills/{name}/meta", s.fsUpdateSkillMeta)
 	mux.HandleFunc("POST /api/skills/{name}/dirs", s.fsCreateDir)
 	mux.HandleFunc("GET /api/skills/{name}/files", s.fsListFiles)
@@ -1111,7 +1121,7 @@ func (s *Server) Handler() http.Handler {
 // --- handlers ---
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	out := map[string]any{"ok": true, "service": "artex", "version": BuildVersion}
+	out := map[string]any{"ok": true, "service": "artex-rea", "version": BuildVersion}
 	// 平台 shell 探测（#9）：登录页/前端可据此提示「模型 Bash 命令的实际执行器」。
 	out["shell"] = shellCapability()
 	writeJSON(w, 200, out)
@@ -3549,6 +3559,11 @@ func (s *Server) settingsPayload() map[string]any {
 		"notify_enabled":             s.m.pg.GetBool(settingNotifyEnabled, true),
 		"notify_public_base_url":     notifyPublicBaseURL(s.m.pg),
 		"notify_digest_interval_min": notifyDigestIntervalMin(s.m.pg),
+		// AI 自我进化沉淀：任务完成/删除时自动生成技能提议（默认开），
+		// 以及是否跳过审阅直接落盘（默认关，直接落盘还需通过 skill_review_gate）。
+		"skill_review_gate":        s.SkillReviewGateEnabled(),
+		"skill_auto_distill":       s.SkillAutoDistillEnabled(),
+		"skill_auto_distill_apply": s.SkillAutoDistillApplyEnabled(),
 	}
 }
 
@@ -3629,6 +3644,11 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyDigestMins *int    `json:"notify_digest_interval_min"`
 		// 输出语言每轮由 Agent Hook 读取，立即生效，无需重建 Agent。null 表示不修改。
 		OutputLanguage *string `json:"output_language"`
+		// AI 自我进化沉淀：开关即时生效（每次任务收尾读取）。skill_auto_distill_apply
+		// 只在 skill_review_gate 开启时作为「跳过审阅直接落盘」的显式选择。
+		SkillReviewGate       *bool `json:"skill_review_gate"`
+		SkillAutoDistill      *bool `json:"skill_auto_distill"`
+		SkillAutoDistillApply *bool `json:"skill_auto_distill_apply"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -3649,6 +3669,24 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if req.NoaCompaction != nil {
 		// 每 run 读的解析器,切换即时对之后启动的 run 生效,无需 applyLLM 重建。
 		if err := s.m.SetNoaCompaction(*req.NoaCompaction); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SkillReviewGate != nil {
+		if err := s.SetSkillReviewGate(*req.SkillReviewGate); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SkillAutoDistill != nil {
+		if err := s.SetSkillAutoDistill(*req.SkillAutoDistill); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SkillAutoDistillApply != nil {
+		if err := s.SetSkillAutoDistillApply(*req.SkillAutoDistillApply); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -4105,6 +4143,10 @@ func (s *Server) stopChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "idle"})
 		return
 	}
+	if !s.isChatKeyBusy(t.ID) {
+		writeJSON(w, 200, map[string]any{"status": "idle"})
+		return
+	}
 	writeJSON(w, 200, map[string]any{"status": "stopping"})
 }
 
@@ -4165,9 +4207,31 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err.Error())
 			return
 		}
+		var samples []db.RESample
+		var sessions []db.RESession
+		var evidences []db.REEvidence
+		if s.m != nil && s.m.pg != nil {
+			if taskID := reID(t.ID); taskID > 0 {
+				samples, _ = s.m.pg.RESamples(taskID)
+				sessions, _ = s.m.pg.RESessions(taskID)
+				for _, sess := range sessions {
+					evs, _ := s.m.pg.REEvidenceList(taskID, sess.ID, 0)
+					for _, ev := range evs {
+						if len(evidences) >= 50 {
+							break
+						}
+						evidences = append(evidences, ev)
+					}
+					if len(evidences) >= 50 {
+						break
+					}
+				}
+			}
+		}
 		md := report.SoftwareMarkdown(report.SoftwareInput{
 			Title: t.Description, Goal: t.Goal, GeneratedAt: time.Now(),
-			Facts: facts, Goals: goals, Truncated: moreFacts || moreGoals,
+			Facts: facts, Goals: goals, Samples: samples, Sessions: sessions, Evidences: evidences,
+			Truncated: moreFacts || moreGoals,
 		})
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		_, _ = w.Write([]byte(md))

@@ -131,8 +131,18 @@ func (s *Server) syncSSStatus(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 			defer cancel()
 			if cl, cerr := mcphttp.New(ctx, m.Name, m.URL, env, m.Insecure); cerr == nil {
-				if _, terr := cl.Tools(ctx); terr == nil {
+				if ts, terr := cl.Tools(ctx); terr == nil {
 					resp["reachable"] = true
+					if len(m.Tools) == 0 && len(ts) > 0 {
+						cached := make([]db.MCPTool, 0, len(ts))
+						names := make([]string, 0, len(ts))
+						for _, t := range ts {
+							cached = append(cached, db.MCPTool{Name: t.Name(), Description: t.Description()})
+							names = append(names, t.Name())
+						}
+						_ = s.m.pg.SaveMCPTools(m.ID, cached)
+						resp["tools"] = names
+					}
 				}
 				_ = cl.Close()
 			}

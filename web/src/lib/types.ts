@@ -1020,6 +1020,11 @@ export interface Settings {
   // worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction;每 run 读一次,对
   // 之后启动的 run 生效。
   noa_compaction?: boolean;
+  // AI 自我进化沉淀：任务完成/删除时把可复用路径、证据与失败模式整理成技能。
+  // skill_review_gate=true（默认）时先进入待审阅队列；auto_distill_apply=true 才直接落盘。
+  skill_review_gate?: boolean;
+  skill_auto_distill?: boolean;
+  skill_auto_distill_apply?: boolean;
   // ---- 漏洞 IM 推送（渠道本身是独立资源，见 /api/notify/*，这里只有三项全局配置）----
   notify_enabled?: boolean; // 推送总开关，默认开；用于维护期一键止血
   notify_public_base_url?: string; // 漏洞详情回链的外部访问地址；空=消息不带回链
@@ -1334,6 +1339,49 @@ export interface MissingSkill {
   calls: number;
   agents: string[];
   last_used?: string;
+}
+
+export type SkillProposalStatus = "pending" | "applied" | "rejected";
+
+export interface SkillProposal {
+  id: string;
+  skill: string;
+  file: string;
+  action: string;
+  content: string;
+  origin: string;
+  evidence: string;
+  lint: string;
+  status: SkillProposalStatus;
+  note: string;
+  created_at: string;
+  reviewed_at?: string;
+}
+
+export interface SkillProposalListResponse {
+  proposals: SkillProposal[];
+  counts: Record<string, number>;
+  review_gate: boolean;
+  auto_distill: boolean;
+  auto_distill_apply: boolean;
+}
+
+export interface VerificationCapabilities {
+  native_protocols: string[];
+  fingerprint_helper: {
+    state: "not_installed" | "configuration_invalid_or_missing" | "detected_not_handshaken" | string;
+    provider: string;
+    profiles: string[];
+    optional_separate_module: boolean;
+    ipc_version: number;
+    handshake_before_network: boolean;
+    platform: string;
+    binary_name: string;
+  };
+  not_supported: string[];
+  limits: Record<string, number>;
+  models_bundled: boolean;
+  automatic_download: boolean;
 }
 
 // ---- Tools (内置工具目录) ----
@@ -1839,10 +1887,32 @@ export interface REEntity {
   address_kind: string;
   payload: Record<string, unknown>;
 }
+export interface REEnginePreset {
+  kind: "rea" | "ghidra" | "ida";
+  title: string;
+  description: string;
+  config: REProviderConfig;
+}
+export interface RECapabilityReport {
+  provider_id: number;
+  kind: string;
+  mode: string;
+  reviewed_static: boolean;
+  discovery: string;
+  catalog_count: number;
+  core_ready: boolean;
+  gate_reason: string;
+  ready_operations: string[];
+  missing_tools?: string[];
+  schema_mismatches?: string[];
+  unmapped_operations?: string[];
+}
 export interface REOverview {
   samples: RESample[];
   providers: REProvider[];
   sessions: RESession[];
+  capabilities?: Record<number, RECapabilityReport>;
+  presets?: REEnginePreset[];
   limit: number;
   scope: string;
 }

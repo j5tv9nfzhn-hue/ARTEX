@@ -390,10 +390,7 @@ func (s *Server) pgRevertConversationCheckpoint(w http.ResponseWriter, r *http.R
 		return
 	}
 	busyKey := s.convBusyKey(c.ID)
-	s.chatMu.Lock()
-	busy := s.chatBusy[busyKey]
-	s.chatMu.Unlock()
-	if busy {
+	if s.isChatKeyBusy(busyKey) {
 		writeErr(w, 409, "当前会话有一轮正在运行，请先停止再回滚")
 		return
 	}
@@ -487,10 +484,7 @@ func (s *Server) pgRollbackConversationMessage(w http.ResponseWriter, r *http.Re
 		return
 	}
 	busyKey := s.convBusyKey(c.ID)
-	s.chatMu.Lock()
-	busy := s.chatBusy[busyKey]
-	s.chatMu.Unlock()
-	if busy {
+	if s.isChatKeyBusy(busyKey) {
 		writeErr(w, 409, "当前会话有一轮正在运行，请先停止再回滚")
 		return
 	}
@@ -544,6 +538,52 @@ func (s *Server) taskCheckpoints(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"checkpoints": items})
 }
 
+// isChatKeyBusy checks whether an agent turn is in flight for busyKey. When a
+// turn's context was just cancelled (e.g. the user clicked Stop) or its terminal
+// SSE frame just landed while the goroutine is still unwinding into defer
+// finishTaskChat/delete(chatBusy), it waits briefly so an immediate rollback
+// does not fail with a transient 409.
+func (s *Server) isChatKeyBusy(busyKey string) bool {
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for {
+		s.chatMu.Lock()
+		busy := s.chatBusy[busyKey]
+		s.chatMu.Unlock()
+		if !busy || time.Now().After(deadline) {
+			return busy
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// taskActivelyExecuting reports whether a task currently has any Planner/Worker
+// execution or claimable intent in flight. Unlike occupiesConcurrencySlot — which
+// stays true for an unpaused task whenever an LLM provider is configured, even
+// while the engine sits in engine_mode="idle" with 0 in-flight operations and no
+// open/running intents — this predicate only blocks timeline/message rollback when
+// background work is actually running or queued to be claimed.
+func (s *Server) taskActivelyExecuting(t *Task) bool {
+	if t == nil {
+		return false
+	}
+	if s.engine.IsDeleting(t.ID) {
+		return true
+	}
+	lifecycle := t.lifecycleSnapshot()
+	if lifecycle.Queued || lifecycle.Paused || isTerminalStatus(lifecycle.Status) || s.engine.IsPaused(t.ID) {
+		return false
+	}
+	if s.engine.inflightCount(t.ID) > 0 || s.engine.ActiveLLMCalls(t.ID) > 0 {
+		return true
+	}
+	if s.engine.ReadyFor(t) && t.Store != nil {
+		if active, err := t.Store.HasActiveIntent(); err != nil || active {
+			return true
+		}
+	}
+	return false
+}
+
 // revertTaskCheckpoint rolls a task's timeline back to one checkpoint: hide later
 // activities, reopen running/paused intents so a resume re-claims them, truncate
 // the planner transcript, supersede newer checkpoints and append a revert marker.
@@ -572,7 +612,11 @@ func (s *Server) revertTaskCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "该检查点已被后续回滚作废，请选择更新的检查点")
 		return
 	}
-	if s.occupiesConcurrencySlot(t) {
+	if s.isChatKeyBusy(t.ID) {
+		writeErr(w, 409, "主 Agent 正在运行，请先停止再回滚时间线")
+		return
+	}
+	if s.taskActivelyExecuting(t) {
 		writeErr(w, 409, "任务正在运行，请先暂停后再回滚时间线")
 		return
 	}
@@ -585,6 +629,9 @@ func (s *Server) revertTaskCheckpoint(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if len(reopened) > 0 && !t.lifecycleSnapshot().Paused && !s.engine.IsPaused(t.ID) && !isTerminalStatus(t.lifecycleSnapshot().Status) {
+		_, _ = s.applyTaskControlWithCause(t, "pause", agent.AbortPausedByUser)
 	}
 	superseded, err := s.m.pg.SupersedeCheckpointsAfter(r.Context(), ckpt.Scope, ckpt.Seq)
 	if err != nil {
@@ -640,15 +687,12 @@ func (s *Server) rollbackTaskMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "只能回滚用户消息")
 		return
 	}
-	if s.occupiesConcurrencySlot(t) {
-		writeErr(w, 409, "任务正在运行，请先暂停后再回滚")
+	if s.isChatKeyBusy(t.ID) {
+		writeErr(w, 409, "主 Agent 正在运行，请先停止再回滚")
 		return
 	}
-	s.chatMu.Lock()
-	busy := s.chatBusy[t.ID]
-	s.chatMu.Unlock()
-	if busy {
-		writeErr(w, 409, "主 Agent 正在运行，请先停止再回滚")
+	if s.taskActivelyExecuting(t) {
+		writeErr(w, 409, "任务正在运行，请先暂停后再回滚")
 		return
 	}
 	boundary, err := s.m.pg.MaxVisibleExplorationActivityBefore(r.Context(), t.ExpID, seq)
@@ -670,6 +714,9 @@ func (s *Server) rollbackTaskMessage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if len(reopened) > 0 && !t.lifecycleSnapshot().Paused && !s.engine.IsPaused(t.ID) && !isTerminalStatus(t.lifecycleSnapshot().Status) {
+		_, _ = s.applyTaskControlWithCause(t, "pause", agent.AbortPausedByUser)
 	}
 	superseded, err := s.supersedeCheckpointsInRegion(r.Context(), checkpoints, boundary)
 	if err != nil {

@@ -46,16 +46,20 @@ func detectShellCapability() ShellCapability {
 			c.Available = append(c.Available, name)
 		}
 	}
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		c.Executor = "powershell"
 		c.Guidance = windowsShellGuidance
-	} else {
+	case "darwin":
+		c.Executor = "bash"
+		c.Guidance = darwinShellGuidance
+	default:
 		c.Executor = "bash"
 	}
 	return c
 }
 
-// platformShellNote 供 wireTools 追加到 Bash 工具描述（非 Windows 返回空串）。
+// platformShellNote 供 wireTools 追加到 Bash 工具描述（按平台返回语法与工具链提示）。
 func platformShellNote() string {
 	g := strings.TrimSpace(shellCapability().Guidance)
 	if g == "" {
@@ -69,3 +73,8 @@ func platformShellNote() string {
 const windowsShellGuidance = "当前平台为 Windows：Bash 工具实际以 PowerShell 执行（powershell -NoProfile -NonInteractive -Command），不是 bash。" +
 	"常规 HTTP 请求、并发目录/参数 Fuzz、编解码/哈希/加解密/JWT、正则/JSON/HTML/JS 提取、端口探测及文件检索，请优先直接调用跨平台内置 Go 原生工具（http_request / http_fuzz / codec_crypto / extract_data / net_probe / Grep / Glob / Read），无需经过 PowerShell，也不要为此编写临时 .py 脚本。" +
 	"确需通过 Bash 调用外部命令行工具时请按 PowerShell 语法书写：环境变量用 $env:NAME；调用 curl 必须写 curl.exe（PowerShell 中 curl 是 Invoke-WebRequest 别名）且含 & 的 URL 必须加双引号；不要使用 grep / sed / awk / export / head / tail 等 Unix 专属命令；PowerShell 5.1 不支持 &&，需要串联时用 ; 或分行执行。"
+
+// darwinShellGuidance 是 macOS (darwin) 的 BSD 用户态语法引导，避免模型混用 GNU 专属参数。
+const darwinShellGuidance = "当前平台为 macOS (darwin)：Bash 工具使用 POSIX/bash 执行，但系统内置命令行工具为 BSD 变体而非 GNU。" +
+	"常规 HTTP 请求、并发 Fuzz、编解码/加解密、数据提取、二进制头部检查与文件检索，请优先直接调用跨平台内置 Go 原生工具（http_request / http_fuzz / codec_crypto / extract_data / binary_inspect / net_probe / Grep / Glob / Read / Edit）。" +
+	"确需调用系统命令时请注意 BSD 差异：grep 不支持 -P（Perl 正则），请用 -E 或内置 Grep 工具；sed -i 必须显式跟备份后缀（如 sed -i ''）；stat 使用 -f 而非 -c；读取 Mach-O 头部优先用 binary_inspect 或 otool。"

@@ -129,21 +129,21 @@ jobs:
       - name: 上传构建产物（Linux 双架构）
         uses: actions/upload-artifact@v7
         with:
-          name: artex-linux-ci
+          name: artex-rea-linux-ci
           path: "dist/*-linux-*.zip"
           retention-days: 14
           if-no-files-found: error
       - name: 上传构建产物（macOS 双架构）
         uses: actions/upload-artifact@v7
         with:
-          name: artex-darwin-ci
+          name: artex-rea-darwin-ci
           path: "dist/*-darwin-*.zip"
           retention-days: 14
           if-no-files-found: error
       - name: 上传构建产物（Windows 双架构）
         uses: actions/upload-artifact@v7
         with:
-          name: artex-windows-ci
+          name: artex-rea-windows-ci
           path: "dist/*-windows-*.zip"
           retention-days: 14
           if-no-files-found: error

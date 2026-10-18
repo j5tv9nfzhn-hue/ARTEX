@@ -1,86 +1,59 @@
-"use client";
-
 import type { ReactNode } from "react";
-import * as React from "react";
+
+import { cookies } from "next/headers";
 
 import { AppSidebar } from "@/app/(main)/_components/sidebar/app-sidebar";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { auth } from "@/lib/auth";
-import { getClientCookie } from "@/lib/cookie.client";
-import {
-  SIDEBAR_COLLAPSIBLE_VALUES,
-  SIDEBAR_VARIANT_VALUES,
-  type SidebarCollapsible,
-  type SidebarVariant,
-} from "@/lib/preferences/layout";
-import { PREFERENCE_DEFAULTS } from "@/lib/preferences/preferences-config";
-import { cn } from "@/lib/utils";
+import { AuthGuard } from "@/components/auth-guard";
+import { FindingAlertMount } from "@/components/finding-alert";
+import { NotificationBell } from "@/components/notification-bell";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SIDEBAR_COLLAPSIBLE_VALUES, SIDEBAR_VARIANT_VALUES } from "@/lib/preferences/layout";
+import { getPreference } from "@/server/server-actions";
 
 import { MainContent } from "./_components/main-content";
+import { LayoutControls } from "./_components/sidebar/layout-controls";
+import { SearchDialog } from "./_components/sidebar/search-dialog";
+import { ThemeSwitcher } from "./_components/sidebar/theme-switcher";
 
-// Reads a layout-critical preference from the browser cookie (falls back to the
-// default during static-export prerender where document is unavailable). Kept
-// fully client-side so the app can be statically exported — no Server Actions /
-// next/headers.
-function readPref<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
-  if (typeof document === "undefined") return fallback;
-  const value = getClientCookie(key);
-  return value && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
-}
-
-export default function Layout({ children }: Readonly<{ children: ReactNode }>) {
-  // Client-side auth gate — replaces the Next proxy/middleware that static export
-  // disables. No token → bounce to /login; render nothing until confirmed so no
-  // protected UI (or its API calls) flashes for a logged-out visitor.
-  const [authed, setAuthed] = React.useState(false);
-  React.useEffect(() => {
-    if (auth.getToken()) {
-      setAuthed(true);
-    } else {
-      // 客户端守卫认为未登录时，必须同时清掉 cookie：否则 proxy.ts 仅凭
-      // “cookie 存在”就把我们从 /login 又重定向回主界面，与本守卫来回弹跳
-      // 形成无限重定向 → 白屏（cookie 与 localStorage 不一致时触发）。
-      auth.clearToken();
-      window.location.href = "/login";
-    }
-  }, []);
-
-  const defaultOpen = typeof document === "undefined" ? true : getClientCookie("sidebar_state") !== "false";
-  const variant = readPref<SidebarVariant>(
-    "sidebar_variant",
-    SIDEBAR_VARIANT_VALUES,
-    PREFERENCE_DEFAULTS.sidebar_variant,
-  );
-  const collapsible = readPref<SidebarCollapsible>(
-    "sidebar_collapsible",
-    SIDEBAR_COLLAPSIBLE_VALUES,
-    PREFERENCE_DEFAULTS.sidebar_collapsible,
-  );
-
-  if (!authed) return null;
+export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
+  const cookieStore = await cookies();
+  const defaultOpen = cookieStore.get("sidebar_state")?.value !== "false";
+  const [variant, collapsible] = await Promise.all([
+    getPreference("sidebar_variant", SIDEBAR_VARIANT_VALUES, "inset"),
+    getPreference("sidebar_collapsible", SIDEBAR_COLLAPSIBLE_VALUES, "icon"),
+  ]);
 
   return (
-    <SidebarProvider
-      defaultOpen={defaultOpen}
-      style={
-        {
-          "--sidebar-width": "calc(var(--spacing) * 62)",
-        } as React.CSSProperties
-      }
-    >
-      <AppSidebar variant={variant} collapsible={collapsible} />
-      <SidebarInset
-        className={cn(
-          "[html[data-content-layout=centered]_&>*]:mx-auto",
-          "[html[data-content-layout=centered]_&>*]:w-full",
-          "[html[data-content-layout=centered]_&>*]:max-w-screen-2xl",
-          "peer-data-[variant=inset]:border",
-          "[--dashboard-header-height:--spacing(12)]",
-          "min-w-0 overflow-x-hidden",
-        )}
-      >
-        <MainContent>{children}</MainContent>
-      </SidebarInset>
-    </SidebarProvider>
+    <AuthGuard>
+      {/* 全局新发现战报卡挂载点:渲染为 null,仅维护去重集合并在顶栏打开弹窗。 */}
+      <FindingAlertMount />
+      <SidebarProvider defaultOpen={defaultOpen}>
+        <AppSidebar variant={variant} collapsible={collapsible} />
+        <SidebarInset className="min-w-0">
+          <header
+            data-navbar-style="sticky"
+            className="sticky top-0 z-50 flex h-12 shrink-0 items-center gap-2 border-b border-border/75 bg-background/85 backdrop-blur-md transition-[width,height] ease-linear after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-linear-to-r after:from-transparent after:via-primary/40 after:to-transparent group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 md:rounded-t-xl"
+          >
+            <div className="flex w-full items-center justify-between px-4 lg:px-6">
+              <div className="flex items-center gap-2 lg:gap-2.5">
+                <SidebarTrigger className="-ml-1" />
+                <div className="mx-0.5 hidden h-4 w-px bg-border/80 sm:block" />
+                <SearchDialog />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="mr-1 hidden items-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-2.5 py-0.5 font-mono text-[10px] font-medium tracking-wider text-primary lg:inline-flex">
+                  <span className="size-1.5 rounded-full bg-primary animate-pulse-soft" />
+                  ARTEX-REA // COMMAND
+                </span>
+                <NotificationBell />
+                <LayoutControls />
+                <ThemeSwitcher />
+              </div>
+            </div>
+          </header>
+          <MainContent>{children}</MainContent>
+        </SidebarInset>
+      </SidebarProvider>
+    </AuthGuard>
   );
 }

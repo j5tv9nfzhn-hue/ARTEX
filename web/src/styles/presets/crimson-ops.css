@@ -1,0 +1,92 @@
+/*
+label: 红队利刃
+value: crimson-ops
+*/
+
+/* 红队利刃(渗透对抗战术预设):
+   深碳黑曜石底(H=18) + 石榴暗红高光边框 + 激光绯红主色,专为高烈度漏洞挖掘与红队行动打造。 */
+
+:root[data-theme-preset="crimson-ops"] {
+  --radius: 0.625rem;
+  --background: oklch(0.983 0.005 18);
+  --foreground: oklch(0.15 0.022 18);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.15 0.022 18);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.15 0.022 18);
+  --primary: oklch(0.54 0.21 18);
+  --primary-foreground: oklch(0.99 0.004 18);
+  --secondary: oklch(0.95 0.012 18);
+  --secondary-foreground: oklch(0.24 0.035 18);
+  --muted: oklch(0.954 0.009 18);
+  --muted-foreground: oklch(0.47 0.022 18);
+  --accent: oklch(0.938 0.022 18);
+  --accent-foreground: oklch(0.22 0.045 18);
+  --destructive: oklch(0.55 0.24 27);
+  --border: oklch(0.905 0.014 18);
+  --input: oklch(0.905 0.014 18);
+  --ring: oklch(0.54 0.21 18);
+  --chart-1: oklch(0.56 0.2 18);
+  --chart-2: oklch(0.55 0.16 250);
+  --chart-3: oklch(0.6 0.15 162);
+  --chart-4: oklch(0.68 0.16 65);
+  --chart-5: oklch(0.58 0.18 335);
+  --sidebar: oklch(0.968 0.008 18);
+  --sidebar-foreground: oklch(0.15 0.022 18);
+  --sidebar-primary: oklch(0.54 0.21 18);
+  --sidebar-primary-foreground: oklch(0.99 0.004 18);
+  --sidebar-accent: oklch(0.938 0.022 18);
+  --sidebar-accent-foreground: oklch(0.22 0.045 18);
+  --sidebar-border: oklch(0.908 0.014 18);
+  --sidebar-ring: oklch(0.54 0.21 18);
+  --shadow-2xs: 0 1px 2px 0 rgb(24 10 14 / 0.04);
+  --shadow-xs: 0 1px 3px 0 rgb(24 10 14 / 0.05), 0 1px 2px -1px rgb(24 10 14 / 0.04);
+  --shadow-sm: 0 2px 6px -1px rgb(24 10 14 / 0.07), 0 1px 3px -1px rgb(24 10 14 / 0.05);
+  --shadow: 0 4px 12px -2px rgb(24 10 14 / 0.08), 0 2px 4px -2px rgb(24 10 14 / 0.05);
+  --shadow-md: 0 8px 20px -4px rgb(24 10 14 / 0.1), 0 3px 6px -3px rgb(24 10 14 / 0.06);
+  --shadow-lg: 0 14px 28px -6px rgb(24 10 14 / 0.12), 0 4px 10px -4px rgb(24 10 14 / 0.07);
+  --shadow-xl: 0 22px 40px -8px rgb(24 10 14 / 0.15), 0 8px 16px -6px rgb(24 10 14 / 0.08);
+  --shadow-2xl: 0 28px 56px -12px rgb(24 10 14 / 0.24);
+}
+
+.dark:root[data-theme-preset="crimson-ops"] {
+  --background: oklch(0.132 0.016 18);
+  --foreground: oklch(0.955 0.008 18);
+  --card: oklch(0.172 0.02 18);
+  --card-foreground: oklch(0.955 0.008 18);
+  --popover: oklch(0.192 0.022 18);
+  --popover-foreground: oklch(0.955 0.008 18);
+  --primary: oklch(0.58 0.21 18);
+  --primary-foreground: oklch(0.985 0.005 18);
+  --secondary: oklch(0.222 0.024 18);
+  --secondary-foreground: oklch(0.93 0.01 18);
+  --muted: oklch(0.202 0.02 18);
+  --muted-foreground: oklch(0.68 0.018 18);
+  --accent: oklch(0.245 0.036 18);
+  --accent-foreground: oklch(0.96 0.01 18);
+  --destructive: oklch(0.66 0.22 26);
+  --border: oklch(0.275 0.026 18);
+  --input: oklch(0.255 0.024 18);
+  --ring: oklch(0.62 0.2 18);
+  --chart-1: oklch(0.68 0.19 18);
+  --chart-2: oklch(0.68 0.155 248);
+  --chart-3: oklch(0.73 0.15 162);
+  --chart-4: oklch(0.77 0.155 68);
+  --chart-5: oklch(0.7 0.175 335);
+  --sidebar: oklch(0.148 0.018 18);
+  --sidebar-foreground: oklch(0.955 0.008 18);
+  --sidebar-primary: oklch(0.58 0.21 18);
+  --sidebar-primary-foreground: oklch(0.985 0.005 18);
+  --sidebar-accent: oklch(0.225 0.034 18);
+  --sidebar-accent-foreground: oklch(0.96 0.01 18);
+  --sidebar-border: oklch(0.245 0.024 18);
+  --sidebar-ring: oklch(0.62 0.2 18);
+  --shadow-2xs: 0 1px 2px 0 rgb(18 4 8 / 0.38);
+  --shadow-xs: 0 1px 3px 0 rgb(18 4 8 / 0.48), 0 1px 2px -1px rgb(18 4 8 / 0.38);
+  --shadow-sm: 0 2px 8px -1px rgb(18 4 8 / 0.52), 0 1px 3px -1px rgb(18 4 8 / 0.42);
+  --shadow: 0 4px 14px -2px rgb(18 4 8 / 0.58), 0 2px 6px -2px rgb(18 4 8 / 0.46);
+  --shadow-md: 0 8px 24px -4px rgb(18 4 8 / 0.62), 0 4px 8px -3px rgb(18 4 8 / 0.48);
+  --shadow-lg: 0 14px 32px -6px rgb(18 4 8 / 0.68), 0 6px 12px -4px rgb(18 4 8 / 0.52);
+  --shadow-xl: 0 24px 48px -8px rgb(18 4 8 / 0.74), 0 10px 20px -6px rgb(18 4 8 / 0.56);
+  --shadow-2xl: 0 32px 64px -12px rgb(18 4 8 / 0.86);
+}

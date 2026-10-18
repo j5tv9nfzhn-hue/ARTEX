@@ -33,6 +33,7 @@ import type {
   Settings,
   SkillCall,
   SkillItem,
+  SkillProposal,
   Stats,
   Task,
   TaskCategory,
@@ -2932,7 +2933,7 @@ export const trafficDetail: TrafficDetail = {
   req: `GET /v1/orders?id=1002 HTTP/1.1
 Host: api.acme.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
-User-Agent: ARTEX-worker/1.0
+User-Agent: ARTEX-REA-worker/1.0
 Accept: application/json
 
 `,
@@ -3230,13 +3231,13 @@ const promptVersions: PromptVersion[] = [
     version: 3,
     ts: T("2026-07-25T10:00:00Z"),
     note: "加强越权探测引导",
-    template_text: "你是 ARTEX 的规划者……",
+    template_text: "你是 ARTEX-REA 的规划者……",
   },
   {
     version: 2,
     ts: T("2026-07-20T10:00:00Z"),
     note: "初始版本微调",
-    template_text: "你是 ARTEX 的规划者(v2)……",
+    template_text: "你是 ARTEX-REA 的规划者(v2)……",
   },
 ];
 
@@ -3244,7 +3245,7 @@ export function agentDetail(key: string): AgentDetail {
   const a = agents.find((x) => x.key === key) ?? agents[1];
   return {
     agent: a,
-    prompt: `你是 ARTEX 的「${a.name}」。\n目标：{{.Goal}}\n资产概览：{{.AssetSummary}}\n路线提示：{{.RouteHint}}\n请基于以上信息推进探索，并通过工具把结果写回图。`,
+    prompt: `你是 ARTEX-REA 的「${a.name}」。\n目标：{{.Goal}}\n资产概览：{{.AssetSummary}}\n路线提示：{{.RouteHint}}\n请基于以上信息推进探索，并通过工具把结果写回图。`,
     variables: promptVars,
     versions: promptVersions,
     visibility: {
@@ -3388,6 +3389,15 @@ export const skills: SkillItem[] = [
     usage_agents: ["planner", "worker"],
     last_used: "2026-08-20T10:15:00Z",
   },
+  {
+    name: "human-verification",
+    description: "人机验证、挑战识别与有界免费 PoW 求解（ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis 确定性求解及协议门禁）。",
+    files: ["SKILL.md"],
+    calls: 6,
+    tasks: 2,
+    usage_agents: ["worker", "pentest"],
+    last_used: "2026-08-20T10:25:00Z",
+  },
 ];
 
 export const skillCalls: SkillCall[] = [
@@ -3398,6 +3408,24 @@ export const skillCalls: SkillCall[] = [
 
 export const missingSkills: MissingSkill[] = [
   { skill: "jwt-forge", calls: 3, agents: ["worker"], last_used: "2026-08-20T07:20:00Z" },
+];
+
+export const skillProposals: SkillProposal[] = [
+  {
+    id: "c91b4a02e81f73d019ab4410",
+    skill: "case-web-42",
+    file: "SKILL.md",
+    action: "create",
+    content:
+      "---\nname: case-web-42\ndescription: 任务复盘经验（web_security）：围绕「商城优惠券并发重放审计」，已验证 2 条路径、发现 1 个漏洞、复测 1 次；含关键词 Race Condition、coupon_redeem、Redis 分布式锁。遇到同类目标或同类故障时加载。\n---\n\n# 商城优惠券并发重放审计 · 任务复盘手册\n\n## 何时使用\n\n- 适用分析域：`web_security`\n- 触发场景：围绕「商城优惠券并发重放审计」开展同类测试时优先加载。\n\n## 已验证的有效路径\n\n1. **并发压测 coupon_redeem 接口** → 产出 2 条事实，触发 1 个确认漏洞\n\n## 失败、误区与止损\n\n- **触发 3-Strike 熔断**：同一请求已连续三次相同负反馈，需切换账号或重置令牌。\n\n## 适用边界与验证要求\n\n- 本手册由系统根据任务完成时的结构化探索图、活动流与证据链自动整理，不含未验证猜测。\n",
+    origin: "curator",
+    evidence: "task=42 domain=web_security intents=2(done=2,blocked=0) facts=2 findings=1 retests=1 re_samples=0",
+    lint: "",
+    status: "pending",
+    note: "",
+    created_at: "2026-08-20T10:30:00Z",
+    reviewed_at: "",
+  },
 ];
 
 // ── Tools ────────────────────────────────────────────────────────────────────

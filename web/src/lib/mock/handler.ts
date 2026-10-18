@@ -2608,6 +2608,130 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   // ── skills ──
   if (path === "/skills" && m === "GET") return { skills: D.skills };
   if (path === "/skills/missing") return { missing: D.missingSkills };
+  if (path === "/skills/gaps") return { gaps: D.missingSkills };
+  if (path === "/skills/proposals" && m === "GET") {
+    const status = sp.get("status") ?? "all";
+    const list = status === "all" ? D.skillProposals : D.skillProposals.filter((p) => p.status === status);
+    const counts: Record<string, number> = { pending: 0, applied: 0, rejected: 0 };
+    for (const p of D.skillProposals) {
+      counts[p.status] = (counts[p.status] ?? 0) + 1;
+    }
+    return {
+      proposals: list,
+      counts,
+      review_gate: true,
+      auto_distill: true,
+      auto_distill_apply: false,
+    };
+  }
+  if (seg[0] === "skills" && seg[1] === "proposals" && seg[3] === "review" && m === "POST") {
+    const id = seg[2];
+    const row = D.skillProposals.find((p) => p.id === id);
+    if (!row) throw new Error("技能提议不存在");
+    const decision = String(b.decision ?? "").toLowerCase();
+    if (typeof b.content === "string" && b.content.trim() !== "") {
+      row.content = b.content;
+    }
+    row.status = decision === "approve" || decision === "apply" ? "applied" : "rejected";
+    row.note = String(b.note ?? "");
+    row.reviewed_at = new Date().toISOString();
+    return { ok: true, message: `提议 ${id} 已审阅`, proposal: row };
+  }
+  if (path === "/skills/proposals/batch-review" && m === "POST") {
+    const ids = Array.isArray(b.ids) ? b.ids.map(String) : [];
+    const decision = String(b.decision ?? "").toLowerCase();
+    const succeeded: string[] = [];
+    const failed: Record<string, string> = {};
+    for (const id of ids) {
+      const row = D.skillProposals.find((p) => p.id === id);
+      if (!row || row.status !== "pending") {
+        failed[id] = "提议不存在或已审阅";
+        continue;
+      }
+      row.status = decision === "approve" || decision === "apply" ? "applied" : "rejected";
+      row.note = String(b.note ?? "");
+      row.reviewed_at = new Date().toISOString();
+      succeeded.push(id);
+    }
+    return { ok: Object.keys(failed).length === 0, succeeded, failed };
+  }
+  if (path === "/skills/proposals/merge" && m === "POST") {
+    const ids = Array.isArray(b.ids) ? b.ids.map(String) : [];
+    const name = String(b.name ?? "merged-case-tactics");
+    const apply = Boolean(b.apply ?? false);
+    const created = {
+      id: `merge-${Date.now()}`,
+      skill: name,
+      file: "SKILL.md",
+      action: "create",
+      content: `---\nname: ${name}\ndescription: ${String(b.description ?? "跨任务合并复盘技能")}\n---\n\n# ${name} · 跨任务合并复盘手册\n`,
+      origin: "curator",
+      evidence: `merged_from=${ids.join(",")}`,
+      lint: "",
+      status: (apply ? "applied" : "pending") as "applied" | "pending",
+      note: "",
+      created_at: new Date().toISOString(),
+      reviewed_at: apply ? new Date().toISOString() : "",
+    };
+    D.skillProposals.unshift(created);
+    return { ok: true, proposal: created };
+  }
+  if (path === "/system/verification-capabilities" && m === "GET") {
+    return {
+      native_protocols: ["altcha_v1_sha256_sha512", "altcha_v2_sha2_pbkdf2", "anubis_legacy_fast_slow_sha256"],
+      fingerprint_helper: {
+        state: "not_installed",
+        provider: "req/v3@v3.59.0",
+        profiles: ["chrome", "firefox"],
+        optional_separate_module: true,
+        ipc_version: 1,
+        handshake_before_network: true,
+        platform: "windows/amd64",
+        binary_name: "artex-verification-http.exe",
+      },
+      not_supported: [
+        "visual_audio_captcha_solver",
+        "argon2_scrypt",
+        "arbitrary_javascript_wasm",
+        "universal_turnstile_recaptcha_hcaptcha",
+      ],
+      limits: {
+        response_body_bytes: 32768,
+        response_header_bytes: 32768,
+        flow_timeout_ms: 15000,
+        flow_roundtrips: 6,
+        proof_cache_entries_per_toolset: 64,
+        flow_cache_entries_per_toolset: 32,
+        helper_processes: 2,
+        proof_max_attempts: 1000000,
+        proof_max_timeout_ms: 5000,
+        v2_max_kdf_work_units: 2000000,
+        helper_go_memory_soft_mib: 64,
+      },
+      models_bundled: false,
+      automatic_download: false,
+    };
+  }
+  if (path === "/skills/distill" && m === "POST") {
+    const taskId = Number(b.task_id ?? 1);
+    const apply = Boolean(b.apply ?? false);
+    const created = {
+      id: `distill-${taskId}-${Date.now()}`,
+      skill: `case-web-${taskId}`,
+      file: "SKILL.md",
+      action: "create",
+      content: `---\nname: case-web-${taskId}\ndescription: 任务复盘经验（web_security）：围绕「任务 #${taskId}」自动提炼。\n---\n\n# 任务 #${taskId} · 任务复盘手册\n`,
+      origin: "curator",
+      evidence: `task=${taskId} domain=web_security`,
+      lint: "",
+      status: (apply ? "applied" : "pending") as "applied" | "pending",
+      note: "",
+      created_at: new Date().toISOString(),
+      reviewed_at: apply ? new Date().toISOString() : "",
+    };
+    D.skillProposals.unshift(created);
+    return { ok: true, proposal: created };
+  }
   if (seg[0] === "skills" && seg[2] === "usage") return { calls: D.skillCalls };
   if (path === "/skills" && m === "POST") return { name: String(b.name ?? "new-skill") };
   if (seg[0] === "skills" && seg[2] === "files" && seg.length === 3) return { files: ["SKILL.md"] };

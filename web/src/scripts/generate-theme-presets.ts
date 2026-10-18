@@ -1,94 +1,102 @@
 /**
  * Script: generate-theme-presets.ts
  *
- * This script scans the /styles/presets directory for CSS files containing theme definitions.
- * It extracts `label:`, `value:`, and primary color definitions (`--primary`) for both light and dark modes.
- * These primary colors are used to visually represent each theme in the UI (e.g., colored dots or theme previews).
- * Default theme colors are fetched from /app/globals.css.
- * All extracted metadata is injected into a marked section of the /lib/preferences/theme.ts file.
- *
- * Usage:
- * - During local development, run manually after adding any new theme preset:
- *     npm run generate:presets
- * - Ensure that each new CSS preset includes `label:` and `value:` comments.
- * - This generation step is currently automated using a Husky pre-push hook.
- * - You may optionally integrate it directly into a build step if preferred.
+ * Scans `/src/styles/presets/*.css` to extract theme metadata and `--primary` colors,
+ * then updates the generated block inside `/src/lib/preferences/theme.ts`.
  */
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-const presetDir = path.resolve(__dirname, "../styles/presets");
-
-if (!fs.existsSync(presetDir)) {
-  console.error(`❌ Preset directory not found at: ${presetDir}`);
-  process.exit(1);
-}
-
-const outputPath = path.resolve(__dirname, "../lib/preferences/theme.ts");
-
-const files = fs.readdirSync(presetDir).filter((file) => file.endsWith(".css"));
-
-if (files.length === 0) {
-  console.warn("⚠️ No preset CSS files found. Only default preset will be included.");
-}
-
-const presets = files.map((file) => {
-  const filePath = path.join(presetDir, file);
-  const content = fs.readFileSync(filePath, "utf8");
-
-  const labelMatch = content.match(/label:\s*(.+)/);
-  const valueMatch = content.match(/value:\s*(.+)/);
-
-  if (!labelMatch) {
-    console.warn(`⚠️ No 'label:' found in ${file}, using filename as fallback.`);
-  }
-  if (!valueMatch) {
-    console.warn(`⚠️ No 'value:' found in ${file}, using filename as fallback.`);
-  }
-
-  const label = labelMatch?.[1]?.trim() ?? file.replace(".css", "");
-  const value = valueMatch?.[1]?.trim() ?? file.replace(".css", "");
-
-  const lightPrimaryMatch = content.match(/:root\[data-theme-preset="[^"]*"\][\s\S]*?--primary:\s*([^;]+);/);
-  const darkPrimaryMatch = content.match(/\.dark:root\[data-theme-preset="[^"]*"\][\s\S]*?--primary:\s*([^;]+);/);
-
-  const primary = {
-    light: lightPrimaryMatch?.[1]?.trim() ?? "",
-    dark: darkPrimaryMatch?.[1]?.trim() ?? "",
+interface ThemePresetMeta {
+  label: string;
+  value: string;
+  primary: {
+    light: string;
+    dark: string;
   };
-
-  if (!lightPrimaryMatch || !darkPrimaryMatch) {
-    console.warn(`⚠️ Missing --primary for ${file} (light or dark). Check CSS syntax.`);
-  }
-
-  return { label, value, primary };
-});
-
-const globalStylesPath = path.resolve(__dirname, "../app/globals.css");
-
-let globalContent = "";
-try {
-  globalContent = fs.readFileSync(globalStylesPath, "utf8");
-} catch (err) {
-  console.error(`❌ Could not read globals.css at ${globalStylesPath}`);
-  console.error(err);
-  process.exit(1);
 }
 
-const defaultLightPrimaryRegex = /:root\s*{[^}]*--primary:\s*([^;]+);/;
-const defaultDarkPrimaryRegex = /\.dark\s*{[^}]*--primary:\s*([^;]+);/;
+const PRESETS_DIR = path.resolve(process.cwd(), "src/styles/presets");
+const THEME_TS_PATH = path.resolve(process.cwd(), "src/lib/preferences/theme.ts");
 
-const defaultLightPrimaryMatch = defaultLightPrimaryRegex.exec(globalContent);
-const defaultDarkPrimaryMatch = defaultDarkPrimaryRegex.exec(globalContent);
+function extractMetadata(content: string, fileName: string) {
+  const commentMatch = content.match(/\/\*\*?([\s\S]*?)\*\//);
 
-const defaultPrimary = {
-  light: defaultLightPrimaryMatch?.[1]?.trim() ?? "",
-  dark: defaultDarkPrimaryMatch?.[1]?.trim() ?? "",
-};
+  let label: string | undefined;
+  let value: string | undefined;
 
-presets.unshift({ label: "Default", value: "default", primary: defaultPrimary });
+  if (commentMatch) {
+    const commentContent = commentMatch[1];
+    const labelMatch = commentContent.match(/label:\s*(.+)/i);
+    const valueMatch = commentContent.match(/value:\s*(.+)/i);
+
+    label = labelMatch?.[1]?.trim();
+    value = valueMatch?.[1]?.trim();
+  }
+
+  const derivedValue = fileName.replace(/\.css$/, "");
+  const finalValue = value || derivedValue;
+
+  const finalLabel =
+    label ||
+    finalValue
+      .split("-")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
+
+  if (!label || !value) {
+    console.warn(`⚠️ [${fileName}] Missing label or value in comment block, using fallback:`, {
+      label: finalLabel,
+      value: finalValue,
+    });
+  }
+
+  return { label: finalLabel, value: finalValue };
+}
+
+function extractPrimaryColors(content: string, fileName: string) {
+  const lightMatch = content.match(/:root\[data-theme-preset="[^"]+"\]\s*{[^}]*--primary:\s*([^;]+);/);
+  const darkMatch = content.match(/\.dark:root\[data-theme-preset="[^"]+"\]\s*{[^}]*--primary:\s*([^;]+);/);
+
+  const light = lightMatch?.[1]?.trim() ?? "";
+  const dark = darkMatch?.[1]?.trim() ?? "";
+
+  if (!light || !dark) {
+    console.warn(`⚠️ [${fileName}] Missinglight/dark --primary value (light: "${light}", dark: "${dark}")`);
+  }
+
+  return { light, dark };
+}
+
+function parsePresetFiles(): ThemePresetMeta[] {
+  const files = fs.readdirSync(PRESETS_DIR).filter((f) => f.endsWith(".css"));
+
+  const presets: ThemePresetMeta[] = [
+    {
+      label: "默认",
+      value: "default",
+      primary: {
+        light: "oklch(0.52 0.175 248)",
+        dark: "oklch(0.58 0.185 248)",
+      },
+    },
+  ];
+
+  for (const file of files) {
+    const filePath = path.join(PRESETS_DIR, file);
+    const content = fs.readFileSync(filePath, "utf8");
+
+    const { label, value } = extractMetadata(content, file);
+    const primary = extractPrimaryColors(content, file);
+
+    presets.push({ label, value, primary });
+  }
+
+  return presets;
+}
+
+const presets = parsePresetFiles();
 
 const generatedBlock = `// --- generated:themePresets:start ---
 
@@ -100,32 +108,15 @@ export type ThemePreset = (typeof THEME_PRESET_OPTIONS)[number]["value"];
 
 // --- generated:themePresets:end ---`;
 
-const fileContent = fs.readFileSync(outputPath, "utf8");
-
-const updated = fileContent.replace(
+const themeFile = fs.readFileSync(THEME_TS_PATH, "utf8");
+const updated = themeFile.replace(
   /\/\/ --- generated:themePresets:start ---[\s\S]*?\/\/ --- generated:themePresets:end ---/,
   generatedBlock,
 );
 
-function main() {
-  const biomeBin = require.resolve("@biomejs/biome/bin/biome");
-  const formatted = execFileSync(process.execPath, [biomeBin, "format", "--stdin-file-path", outputPath], {
-    input: updated,
-    encoding: "utf8",
-  });
-
-  if (formatted === fileContent) {
-    console.log("ℹ️  No changes in theme.ts");
-    return;
-  }
-
-  fs.writeFileSync(outputPath, formatted);
-  console.log("✅ theme.ts updated with new theme presets");
-}
-
-try {
-  main();
-} catch (err) {
-  console.error("❌ Unexpected error while generating theme presets:", err);
-  process.exit(1);
+if (updated === themeFile) {
+  console.warn("ℹ️ No changes detected in theme.ts");
+} else {
+  fs.writeFileSync(THEME_TS_PATH, updated, "utf8");
+  console.log("✅ Successfully updated THEME_PRESET_OPTIONS in theme.ts");
 }

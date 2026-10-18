@@ -195,10 +195,11 @@ func classifyNegativeOutcome(name string, res actool.Result) (string, string) {
 	switch name {
 	case "http_request":
 		var out struct {
-			Status    int    `json:"status"`
-			Body      string `json:"body"`
-			Error     string `json:"error"`
-			Truncated bool   `json:"body_truncated"`
+			Status    int               `json:"status"`
+			Headers   map[string]string `json:"headers"`
+			Body      string            `json:"body"`
+			Error     string            `json:"error"`
+			Truncated bool              `json:"body_truncated"`
 		}
 		if json.Unmarshal([]byte(text), &out) != nil {
 			return "", ""
@@ -206,6 +207,10 @@ func classifyNegativeOutcome(name string, res actool.Result) (string, string) {
 		if out.Error != "" {
 			sum := sha256.Sum256([]byte(out.Error))
 			return "network:" + hex.EncodeToString(sum[:]), "观察到网络错误；不能据此推断服务不存在或被封禁。"
+		}
+		assessment := inspectVerification(out.Status, out.Headers, out.Body)
+		if assessment.Category == "challenge_page" {
+			return "challenge:" + assessment.Vendor, "确认当前响应为挑战页，而非业务成功；允许基于新证据选择不同的协议/已有浏览器策略，不默认要求人工，不能重复同一失败策略。"
 		}
 		if out.Truncated || out.Status < 400 || out.Status > 599 {
 			return "", ""

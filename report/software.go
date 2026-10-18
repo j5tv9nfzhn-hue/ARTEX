@@ -17,6 +17,9 @@ type SoftwareInput struct {
 	GeneratedAt time.Time
 	Goals       []*db.Node
 	Facts       []*db.Node
+	Samples     []db.RESample
+	Sessions    []db.RESession
+	Evidences   []db.REEvidence
 	Truncated   bool
 }
 
@@ -93,6 +96,35 @@ func SoftwareMarkdown(in SoftwareInput) string {
 	}
 	if count == 0 {
 		b.WriteString("尚无分析事实。请先识别样本，再记录与用户问题相关的观察与证据。\n\n")
+	}
+	if len(in.Samples) > 0 || len(in.Sessions) > 0 || len(in.Evidences) > 0 {
+		b.WriteString("## 样本库与分析会话摘要\n\n")
+		if len(in.Samples) > 0 {
+			b.WriteString("### 登记样本\n\n")
+			for _, s := range in.Samples {
+				fmt.Fprintf(&b, "- **%s** · SHA-256: `%s` · 大小: %d 字节\n", reportText(nz(s.Name, "未命名样本"), 256), reportText(s.SHA256, 64), s.Size)
+			}
+			b.WriteString("\n")
+		}
+		if len(in.Sessions) > 0 {
+			b.WriteString("### 分析会话\n\n")
+			for _, s := range in.Sessions {
+				fmt.Fprintf(&b, "- 会话 #%d · 样本 `%s` · 状态: `%s`", s.ID, reportText(s.SampleSHA, 64), reportText(s.State, 32))
+				if strings.TrimSpace(s.Message) != "" {
+					fmt.Fprintf(&b, " · %s", reportText(s.Message, 512))
+				}
+				b.WriteString("\n")
+			}
+			b.WriteString("\n")
+		}
+		if len(in.Evidences) > 0 {
+			b.WriteString("### 最近结构化证据索引\n\n")
+			for _, e := range in.Evidences {
+				fmt.Fprintf(&b, "- 证据 #%d（会话 #%d）· 操作 `%s` (`%s`) · 输出 SHA-256: `%s` · 错误=%t · 截断=%t\n",
+					e.ID, e.SessionID, reportText(e.Operation, 64), reportText(e.Tool, 128), reportText(e.OutputSHA, 64), e.IsError, e.Truncated)
+			}
+			b.WriteString("\n")
+		}
 	}
 	b.WriteString("## 范围与限制\n\n- 本报告不自动验证样本身份、地址映射或证据真实性；应核对 SHA-256、模块、地址类型与原始工具输出。\n- 基础样本检查不执行样本，也不提供完整函数或类型恢复。深度能力以实际配置的 Provider 为准。\n- 推测与缺少证据的记录仍需后续验证；本报告未将它们提升为已确认结论。\n- 专用样本库、分析会话及结构化证据管理属于后续阶段。\n")
 	return b.String()

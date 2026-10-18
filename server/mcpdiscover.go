@@ -5,6 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/Autumn-27/artex/db"
@@ -45,7 +50,8 @@ func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
 		if m.Command == "" {
 			return nil, errors.New(errMCPStdioNoCommand)
 		}
-		return mcp.NewStdioClient(ctx, m.Name, m.Command, env, jsonStrSlice(m.Args)...)
+		cmd, args, stdioEnv := prepareStdioMCP(m.Command, jsonStrSlice(m.Args), env)
+		return mcp.NewStdioClient(ctx, m.Name, cmd, stdioEnv, args...)
 	case "http":
 		if m.URL == "" {
 			return nil, errors.New(errMCPHTTPNoURL)
@@ -60,6 +66,135 @@ func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
 	default:
 		return nil, fmt.Errorf(trMsg(errMCPUnknownTransportFmt), m.Transport)
 	}
+}
+
+// prepareStdioMCP normalizes the stdio command, arguments and environment across
+// Windows / macOS / Linux so packaged single-binary builds can reliably spawn
+// Node/npx-based MCP servers (such as the built-in Playwright browser MCP)
+// without hanging on interactive prompts or missing PATH entries.
+func prepareStdioMCP(command string, args []string, env map[string]string) (string, []string, map[string]string) {
+	outEnv := make(map[string]string, len(env)+4)
+	for k, v := range env {
+		outEnv[k] = v
+	}
+	trimmedCmd := strings.TrimSpace(command)
+	baseLower := strings.ToLower(filepath.Base(trimmedCmd))
+	isNPX := baseLower == "npx" || baseLower == "npx.cmd" || baseLower == "npx.exe"
+
+	outArgs := append([]string(nil), args...)
+	if isNPX {
+		hasYes := false
+		for _, a := range outArgs {
+			if a == "-y" || a == "--yes" {
+				hasYes = true
+				break
+			}
+		}
+		if !hasYes && len(outArgs) > 0 {
+			outArgs = append([]string{"-y"}, outArgs...)
+		}
+		if _, ok := outEnv["npm_config_yes"]; !ok {
+			outEnv["npm_config_yes"] = "true"
+		}
+		if _, ok := outEnv["NPM_CONFIG_YES"]; !ok {
+			outEnv["NPM_CONFIG_YES"] = "true"
+		}
+	}
+
+	resolvedCmd, extraDirs := resolveStdioCommandPath(trimmedCmd)
+	if len(extraDirs) > 0 {
+		pathSep := string(os.PathListSeparator)
+		curPath := outEnv["PATH"]
+		if curPath == "" {
+			curPath = outEnv["Path"]
+		}
+		if curPath == "" {
+			curPath = os.Getenv("PATH")
+		}
+		prefix := strings.Join(extraDirs, pathSep)
+		if curPath != "" {
+			curPath = prefix + pathSep + curPath
+		} else {
+			curPath = prefix
+		}
+		outEnv["PATH"] = curPath
+		if runtime.GOOS == "windows" {
+			outEnv["Path"] = curPath
+		}
+	}
+	return resolvedCmd, outArgs, outEnv
+}
+
+func resolveStdioCommandPath(command string) (string, []string) {
+	if command == "" {
+		return command, nil
+	}
+	if p, err := exec.LookPath(command); err == nil && p != "" {
+		return p, []string{filepath.Dir(p)}
+	}
+	if filepath.IsAbs(command) {
+		return command, nil
+	}
+
+	var candidateDirs []string
+	if runtime.GOOS == "windows" {
+		for _, envKey := range []string{"ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "APPDATA", "NVM_SYMLINK"} {
+			val := strings.TrimSpace(os.Getenv(envKey))
+			if val == "" {
+				continue
+			}
+			switch envKey {
+			case "ProgramFiles", "ProgramFiles(x86)":
+				candidateDirs = append(candidateDirs, filepath.Join(val, "nodejs"))
+			case "LOCALAPPDATA":
+				candidateDirs = append(candidateDirs, filepath.Join(val, "Programs", "nodejs"), filepath.Join(val, "fnm_multishells"))
+			case "APPDATA":
+				candidateDirs = append(candidateDirs, filepath.Join(val, "npm"))
+			case "NVM_SYMLINK":
+				candidateDirs = append(candidateDirs, val)
+			}
+		}
+	} else {
+		candidateDirs = append(candidateDirs, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			candidateDirs = append(candidateDirs,
+				filepath.Join(home, ".local", "bin"),
+				filepath.Join(home, ".nvm", "current", "bin"),
+				filepath.Join(home, ".volta", "bin"),
+			)
+		}
+	}
+
+	exts := []string{""}
+	if runtime.GOOS == "windows" && filepath.Ext(command) == "" {
+		exts = []string{".cmd", ".exe", ".bat", ""}
+	}
+
+	var foundPath string
+	var extraDirs []string
+	seenDir := map[string]bool{}
+	for _, dir := range candidateDirs {
+		if dir == "" || seenDir[dir] {
+			continue
+		}
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			seenDir[dir] = true
+			extraDirs = append(extraDirs, dir)
+		}
+		if foundPath == "" {
+			for _, ext := range exts {
+				cand := filepath.Join(dir, command+ext)
+				if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+					foundPath = cand
+					break
+				}
+			}
+		}
+	}
+	if foundPath != "" {
+		return foundPath, extraDirs
+	}
+	return command, extraDirs
 }
 
 // discoverAndCacheMCP connects to one MCP, lists its tools, and persists the tool

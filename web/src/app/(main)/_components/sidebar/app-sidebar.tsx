@@ -2,8 +2,6 @@
 
 import Link from "next/link";
 
-import { useShallow } from "zustand/react/shallow";
-
 import {
   Sidebar,
   SidebarContent,
@@ -14,38 +12,36 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { APP_CONFIG } from "@/config/app-config";
-import { useCurrentUser } from "@/hooks/use-current-user";
 import { sidebarItems } from "@/navigation/sidebar/sidebar-items";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 import { NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
-import { SidebarCustomize } from "./sidebar-customize-dialog";
-import { SidebarSupportCard } from "./sidebar-support-card";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const currentUser = useCurrentUser();
-  const { sidebarVariant, sidebarCollapsible, isSynced } = usePreferencesStore(
-    useShallow((s) => ({
-      sidebarVariant: s.sidebarVariant,
-      sidebarCollapsible: s.sidebarCollapsible,
-      isSynced: s.isSynced,
-    })),
-  );
-
-  const variant = isSynced ? sidebarVariant : props.variant;
-  const collapsible = isSynced ? sidebarCollapsible : props.collapsible;
+  const sidebarVariant = usePreferencesStore((s) => s.sidebarVariant);
+  const sidebarCollapsible = usePreferencesStore((s) => s.sidebarCollapsible);
 
   return (
-    <Sidebar {...props} variant={variant} collapsible={collapsible}>
-      <SidebarHeader>
+    <Sidebar {...props} variant={sidebarVariant} collapsible={sidebarCollapsible}>
+      <SidebarHeader className="border-b border-sidebar-border/60 pb-2.5">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <Link prefetch={false} href="/function/tasks">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/logo.png" alt="ARTEX" width={40} height={40} className="shrink-0" />
-                <span className="font-semibold text-base">{APP_CONFIG.name}</span>
+            <SidebarMenuButton asChild className="h-10 gap-2.5 px-2 hover:bg-sidebar-accent/70">
+              <Link prefetch={false} href="/dashboard" aria-label={APP_CONFIG.name}>
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-primary/20 to-chart-2/15 shadow-2xs ring-1 ring-primary/35">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/logo.png" alt="ARTEX-REA" width={20} height={20} className="size-5 shrink-0 dark:invert" />
+                </span>
+                <div className="flex min-w-0 flex-1 items-center justify-between gap-1.5 group-data-[collapsible=icon]:hidden">
+                  <span className="truncate font-display text-base font-bold tracking-tight">
+                    <span>ARTEX</span>
+                    <span className="bg-linear-to-r from-primary to-chart-2 bg-clip-text text-transparent">-REA</span>
+                  </span>
+                  <span className="shrink-0 rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wider text-primary ring-1 ring-primary/25">
+                    OPS // REA
+                  </span>
+                </div>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -53,12 +49,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={sidebarItems} />
-        {/* <NavDocuments items={data.documents} /> */}
-        {/* <NavSecondary items={data.navSecondary} className="mt-auto" /> */}
       </SidebarContent>
-      <SidebarFooter>
-        <SidebarCustomize />
-        <NavUser user={currentUser} />
+      <SidebarFooter className="border-t border-sidebar-border/60 pt-2">
+        <NavUser />
       </SidebarFooter>
     </Sidebar>
   );

@@ -8,15 +8,24 @@ import {
   CheckIcon,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  CodeIcon,
   CopyIcon,
+  CpuIcon,
   CrosshairIcon,
   Flag,
   GlobeIcon,
   KeyRoundIcon,
+  ListOrderedIcon,
+  Loader2Icon,
   MessageSquare,
+  NetworkIcon,
   PaperclipIcon,
+  PlugIcon,
   RadarIcon,
   ShieldAlertIcon,
+  ShieldCheckIcon,
   Terminal,
   Undo2Icon,
   UserIcon,
@@ -52,53 +61,151 @@ const chip = (worker: string) =>
   `mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium text-white ${workerColor(worker)}`;
 
 // Semantic tool category metadata for progressive disclosure trace rows.
-function getToolCategoryMeta(toolName: string) {
+function getToolCategoryMeta(toolName: string): {
+  tag: string;
+  displayName: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  pillClass: string;
+} {
+  if (toolName.startsWith("mcp__")) {
+    const rest = toolName.slice(5);
+    const sep = rest.indexOf("__");
+    const srv = sep > 0 ? rest.slice(0, sep) : "MCP";
+    const sub = sep > 0 ? rest.slice(sep + 2) : rest;
+    return {
+      tag: `MCP:${srv}`,
+      displayName: sub || toolName,
+      Icon: PlugIcon,
+      pillClass:
+        "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200",
+    };
+  }
   if (toolName === "http_request" || toolName === "http_fuzz" || toolName === "http_sequence") {
     return {
       tag: "HTTP",
+      displayName: toolName,
       Icon: GlobeIcon,
-      pillClass: "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400",
+      pillClass:
+        "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300",
     };
   }
   if (toolName === "web_recon" || toolName === "dns_probe" || toolName === "net_probe") {
     return {
       tag: "RECON",
+      displayName: toolName,
       Icon: RadarIcon,
-      pillClass: "border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+      pillClass:
+        "border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300",
+    };
+  }
+  if (
+    toolName === "human_verification" ||
+    toolName === "human_verification_solve" ||
+    toolName === "human_verification_capabilities" ||
+    toolName === "human_verification_flow"
+  ) {
+    return {
+      tag: "VERIFY",
+      displayName: toolName,
+      Icon: ShieldCheckIcon,
+      pillClass:
+        "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-300",
+    };
+  }
+  if (toolName === "binary_inspect" || toolName === "software_analysis") {
+    return {
+      tag: "RE",
+      displayName: toolName,
+      Icon: CpuIcon,
+      pillClass:
+        "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
+    };
+  }
+  if (
+    toolName === "record_fact" ||
+    toolName === "report_finding" ||
+    toolName === "add_finding" ||
+    toolName === "insert_assets" ||
+    toolName === "list_assets" ||
+    toolName === "graph_overview" ||
+    toolName === "node_detail" ||
+    toolName === "add_intent" ||
+    toolName === "prove_goal" ||
+    toolName === "set_goals" ||
+    toolName === "set_constraints" ||
+    toolName === "add_hint" ||
+    toolName === "expand_digest"
+  ) {
+    return {
+      tag: "GRAPH",
+      displayName: toolName,
+      Icon: NetworkIcon,
+      pillClass:
+        "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:border-zinc-700 dark:bg-zinc-800/90 dark:text-zinc-200",
+    };
+  }
+  if (
+    toolName === "search_all_worker_traces" ||
+    toolName === "list_worker_traces" ||
+    toolName === "get_worker_trace" ||
+    toolName === "TodoWrite" ||
+    toolName === "steer_work" ||
+    toolName === "kill_work"
+  ) {
+    return {
+      tag: "TRACE",
+      displayName: toolName,
+      Icon: ListOrderedIcon,
+      pillClass:
+        "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:border-fuchsia-500/30 dark:bg-fuchsia-500/10 dark:text-fuchsia-300",
     };
   }
   if (toolName === "tactical_kb" || toolName === "Skill") {
     return {
       tag: "KB",
+      displayName: toolName,
       Icon: BookOpenIcon,
-      pillClass: "border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400",
+      pillClass:
+        "border-violet-500/30 bg-violet-500/10 text-violet-600 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300",
     };
   }
   if (toolName === "codec_crypto" || toolName === "extract_data") {
     return {
       tag: "CRYPTO",
+      displayName: toolName,
       Icon: KeyRoundIcon,
-      pillClass: "border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-400",
+      pillClass:
+        "border-teal-500/30 bg-teal-500/10 text-teal-600 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300",
     };
   }
   if (
     toolName === "Bash" ||
+    toolName === "shell_open" ||
+    toolName === "shell_send" ||
+    toolName === "shell_read" ||
+    toolName === "shell_close" ||
     toolName === "Glob" ||
     toolName === "Grep" ||
     toolName === "Read" ||
     toolName === "Write" ||
-    toolName === "Edit"
+    toolName === "Edit" ||
+    toolName === "MultiEdit" ||
+    toolName === "LS"
   ) {
     return {
       tag: "EXEC",
+      displayName: toolName,
       Icon: Terminal,
-      pillClass: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+      pillClass:
+        "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
     };
   }
   return {
     tag: "TOOL",
+    displayName: toolName,
     Icon: Wrench,
-    pillClass: "border-border bg-muted/60 text-muted-foreground",
+    pillClass:
+      "border-border bg-muted/60 text-muted-foreground dark:border-zinc-700 dark:bg-zinc-800/80 dark:text-zinc-300",
   };
 }
 
@@ -301,8 +408,41 @@ function formatNativeToolInput(tool: string, raw: string): string | null {
       const q = pickFirstString(o, ["query", "category"]);
       return q ? `[${o.mode}] ${q}` : `[${o.mode}]`;
     }
-    if (tool === "Skill" && typeof o.skill === "string") {
-      return o.skill;
+    if (tool === "Skill") {
+      const skillName = pickFirstString(o, ["name", "skill", "skill_name"]);
+      if (skillName) return skillName;
+    }
+    if (tool === "human_verification" || tool === "human_verification_solve" || tool === "human_verification_flow") {
+      const mode = pickFirstString(o, ["mode", "protocol", "algorithm"]);
+      const target = pickFirstString(o, ["target_url", "challenge_url", "submit_url"]);
+      if (mode && target) return `[${mode}] ${target}`;
+      if (mode) return `[${mode}]`;
+      if (target) return target;
+    }
+    if (tool === "binary_inspect" || tool === "software_analysis") {
+      const mode = pickFirstString(o, ["mode", "operation"]);
+      const target = pickFirstString(o, ["file_path", "address", "query", "sample_sha"]);
+      if (mode && target) return `[${mode}] ${target}`;
+      if (mode) return `[${mode}]`;
+      if (target) return target;
+    }
+    if (tool === "record_fact" || tool === "report_finding" || tool === "add_finding" || tool === "add_intent") {
+      const summary = pickFirstString(o, ["summary", "name", "vulnclass"]);
+      if (summary) return summary;
+    }
+    if (tool === "Read" || tool === "Write" || tool === "Edit" || tool === "MultiEdit" || tool === "LS") {
+      const p = pickFirstString(o, ["file_path", "path"]);
+      if (p) return p;
+    }
+    if (tool === "Grep" || tool === "Glob") {
+      const pat = pickFirstString(o, ["pattern"]);
+      const p = pickFirstString(o, ["path"]);
+      if (pat && p) return `${pat} (${p})`;
+      if (pat) return pat;
+    }
+    if (tool === "search_all_worker_traces") {
+      const q = pickFirstString(o, ["query", "q"]);
+      if (q) return q;
     }
   } catch {
     return null;
@@ -514,23 +654,45 @@ function InterceptCard({ step, getDetail }: { step: Activity; getDetail: (seq: n
   );
 }
 
+function tryPrettyJson(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) return null;
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return null;
+  }
+}
+
+function countLines(text: string): number {
+  if (!text) return 0;
+  let n = 1;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) n++;
+  }
+  return n;
+}
+
 // ToolBlock renders ONE tool call using 3-tier progressive disclosure:
 // Tier 1 (collapsed): Timeline left rail + semantic category pill + tool name + primary target + status badge.
-// Tier 2 (expanded): Split Command/Input & Output/Response inspector with copy and line-wrap controls.
+// Tier 2 (expanded): Split Command/Input & Output/Response inspector with JSON formatting, copy, and line-wrap.
 function ToolBlock({
   group,
   getDetail,
   showWorker,
   focused = false,
+  expandSignal,
 }: {
   group: Extract<Group, { type: "tool" }>;
   getDetail: (seq: number) => Promise<string>;
   showWorker?: boolean;
   focused?: boolean;
+  expandSignal?: { version: number; open: boolean };
 }) {
   const t = useTranslations("transcript");
   const [open, setOpen] = React.useState(focused);
   const [wrapLines, setWrapLines] = React.useState(true);
+  const [prettyJson, setPrettyJson] = React.useState(true);
   const targetRef = React.useRef<HTMLElement>(null);
   const [sections, setSections] = React.useState<
     { label: string; content: string; isCmd?: boolean; isError?: boolean }[] | null
@@ -542,11 +704,14 @@ function ToolBlock({
   const ToolIcon = cat.Icon;
   const running = !result;
   const ok = !!result && !result.is_error;
-  let statusPillClass = "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400";
+  let statusPillClass =
+    "border-red-500/35 bg-red-500/10 text-red-600 dark:border-red-500/35 dark:bg-red-500/15 dark:text-red-300";
   if (running) {
-    statusPillClass = "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 animate-pulse";
+    statusPillClass =
+      "border-sky-500/40 bg-sky-500/12 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/15 dark:text-sky-300";
   } else if (ok) {
-    statusPillClass = "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+    statusPillClass =
+      "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/12 dark:text-emerald-300";
   }
 
   const rawCmd = use?.summary.startsWith(toolName)
@@ -557,12 +722,22 @@ function ToolBlock({
     result?.summary?.includes("专家战术熔断提醒") || sections?.some((s) => s.content.includes("专家战术熔断提醒")),
   );
   if (loopTripped) {
-    statusPillClass = "border-amber-500/45 bg-amber-500/15 text-amber-600 dark:text-amber-300";
+    statusPillClass =
+      "border-amber-500/45 bg-amber-500/15 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300";
   }
 
-  let statusText = ok ? "✓" : t("tool.failed");
+  let statusText = ok ? t("tool.ok") : t("tool.failed");
   if (loopTripped) statusText = "⚡ 3-Strike";
   if (running) statusText = t("tool.running");
+
+  const seqNum = use?.seq ?? result?.seq;
+  const stepTs = result?.ts || use?.ts || "";
+
+  React.useEffect(() => {
+    if (expandSignal && expandSignal.version > 0 && !focused) {
+      setOpen(expandSignal.open);
+    }
+  }, [expandSignal, focused]);
 
   const detailKey = `${use?.seq ?? ""}:${result?.seq ?? ""}`;
   React.useEffect(() => {
@@ -643,28 +818,45 @@ function ToolBlock({
     };
   }, [focused, open, sections]);
 
+  let railColor = "before:bg-border/80 dark:before:bg-zinc-700";
+  if (running) {
+    railColor = "before:bg-sky-500/70";
+  } else if (loopTripped) {
+    railColor = "before:bg-amber-500/70";
+  } else if (result?.is_error) {
+    railColor = "before:bg-red-500/60";
+  }
+
   return (
     <section
       ref={targetRef}
       aria-label={focused ? t("tool.pinned", { seq: use?.seq ?? "" }) : undefined}
       className={cn(
-        "relative pl-3 text-xs before:absolute before:top-0 before:bottom-0 before:left-1 before:w-px",
-        loopTripped ? "before:bg-amber-500/50" : "before:bg-border/70",
-        focused && "my-1 rounded-xl border-2 border-primary bg-primary/5 p-2.5 before:hidden",
+        "relative my-0.5 pl-3 text-xs before:absolute before:top-0 before:bottom-0 before:left-1 before:w-0.5 before:rounded-full",
+        railColor,
+        focused && "my-1.5 rounded-xl border-2 border-primary bg-primary/5 p-2.5 before:hidden",
       )}
     >
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-          loopTripped && "border border-amber-500/35 bg-amber-500/8 hover:bg-amber-500/15",
-          !loopTripped && (open ? "bg-secondary/60 text-foreground" : "hover:bg-muted/50"),
+          "group flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-all",
+          loopTripped && "border-amber-500/40 bg-amber-500/8 hover:bg-amber-500/15",
+          !loopTripped &&
+            (open
+              ? "border-primary/30 bg-accent/65 text-foreground shadow-2xs dark:border-zinc-700 dark:bg-zinc-800/90"
+              : "border-border/70 bg-card/90 hover:border-primary/25 hover:bg-accent/40 dark:border-zinc-800/90 dark:bg-zinc-900/60 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/70"),
         )}
       >
-        <span className="shrink-0 text-muted-foreground">
+        <span className="shrink-0 text-muted-foreground transition-transform">
           {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         </span>
+        {seqNum != null && seqNum >= 0 && (
+          <span className="hidden shrink-0 rounded bg-muted/80 px-1 py-0.5 font-mono text-[10px] text-muted-foreground tabular-nums sm:inline dark:bg-zinc-800">
+            #{seqNum}
+          </span>
+        )}
         <span
           className={cn(
             "inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 font-mono font-semibold text-[10px] tracking-tight",
@@ -675,64 +867,120 @@ function ToolBlock({
           {cat.tag}
         </span>
         {showWorker && <span className={chip(group.worker)}>{group.worker}</span>}
-        <span className="shrink-0 font-medium font-mono text-[11.5px] text-foreground">{toolName}</span>
-        {cmd && <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{cmd}</span>}
         <span
-          className={cn(
-            "ml-auto shrink-0 rounded-md border px-1.5 py-0.5 font-medium font-mono text-[10px]",
-            statusPillClass,
-          )}
+          className="shrink-0 font-mono font-semibold text-[11.5px] text-foreground"
+          title={toolName !== cat.displayName ? toolName : undefined}
         >
-          {statusText}
+          {cat.displayName}
         </span>
+        {cmd && (
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground group-hover:text-foreground/85"
+            title={cmd}
+          >
+            {cmd}
+          </span>
+        )}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {stepTs && (
+            <span className="hidden md:inline">
+              <ActivityTime ts={stepTs} />
+            </span>
+          )}
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 font-medium font-mono text-[10px]",
+              statusPillClass,
+            )}
+          >
+            {running && <Loader2Icon className="size-2.5 animate-spin" />}
+            {statusText}
+          </span>
+        </div>
       </button>
 
       {open && (
-        <div className="mt-1.5 mb-2 ml-2 overflow-hidden rounded-lg border border-border/80 bg-secondary/30 shadow-2xs">
+        <div className="mt-1.5 mb-2 ml-1 overflow-hidden rounded-xl border border-border/85 bg-card shadow-xs dark:border-zinc-800 dark:bg-zinc-900/85">
           {!sections ? (
-            <div className="p-3 font-mono text-[11px] text-muted-foreground">{t("loading")}</div>
+            <div className="flex items-center gap-2 p-3 font-mono text-[11px] text-muted-foreground">
+              <Loader2Icon className="size-3.5 animate-spin" />
+              {t("loading")}
+            </div>
           ) : (
-            <div className="divide-y divide-border/70">
-              {sections.map((sec) => (
-                <div key={sec.label} className="flex flex-col">
-                  <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-1 text-[10px]">
-                    <span
+            <div className="divide-y divide-border/75 dark:divide-zinc-800">
+              {sections.map((sec) => {
+                const formatted = prettyJson ? tryPrettyJson(sec.content) : null;
+                const displayText = formatted ?? sec.content;
+                const lines = countLines(displayText);
+                const chars = displayText.length;
+                return (
+                  <div key={sec.label} className="flex flex-col">
+                    <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/50 px-3 py-1.5 text-[10px] dark:bg-zinc-800/60">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={cn(
+                            "font-semibold uppercase tracking-wide",
+                            sec.isError ? "text-red-600 dark:text-red-400" : "text-foreground/80",
+                          )}
+                        >
+                          {sec.label}
+                        </span>
+                        <span className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-[9.5px] text-muted-foreground tabular-nums dark:bg-zinc-900/80">
+                          {t("tool.metaStats", { lines, chars })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {tryPrettyJson(sec.content) !== null && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPrettyJson((p) => !p);
+                            }}
+                            className={cn(
+                              "inline-flex size-5 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground",
+                              prettyJson ? "text-primary" : "text-muted-foreground",
+                            )}
+                            title={t("tool.formatJson")}
+                            aria-label={t("tool.formatJson")}
+                          >
+                            <CodeIcon className="size-3" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setWrapLines((w) => !w);
+                          }}
+                          className={cn(
+                            "inline-flex size-5 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground",
+                            wrapLines ? "text-primary" : "text-muted-foreground",
+                          )}
+                          title={t("tool.wrapLines")}
+                          aria-label={t("tool.wrapLines")}
+                        >
+                          <WrapTextIcon className="size-3" />
+                        </button>
+                        <CopyTextButton text={displayText} />
+                      </div>
+                    </div>
+                    <pre
                       className={cn(
-                        "font-semibold uppercase tracking-wide",
-                        sec.isError ? "text-red-500" : "text-muted-foreground",
+                        "max-h-80 overflow-auto p-3 font-mono text-[11px] leading-relaxed",
+                        wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre",
+                        sec.isCmd
+                          ? "bg-sky-500/[0.03] text-sky-800 dark:bg-zinc-950/50 dark:text-sky-300"
+                          : sec.isError
+                            ? "bg-red-500/[0.03] text-red-700 dark:bg-red-950/20 dark:text-red-300"
+                            : "text-foreground/90 dark:bg-zinc-950/30",
                       )}
                     >
-                      {sec.label}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setWrapLines((w) => !w);
-                        }}
-                        className={cn(
-                          "inline-flex size-5 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground",
-                          wrapLines ? "text-primary" : "text-muted-foreground",
-                        )}
-                        title="Toggle line wrap"
-                      >
-                        <WrapTextIcon className="size-3" />
-                      </button>
-                      <CopyTextButton text={sec.content} />
-                    </div>
+                      {displayText}
+                    </pre>
                   </div>
-                  <pre
-                    className={cn(
-                      "max-h-72 overflow-auto p-2.5 font-mono text-[11px] leading-relaxed",
-                      wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre",
-                      sec.isCmd ? "text-sky-700 dark:text-sky-300" : "text-foreground/90",
-                    )}
-                  >
-                    {sec.content}
-                  </pre>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1009,7 +1257,7 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
 }
 
 // ExecView renders an agent execution replay (planner / worker / main agent) in
-// the compact, grouped, expand-to-detail format.
+// the compact, grouped, expand-to-detail format with an interactive tool telemetry bar.
 function ExecView({
   activity,
   taskId,
@@ -1026,14 +1274,138 @@ function ExecView({
   rollback?: TranscriptRollback;
 }) {
   const t = useTranslations("transcript");
+  const [filterMode, setFilterMode] = React.useState<"all" | "tools" | "errors">("all");
+  const [expandSignal, setExpandSignal] = React.useState<{ version: number; open: boolean }>({
+    version: 0,
+    open: false,
+  });
   const showWorker = new Set(activity.map((a) => a.worker)).size > 1;
   const getDetail = React.useCallback(
     (seq: number) => (fetchDetail ? fetchDetail(seq) : api.activityDetail(seq, taskId).then((r) => r.detail ?? "")),
     [fetchDetail, taskId],
   );
+  const groups = React.useMemo(() => groupSteps(activity, !!chat), [activity, chat]);
+  const toolStats = React.useMemo(() => {
+    let total = 0;
+    let ok = 0;
+    let running = 0;
+    let errors = 0;
+    for (const g of groups) {
+      if (g.type !== "tool") continue;
+      total++;
+      if (!g.result) {
+        running++;
+      } else if (g.result.is_error || g.result.summary?.includes("专家战术熔断提醒")) {
+        errors++;
+      } else {
+        ok++;
+      }
+    }
+    return { total, ok, running, errors };
+  }, [groups]);
+
+  const visibleGroups = React.useMemo(() => {
+    if (filterMode === "all") return groups;
+    if (filterMode === "tools") {
+      return groups.filter((g) => g.type === "tool" || g.type === "intercept" || (g.type === "user" && g.intent));
+    }
+    return groups.filter((g) => {
+      if (g.type === "tool") {
+        return Boolean(g.result?.is_error || g.result?.summary?.includes("专家战术熔断提醒"));
+      }
+      if (g.type === "intercept") return true;
+      if (g.type === "answer") return Boolean(g.step.is_error);
+      if (g.type === "msg") return g.steps.some((s) => s.is_error);
+      return false;
+    });
+  }, [groups, filterMode]);
+
   return (
-    <div className="flex flex-col gap-0.5">
-      {groupSteps(activity, !!chat).map((g) => {
+    <div className="flex flex-col gap-1">
+      {toolStats.total > 0 && (
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/80 bg-muted/40 px-3 py-1.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-900/80">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 font-medium text-foreground">
+              <Wrench className="size-3 text-primary" />
+              {t("tool.telemetryCalls", { total: toolStats.total })}
+            </span>
+            <span className="rounded bg-emerald-500/12 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700 tabular-nums dark:text-emerald-300">
+              {t("tool.telemetryOk", { count: toolStats.ok })}
+            </span>
+            {toolStats.running > 0 && (
+              <span className="inline-flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 font-mono text-[10px] text-sky-700 tabular-nums dark:text-sky-300">
+                <Loader2Icon className="size-2.5 animate-spin" />
+                {t("tool.telemetryRunning", { count: toolStats.running })}
+              </span>
+            )}
+            {toolStats.errors > 0 && (
+              <span className="rounded bg-red-500/12 px-1.5 py-0.5 font-mono text-[10px] text-red-600 tabular-nums dark:text-red-300">
+                {t("tool.telemetryErrors", { count: toolStats.errors })}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setFilterMode("all")}
+              className={cn(
+                "rounded-md border px-2 py-0.5 text-[10px] transition-colors",
+                filterMode === "all"
+                  ? "border-primary/40 bg-primary/12 font-semibold text-primary dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  : "border-transparent text-muted-foreground hover:bg-accent",
+              )}
+            >
+              {t("tool.allSteps")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode("tools")}
+              className={cn(
+                "rounded-md border px-2 py-0.5 text-[10px] transition-colors",
+                filterMode === "tools"
+                  ? "border-primary/40 bg-primary/12 font-semibold text-primary dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  : "border-transparent text-muted-foreground hover:bg-accent",
+              )}
+            >
+              {t("tool.toolsOnly", { count: toolStats.total })}
+            </button>
+            {toolStats.errors > 0 && (
+              <button
+                type="button"
+                onClick={() => setFilterMode("errors")}
+                className={cn(
+                  "rounded-md border px-2 py-0.5 text-[10px] transition-colors",
+                  filterMode === "errors"
+                    ? "border-red-500/40 bg-red-500/15 font-semibold text-red-600 dark:text-red-300"
+                    : "border-transparent text-muted-foreground hover:bg-accent",
+                )}
+              >
+                {t("tool.errorsOnly", { count: toolStats.errors })}
+              </button>
+            )}
+            <span className="mx-0.5 h-3.5 w-px bg-border dark:bg-zinc-700" />
+            <button
+              type="button"
+              onClick={() => setExpandSignal((s) => ({ version: s.version + 1, open: !s.open }))}
+              className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground dark:border-zinc-700 dark:bg-zinc-800/80"
+              title={expandSignal.open ? t("tool.collapseAll") : t("tool.expandAll")}
+            >
+              {expandSignal.open ? (
+                <>
+                  <ChevronsDownUpIcon className="size-3" />
+                  {t("tool.collapseAll")}
+                </>
+              ) : (
+                <>
+                  <ChevronsUpDownIcon className="size-3" />
+                  {t("tool.expandAll")}
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+      {visibleGroups.map((g) => {
         if (g.type === "round") {
           return (
             <div
@@ -1065,6 +1437,7 @@ function ExecView({
               getDetail={getDetail}
               showWorker={showWorker}
               focused={focusedSeq != null && g.use?.seq === focusedSeq}
+              expandSignal={expandSignal}
             />
           );
         }

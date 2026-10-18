@@ -17,6 +17,10 @@ import (
 )
 
 func (t *ToolSet) httpRequestTool() actool.CoreTool {
+	return t.httpRequestToolWithVerification(nil)
+}
+
+func (t *ToolSet) httpRequestToolWithVerification(flow *verificationHTTPOptions) actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name:        "http_request",
 		Description: "原生 HTTP/HTTPS 请求工具（优先替代 curl / Python requests 脚本）。支持任意 HTTP 方法、自定义 Header(含 Host 头覆盖)、Cookie、URL/表单参数、原始 Body 或 Base64 二进制 Body、multipart/form-data 文件上传、重定向跳转轨迹追踪及响应体正则提取。默认自动写入平台流量库并返回 exchange_id 供漏洞报告绑定证据，彻底避免 PowerShell/Bash 引号转义与 & 截断问题。",
@@ -24,6 +28,7 @@ func (t *ToolSet) httpRequestTool() actool.CoreTool {
 			"type": "object",
 			"properties": map[string]any{
 				"url":              map[string]any{"type": "string", "description": "目标完整 URL（必须以 http:// 或 https:// 开头）"},
+				"http_version":     map[string]any{"type": "string", "enum": []string{"auto", "1.1", "2"}, "description": "可选协议兼容策略；省略保持原行为，auto 协商 HTTP/1.1 或 HTTP/2，2 仅支持 HTTPS；不伪造 TLS 指纹"},
 				"method":           map[string]any{"type": "string", "description": "HTTP 方法，默认 GET（如 GET/POST/PUT/DELETE/PATCH/OPTIONS/HEAD/PROPFIND）"},
 				"headers":          map[string]any{"type": "object", "description": "自定义请求头键值对（支持设置 Host 覆盖虚拟主机）"},
 				"cookies":          map[string]any{"type": "object", "description": "附加 Cookie 键值对"},
@@ -49,6 +54,7 @@ func (t *ToolSet) httpRequestTool() actool.CoreTool {
 			var a struct {
 				URL             string              `json:"url"`
 				Method          string              `json:"method"`
+				HTTPVersion     string              `json:"http_version"`
 				Headers         map[string]string   `json:"headers"`
 				Cookies         map[string]string   `json:"cookies"`
 				Query           map[string]string   `json:"query"`
@@ -75,6 +81,12 @@ func (t *ToolSet) httpRequestTool() actool.CoreTool {
 			parsedURL, err := url.Parse(rawURL)
 			if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
 				return actool.Errorf("url 必须是合法的 http:// 或 https:// 地址"), nil
+			}
+			if a.HTTPVersion != "" && a.HTTPVersion != "auto" && a.HTTPVersion != "1.1" && a.HTTPVersion != "2" {
+				return actool.Errorf("http_version 必须是 auto、1.1 或 2"), nil
+			}
+			if a.HTTPVersion == "2" && parsedURL.Scheme != "https" {
+				return actool.Errorf("HTTP/2 显式策略仅支持 HTTPS，不自动启用 h2c"), nil
 			}
 			if len(a.Query) > 0 {
 				q := parsedURL.Query()
@@ -170,13 +182,46 @@ func (t *ToolSet) httpRequestTool() actool.CoreTool {
 			if !directRecord {
 				proxyURL, caCert = t.resolveHTTPSettings(a.Proxy, a.UseProxy)
 			}
-			tr := t.getPooledTransport(proxyURL, caCert, true)
+			tr := compatibilityTransport(t.getPooledTransport(proxyURL, caCert, true), a.HTTPVersion)
 			maxRedir := defaultInt(a.MaxRedirects, 5, 1, 20)
 			var redirectChain []string
+			var roundTripper http.RoundTripper = tr
+			var jar http.CookieJar
+			if flow != nil {
+				var base http.RoundTripper
+				if flow.profile == "" {
+					if flow.transport == nil {
+						flow.transport = verificationBoundedTransport(tr)
+					}
+					base = flow.transport
+				} else {
+					if flow.helper == nil {
+						var err error
+						flow.helper, err = startVerificationHelper(flow.ctx, flow.profile, a.HTTPVersion, proxyURL, caCert, flow.budget.origin)
+						if err != nil {
+							flow.failureCode = verificationIPCCode(err)
+							return actool.Errorf("fingerprint provider unavailable or rejected configuration"), nil
+						}
+					}
+					base = flow.helper
+				}
+				roundTripper = verificationRoundTripper{base: base, budget: flow.budget}
+				jar = flow.jar
+			}
 			client := &http.Client{
-				Transport: tr,
+				Transport: roundTripper,
+				Jar:       jar,
 				Timeout:   timeoutDur,
 				CheckRedirect: func(r *http.Request, via []*http.Request) error {
+					if flow != nil {
+						if r == nil || r.URL == nil {
+							return http.ErrUseLastResponse
+						}
+						origin, err := verificationOrigin(r.URL.String())
+						if err != nil || origin != flow.budget.origin || (r.Method != "GET" && r.Method != "HEAD") {
+							return http.ErrUseLastResponse
+						}
+					}
 					if r != nil && r.URL != nil {
 						redirectChain = append(redirectChain, r.URL.String())
 					}
@@ -203,17 +248,35 @@ func (t *ToolSet) httpRequestTool() actool.CoreTool {
 			}
 			defer resp.Body.Close()
 
-			const maxCaptureRead = 2 * 1024 * 1024
-			rawResp, _ := io.ReadAll(io.LimitReader(resp.Body, int64(maxCaptureRead)+1))
+			maxCaptureRead := 2 * 1024 * 1024
+			if flow != nil {
+				maxCaptureRead = verificationFlowCapture
+			}
+			rawResp, readErr := io.ReadAll(io.LimitReader(resp.Body, int64(maxCaptureRead)+1))
+			if flow != nil && readErr != nil {
+				return actool.Errorf("verification response read failed; no business success is claimed"), nil
+			}
 
+			recordMethod, recordURL, recordBody := method, parsedURL.String(), bodyBytes
+			if flow != nil && resp.Request != nil {
+				recordMethod = resp.Request.Method
+				recordURL = resp.Request.URL.String()
+				reqHeaderSnap = resp.Request.Header.Clone()
+				if resp.Request.Host != "" {
+					reqHeaderSnap.Set("Host", resp.Request.Host)
+				}
+				if recordMethod != method {
+					recordBody = nil
+				}
+			}
 			var exchangeID string
 			if directRecord {
 				exchangeID = t.trafficStore.RecordDirect(
-					method,
-					parsedURL.String(),
+					recordMethod,
+					recordURL,
 					resp.Proto,
 					reqHeaderSnap,
-					bodyBytes,
+					recordBody,
 					resp.StatusCode,
 					resp.Header.Clone(),
 					rawResp,
@@ -263,26 +326,30 @@ func (t *ToolSet) httpRequestTool() actool.CoreTool {
 			}
 
 			out := map[string]any{
-				"exchange_id":    exchangeID,
-				"status":         resp.StatusCode,
-				"status_text":    resp.Status,
-				"proto":          resp.Proto,
-				"url":            parsedURL.String(),
-				"final_url":      resp.Request.URL.String(),
-				"redirect_chain": redirectChain,
-				"elapsed_ms":     elapsedMs,
-				"content_length": resp.ContentLength,
-				"headers":        respHeaders,
-				"body_preview":   clipUTF8(bodyStr, 2048),
-				"body_length":    len(rawResp),
-				"body":           bodyStr,
-				"body_truncated": truncated,
+				"human_verification": inspectVerification(resp.StatusCode, respHeaders, string(rawResp)),
+				"exchange_id":        exchangeID,
+				"status":             resp.StatusCode,
+				"status_text":        resp.Status,
+				"proto":              resp.Proto,
+				"url":                parsedURL.String(),
+				"final_url":          resp.Request.URL.String(),
+				"redirect_chain":     redirectChain,
+				"elapsed_ms":         elapsedMs,
+				"content_length":     resp.ContentLength,
+				"headers":            respHeaders,
+				"body_preview":       clipUTF8(bodyStr, 2048),
+				"body_length":        len(rawResp),
+				"body":               bodyStr,
+				"body_truncated":     truncated,
 			}
 			if len(extracted) > 0 {
 				out["extracted"] = extracted
 			}
 			b, _ := json.MarshalIndent(out, "", "  ")
-			return actool.Text(actool.Capture(tc, string(b))), nil
+			if tc != nil {
+				return actool.Text(actool.Capture(tc, string(b))), nil
+			}
+			return actool.Text(string(b)), nil
 		},
 	})
 }

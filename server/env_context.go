@@ -54,7 +54,7 @@ type envSnapshot struct {
 // envToolCandidates are probed once per process (LookPath + one --version line).
 // Kept deliberately small: the version strings are prompt context, not an
 // inventory — missing tools are simply absent.
-var envToolCandidates = []string{"python", "python3", "pip", "node", "npm", "go", "git", "curl", "nmap", "sqlmap", "jq"}
+var envToolCandidates = []string{"python", "python3", "pip", "node", "npm", "go", "git", "curl", "nmap", "sqlmap", "jq", "file", "strings", "objdump", "readelf", "otool"}
 
 var (
 	envToolsOnce   sync.Once

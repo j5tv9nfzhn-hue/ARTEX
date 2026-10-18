@@ -8,8 +8,11 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/Autumn-27/artex/db"
@@ -35,6 +38,46 @@ func (s *Server) retentionAvailable(w http.ResponseWriter) bool {
 	return true
 }
 
+func retentionLoopbackHost(hostport string) bool {
+	h := strings.TrimSpace(hostport)
+	if h == "" {
+		return false
+	}
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		h = host
+	} else {
+		h = strings.TrimPrefix(strings.TrimSuffix(h, "]"), "[")
+	}
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+func retentionAllowedOrigin(origin string, r *http.Request) bool {
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	for _, allowed := range strings.Split(os.Getenv("ARTEX_CORS_ORIGINS"), ",") {
+		if a := strings.TrimSpace(allowed); a != "" && strings.EqualFold(a, origin) {
+			return true
+		}
+	}
+	// Local dev proxy (./dev.sh: Next.js dev on localhost:5173 rewriting /api/* to
+	// 127.0.0.1:8787) rewrites Host to the backend loopback address while preserving
+	// the browser's loopback Origin. Permit only when the socket peer, Host and Origin
+	// are all loopback — never via untrusted X-Forwarded-Host headers.
+	if retentionLoopbackHost(r.RemoteAddr) && retentionLoopbackHost(r.Host) && retentionLoopbackHost(u.Host) {
+		return true
+	}
+	return false
+}
+
 func decodeRetentionJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	kind, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || kind != "application/json" {
@@ -42,8 +85,7 @@ func decodeRetentionJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		return false
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host != r.Host || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		if !retentionAllowedOrigin(origin, r) {
 			writeErr(w, http.StatusForbidden, "拒绝跨来源数据维护请求")
 			return false
 		}

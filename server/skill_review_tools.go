@@ -5,12 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/fsutil"
 	"github.com/Autumn-27/artex/stageerr"
@@ -133,25 +137,9 @@ func (s *Server) applySkillFile(skill, file, content string) error {
 	return nil
 }
 
-// proposeOrWrite 是技能写入的唯一入口。
-//
-// 门控关闭时直接落盘（原行为）；开启时登记提议。两条路径都返回一句话给 Agent，
-// 但措辞必须说清发生了什么——否则 Agent 会以为技能已经可用了，转头就去加载一个
-// 还不存在的技能。
-func (s *Server) proposeOrWrite(ctx context.Context, skill, file, content, evidence, origin string) (actool.Result, error) {
-	if !s.SkillReviewGateEnabled() {
-		if err := s.applySkillFile(skill, file, content); err != nil {
-			return actool.Errorf(err.Error()), nil
-		}
-		target := skill
-		if f := strings.TrimSpace(file); f != "" {
-			target += "/" + f
-		}
-		return actool.Text("skill file written: " + target), nil
-	}
+// stageSkillProposal 无条件把技能写入请求登记为待审阅提议。
+func (s *Server) stageSkillProposal(ctx context.Context, skill, file, content, evidence, origin string) (actool.Result, error) {
 	if s.m == nil || s.m.pg == nil {
-		// 明确报错而不是退化成直写：静默绕过门控会让"已审阅"这个前提失效，
-		// 而使用者无从察觉自己踩在未审阅的内容上。
 		return actool.Errorf("技能审阅门控已开启，但数据库不可用，无法登记提议。" +
 			"请先恢复数据库，或显式关闭门控（SkillReviewGateEnabled）后再写入。"), nil
 	}
@@ -174,6 +162,25 @@ func (s *Server) proposeOrWrite(ctx context.Context, skill, file, content, evide
 		msg += "\n审阅告警: " + p.Lint
 	}
 	return actool.Text(msg), nil
+}
+
+// proposeOrWrite 是技能写入的唯一入口。
+//
+// 门控关闭时直接落盘（原行为）；开启时登记提议。两条路径都返回一句话给 Agent，
+// 但措辞必须说清发生了什么——否则 Agent 会以为技能已经可用了，转头就去加载一个
+// 还不存在的技能。
+func (s *Server) proposeOrWrite(ctx context.Context, skill, file, content, evidence, origin string) (actool.Result, error) {
+	if !s.SkillReviewGateEnabled() {
+		if err := s.applySkillFile(skill, file, content); err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
+		target := skill
+		if f := strings.TrimSpace(file); f != "" {
+			target += "/" + f
+		}
+		return actool.Text("skill file written: " + target), nil
+	}
+	return s.stageSkillProposal(ctx, skill, file, content, evidence, origin)
 }
 
 // numParam 描述一个数值参数。
@@ -216,12 +223,27 @@ func (s *Server) toolListSkillGaps() actool.CoreTool {
 // skills/ 目录里已有的技能不算缺口。数据层不知道部署布局，所以这个判断必须在
 // server 侧做，而它也正是一条需要测试盯住的行为。
 func (s *Server) gapReport(ctx context.Context, minMisses int) (string, error) {
+	items, err := s.collectSkillGaps(ctx, minMisses)
+	if err != nil {
+		return "", err
+	}
+	if len(items) == 0 {
+		return "没有达到阈值的技能缺口。", nil
+	}
+	raw, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (s *Server) collectSkillGaps(ctx context.Context, minMisses int) ([]map[string]any, error) {
 	if s.m == nil || s.m.pg == nil {
-		return "", fmt.Errorf("数据库不可用")
+		return nil, fmt.Errorf("数据库不可用")
 	}
 	gaps, err := s.m.pg.SkillGaps(ctx, minMisses)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	out := make([]map[string]any, 0, len(gaps))
 	for _, g := range gaps {
@@ -234,19 +256,13 @@ func (s *Server) gapReport(ctx context.Context, minMisses int) (string, error) {
 			"agents":       g.Agents,
 			"tasks":        g.Tasks,
 			"agent_keys":   g.AgentKeys,
+			"first_seen":   g.FirstSeen.UTC().Format("2006-01-02T15:04:05Z"),
 			"last_seen":    g.LastSeen.UTC().Format("2006-01-02T15:04:05Z"),
 			"suggested":    "用 propose_skill 起草一条技能，内容依据这些未命中记录",
 			"evidence_fmt": db.SkillGapEvidence(g),
 		})
 	}
-	if len(out) == 0 {
-		return "没有达到阈值的技能缺口。", nil
-	}
-	raw, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
+	return out, nil
 }
 
 // toolProposeSkill 起草一条技能提议。
@@ -273,8 +289,39 @@ func (s *Server) toolProposeSkill() actool.CoreTool {
 				return actool.Errorf("description 必填"), nil
 			}
 			doc := buildSkillDocument(a.Name, a.Description, a.Instructions)
-			res, err := s.proposeOrWrite(ctx, a.Name, "", doc, a.Evidence, "agent")
-			return res, err
+			return s.stageSkillProposal(ctx, a.Name, "", doc, a.Evidence, "agent")
+		})
+}
+
+// toolDistillTaskSkill 手动将指定任务的结构化产出沉淀为复盘技能提议。
+func (s *Server) toolDistillTaskSkill() actool.CoreTool {
+	return wrTool("distill_task_skill",
+		"将指定任务的已完成意图、关键事实、确认漏洞、复测记录、软件逆向证据与 3-Strike 止损经验确定性沉淀为 case-web-<id> / case-re-<id> 复盘技能。",
+		objSchema(map[string]any{
+			"task_id": numParam("目标任务 ID（正整数）"),
+			"apply":   map[string]any{"type": "boolean", "description": "当审阅门控开启时，是否直接落盘（默认跟随系统设置 skill_auto_distill_apply）"},
+		}, "task_id"),
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
+			var a struct {
+				TaskID int64 `json:"task_id"`
+				Apply  *bool `json:"apply"`
+			}
+			_ = json.Unmarshal(in, &a)
+			p, err := s.DistillTaskSkill(ctx, a.TaskID, a.Apply)
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			if p == nil {
+				return actool.Errorf("未能生成技能提议"), nil
+			}
+			return jsonResult(map[string]any{
+				"id":       p.ID,
+				"skill":    p.Skill,
+				"status":   p.Status,
+				"origin":   p.Origin,
+				"evidence": p.Evidence,
+				"lint":     p.Lint,
+			})
 		})
 }
 
@@ -284,7 +331,7 @@ func (s *Server) toolListSkillProposals() actool.CoreTool {
 	return wrTool("list_skill_proposals",
 		"列出待审阅的技能提议。审阅前请看 content（落地后的完整文件）与 evidence（依据）。",
 		objSchema(map[string]any{
-			"status": strParam("pending(默认) / applied / rejected"),
+			"status": strParam("pending(默认) / applied / rejected / all"),
 			"limit":  numParam("最多返回条数，默认 20"),
 		}),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
@@ -306,14 +353,17 @@ func (s *Server) toolListSkillProposals() actool.CoreTool {
 			out := make([]map[string]any, 0, len(list))
 			for _, p := range list {
 				out = append(out, map[string]any{
-					"id":       p.ID,
-					"skill":    p.Skill,
-					"file":     p.File,
-					"origin":   p.Origin,
-					"status":   p.Status,
-					"evidence": p.Evidence,
-					"lint":     p.Lint,
-					"content":  p.Content,
+					"id":          p.ID,
+					"skill":       p.Skill,
+					"file":        p.File,
+					"origin":      p.Origin,
+					"status":      p.Status,
+					"evidence":    p.Evidence,
+					"lint":        p.Lint,
+					"note":        p.Note,
+					"created_at":  p.CreatedAt,
+					"reviewed_at": p.ReviewedAt,
+					"content":     p.Content,
 				})
 			}
 			raw, err := json.MarshalIndent(out, "", "  ")
@@ -386,6 +436,338 @@ func (s *Server) reviewProposal(ctx context.Context, id, decision, note string) 
 		verb = "已批准并写入磁盘"
 	}
 	return fmt.Sprintf("提议 %s（技能 %s）%s", id, p.Skill, verb), nil
+}
+
+// ---- HTTP API 路由处理器（供 /system/skills 审阅界面与手动沉淀调用） ----
+
+// fsListSkillProposals returns skill proposals filtered by status plus per-status counts.
+func (s *Server) fsListSkillProposals(w http.ResponseWriter, r *http.Request) {
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 50
+	}
+	proposals, err := pg.ListSkillProposals(r.Context(), status, limit)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	counts, err := pg.CountSkillProposals(r.Context())
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"proposals":          proposals,
+		"counts":             counts,
+		"review_gate":        s.SkillReviewGateEnabled(),
+		"auto_distill":       s.SkillAutoDistillEnabled(),
+		"auto_distill_apply": s.SkillAutoDistillApplyEnabled(),
+	})
+}
+
+// fsReviewSkillProposal approves (with optional content edit) or rejects a pending proposal.
+func (s *Server) fsReviewSkillProposal(w http.ResponseWriter, r *http.Request) {
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeErr(w, 400, "缺少提议 id")
+		return
+	}
+	var body struct {
+		Decision string `json:"decision"`
+		Note     string `json:"note"`
+		Content  string `json:"content"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	decision := strings.ToLower(strings.TrimSpace(body.Decision))
+	if decision != "approve" && decision != "apply" && decision != "reject" {
+		writeErr(w, 400, "decision 只能是 approve 或 reject")
+		return
+	}
+	if (decision == "approve" || decision == "apply") && strings.TrimSpace(body.Content) != "" {
+		if _, err := pg.UpdateSkillProposalContent(r.Context(), id, body.Content); err != nil {
+			if errors.Is(err, db.ErrSkillProposalNotFound) {
+				writeErr(w, 404, "技能提议不存在")
+				return
+			}
+			if errors.Is(err, db.ErrSkillProposalConflict) {
+				writeErr(w, 409, "该提议已被审阅，无法修改")
+				return
+			}
+			writeErr(w, 400, err.Error())
+			return
+		}
+	}
+	msg, err := s.reviewProposal(r.Context(), id, decision, strings.TrimSpace(body.Note))
+	if err != nil {
+		if errors.Is(err, db.ErrSkillProposalNotFound) {
+			writeErr(w, 404, "技能提议不存在")
+			return
+		}
+		if errors.Is(err, db.ErrSkillProposalConflict) || strings.Contains(err.Error(), "不能重复审阅") {
+			writeErr(w, 409, err.Error())
+			return
+		}
+		writeErr(w, 400, err.Error())
+		return
+	}
+	updated, _ := pg.GetSkillProposal(r.Context(), id)
+	writeJSON(w, 200, map[string]any{
+		"ok":       true,
+		"message":  msg,
+		"proposal": updated,
+	})
+}
+
+// fsSkillGaps returns structured skill gaps (excluding skills already present on disk).
+func (s *Server) fsSkillGaps(w http.ResponseWriter, r *http.Request) {
+	if s.pg(w) == nil {
+		return
+	}
+	minMisses, _ := strconv.Atoi(r.URL.Query().Get("min_misses"))
+	gaps, err := s.collectSkillGaps(r.Context(), minMisses)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"gaps": gaps})
+}
+
+// fsDistillTaskSkill manually triggers deterministic skill distillation for a task.
+func (s *Server) fsDistillTaskSkill(w http.ResponseWriter, r *http.Request) {
+	if s.pg(w) == nil {
+		return
+	}
+	var body struct {
+		TaskID int64 `json:"task_id"`
+		Apply  *bool `json:"apply"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if body.TaskID <= 0 {
+		writeErr(w, 400, "task_id 必须为正整数")
+		return
+	}
+	p, err := s.DistillTaskSkill(r.Context(), body.TaskID, body.Apply)
+	if err != nil {
+		if errors.Is(err, ErrTaskNotSubstantive) {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "不存在") {
+			writeErr(w, 404, err.Error())
+			return
+		}
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":       true,
+		"proposal": p,
+	})
+}
+
+// fsBatchReviewSkillProposals batch-approves or batch-rejects multiple pending proposals.
+func (s *Server) fsBatchReviewSkillProposals(w http.ResponseWriter, r *http.Request) {
+	if s.pg(w) == nil {
+		return
+	}
+	var body struct {
+		IDs      []string `json:"ids"`
+		Decision string   `json:"decision"`
+		Note     string   `json:"note"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	decision := strings.ToLower(strings.TrimSpace(body.Decision))
+	if decision != "approve" && decision != "apply" && decision != "reject" {
+		writeErr(w, 400, "decision 只能是 approve 或 reject")
+		return
+	}
+	if len(body.IDs) == 0 {
+		writeErr(w, 400, "请至少选择一条技能提议")
+		return
+	}
+	succeeded := make([]string, 0, len(body.IDs))
+	failed := map[string]string{}
+	seen := map[string]bool{}
+	for _, rawID := range body.IDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, err := s.reviewProposal(r.Context(), id, decision, strings.TrimSpace(body.Note)); err != nil {
+			failed[id] = err.Error()
+			continue
+		}
+		succeeded = append(succeeded, id)
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":        len(failed) == 0,
+		"succeeded": succeeded,
+		"failed":    failed,
+	})
+}
+
+// fsMergeSkillProposals consolidates multiple case/custom proposals into a single generalized skill.
+func (s *Server) fsMergeSkillProposals(w http.ResponseWriter, r *http.Request) {
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	var body struct {
+		IDs           []string `json:"ids"`
+		Name          string   `json:"name"`
+		Description   string   `json:"description"`
+		Apply         bool     `json:"apply"`
+		RejectSources bool     `json:"reject_sources"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if !validSkillName(name) {
+		writeErr(w, 400, "合并技能名不合法(小写字母开头，仅字母/数字/连字符，≤64)")
+		return
+	}
+	seen := map[string]bool{}
+	var sources []db.SkillProposal
+	for _, rawID := range body.IDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		p, err := pg.GetSkillProposal(r.Context(), id)
+		if err != nil || p == nil {
+			writeErr(w, 404, fmt.Sprintf("提议 %s 不存在", id))
+			return
+		}
+		sources = append(sources, *p)
+	}
+	if len(sources) < 2 {
+		writeErr(w, 400, "至少需要选择 2 条技能提议进行合并提炼")
+		return
+	}
+	doc, evidence := mergeSkillProposalDocuments(name, strings.TrimSpace(body.Description), sources)
+	merged, err := s.persistCuratorSkill(r.Context(), name, doc, evidence, body.Apply)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if body.RejectSources {
+		for _, src := range sources {
+			if src.Status == db.SkillProposalPending {
+				_, _ = s.reviewProposal(r.Context(), src.ID, "reject", "已合并沉淀至通用技能 "+name)
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":       true,
+		"proposal": merged,
+	})
+}
+
+func mergeSkillProposalDocuments(name, description string, sources []db.SkillProposal) (string, string) {
+	sourceNames := make([]string, 0, len(sources))
+	sourceIDs := make([]string, 0, len(sources))
+	sectionLines := map[string][]string{}
+	seenLine := map[string]bool{}
+
+	targetSections := []string{
+		"何时使用",
+		"已验证的有效路径",
+		"关键事实与证据",
+		"已确认漏洞与可利用点",
+		"漏洞复测与修复验证",
+		"逆向样本与静态分析证据",
+		"工具与命令模式",
+		"失败、误区与止损",
+		"人工提示与决策",
+		"复用步骤",
+		"适用边界与验证要求",
+	}
+
+	for _, src := range sources {
+		sourceNames = append(sourceNames, src.Skill)
+		sourceIDs = append(sourceIDs, src.ID)
+		raw := strings.ReplaceAll(src.Content, "\r\n", "\n")
+		if strings.HasPrefix(raw, "---\n") {
+			if end := strings.Index(raw[4:], "\n---\n"); end >= 0 {
+				raw = raw[4+end+5:]
+			}
+		}
+		blocks := strings.Split(raw, "\n## ")
+		for i, blk := range blocks {
+			if i == 0 && !strings.HasPrefix(strings.TrimSpace(blk), "## ") {
+				continue
+			}
+			blk = strings.TrimPrefix(strings.TrimSpace(blk), "## ")
+			nl := strings.Index(blk, "\n")
+			if nl < 0 {
+				continue
+			}
+			secTitle := strings.TrimSpace(blk[:nl])
+			secBody := strings.TrimSpace(blk[nl+1:])
+			for _, line := range strings.Split(secBody, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				dedupKey := secTitle + "\x00" + line
+				if seenLine[dedupKey] {
+					continue
+				}
+				seenLine[dedupKey] = true
+				sectionLines[secTitle] = append(sectionLines[secTitle], line)
+			}
+		}
+	}
+
+	if description == "" {
+		description = fmt.Sprintf("跨任务合并提炼经验（源自 %s 等 %d 份复盘提议）：汇总已验证路径、漏洞证据与 3-Strike 止损规范。", strings.Join(sourceNames, "、"), len(sources))
+	}
+	description = curatorSingleLine(description, 240)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s · 跨任务合并复盘手册\n\n", name)
+	fmt.Fprintf(&b, "> 合并来源：`%s`（提议 ID：`%s`）\n\n", strings.Join(sourceNames, "`, `"), strings.Join(sourceIDs, "`, `"))
+	for _, sec := range targetSections {
+		lines := sectionLines[sec]
+		if len(lines) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "## %s\n\n", sec)
+		for _, l := range lines {
+			b.WriteString(l)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+	evidence := fmt.Sprintf("merged_from=%s skills=%s", strings.Join(sourceIDs, ","), strings.Join(sourceNames, ","))
+	return buildSkillDocument(name, description, b.String()), evidence
+}
+
+// sysVerificationCapabilities returns a read-only snapshot of human verification PoW & helper capabilities.
+func (s *Server) sysVerificationCapabilities(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, agent.VerificationCapabilitiesSnapshot())
 }
 
 // knownSkillDirs 列出已落盘的技能名，测试与诊断用。

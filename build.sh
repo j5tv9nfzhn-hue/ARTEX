@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ARTEX cross-platform release builder.
+# ARTEX-REA cross-platform release builder.
 #
 # The default mode builds one target and embeds the already-exported frontend.
 # `./build.sh --release` builds and packages all supported desktop/server targets.
@@ -9,7 +9,7 @@
 #   ARTEX_TARGET_ARCH=amd64           One target arch in single-target mode.
 #   ARTEX_TARGETS=linux/amd64,...     Comma-separated targets for multi-target mode.
 #   ARTEX_BUILD_VERSION=v0.3.3        Version embedded in the binary and archive name.
-#   ARTEX_OUTPUT=/path/to/artex       Explicit binary path in single-target mode.
+#   ARTEX_OUTPUT=/path/to/artex-rea   Explicit binary path in single-target mode.
 #   ARTEX_OUTPUT_DIR=dist             Directory for default binary paths.
 #   ARTEX_PACKAGE=1                   Create a zip archive for each target.
 #   ARTEX_PACKAGE_DIR=dist            Directory for release archives.
@@ -165,7 +165,7 @@ package_binary() {
   binary="$1"
   goos="$2"
   goarch="$3"
-  package_name="artex-${ARTEX_BUILD_VERSION}-${goos}-${goarch}"
+  package_name="artex-rea-${ARTEX_BUILD_VERSION}-${goos}-${goarch}"
   package_root="${ARTEX_PACKAGE_DIR}/${package_name}"
   archive="${ARTEX_PACKAGE_DIR}/${package_name}.zip"
 
@@ -174,7 +174,7 @@ package_binary() {
   mkdir -p "$package_root"
   cp "$binary" "$package_root/"
   # 启动监护脚本是正式入口；页面一键更新需要进程退出后由脚本重启。
-  # 直接运行 artex 不会自动重启，发布包仅包含对应系统的启动脚本。
+  # 直接运行 artex-rea 不会自动重启，发布包仅包含对应系统的启动脚本。
   if [ "$goos" = "windows" ]; then
     cp start.bat "$package_root/"
   else
@@ -203,12 +203,12 @@ build_target() {
     *) die "不支持的系统：$goos，支持 linux、darwin、windows" ;;
   esac
 
-  binary_name="artex"
-  [ "$goos" = "windows" ] && binary_name="artex.exe"
+  binary_name="artex-rea"
+  [ "$goos" = "windows" ] && binary_name="artex-rea.exe"
   if [ -n "${ARTEX_OUTPUT:-}" ] && [ "$ARTEX_RELEASE" != "1" ]; then
     output="$ARTEX_OUTPUT"
   else
-    output="${ARTEX_OUTPUT_DIR}/artex-${goos}-${goarch}/${binary_name}"
+    output="${ARTEX_OUTPUT_DIR}/artex-rea-${goos}-${goarch}/${binary_name}"
   fi
   mkdir -p "$(dirname "$output")"
 

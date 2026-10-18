@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 
 import {
   CircleDollarSignIcon,
@@ -12,10 +13,13 @@ import {
   RadioTowerIcon,
   SearchIcon,
   ShieldAlertIcon,
+  ShieldCheckIcon,
+  SparklesIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,7 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LOCALE_LABELS } from "@/i18n/config";
 import { api } from "@/lib/api";
 import { type ChatSendMode, setChatSendMode, useChatSendMode, useChatSendModeOptions } from "@/lib/chat-send-mode";
-import type { Settings } from "@/lib/types";
+import type { Settings, VerificationCapabilities } from "@/lib/types";
 
 import { UpdateCard } from "./_components/update-card";
 
@@ -68,6 +72,12 @@ export default function SystemSettingsPage() {
   const [injectWorker, setInjectWorker] = React.useState(true);
   // 实验功能:noa 上下文压缩(默认关)。
   const [noaCompaction, setNoaCompaction] = React.useState(false);
+  // AI 自我进化沉淀：任务完成/删除时自动生成技能；审阅门控默认开启。
+  const [skillReviewGate, setSkillReviewGate] = React.useState(true);
+  const [skillAutoDistill, setSkillAutoDistill] = React.useState(true);
+  const [skillAutoDistillApply, setSkillAutoDistillApply] = React.useState(false);
+  // 人机验证工具链只读状态快照
+  const [verificationCaps, setVerificationCaps] = React.useState<VerificationCapabilities | null>(null);
   // 纯前端偏好：不走 /api/settings，直接读写 localStorage。
   const sendMode = useChatSendMode();
   const sendModeOptions = useChatSendModeOptions();
@@ -89,6 +99,9 @@ export default function SystemSettingsPage() {
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
     setNoaCompaction(!!s.noa_compaction);
+    setSkillReviewGate(s.skill_review_gate !== false);
+    setSkillAutoDistill(s.skill_auto_distill !== false);
+    setSkillAutoDistillApply(!!s.skill_auto_distill_apply);
   }, []);
 
   const saveWorkers = () => {
@@ -168,6 +181,10 @@ export default function SystemSettingsPage() {
       .then(apply)
       .catch(() => undefined)
       .finally(() => setLoaded(true));
+    api
+      .verificationCapabilities()
+      .then(setVerificationCaps)
+      .catch(() => undefined);
   }, [apply]);
 
   const toggleTraffic = (v: boolean) => {
@@ -222,6 +239,39 @@ export default function SystemSettingsPage() {
       })
       .catch((e) => {
         setNoaCompaction(!v); // revert on failure
+        toast.error(t("toast.saveFailed", { error: (e as Error).message }));
+      });
+  };
+
+  const toggleSkillReviewGate = (v: boolean) => {
+    setSkillReviewGate(v); // optimistic
+    api
+      .setSettings({ skill_review_gate: v })
+      .then(apply)
+      .catch((e) => {
+        setSkillReviewGate(!v);
+        toast.error(t("toast.saveFailed", { error: (e as Error).message }));
+      });
+  };
+
+  const toggleSkillAutoDistill = (v: boolean) => {
+    setSkillAutoDistill(v); // optimistic
+    api
+      .setSettings({ skill_auto_distill: v })
+      .then(apply)
+      .catch((e) => {
+        setSkillAutoDistill(!v);
+        toast.error(t("toast.saveFailed", { error: (e as Error).message }));
+      });
+  };
+
+  const toggleSkillAutoDistillApply = (v: boolean) => {
+    setSkillAutoDistillApply(v); // optimistic
+    api
+      .setSettings({ skill_auto_distill_apply: v })
+      .then(apply)
+      .catch((e) => {
+        setSkillAutoDistillApply(!v);
         toast.error(t("toast.saveFailed", { error: (e as Error).message }));
       });
   };
@@ -462,6 +512,147 @@ export default function SystemSettingsPage() {
               disabled={!loaded}
               onCheckedChange={toggleNoaCompaction}
             />
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <SparklesIcon className="size-4" />
+              {t("skillEvolution.title")}
+            </CardTitle>
+            <CardDescription>{t.rich("skillEvolution.desc", richTags)}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="skill-auto-distill" className="text-sm font-normal text-muted-foreground">
+                {t("skillEvolution.autoDistill")}
+                {skillAutoDistill ? t("onSuffix") : t("offSuffix")}
+              </Label>
+              <Switch
+                id="skill-auto-distill"
+                checked={skillAutoDistill}
+                disabled={!loaded}
+                onCheckedChange={toggleSkillAutoDistill}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="skill-review-gate" className="text-sm font-normal text-muted-foreground">
+                {t("skillEvolution.reviewGate")}
+                {skillReviewGate ? t("onSuffix") : t("offSuffix")}
+              </Label>
+              <Switch
+                id="skill-review-gate"
+                checked={skillReviewGate}
+                disabled={!loaded}
+                onCheckedChange={toggleSkillReviewGate}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="skill-auto-distill-apply" className="text-sm font-normal text-muted-foreground">
+                  {t("skillEvolution.autoApply")}
+                  {skillReviewGate && !skillAutoDistillApply ? t("offSuffix") : t("onSuffix")}
+                </Label>
+                {!skillReviewGate && (
+                  <p className="mt-1 text-muted-foreground text-xs">{t("skillEvolution.autoApplyGateOff")}</p>
+                )}
+              </div>
+              <Switch
+                id="skill-auto-distill-apply"
+                checked={!skillReviewGate || skillAutoDistillApply}
+                disabled={!loaded || !skillReviewGate}
+                onCheckedChange={toggleSkillAutoDistillApply}
+              />
+            </div>
+            <div className="flex justify-end pt-1">
+              <Button asChild size="sm" variant="outline" className="h-7 text-xs">
+                <Link href="/system/skills?openProposals=1">
+                  <SparklesIcon className="size-3" />
+                  {t("skillEvolution.openProposalsLink")}
+                </Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldCheckIcon className="size-4" />
+              {t("verificationStatus.title")}
+            </CardTitle>
+            <CardDescription>{t("verificationStatus.desc")}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 text-xs">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">{t("verificationStatus.nativeProtocols")}</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  verificationCaps?.native_protocols ?? [
+                    "altcha_v1_sha256_sha512",
+                    "altcha_v2_sha2_pbkdf2",
+                    "anubis_legacy_fast_slow_sha256",
+                  ]
+                ).map((proto) => (
+                  <Badge key={proto} variant="secondary" className="font-mono font-normal text-[11px]">
+                    {proto}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-muted-foreground text-xs">{t("verificationStatus.helperLabel")}</Label>
+                <Badge
+                  variant={
+                    verificationCaps?.fingerprint_helper.state === "detected_not_handshaken"
+                      ? "default"
+                      : verificationCaps?.fingerprint_helper.state === "configuration_invalid_or_missing"
+                        ? "destructive"
+                        : "outline"
+                  }
+                  className="font-normal text-[11px]"
+                >
+                  {verificationCaps?.fingerprint_helper.state === "detected_not_handshaken"
+                    ? t("verificationStatus.stateDetected")
+                    : verificationCaps?.fingerprint_helper.state === "configuration_invalid_or_missing"
+                      ? t("verificationStatus.stateInvalid")
+                      : t("verificationStatus.stateNotInstalled")}
+                </Badge>
+              </div>
+              <p className="text-muted-foreground text-[11px] leading-relaxed">
+                {t("verificationStatus.helperMeta", {
+                  binary: verificationCaps?.fingerprint_helper.binary_name ?? "artex-verification-http",
+                  provider: verificationCaps?.fingerprint_helper.provider ?? "req/v3@v3.59.0",
+                  profiles: (verificationCaps?.fingerprint_helper.profiles ?? ["chrome", "firefox"]).join(", "),
+                })}
+              </p>
+            </div>
+
+            {verificationCaps?.limits && (
+              <div className="grid grid-cols-2 gap-2 rounded-md border bg-muted/30 p-2 text-[11px]">
+                <div>
+                  <span className="text-muted-foreground">{t("verificationStatus.limitTimeout")}：</span>
+                  <span className="font-mono tabular-nums">{verificationCaps.limits.flow_timeout_ms ?? 15000}ms</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">{t("verificationStatus.limitRoundtrips")}：</span>
+                  <span className="font-mono tabular-nums">{verificationCaps.limits.flow_roundtrips ?? 6}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">{t("verificationStatus.limitProcesses")}：</span>
+                  <span className="font-mono tabular-nums">{verificationCaps.limits.helper_processes ?? 2}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">{t("verificationStatus.limitMemory")}：</span>
+                  <span className="font-mono tabular-nums">
+                    {verificationCaps.limits.helper_go_memory_soft_mib ?? 64} MiB
+                  </span>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

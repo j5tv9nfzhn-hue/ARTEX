@@ -628,7 +628,7 @@ function NodeDetailSheet({
                       </span>
                     </DetailRow>
                   )}
-                  <DetailRow label={t("detail.time")}>{new Date(node.ts).toLocaleString("ko-KR")}</DetailRow>
+                  <DetailRow label={t("detail.time")}>{new Date(node.ts).toLocaleString("zh-CN")}</DetailRow>
                 </section>
 
                 {node.type === "digest" && (

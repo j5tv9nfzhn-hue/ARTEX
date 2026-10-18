@@ -48,7 +48,7 @@ func builtinToolsByAgent() map[string][]actool.CoreTool {
 		"pentest": {
 			ts.listAssets(), ts.insertAssets(), ts.addFinding(), ts.listFindings(), ts.listCompanies(),
 			ts.httpRequestTool(), ts.httpFuzzTool(), ts.httpSequenceTool(), ts.webReconTool(),
-			ts.codecCryptoTool(), ts.extractDataTool(), ts.netProbeTool(), ts.dnsProbeTool(), ts.tacticalKBTool(),
+			ts.humanVerificationTool(), ts.verificationSolveTool(), ts.verificationCapabilitiesTool(), ts.verificationFlowTool(), ts.codecCryptoTool(), ts.extractDataTool(), ts.netProbeTool(), ts.dnsProbeTool(), ts.tacticalKBTool(),
 		},
 	}
 }

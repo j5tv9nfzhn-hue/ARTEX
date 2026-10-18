@@ -25,6 +25,7 @@ func (s *Server) platformTools() []actool.CoreTool {
 		s.toolProposeSkill(),
 		s.toolListSkillProposals(),
 		s.toolReviewSkillProposal(),
+		s.toolDistillTaskSkill(),
 		s.toolCreateCustomTool(),
 		s.toolUpdateCustomTool(),
 		s.toolCreateMCP(),
@@ -36,6 +37,7 @@ func (s *Server) platformTools() []actool.CoreTool {
 // platformToolKeys are the tool keys the Auto agent gets bound by default.
 var platformToolKeys = []string{
 	"create_skill", "update_skill_file",
+	"list_skill_gaps", "propose_skill", "list_skill_proposals", "review_skill_proposal", "distill_task_skill",
 	"create_custom_tool", "update_custom_tool",
 	"create_mcp", "update_mcp",
 	"delete_assets_by_host",
@@ -154,6 +156,7 @@ func (s *Server) toolCreateSkill() actool.CoreTool {
 				_ = os.RemoveAll(path)
 				return actool.Errorf(stageerr.Wrap(stageerr.StagePersist, "写入技能文件失败", err).Error()), nil
 			}
+			s.bindDefaultSkillVisibility(a.Name)
 			return actool.Text("skill created: " + a.Name), nil
 		})
 }

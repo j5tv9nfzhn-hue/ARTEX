@@ -1,4 +1,4 @@
-// Command artex runs the ARTEX backend: the dual SQLite graph stores,
+// Command artex runs the ARTEX-REA backend: the dual SQLite graph stores,
 // the event-driven exploration engine, and the JSON HTTP API consumed by the
 // shadcn/ui frontend.
 package main
@@ -27,17 +27,17 @@ import (
 var version = "dev"
 
 const banner = `
-    _    ____ _____ _______  __
-   / \  |  _ \_   _| ____\ \/ /
-  / _ \ | |_) || | |  _|  \  /
- / ___ \|  _ < | | | |___ /  \
-/_/   \_\_| \_\|_| |_____/_/\_\
+    _    ____ _____ _______  __      ____  _____    _    
+   / \  |  _ \_   _| ____\ \/ /     |  _ \| ____|  / \   
+  / _ \ | |_) || | |  _|  \  / _____| |_) |  _|   / _ \  
+ / ___ \|  _ < | | | |___ /  \_____|  _ <| |___ / ___ \ 
+/_/   \_\_| \_\|_| |_____/_/\_\    |_| \_\_____/_/   \_\
 `
 
 // printBanner writes the startup banner + version/runtime info to stdout.
 func printBanner(addr string) {
 	fmt.Print(banner)
-	fmt.Println("  AI 自主渗透测试系统")
+	fmt.Println("  ARTEX-REA  ·  AI 自主渗透测试系统与逆向工程指挥中枢")
 	fmt.Printf("  版本 %s  ·  %s/%s  ·  %s  ·  监听地址 %s\n\n",
 		version, runtime.GOOS, runtime.GOARCH, runtime.Version(), addr)
 }
@@ -59,7 +59,7 @@ func run() int {
 		addr      = flag.String("addr", "127.0.0.1:8787", "HTTP listen address (default accepts local connections only; use :8787 to serve other hosts)")
 		dataDir   = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
 		proxy     = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
-		resetPass = flag.Bool("reset-password", false, "重置 ARTEX 管理员密码后退出；新密码取自 ARTEX_RESET_NEWPASS，未设置则交互输入")
+		resetPass = flag.Bool("reset-password", false, "重置 ARTEX-REA 管理员密码后退出；新密码取自 ARTEX_RESET_NEWPASS，未设置则交互输入")
 	)
 	flag.Parse()
 
@@ -164,7 +164,7 @@ func run() int {
 	}
 
 	go func() {
-		log.Printf("ARTEX %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
+		log.Printf("ARTEX-REA %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("serve: %v", err)
 		}

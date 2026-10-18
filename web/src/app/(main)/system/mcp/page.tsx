@@ -216,6 +216,18 @@ export default function MCPPage() {
   }
 
   async function toggleEnabled(s: MCPServer) {
+    if (!s.enabled) {
+      if (s.transport === "stdio" && !s.command?.trim()) {
+        toast.error(t("errNoCmd"));
+        openEdit(s);
+        return;
+      }
+      if (s.transport !== "stdio" && !s.url?.trim()) {
+        toast.error(t("errNoUrl"));
+        openEdit(s);
+        return;
+      }
+    }
     try {
       await api.saveMcpServer({ ...s, enabled: !s.enabled });
       load();

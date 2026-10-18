@@ -67,23 +67,25 @@ func (d *DB) ensureSkillProposalTable() error {
 
 // SkillProposal 是一条待审阅的技能写入提议。
 type SkillProposal struct {
-	ID     string
-	Skill  string
-	File   string
-	Action string
+	ID     string `json:"id"`
+	Skill  string `json:"skill"`
+	File   string `json:"file"`
+	Action string `json:"action"`
 	// Content 是完整的新内容，不是补丁：审阅者需要看到落地后的完整样子，
 	// 而不是自己拼装前后差异。
-	Content string
-	Origin  string
+	Content string `json:"content"`
+	Origin  string `json:"origin"`
 	// Evidence 记录提议依据的来源标识，例如 "task=12,retest=45"。
-	Evidence string
-	Status   string
-	Lint     string
-	Note     string
+	Evidence   string `json:"evidence"`
+	Status     string `json:"status"`
+	Lint       string `json:"lint"`
+	Note       string `json:"note"`
+	CreatedAt  string `json:"created_at,omitempty"`
+	ReviewedAt string `json:"reviewed_at,omitempty"`
 }
 
 // skillProposalCols 是读取列清单。
-const skillProposalCols = `id,skill,file,action,content,origin,evidence,status,lint,note`
+const skillProposalCols = `id,skill,file,action,content,origin,evidence,status,lint,note,CAST(ts AS TEXT),COALESCE(CAST(reviewed_ts AS TEXT),'')`
 
 // LintWarning 是一条技能内容告警。告警从不阻止写入，只呈现给审阅者。
 type LintWarning struct {
@@ -132,6 +134,15 @@ func LintSkillContent(content string) []LintWarning {
 	return out
 }
 
+func formatLintWarnings(content string) string {
+	warnings := LintSkillContent(content)
+	lints := make([]string, 0, len(warnings))
+	for _, w := range warnings {
+		lints = append(lints, w.Rule+": "+w.Detail)
+	}
+	return strings.Join(lints, "; ")
+}
+
 // skillNameRe 沿用 create_skill 的约束：小写字母开头，仅字母/数字/连字符。
 var skillNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 
@@ -159,37 +170,47 @@ func (d *DB) ProposeSkill(ctx context.Context, p SkillProposal) (*SkillProposal,
 		p.Status = SkillProposalPending
 	}
 
-	warnings := LintSkillContent(p.Content)
-	lints := make([]string, 0, len(warnings))
-	for _, w := range warnings {
-		lints = append(lints, w.Rule+": "+w.Detail)
-	}
+	lintStr := formatLintWarnings(p.Content)
 
 	_, err := d.ExecContext(ctx, `INSERT INTO skill_proposals
 (id,skill,file,action,content,origin,evidence,status,lint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 ON CONFLICT (id) DO NOTHING`,
 		p.ID, p.Skill, p.File, p.Action, p.Content, p.Origin, p.Evidence,
-		p.Status, strings.Join(lints, "; "))
+		p.Status, lintStr)
 	if err != nil {
 		return nil, err
 	}
 	return d.GetSkillProposal(ctx, p.ID)
 }
 
-// ListSkillProposals 列出提议，status 为空时只返回待审阅的。
+// ListSkillProposals 列出提议，status 为空时只返回待审阅的；status 为 all/* 时返回全部状态。
 func (d *DB) ListSkillProposals(ctx context.Context, status string, limit int) ([]SkillProposal, error) {
 	if err := d.ensureSkillProposalTable(); err != nil {
 		return nil, err
 	}
+	status = strings.TrimSpace(status)
 	if status == "" {
 		status = SkillProposalPending
 	}
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := d.QueryContext(ctx,
-		`SELECT `+skillProposalCols+` FROM skill_proposals WHERE status=$1 ORDER BY ts DESC, id LIMIT $2`,
-		status, limit)
+	if limit > 500 {
+		limit = 500
+	}
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if strings.EqualFold(status, "all") || status == "*" {
+		rows, err = d.QueryContext(ctx,
+			`SELECT `+skillProposalCols+` FROM skill_proposals ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, ts DESC, id LIMIT $1`,
+			limit)
+	} else {
+		rows, err = d.QueryContext(ctx,
+			`SELECT `+skillProposalCols+` FROM skill_proposals WHERE status=$1 ORDER BY ts DESC, id LIMIT $2`,
+			status, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -198,12 +219,38 @@ func (d *DB) ListSkillProposals(ctx context.Context, status string, limit int) (
 	for rows.Next() {
 		var p SkillProposal
 		if err := rows.Scan(&p.ID, &p.Skill, &p.File, &p.Action, &p.Content,
-			&p.Origin, &p.Evidence, &p.Status, &p.Lint, &p.Note); err != nil {
+			&p.Origin, &p.Evidence, &p.Status, &p.Lint, &p.Note, &p.CreatedAt, &p.ReviewedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// CountSkillProposals 按状态统计技能提议数量（pending / applied / rejected）。
+func (d *DB) CountSkillProposals(ctx context.Context) (map[string]int, error) {
+	if err := d.ensureSkillProposalTable(); err != nil {
+		return nil, err
+	}
+	counts := map[string]int{
+		SkillProposalPending:  0,
+		SkillProposalApplied:  0,
+		SkillProposalRejected: 0,
+	}
+	rows, err := d.QueryContext(ctx, `SELECT status, COUNT(*) FROM skill_proposals GROUP BY status`)
+	if err != nil {
+		return counts, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st string
+		var n int
+		if err := rows.Scan(&st, &n); err != nil {
+			return counts, err
+		}
+		counts[st] = n
+	}
+	return counts, rows.Err()
 }
 
 // GetSkillProposal 按 id 取单条提议。
@@ -215,7 +262,7 @@ func (d *DB) GetSkillProposal(ctx context.Context, id string) (*SkillProposal, e
 	err := d.QueryRowContext(ctx,
 		`SELECT `+skillProposalCols+` FROM skill_proposals WHERE id=$1`, id).
 		Scan(&p.ID, &p.Skill, &p.File, &p.Action, &p.Content,
-			&p.Origin, &p.Evidence, &p.Status, &p.Lint, &p.Note)
+			&p.Origin, &p.Evidence, &p.Status, &p.Lint, &p.Note, &p.CreatedAt, &p.ReviewedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrSkillProposalNotFound
 	}
@@ -223,6 +270,31 @@ func (d *DB) GetSkillProposal(ctx context.Context, id string) (*SkillProposal, e
 		return nil, err
 	}
 	return &p, nil
+}
+
+// UpdateSkillProposalContent 允许审阅者在批准前修订待审阅提议的正文，并同步重算 lint 告警。
+// 已审阅（applied / rejected）的提议不可修改，保证历史留档不可篡改。
+func (d *DB) UpdateSkillProposalContent(ctx context.Context, id, content string) (*SkillProposal, error) {
+	if strings.TrimSpace(content) == "" {
+		return nil, errors.New("提议内容为空")
+	}
+	if err := d.ensureSkillProposalTable(); err != nil {
+		return nil, err
+	}
+	lintStr := formatLintWarnings(content)
+	res, err := d.ExecContext(ctx,
+		`UPDATE skill_proposals SET content=$1, lint=$2 WHERE id=$3 AND status=$4`,
+		content, lintStr, id, SkillProposalPending)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := d.GetSkillProposal(ctx, id); err != nil {
+			return nil, err
+		}
+		return nil, ErrSkillProposalConflict
+	}
+	return d.GetSkillProposal(ctx, id)
 }
 
 // ReviewSkillProposal 记录一条提议的审阅结论。

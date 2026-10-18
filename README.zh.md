@@ -1,8 +1,8 @@
 <div align="center">
 
-# ARTEX
+# ARTEX-REA
 
-AI 自主渗透测试系统（Go 后端 + Next.js 前端）
+AI 自主渗透测试与逆向工程系统（Go 后端 + Next.js 前端）
 
 
 🌐 **在线 Demo**： [https://artex-demo.vercel.app/](https://artex-demo.vercel.app/)
@@ -71,15 +71,15 @@ docker compose up -d          # 拉取 autumn27/artex 镜像
 
 ### 方式三：下载预编译二进制（Releases）
 
-到 [Releases](https://github.com/Autumn-27/ARTEX/releases) 下载对应平台的 zip，解压后得到 `artex` + `start.sh`（Windows 为 `start.bat`）+ `skills/` + `config.example.json`：
+到 [Releases](https://github.com/Autumn-27/ARTEX/releases) 下载对应平台的 zip，解压后得到 `artex-rea` + `start.sh`（Windows 为 `start.bat`）+ `skills/` + `config.example.json`：
 
 ```bash
 cp config.example.json config.json   # 填好 database 连接
 ./start.sh                           # → http://localhost:8787
 ```
 
-> 请用 `start.sh` / `start.bat` 启动，而不是直接跑 `./artex`。它是个守护脚本：程序退出后按退出码决定是否重新拉起，**页面上的[一键更新](#方式一页面一键更新推荐)靠它完成换装**。直接运行 `./artex` 时更新完就不会被拉起了。
-> 后台常驻：`nohup ./start.sh >artex.log 2>&1 &`。
+> 请用 `start.sh` / `start.bat` 启动，而不是直接跑 `./artex-rea`。它是个守护脚本：程序退出后按退出码决定是否重新拉起，**页面上的[一键更新](#方式一页面一键更新推荐)靠它完成换装**。直接运行 `./artex-rea` 时更新完就不会被拉起了。
+> 后台常驻：`nohup ./start.sh >artex-rea.log 2>&1 &`。
 
 ### 方式四：从源码编译单二进制
 
@@ -89,7 +89,7 @@ cd web && npm ci && npm run build:static && cd ..
 # 2) 拷进内嵌目录
 cp -r web/out server/webui/dist
 # 3) 编译（-tags embedui 才内嵌前端）
-CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
+CGO_ENABLED=0 go build -tags embedui -o artex-rea ./cmd/artex
 ./start.sh
 ```
 
@@ -99,7 +99,7 @@ CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
 
 ```bash
 ./build.sh --release
-# 产物：dist/artex-<版本>-<os>-<arch>.zip（linux/darwin/windows × amd64/arm64）
+# 产物：dist/artex-rea-<版本>-<os>-<arch>.zip（linux/darwin/windows × amd64/arm64）
 ```
 
 UPX 自解压二进制可能与部分内核、虚拟化环境或安全策略不兼容，因此默认不启用。可用 `ARTEX_TARGETS` 自定义目标；确认目标运行环境兼容时，可显式传入 `--upx` 进一步缩小二进制：

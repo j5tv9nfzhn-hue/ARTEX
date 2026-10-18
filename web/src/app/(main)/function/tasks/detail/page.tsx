@@ -17,6 +17,7 @@ import {
   PauseIcon,
   PlayIcon,
   ShieldAlertIcon,
+  SparklesIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -235,6 +236,7 @@ function TaskDetailInner() {
   const [interceptPendingCount, setInterceptPendingCount] = React.useState(0);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [archiving, setArchiving] = React.useState(false);
+  const [distilling, setDistilling] = React.useState(false);
 
   React.useEffect(() => {
     api
@@ -322,6 +324,30 @@ function TaskDetailInner() {
     }
   }
 
+  async function distillTask() {
+    if (!task || distilling) return;
+    setDistilling(true);
+    try {
+      const res = await api.distillTaskSkill({ task_id: Number(task.id) });
+      const prop = res.proposal;
+      toast.success(
+        prop.status === "applied"
+          ? t("distill.applied", { skill: prop.skill })
+          : t("distill.pending", { skill: prop.skill }),
+        {
+          action: {
+            label: t("distill.openReview"),
+            onClick: () => router.push(`/system/skills?proposal=${encodeURIComponent(prop.id)}`),
+          },
+        },
+      );
+    } catch (error) {
+      toast.error(t("distill.failed", { message: (error as Error).message }));
+    } finally {
+      setDistilling(false);
+    }
+  }
+
   if (!task) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
@@ -390,7 +416,7 @@ function TaskDetailInner() {
         </Alert>
       )}
       {/* Unified Mission Control Header */}
-      <header className="sticky top-0 z-10 flex flex-col gap-2 border-border/80 border-b bg-background/90 px-4 py-2 backdrop-blur-md lg:px-6">
+      <header className="sticky top-0 z-10 flex flex-col gap-2 border-border/80 border-b bg-background/88 px-4 py-2.5 shadow-2xs backdrop-blur-md lg:px-6">
         <div className="flex flex-wrap items-center gap-2">
           <SidebarTrigger className="-ml-1" />
           <Button asChild variant="ghost" size="icon-sm" className="size-7 rounded-lg">
@@ -481,6 +507,22 @@ function TaskDetailInner() {
               </Badge>
             </Link>
           )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 rounded-lg px-2.5 text-xs"
+                disabled={distilling}
+                onClick={() => void distillTask()}
+                aria-label={t("distill.triggerAria")}
+              >
+                {distilling ? <Spinner data-icon="inline-start" /> : <SparklesIcon className="size-3.5 text-primary" />}
+                <span className="hidden sm:inline">{t("distill.button")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("distill.tooltip")}</TooltipContent>
+          </Tooltip>
           {canArchive ? (
             <AlertDialog>
               <AlertDialogTrigger asChild>{archiveTrigger}</AlertDialogTrigger>

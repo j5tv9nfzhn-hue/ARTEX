@@ -236,6 +236,12 @@ type Manager struct {
 	mu          sync.RWMutex
 	tasks       map[string]*Task
 	active      string
+	// Skill curator hooks (server/skill_curator.go). Set once by Server.New; nil in
+	// tests / headless managers. Terminal runs asynchronously so status writes never
+	// wait on distillation; deletion runs BEFORE the cascade deletes the task data.
+	skillHookMu    sync.RWMutex
+	onTaskTerminal func(taskID, status string)
+	onTaskDeleted  func(taskID string, snapshot *pgdb.Task)
 	trafficOn   bool // 流量捕获开关（默认关；settings.traffic_capture）
 	llmRecOn    bool // LLM 录制开关（默认关；settings.llm_record）
 	// 联网搜索开关与来源（默认关；settings.web_search_*）。brave-free 需要 braveKey；tavily 需要 tavilyKey。
@@ -717,6 +723,9 @@ func (m *Manager) syncBrowserMCPProxy() {
 	cert := m.ProxyCACert() // "" when capture off
 
 	args := stripProxyArgs(decodeStrSlice(srv.Args))
+	if strings.EqualFold(strings.TrimSpace(srv.Command), "npx") && len(args) > 0 && args[0] == "@playwright/mcp" {
+		args = append([]string{"-y"}, args...)
+	}
 	env := decodeStrMap(srv.Env)
 	delete(env, "NODE_EXTRA_CA_CERTS")
 	if proxy != "" {
@@ -1483,6 +1492,9 @@ func (m *Manager) SetTaskStatusGuarded(id, status string) (won bool, err error) 
 	// won=true 即「非终态 → 终态」的真实变化（守卫 UPDATE 只在此情况下命中），
 	// 直接发事件；竞态输掉的一侧 won=false 早已返回，不会重复推送。
 	m.emitTaskStatusEvent(n, status, terminalStatusReason(status))
+	// Terminal transition (first writer wins). Distillation is asynchronous and must
+	// never block the lifecycle write or delay the notification path.
+	m.fireTaskTerminal(id, status)
 	return true, nil
 }
 
@@ -1521,6 +1533,9 @@ func (m *Manager) SetTaskStatus(id, status string) error {
 	m.taskStateMu.Unlock()
 	if changed {
 		m.emitTaskStatusEvent(n, status, "")
+		if pgdb.IsTerminal(status) {
+			m.fireTaskTerminal(id, status)
+		}
 	}
 	return nil
 }
@@ -1544,6 +1559,11 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 		m.forgetTask(id, n)
 		return result, nil
 	}
+
+	// Distill the task's reusable playbook BEFORE the cascade removes its graph,
+	// evidence and activity. This hook is bounded and never blocks deletion on error;
+	// it receives the pre-delete snapshot so it does not need to re-read the row.
+	m.fireTaskDeleted(id, registered)
 
 	var fileStage *taskFileDeleteStage
 	if opts.DeleteFiles {

@@ -45,7 +45,7 @@ func TestPrintBannerLocalized(t *testing.T) {
 		t.Fatalf("启动横幅未包含中文：%q", out)
 	}
 
-	for _, want := range []string{"自主渗透测试系统", "版本", "监听地址", ":8787"} {
+	for _, want := range []string{"ARTEX-REA", "自主渗透测试系统", "版本", "监听地址", ":8787"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("启动横幅缺少 %q：%q", want, out)
 		}

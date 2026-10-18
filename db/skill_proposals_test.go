@@ -92,6 +92,38 @@ func TestSkillProposalReviewIsOnceOnly(t *testing.T) {
 	}
 }
 
+func TestSkillProposalUpdateContentBeforeReview(t *testing.T) {
+	d := openProposalDB(t)
+	ctx := context.Background()
+	if _, err := d.ProposeSkill(ctx, SkillProposal{ID: "p-edit", Skill: "demo", Action: "create", Content: "旧正文"}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := d.UpdateSkillProposalContent(ctx, "p-edit", "审阅者修订后的正文")
+	if err != nil {
+		t.Fatalf("待审提议修订失败: %v", err)
+	}
+	if updated.Content != "审阅者修订后的正文" {
+		t.Fatalf("修订内容未生效: %q", updated.Content)
+	}
+	if _, err := d.ReviewSkillProposal(ctx, "p-edit", SkillProposalApplied, "已修订通过"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.UpdateSkillProposalContent(ctx, "p-edit", "已审阅后篡改"); err != ErrSkillProposalConflict {
+		t.Fatalf("已审阅提议不应允许修改正文, got err=%v", err)
+	}
+	counts, err := d.CountSkillProposals(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[SkillProposalApplied] < 1 {
+		t.Fatalf("CountSkillProposals 计数异常: %+v", counts)
+	}
+	all, err := d.ListSkillProposals(ctx, "all", 50)
+	if err != nil || len(all) == 0 {
+		t.Fatalf("ListSkillProposals(all) 失败: err=%v len=%d", err, len(all))
+	}
+}
+
 func TestSkillProposalRejectsBadInput(t *testing.T) {
 	d := openProposalDB(t)
 	ctx := context.Background()

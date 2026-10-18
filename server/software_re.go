@@ -21,9 +21,11 @@ import (
 
 func (s *Server) reRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/re/samples", s.reLibrary)
+	mux.HandleFunc("GET /api/re/presets", s.rePresetsHTTP)
 	mux.HandleFunc("GET /api/re/mcp-candidates", s.reMCPCandidates)
 	mux.HandleFunc("POST /api/re/providers", s.reSaveProvider)
 	mux.HandleFunc("POST /api/re/providers/{provider}/discover", s.reDiscover)
+	mux.HandleFunc("GET /api/re/providers/{provider}/capabilities", s.reCapabilitiesHTTP)
 	mux.HandleFunc("GET /api/tasks/{id}/re", s.reOverview)
 	mux.HandleFunc("POST /api/tasks/{id}/re/samples", s.reUpload)
 	mux.HandleFunc("POST /api/tasks/{id}/re/attach", s.reAttach)
@@ -33,6 +35,24 @@ func (s *Server) reRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/tasks/{id}/re/sessions/{session}/data", s.reDataHTTP)
 	mux.HandleFunc("GET /api/tasks/{id}/re/evidence/{evidence}", s.reEvidenceHTTP)
 	mux.HandleFunc("POST /api/tasks/{id}/re/observations", s.reObservation)
+}
+
+func (s *Server) rePresetsHTTP(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"presets": reEnginePresets()})
+}
+
+func (s *Server) reCapabilitiesHTTP(w http.ResponseWriter, r *http.Request) {
+	if err := s.reInitialize(); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	id := reID(r.PathValue("provider"))
+	p, err := s.m.pg.REProvider(id)
+	if err != nil {
+		writeErr(w, 404, err.Error())
+		return
+	}
+	writeJSON(w, 200, reEvaluateCapabilities(*p))
 }
 func reDecode(w http.ResponseWriter, r *http.Request, out any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
@@ -78,7 +98,19 @@ func (s *Server) reOverviewData(taskID int64) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"samples": samples, "providers": providers, "sessions": sessions, "limit": 100, "scope": "最多 100 个样本与最近 100 个会话；Provider 目录就绪不等于分析引擎或目标就绪"}, nil
+	caps := make(map[int64]RECapabilityReport, len(providers))
+	for _, p := range providers {
+		caps[p.ID] = reEvaluateCapabilities(p)
+	}
+	return map[string]any{
+		"samples":      samples,
+		"providers":    providers,
+		"sessions":     sessions,
+		"capabilities": caps,
+		"presets":      reEnginePresets(),
+		"limit":        100,
+		"scope":        "最多 100 个样本与最近 100 个会话；Provider 目录就绪不等于分析引擎或目标就绪",
+	}, nil
 }
 func (s *Server) reOverview(w http.ResponseWriter, r *http.Request) {
 	_, id, ok := s.reTask(w, r)
@@ -443,7 +475,9 @@ func (s *Server) reData(taskID, sessionID, before int64, kind string) (map[strin
 		}
 		return map[string]any{"items": items, "has_more": more, "next_before": next}, nil
 	}
-	if kind != "functions" && kind != "xrefs" && kind != "callgraph" && kind != "types" {
+	switch kind {
+	case "functions", "xrefs", "callgraph", "types", "modules", "imports", "exports", "strings":
+	default:
 		return nil, errors.New("数据类型无效")
 	}
 	items, err := s.m.pg.REEntities(taskID, sessionID, before, kind)
@@ -519,11 +553,11 @@ func (s *Server) reObservation(w http.ResponseWriter, r *http.Request) {
 
 // softwareAnalysisTools uses the trusted run TaskID, never a model-supplied task.
 func (s *Server) softwareAnalysisTools() []actool.CoreTool {
-	return []actool.CoreTool{wrTool("software_analysis", "软件逆向受管样本、独占会话、函数/调用链/证据工作台。仅限当前 software_re 任务；不会安装 Provider。先 overview，按真实 Provider ID 与样本哈希 open，再 query/data；close 显式关闭。Provider 必须已经由操作员审核。",
+	return []actool.CoreTool{wrTool("software_analysis", "软件逆向受管样本、独占会话、函数/调用链/模块/符号/证据工作台。仅限当前 software_re 任务；不会安装 Provider。先 overview（或 capabilities）核对真实 Provider 能力门控与样本哈希，按 core_ready 的 Provider open，再 query/data；close 显式关闭。Provider 必须已经由操作员审核。",
 		objSchema(map[string]any{
-			"mode":       map[string]any{"type": "string", "enum": []string{"overview", "open", "query", "data", "evidence", "close"}},
+			"mode":       map[string]any{"type": "string", "enum": []string{"overview", "capabilities", "open", "query", "data", "evidence", "close"}},
 			"sample_sha": strParam("已关联样本 SHA-256"), "provider_id": map[string]any{"type": "integer"}, "session_id": map[string]any{"type": "integer"}, "evidence_id": map[string]any{"type": "integer"},
-			"operation": strParam("status/functions/decompile/xrefs/callgraph/types；data 模式也可 evidence"), "address": strParam("Provider 明确支持的地址，不得混淆 RVA/VA/文件偏移"), "query": strParam("有限查询关键词"), "before": map[string]any{"type": "integer"}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+			"operation": strParam("status/functions/decompile/xrefs/callgraph/types/modules/imports/exports/strings；data 模式也可 evidence"), "address": strParam("Provider 明确支持的地址，不得混淆 RVA/VA/文件偏移"), "query": strParam("有限查询关键词"), "before": map[string]any{"type": "integer"}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 		}, "mode"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			info := agent.RunInfoFrom(ctx)
 			t, ok := s.m.Task(fmt.Sprint(info.TaskID))
@@ -553,6 +587,24 @@ func (s *Server) softwareAnalysisTools() []actool.CoreTool {
 			switch a.Mode {
 			case "overview":
 				v, err = s.reOverviewData(info.TaskID)
+			case "capabilities":
+				if a.ProviderID > 0 {
+					var p *db.REProvider
+					p, err = s.m.pg.REProvider(a.ProviderID)
+					if err == nil {
+						v = reEvaluateCapabilities(*p)
+					}
+				} else {
+					var ps []db.REProvider
+					ps, err = s.m.pg.REProviders()
+					if err == nil {
+						reports := make([]RECapabilityReport, 0, len(ps))
+						for _, p := range ps {
+							reports = append(reports, reEvaluateCapabilities(p))
+						}
+						v = map[string]any{"providers": reports, "presets": reEnginePresets()}
+					}
+				}
 			case "open":
 				v, err = s.reOpen(ctx, info.TaskID, a.SampleSHA, a.ProviderID)
 			case "query":

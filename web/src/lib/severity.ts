@@ -1,133 +1,92 @@
-// 全站「严重度」色彩契约的唯一事实源(语义状态色)。
-//
-// 为什么单独成文件:severity 需要的不只是 tone——正文色、药丸(背景 tint + 边框 +
-// 文字)、圆点、条形填充、画布 hex(亮/暗两套)都要从这里取;lib/status.ts 是通用的
-// 「状态 → tone」注册表,severity 域直接引用本模块的完整 class(见 statusMeta),
-// 不再经 tone 间接推导,避免各页面各写一套色。
-//
-// 色序遵循安全领域惯例(修正旧版 critical=rose / high=red 的亮度倒挂):
-//   critical 红 → high 橙 → medium 琥珀 → low 灰蓝。
-// 与图表系列色(chart token,var(--chart-*))无关:severity = 语义状态,chart = 数据系列。
-// 当前数据模型的 Severity 只有 4 级、没有 info;若未来新增 info 级,按契约用青色
-// (亮 #0891B2 / 暗 #22D3EE)。
-//
-// 所有 class 都是完整静态字符串(不做模板拼接),保证 Tailwind 能扫描到;
-// 浅色底用深字、暗色底用浅字,两套组合的文字对比度都在 4.5:1 以上。
+// 漏洞严重度(severity)的唯一事实源:
+// - 阶梯:critical(深洋红 rose)→ high(亮红 red)→ medium(琥珀 amber)→ low(冷蓝 sky)→ info(中灰 zinc)。
+//   旧版在多处把 critical 写成 rose-500、high 写成 red-400,在深色底上 red-400 反而比 rose-500 更亮,
+//   形成"高危比严重更刺眼"的倒挂;这里让 critical 固定比 high 高半档饱和、并带轻微描边强化;
+// - 亮/暗双模:文字用 text-*-700 dark:text-*-300(或 600/400),避免 text-*-400 在亮色白底上发虚;
+// - Tailwind v4 按字面扫描类名,所有完整类名必须静态出现在本文件内,禁止模板字符串拼接色名。
 
-import type { Severity } from "@/lib/types";
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
-export type { Severity };
+export const SEVERITY_ORDER: readonly Severity[] = ["critical", "high", "medium", "low", "info"] as const;
 
-// 展示顺序:由重到轻(findings 筛选 chip、统计卡、编辑下拉统一用它)。
-export const SEVERITIES: readonly Severity[] = ["critical", "high", "medium", "low"] as const;
-
-// 聚合/排序权重(越大越重),与展示顺序一致。
-export const SEVERITY_RANK: Record<Severity, number> = {
-  critical: 4,
-  high: 3,
-  medium: 2,
-  low: 1,
-};
-
-export interface SeverityMeta {
-  /** 正文/数字的强调色(亮色深字 + dark: 浅字) */
-  text: string;
-  /** 药丸:背景 tint + 边框 + 文字(StatusBadge 等) */
+interface SeveritySpec {
+  // Badge / 胶囊(border + 半透明底 + 前景字,适配 variant="outline")
   badge: string;
-  /** 自带容器样式的柔色 chip:仅背景 tint + 文字,无边框(播报板类型签等) */
-  softChip: string;
-  /** 圆点:独立色点(StatusBadge dot / 时间线) */
-  dot: string;
-  /** 进度条 / 条形填充 */
+  // 纯文字强调(仪表盘内联数字、小标题等)
+  text: string;
+  // 实心色块(分布条、小圆点、左边框色条)
   bar: string;
-  /** 画布(SVG / 力导向图等)用十六进制色,亮/暗两套 */
-  hex: { light: string; dark: string };
+  dot: string;
+  // Canvas / G6 图谱等非 DOM 场景用的十六进制主色
+  hex: string;
 }
 
-export const SEVERITY_META: Record<Severity, SeverityMeta> = {
+const SEVERITY_MAP: Record<Severity, SeveritySpec> = {
   critical: {
-    text: "text-red-600 dark:text-red-400",
-    badge: "bg-red-600/10 text-red-700 border-red-600/20 dark:bg-red-400/10 dark:text-red-400 dark:border-red-400/20",
-    softChip: "bg-red-600/10 text-red-700 dark:bg-red-400/10 dark:text-red-400",
-    dot: "bg-red-600 dark:bg-red-400",
-    bar: "bg-red-600 dark:bg-red-400",
-    hex: { light: "#DC2626", dark: "#F87171" },
+    badge: "bg-rose-500/15 text-rose-700 border-rose-500/45 font-medium dark:bg-rose-500/18 dark:text-rose-300 dark:border-rose-500/45",
+    text: "text-rose-600 dark:text-rose-400",
+    bar: "bg-rose-500",
+    dot: "bg-rose-500",
+    hex: "#f43f5e",
   },
   high: {
-    text: "text-orange-700 dark:text-orange-400",
-    badge:
-      "bg-orange-500/10 text-orange-700 border-orange-500/20 dark:bg-orange-400/10 dark:text-orange-400 dark:border-orange-400/20",
-    softChip: "bg-orange-500/10 text-orange-700 dark:bg-orange-400/10 dark:text-orange-400",
-    dot: "bg-orange-500 dark:bg-orange-400",
-    bar: "bg-orange-500 dark:bg-orange-400",
-    hex: { light: "#F97316", dark: "#FB923C" },
+    badge: "bg-red-500/12 text-red-700 border-red-500/35 font-medium dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/40",
+    text: "text-red-600 dark:text-red-400",
+    bar: "bg-red-500",
+    dot: "bg-red-500",
+    hex: "#ef4444",
   },
   medium: {
-    text: "text-amber-700 dark:text-amber-400",
-    badge:
-      "bg-amber-500/10 text-amber-700 border-amber-500/20 dark:bg-amber-400/10 dark:text-amber-400 dark:border-amber-400/20",
-    softChip: "bg-amber-500/10 text-amber-700 dark:bg-amber-400/10 dark:text-amber-400",
-    dot: "bg-amber-500 dark:bg-amber-400",
-    bar: "bg-amber-500 dark:bg-amber-400",
-    hex: { light: "#F59E0B", dark: "#FBBF24" },
+    badge: "bg-amber-500/12 text-amber-700 border-amber-500/35 font-medium dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/40",
+    text: "text-amber-600 dark:text-amber-400",
+    bar: "bg-amber-500",
+    dot: "bg-amber-500",
+    hex: "#f59e0b",
   },
   low: {
-    text: "text-slate-600 dark:text-slate-400",
-    badge:
-      "bg-slate-500/10 text-slate-600 border-slate-500/20 dark:bg-slate-400/10 dark:text-slate-400 dark:border-slate-400/20",
-    softChip: "bg-slate-500/10 text-slate-600 dark:bg-slate-400/10 dark:text-slate-400",
-    dot: "bg-slate-500 dark:bg-slate-400",
-    bar: "bg-slate-500 dark:bg-slate-400",
-    hex: { light: "#64748B", dark: "#94A3B8" },
+    badge: "bg-sky-500/12 text-sky-700 border-sky-500/35 font-medium dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/40",
+    text: "text-sky-600 dark:text-sky-400",
+    bar: "bg-sky-500",
+    dot: "bg-sky-500",
+    hex: "#0ea5e9",
+  },
+  info: {
+    badge: "bg-zinc-500/12 text-zinc-700 border-zinc-500/30 font-medium dark:bg-zinc-500/15 dark:text-zinc-300 dark:border-zinc-500/35",
+    text: "text-zinc-600 dark:text-zinc-400",
+    bar: "bg-zinc-400",
+    dot: "bg-zinc-400",
+    hex: "#71717a",
   },
 };
 
-// 筛选 chip(ToggleGroupItem)的选中态:同一套色调,带 data-[state=on] 前缀。
-// 逐条写出完整 class 而不是拼字符串前缀,保证 Tailwind 静态扫描。
-const FILTER_CHIP_ON: Record<Severity, string> = {
-  critical:
-    "data-[state=on]:border-red-600/40 data-[state=on]:bg-red-600/10 data-[state=on]:text-red-700 dark:data-[state=on]:border-red-400/40 dark:data-[state=on]:bg-red-400/10 dark:data-[state=on]:text-red-400",
-  high: "data-[state=on]:border-orange-500/40 data-[state=on]:bg-orange-500/10 data-[state=on]:text-orange-700 dark:data-[state=on]:border-orange-400/40 dark:data-[state=on]:bg-orange-400/10 dark:data-[state=on]:text-orange-400",
-  medium:
-    "data-[state=on]:border-amber-500/40 data-[state=on]:bg-amber-500/10 data-[state=on]:text-amber-700 dark:data-[state=on]:border-amber-400/40 dark:data-[state=on]:bg-amber-400/10 dark:data-[state=on]:text-amber-400",
-  low: "data-[state=on]:border-slate-500/40 data-[state=on]:bg-slate-500/10 data-[state=on]:text-slate-600 dark:data-[state=on]:border-slate-400/40 dark:data-[state=on]:bg-slate-400/10 dark:data-[state=on]:text-slate-400",
-};
+const FALLBACK: SeveritySpec = SEVERITY_MAP.info;
 
-// isSeverity 用于运行时字符串(后端返回的 severity 是 string)判定。
-export function isSeverity(value: string): value is Severity {
-  return (SEVERITIES as readonly string[]).includes(value);
+export function normalizeSeverity(s?: string | null): Severity {
+  const k = (s ?? "").toLowerCase();
+  if (k === "critical" || k === "high" || k === "medium" || k === "low" || k === "info") return k;
+  return "info";
 }
 
-export function severityMeta(value: Severity): SeverityMeta {
-  return SEVERITY_META[value];
+export function severitySpec(s?: string | null): SeveritySpec {
+  return SEVERITY_MAP[normalizeSeverity(s)] ?? FALLBACK;
 }
 
-export function severityTextClass(value: Severity): string {
-  return SEVERITY_META[value].text;
+export function severityBadgeClass(s?: string | null): string {
+  return severitySpec(s).badge;
 }
 
-export function severityBadgeClass(value: Severity): string {
-  return SEVERITY_META[value].badge;
+export function severityTextClass(s?: string | null): string {
+  return severitySpec(s).text;
 }
 
-export function severitySoftChipClass(value: Severity): string {
-  return SEVERITY_META[value].softChip;
+export function severityBarClass(s?: string | null): string {
+  return severitySpec(s).bar;
 }
 
-export function severityDotClass(value: Severity): string {
-  return SEVERITY_META[value].dot;
+export function severityDotClass(s?: string | null): string {
+  return severitySpec(s).dot;
 }
 
-export function severityBarClass(value: Severity): string {
-  return SEVERITY_META[value].bar;
-}
-
-/** 画布(SVG / Canvas)用 hex;mode 缺省 light。 */
-export function severityHex(value: Severity, mode: "light" | "dark" = "light"): string {
-  return SEVERITY_META[value].hex[mode];
-}
-
-/** 筛选 chip 选中态 class(配 ToggleGroupItem 使用)。 */
-export function severityFilterChipClass(value: Severity): string {
-  return FILTER_CHIP_ON[value];
+export function severityHex(s?: string | null): string {
+  return severitySpec(s).hex;
 }

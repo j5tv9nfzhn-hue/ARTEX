@@ -166,14 +166,15 @@ var builtinVulnPatternCards = []vulnPatternCard{
 func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 	return readTool(
 		"tactical_kb",
-		"跨任务战术知识库与专家战法秒级检索工具（零外部进程开销）。支持 4 种模式：\n"+
+		"跨任务战术知识库与专家战法秒级检索工具（零外部进程开销）。支持 5 种模式：\n"+
 			"- past_findings：检索本平台历史漏洞记录（逐条返回状态；非误报不等于已确认）（按域名、漏洞类型、关键词匹配，直接复用过往成功攻击链与 PoC）；\n"+
 			"- past_assets：跨历史任务检索已探明的目标资产、端口、技术栈指纹与历史 API 端点；\n"+
+			"- case_skills：专项检索 AI 自主沉淀的历史任务复盘技能（case-web-* / case-re-* / merged-*），结构化返回已验证路径、漏洞/复测/逆向证据与 3-Strike 止损经验；\n"+
 			"- skill_search：按关键词全文检索本地与内置专家技能包（SKILL.md）的章节切片，无需整篇加载即可获取关键步骤；\n"+
 			"- vuln_patterns：按漏洞分类（bola_idor / auth_mfa / jwt_oauth / graphql_api / ssrf_cloud / race_toctou / js_reverse / sqli_injection_triage）获取本地静态经验卡片（不构成在线全球知识库或结论证明）、止损建议与推荐原生工具。",
 		obj(map[string]any{
-			"mode":     str("必填：检索模式，可选 past_findings | past_assets | skill_search | vuln_patterns"),
-			"query":    str("可选：检索关键词（域名、端点路径、技术栈如 fastapi/supabase/graphql、漏洞词如 mfa/jwt/bola/ssrf）"),
+			"mode":     str("必填：检索模式，可选 past_findings | past_assets | case_skills | skill_search | vuln_patterns"),
+			"query":    str("可选：检索关键词（域名、端点路径、技术栈如 fastapi/supabase/graphql、漏洞词如 mfa/jwt/bola/ssrf、逆向样本或函数名）"),
 			"category": str("可选：vuln_patterns 模式下指定分类（bola_idor | auth_mfa | jwt_oauth | graphql_api | ssrf_cloud | race_toctou | js_reverse | sqli_injection_triage），留空返回全部分类概览"),
 			"limit":    intp("可选：最大返回条数（默认 8，上限 25）"),
 		}, "mode"),
@@ -303,6 +304,9 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 					"assets":   out,
 				})
 
+			case "case_skills":
+				return searchDistilledCaseSkills(q, limit)
+
 			case "skill_search":
 				return searchBundledAndDiskSkills(q, limit)
 
@@ -339,10 +343,99 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 				})
 
 			default:
-				return actool.Errorf(fmt.Sprintf("未知 mode %q，可选值: past_findings | past_assets | skill_search | vuln_patterns", a.Mode)), nil
+				return actool.Errorf(fmt.Sprintf("未知 mode %q，可选值: past_findings | past_assets | case_skills | skill_search | vuln_patterns", a.Mode)), nil
 			}
 		},
 	)
+}
+
+func searchDistilledCaseSkills(query string, limit int) (actool.Result, error) {
+	type caseSkillCard struct {
+		Skill             string `json:"skill"`
+		Domain            string `json:"domain"`
+		Description       string `json:"description"`
+		VerifiedPaths     string `json:"verified_paths,omitempty"`
+		FindingsRetestsRE string `json:"findings_retests_re,omitempty"`
+		PitfallsAndStops  string `json:"pitfalls_and_stop_signals,omitempty"`
+		MatchedSection    string `json:"matched_section,omitempty"`
+	}
+	var results []caseSkillCard
+	ql := strings.ToLower(strings.TrimSpace(query))
+	skillDir := config.SkillDir()
+	if reg, err := skill.LoadDir(skillDir); err == nil && reg != nil {
+		for _, s := range reg.List() {
+			name := s.Name
+			if s.Dir != "" {
+				name = filepath.Base(s.Dir)
+			}
+			isCase := strings.HasPrefix(name, "case-") || strings.HasPrefix(name, "merged-")
+			if !isCase {
+				continue
+			}
+			body := s.Instructions
+			combined := strings.ToLower(name + "\n" + s.Description + "\n" + body)
+			if ql != "" && !strings.Contains(combined, ql) {
+				continue
+			}
+			domain := "web_security"
+			if strings.HasPrefix(name, "case-re-") || strings.Contains(s.Description, "software_re") {
+				domain = "software_re"
+			}
+			verified := extractMarkdownSection(body, "已验证的有效路径", 450)
+			var evidenceParts []string
+			for _, secTitle := range []string{"已确认漏洞与可利用点", "漏洞复测与修复验证", "逆向样本与静态分析证据", "关键事实与证据"} {
+				if sec := extractMarkdownSection(body, secTitle, 320); sec != "" {
+					evidenceParts = append(evidenceParts, sec)
+				}
+			}
+			pitfalls := extractMarkdownSection(body, "失败、误区与止损", 400)
+			var matchedSec string
+			if ql != "" {
+				for _, sec := range strings.Split(body, "\n## ") {
+					if strings.Contains(strings.ToLower(sec), ql) {
+						matchedSec = clipUTF8(strings.TrimSpace("## "+sec), 500)
+						break
+					}
+				}
+			}
+			results = append(results, caseSkillCard{
+				Skill:             name,
+				Domain:            domain,
+				Description:       s.Description,
+				VerifiedPaths:     verified,
+				FindingsRetestsRE: clipUTF8(strings.Join(evidenceParts, "\n"), 600),
+				PitfallsAndStops:  pitfalls,
+				MatchedSection:    matchedSec,
+			})
+			if len(results) >= limit {
+				break
+			}
+		}
+	}
+	return jsonResult(map[string]any{
+		"mode":       "case_skills",
+		"query":      query,
+		"skill_dir":  os.Getenv("ARTEX_SKILL_DIR"),
+		"count":      len(results),
+		"case_cards": results,
+	})
+}
+
+func extractMarkdownSection(body, title string, maxRunes int) string {
+	marker := "## " + title
+	idx := strings.Index(body, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := body[idx:]
+	if next := strings.Index(rest[len(marker):], "\n## "); next >= 0 {
+		rest = rest[:len(marker)+next]
+	}
+	rest = strings.TrimSpace(rest)
+	if maxRunes > 0 {
+		rest = clipUTF8(rest, maxRunes)
+	}
+	return rest
 }
 
 func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) {

@@ -5,7 +5,7 @@
     python3 -I scripts/check-binary-headers.py            # 校验全部六目标
     python3 -I scripts/check-binary-headers.py linux/amd64 darwin/arm64 ...
 
-目标文件为 dist/artex-<os>-<arch>/artex（Windows 为 artex.exe）。runner
+目标文件为 dist/artex-rea-<os>-<arch>/artex-rea（Windows 为 artex-rea.exe）。runner
 不能执行非宿主平台的二进制，这些检查代替冒烟测试；任何一项不符即非零退出。
 """
 
@@ -31,9 +31,13 @@ def check(spec: str) -> None:
     known = "、".join(f"{os_}/{arch_}" for os_, arches in TARGETS.items() for arch_ in arches)
     if arch not in TARGETS.get(goos, {}):
         sys.exit(f"不支持的目标：{spec}（支持 {known}）")
-    binary = ROOT / "dist" / f"artex-{goos}-{arch}" / ("artex.exe" if goos == "windows" else "artex")
+    binary = ROOT / "dist" / f"artex-rea-{goos}-{arch}" / ("artex-rea.exe" if goos == "windows" else "artex-rea")
     if not binary.is_file():
-        sys.exit(f"{binary}: 文件不存在（先构建再校验）")
+        legacy = ROOT / "dist" / f"artex-{goos}-{arch}" / ("artex.exe" if goos == "windows" else "artex")
+        if legacy.is_file():
+            binary = legacy
+        else:
+            sys.exit(f"{binary}: 文件不存在（先构建再校验）")
     with binary.open("rb") as handle:
         data = handle.read(4096)
     if goos == "windows":

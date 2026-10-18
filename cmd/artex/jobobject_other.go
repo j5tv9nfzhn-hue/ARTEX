@@ -2,9 +2,11 @@
 
 package main
 
-// guardProcessTree 在非 Windows 平台是空实现。
+// guardProcessTree 在 Linux / macOS 等非 Windows 平台上保持无侵入返回。
 //
-// Windows 之外的进程树由 SDK（norma）在每条命令结束/中断时按 ctx 终止进程组负责；
-// 「父进程被强杀后子进程变孤儿」这一类问题在 Linux/macOS 需要 session/PDEATHSIG
-// 之类的额外机制，本分支当前部署面是 Windows，暂不扩面（保持行为不变）。
+// 三端进程树收口分工：
+//   - Windows：由 jobobject_windows.go 的 Kill-On-Close Job Object 统一收口；
+//   - Linux / macOS：norma SDK 的 Bash 工具与 agent/proc_limiter_unix.go 均为子进程
+//     启用独立进程组（Setpgid: true），在超时或取消时向 -pgid 发送 SIGKILL 整组回收；
+//     守护脚本 start.sh 捕获 INT/TERM 并转发给主进程，配合上下文取消链完成退出清理。
 func guardProcessTree() error { return nil }

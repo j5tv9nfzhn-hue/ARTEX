@@ -73,7 +73,9 @@ import type {
   NotificationMeta,
   PromptVar,
   PromptVersion,
+  RECapabilityReport,
   REDataPage,
+  REEnginePreset,
   REEntity,
   REEvidence,
   REMCPCandidate,
@@ -89,6 +91,8 @@ import type {
   ShellCapability,
   SkillCall,
   SkillItem,
+  SkillProposal,
+  SkillProposalListResponse,
   SSProject,
   SSTask,
   Stats,
@@ -115,6 +119,7 @@ import type {
   TrafficResp,
   UpdateCheck,
   UsageStats,
+  VerificationCapabilities,
   WorkerTokenStat,
   WorkspaceFile,
   WorkspaceListing,
@@ -191,7 +196,7 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
 // Token is appended as ?token= because SSE can't carry cookies cross-origin.
 // mockReport returns a canned Markdown report for the demo.
 function mockReport(_task?: string): string {
-  return `# ARTEX 渗透测试报告：Acme Corp
+  return `# ARTEX-REA 渗透测试报告：Acme Corp
 
 ## 概述
 - 范围：acme.com（包含 www / admin / api / shop / vpn 子域名）
@@ -487,11 +492,13 @@ export const api = {
   taskAssetRefs: (id: string, assetId: number) => get<CoverageAssetRefs>(`/tasks/${id}/asset-refs?asset_id=${assetId}`),
 
   reOverview: (id: string) => get<REOverview>(`/tasks/${encodeURIComponent(id)}/re`),
+  rePresets: () => get<{ presets: REEnginePreset[] }>("/re/presets"),
   reLibrary: () => get<{ samples: RESample[]; limit: number }>("/re/samples"),
   reMCPCandidates: () => get<{ servers: REMCPCandidate[] }>("/re/mcp-candidates"),
   reSaveProvider: (input: { id?: number; mcp_id: number; name: string; kind: string; config: REProviderConfig }) =>
     post<{ id: number }>("/re/providers", input),
   reDiscover: (id: number) => post<REProvider>(`/re/providers/${id}/discover`, {}),
+  reCapabilities: (id: number) => get<RECapabilityReport>(`/re/providers/${id}/capabilities`),
   reUpload: (id: string, file: File) => {
     const data = new FormData();
     data.append("file", file);
@@ -1284,6 +1291,24 @@ export const api = {
     get<{ calls: SkillCall[] }>(`/skills/${name}/usage?limit=${limit}`).then((r) => arr(r.calls)),
   missingSkills: (limit = 20) =>
     get<{ missing: MissingSkill[] }>(`/skills/missing?limit=${limit}`).then((r) => arr(r.missing)),
+  skillProposals: (status: "pending" | "applied" | "rejected" | "all" = "all", limit = 50) =>
+    get<SkillProposalListResponse>(`/skills/proposals?status=${status}&limit=${limit}`),
+  reviewSkillProposal: (
+    id: string,
+    body: { decision: "approve" | "reject"; note?: string; content?: string },
+  ) => post<{ ok: boolean; message: string; proposal: SkillProposal }>(`/skills/proposals/${encodeURIComponent(id)}/review`, body),
+  batchReviewSkillProposals: (body: { ids: string[]; decision: "approve" | "reject"; note?: string }) =>
+    post<{ ok: boolean; succeeded: string[]; failed: Record<string, string> }>("/skills/proposals/batch-review", body),
+  mergeSkillProposals: (body: {
+    ids: string[];
+    name: string;
+    description?: string;
+    apply?: boolean;
+    reject_sources?: boolean;
+  }) => post<{ ok: boolean; proposal: SkillProposal }>("/skills/proposals/merge", body),
+  distillTaskSkill: (body: { task_id: number; apply?: boolean }) =>
+    post<{ ok: boolean; proposal: SkillProposal }>("/skills/distill", body),
+  verificationCapabilities: () => get<VerificationCapabilities>("/system/verification-capabilities"),
 
   // ---- visibility (MCP resource side) ---- (agent ids are strings per spec)
   resourceVisibility: (kind: string, id: number) =>

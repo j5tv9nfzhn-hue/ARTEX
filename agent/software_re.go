@@ -50,7 +50,7 @@ const softwareREMain = `你是软件逆向任务的人机协调者。解释事�
 // This is a workflow/tool-surface filter, NOT a sandbox or a replacement for interception.
 // Apply after DB injection so a Web binding cannot reintroduce active probes.
 func softwareRETools(tools []actool.CoreTool, def DeferredInfo) ([]actool.CoreTool, DeferredInfo) {
-	blocked := map[string]bool{"http_request": true, "http_fuzz": true, "http_sequence": true, "web_recon": true, "net_probe": true, "dns_probe": true, "tactical_kb": true, "add_task_scope": true, "list_untested_assets": true}
+	blocked := map[string]bool{"human_verification_flow": true, "http_request": true, "http_fuzz": true, "http_sequence": true, "web_recon": true, "net_probe": true, "dns_probe": true, "tactical_kb": true, "add_task_scope": true, "list_untested_assets": true}
 	out := make([]actool.CoreTool, 0, len(tools))
 	for _, tool := range tools {
 		if !blocked[tool.Name()] {
@@ -65,5 +65,5 @@ func softwareREArtifactSpec(dir string) string {
 }
 
 func softwareREHint() string {
-	return "软件逆向优先调用 software_analysis(mode=overview) 获取已登记样本、真实 Provider 与会话。用 open 建立独占静态会话，query 获取函数/反编译/交叉引用/调用关系，data/evidence 读取真实结果；不编造工具参数，不绕过工作台直连受管 MCP。结束时 close；缺少映射或工具则说明受阻。备用静态路径：先 binary_inspect；按实际挂载的 MCP schema 查询函数/交叉引用/类型。可选 Skill(reverse-engineering)，仅使用其中的软件静态分析分支。未安装 Provider 时交付明确的环境缺口。"
+	return "软件逆向优先调用 software_analysis(mode=overview) 获取已登记样本、真实 Provider、能力门控（capabilities.core_ready）与会话。仅在 Provider 的 core_ready=true 时用 open 建立独占静态会话，再用 query 获取函数/反编译/交叉引用/调用关系/模块(modules)/导入导出(imports/exports)/字符串(strings)，用 data/evidence 读取真实结果；不编造工具参数，不绕过工作台直连受管 MCP。结束时 close；缺少映射或工具则说明受阻。备用静态路径：先 binary_inspect；按实际挂载的 MCP schema 查询函数/交叉引用/类型。可选 Skill(reverse-engineering)，仅使用其中的软件静态分析分支。未安装 Provider 时交付明确的环境缺口。"
 }

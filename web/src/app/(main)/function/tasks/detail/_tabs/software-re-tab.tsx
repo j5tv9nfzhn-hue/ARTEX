@@ -19,9 +19,31 @@ const panel = "rounded-xl border bg-card p-4 space-y-3 min-w-0";
 const field = "rounded-md border bg-background px-3 py-2 text-sm min-w-0 disabled:opacity-50";
 const button = `${field} hover:bg-muted disabled:cursor-not-allowed`;
 const initialConfig: REProviderConfig = { mode: "open", reviewed_static: false, operations: {} };
-const panes = ["functions", "callgraph", "xrefs", "types", "evidence"] as const;
+const panes = [
+  "functions",
+  "callgraph",
+  "xrefs",
+  "types",
+  "modules",
+  "imports",
+  "exports",
+  "strings",
+  "evidence",
+] as const;
 type Pane = (typeof panes)[number];
-const queries = ["status", "identity", "functions", "decompile", "xrefs", "callgraph", "types"] as const;
+const queries = [
+  "status",
+  "identity",
+  "functions",
+  "decompile",
+  "xrefs",
+  "callgraph",
+  "types",
+  "modules",
+  "imports",
+  "exports",
+  "strings",
+] as const;
 const emptyPage: REDataPage<REEntity | REEvidence> = { items: [], has_more: false, next_before: 0 };
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -249,7 +271,16 @@ export function SoftwareRETab({ taskId }: { taskId: string }) {
   }
   const session = overview?.sessions.find((s) => s.id === sessionID);
   const selectedProvider = overview?.providers.find((p) => p.id === providerID);
+  const selectedCapability = providerID ? overview?.capabilities?.[providerID] : undefined;
   const editingProvider = overview?.providers.find((p) => p.id === editID);
+  const editingCapability = editID ? overview?.capabilities?.[editID] : undefined;
+  function applyPreset(targetKind: string) {
+    const preset = overview?.presets?.find((p) => p.kind === targetKind);
+    if (!preset) return;
+    setConfig(JSON.stringify(preset.config, null, 2));
+    setReviewed(false);
+    setStatus(t("presetLoaded", { title: preset.title }));
+  }
   const operations = queries.filter((q) => q !== "identity" && session?.snapshot.config.operations[q]);
   const mappedOperation = operations.includes(operation as (typeof queries)[number])
     ? operation
@@ -266,33 +297,53 @@ export function SoftwareRETab({ taskId }: { taskId: string }) {
           <h2 className="font-semibold">{t("title")}</h2>
           <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
         </div>
-        <button
-          className={button}
-          disabled={refreshing}
-          onClick={async () => {
-            setRefreshing(true);
-            try {
-              const [value, all, candidates] = await Promise.all([
-                api.reOverview(taskId),
-                api.reLibrary(),
-                api.reMCPCandidates(),
-              ]);
-              if (alive.current) {
-                setOverview(value);
-                setLibrary(all.samples);
-                setMCPs(candidates.servers);
-                setRevision((v) => v + 1);
-              }
-            } catch (e) {
-              if (alive.current) setError(messageOf(e));
-            } finally {
-              if (alive.current) setRefreshing(false);
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className={button}
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                const res = await api.distillTaskSkill({ task_id: Number(taskId) });
+                setStatus(
+                  t("distillDone", {
+                    skill: res.proposal.skill,
+                    status: res.proposal.status,
+                  }),
+                );
+              })
             }
-          }}
-          type="button"
-        >
-          {refreshing ? t("loading") : t("refresh")}
-        </button>
+            type="button"
+          >
+            {t("distillRE")}
+          </button>
+          <button
+            className={button}
+            disabled={refreshing}
+            onClick={async () => {
+              setRefreshing(true);
+              try {
+                const [value, all, candidates] = await Promise.all([
+                  api.reOverview(taskId),
+                  api.reLibrary(),
+                  api.reMCPCandidates(),
+                ]);
+                if (alive.current) {
+                  setOverview(value);
+                  setLibrary(all.samples);
+                  setMCPs(candidates.servers);
+                  setRevision((v) => v + 1);
+                }
+              } catch (e) {
+                if (alive.current) setError(messageOf(e));
+              } finally {
+                if (alive.current) setRefreshing(false);
+              }
+            }}
+            type="button"
+          >
+            {refreshing ? t("loading") : t("refresh")}
+          </button>
+        </div>
       </header>
       <p className="text-muted-foreground text-xs">{t("scope")}</p>
       {error && (
@@ -408,6 +459,12 @@ export function SoftwareRETab({ taskId }: { taskId: string }) {
             ))}
           </select>
           {!overview?.providers.length && <p className="text-muted-foreground text-xs">{t("noProvider")}</p>}
+          {selectedCapability && (
+            <p className="break-words text-xs">
+              {selectedCapability.core_ready ? t("capabilityReady") : t("capabilityBlocked")} ·{" "}
+              {selectedCapability.gate_reason}
+            </p>
+          )}
           <button
             className={button}
             type="button"
@@ -415,7 +472,8 @@ export function SoftwareRETab({ taskId }: { taskId: string }) {
               busy ||
               !sample ||
               !selectedProvider?.config.reviewed_static ||
-              selectedProvider.discovery !== "catalog_verified"
+              selectedProvider.discovery !== "catalog_verified" ||
+              Boolean(selectedCapability && !selectedCapability.core_ready)
             }
             onClick={() =>
               run(async () => {
@@ -772,6 +830,17 @@ export function SoftwareRETab({ taskId }: { taskId: string }) {
             <option value="ida">IDA MCP</option>
           </select>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={button}
+            disabled={busy || !overview?.presets?.some((p) => p.kind === kind)}
+            onClick={() => applyPreset(kind)}
+          >
+            {t("loadPreset")}
+          </button>
+          <span className="text-muted-foreground text-xs">{t("presetHint")}</span>
+        </div>
         <label className="block text-sm">
           {t("config")}
           <textarea
@@ -835,6 +904,14 @@ export function SoftwareRETab({ taskId }: { taskId: string }) {
         {editingProvider && (
           <p className="break-words text-xs">
             {t("providerState")}: {editingProvider.discovery} · {editingProvider.message}
+          </p>
+        )}
+        {editingCapability && (
+          <p className="break-words text-xs">
+            {editingCapability.core_ready ? t("capabilityReady") : t("capabilityBlocked")} ·{" "}
+            {editingCapability.gate_reason}
+            {editingCapability.ready_operations.length > 0 &&
+              ` · ${t("readyOps", { ops: editingCapability.ready_operations.join(", ") })}`}
           </p>
         )}
         <details>

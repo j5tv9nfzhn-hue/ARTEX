@@ -1,12 +1,12 @@
 #!/bin/sh
-# ARTEX 启动监护脚本，适用于 Linux、macOS 与 Docker ENTRYPOINT。
+# ARTEX-REA 启动监护脚本，适用于 Linux、macOS 与 Docker ENTRYPOINT。
 #
 # 用法：
-# ./start.sh                       前台运行，Ctrl-C 停止
-# nohup ./start.sh >artex.log 2>&1 & 后台运行
-# ./start.sh -addr :9000           其他参数原样传给 artex
+# ./start.sh                           前台运行，Ctrl-C 停止
+# nohup ./start.sh >artex-rea.log 2>&1 & 后台运行
+# ./start.sh -addr :9000               其他参数原样传给 artex-rea
 #
-# 启动 artex，并在进程退出后按退出码决定是否重启。
+# 启动 artex-rea，并在进程退出后按退出码决定是否重启。
 #
 # 0：用户正常停止，结束循环。
 # 75：请求重启，立即重新运行，用于页面的一键更新或回滚。
@@ -15,13 +15,16 @@
 # 下载、SHA256 校验、版本替换不在脚本中重复实现。
 # 若替换为无法运行的二进制，简单重启会反复失败，只能人工恢复。
 # 因此关键校验与切换统一在 Go selfupdate 包中实现。
-# artex 启动时自行处理，sh 与 bat 保持简单。
+# artex-rea 启动时自行处理，sh 与 bat 保持简单。
 set -u
 
 cd "$(dirname "$0")" || exit 1
 
-BIN=./artex
-[ -x "$BIN" ] || { echo "[artex] 找不到可执行文件：$BIN" >&2; exit 1; }
+BIN=./artex-rea
+if [ ! -x "$BIN" ] && [ -x ./artex ]; then
+	BIN=./artex
+fi
+[ -x "$BIN" ] || { echo "[artex-rea] 找不到可执行文件：$BIN" >&2; exit 1; }
 
 RESTART_CODE=75
 MAX_DELAY=60
@@ -29,7 +32,7 @@ MAX_DELAY=60
 child=0
 stopping=0
 
-# 将停止信号转发给 artex。
+# 将停止信号转发给 artex-rea。
 #
 # Docker 必须转发，因为 docker stop 只向 PID 1，即本脚本发送 SIGTERM。
 # 子进程不会自动收到信号，不转发会阻止优雅退出。
@@ -58,22 +61,22 @@ while :; do
 	child=0
 
 	if [ "$stopping" -eq 1 ]; then
-		echo "[artex] 已停止"
+		echo "[artex-rea] 已停止"
 		exit 0
 	fi
 
 	case "$code" in
 		0)
-			echo "[artex] 正常退出"
+			echo "[artex-rea] 正常退出"
 			exit 0
 			;;
 		"$RESTART_CODE")
 			# 更新或回滚已准备，重新运行时完成版本替换，参见 selfupdate.Bootstrap。
-			echo "[artex] 收到重启请求，正在应用新版本…"
+			echo "[artex-rea] 收到重启请求，正在应用新版本…"
 			delay=1
 			;;
 		*)
-			echo "[artex] 异常退出 (code=$code)，${delay} 秒后重启" >&2
+			echo "[artex-rea] 异常退出 (code=$code)，${delay} 秒后重启" >&2
 			sleep "$delay"
 			delay=$((delay * 2))
 			[ "$delay" -gt "$MAX_DELAY" ] && delay=$MAX_DELAY

@@ -17,11 +17,11 @@ func testPaths(t *testing.T) Paths {
 	dir := t.TempDir()
 	return Paths{
 		Dir:     dir,
-		Current: filepath.Join(dir, "artex"),
-		New:     filepath.Join(dir, "artex.new"),
-		Sum:     filepath.Join(dir, "artex.new.sha256"),
-		Old:     filepath.Join(dir, "artex.old"),
-		Marker:  filepath.Join(dir, "artex.upgrade.json"),
+		Current: filepath.Join(dir, "artex-rea"),
+		New:     filepath.Join(dir, "artex-rea.new"),
+		Sum:     filepath.Join(dir, "artex-rea.new.sha256"),
+		Old:     filepath.Join(dir, "artex-rea.old"),
+		Marker:  filepath.Join(dir, "artex-rea.upgrade.json"),
 	}
 }
 
@@ -293,18 +293,18 @@ func TestParseSums(t *testing.T) {
 		winSum   = "ABCDEF0000000000000000000000000000000000000000000000000000000000"
 	)
 	// sha256sum 输出是双空格分隔；shasum -a 256 在二进制模式下会给文件名加 *。
-	raw := linuxSum + "  artex-0.3.8-linux-amd64.zip\n" +
-		winSum + " *artex-0.3.8-windows-amd64.zip\n" +
+	raw := linuxSum + "  artex-rea-0.3.8-linux-amd64.zip\n" +
+		winSum + " *artex-rea-0.3.8-windows-amd64.zip\n" +
 		"\n" +
 		"garbage line\n" + // 恰好两个字段，但第一个不是摘要
-		"deadbeef  artex-0.3.8-darwin-arm64.zip\n" // 摘要长度不对
+		"deadbeef  artex-rea-0.3.8-darwin-arm64.zip\n" // 摘要长度不对
 
 	out := parseSums(raw)
-	if out["artex-0.3.8-linux-amd64.zip"] != linuxSum {
+	if out["artex-rea-0.3.8-linux-amd64.zip"] != linuxSum {
 		t.Errorf("linux 条目解析错误: %v", out)
 	}
 	// 摘要统一小写，比对时才不会因大小写误判为不匹配。
-	if got := out["artex-0.3.8-windows-amd64.zip"]; got != strings.ToLower(winSum) {
+	if got := out["artex-rea-0.3.8-windows-amd64.zip"]; got != strings.ToLower(winSum) {
 		t.Errorf("windows 条目错误（* 前缀应剥离、摘要应转小写）: %q", got)
 	}
 	if len(out) != 2 {
@@ -314,7 +314,7 @@ func TestParseSums(t *testing.T) {
 
 func TestExtractBinaryFindsNestedEntry(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("包内基名在 Windows 上是 artex.exe，此用例按 Unix 命名构造")
+		t.Skip("包内基名在 Windows 上是 artex-rea.exe，此用例按 Unix 命名构造")
 	}
 	dir := t.TempDir()
 	zipPath := filepath.Join(dir, "release.zip")
@@ -324,12 +324,12 @@ func TestExtractBinaryFindsNestedEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	zw := zip.NewWriter(f)
-	// 真实发布包的结构：artex-<版本>-<os>-<arch>/artex，外加若干干扰文件。
+	// 真实发布包的结构：artex-rea-<版本>-<os>-<arch>/artex-rea，外加若干干扰文件。
 	for name, body := range map[string]string{
-		"artex-0.3.8-linux-amd64/README.md":           "readme",
-		"artex-0.3.8-linux-amd64/skills/a.md":         "skill",
-		"artex-0.3.8-linux-amd64/artex":               "#!/bin/sh\nexit 0\n",
-		"artex-0.3.8-linux-amd64/config.example.json": "{}",
+		"artex-rea-0.3.8-linux-amd64/README.md":           "readme",
+		"artex-rea-0.3.8-linux-amd64/skills/a.md":         "skill",
+		"artex-rea-0.3.8-linux-amd64/artex-rea":           "#!/bin/sh\nexit 0\n",
+		"artex-rea-0.3.8-linux-amd64/config.example.json": "{}",
 	} {
 		w, err := zw.Create(name)
 		if err != nil {
@@ -349,7 +349,7 @@ func TestExtractBinaryFindsNestedEntry(t *testing.T) {
 		t.Fatalf("extractBinary: %v", err)
 	}
 	if got := readAll(t, dst); !strings.Contains(got, "exit 0") {
-		t.Errorf("解压出来的不是 artex 可执行文件: %q", got)
+		t.Errorf("解压出来的不是 artex-rea 可执行文件: %q", got)
 	}
 	info, err := os.Stat(dst)
 	if err != nil {
@@ -368,7 +368,7 @@ func TestExtractBinaryMissingEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	zw := zip.NewWriter(f)
-	w, _ := zw.Create("artex-0.3.8-linux-amd64/README.md")
+	w, _ := zw.Create("artex-rea-0.3.8-linux-amd64/README.md")
 	_, _ = w.Write([]byte("readme"))
 	_ = zw.Close()
 	f.Close()
@@ -405,12 +405,12 @@ func TestCheckURLRejectsNonGitHub(t *testing.T) {
 }
 
 func TestAssetNameMatchesBuildScript(t *testing.T) {
-	// build.sh 的 package_binary 用的是 artex-<版本>-<os>-<arch>.zip，且版本号
+	// build.sh 的 package_binary 用的是 artex-rea-<版本>-<os>-<arch>.zip，且版本号
 	// 去掉了 v 前缀。这里对错一个字符，所有平台的一键更新都会找不到资产。
-	if got := AssetName("v0.3.8", "linux", "amd64"); got != "artex-0.3.8-linux-amd64.zip" {
+	if got := AssetName("v0.3.8", "linux", "amd64"); got != "artex-rea-0.3.8-linux-amd64.zip" {
 		t.Errorf("AssetName = %q", got)
 	}
-	if got := AssetName("0.3.8", "windows", "amd64"); got != "artex-0.3.8-windows-amd64.zip" {
+	if got := AssetName("0.3.8", "windows", "amd64"); got != "artex-rea-0.3.8-windows-amd64.zip" {
 		t.Errorf("AssetName = %q", got)
 	}
 }

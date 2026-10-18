@@ -1,7 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,6 +201,118 @@ func TestSkillGateOffWritesDirectly(t *testing.T) {
 		if p.Skill == "direct-skill" {
 			t.Fatal("门控关闭时不应登记提议")
 		}
+	}
+}
+
+func TestStageSkillProposalAlwaysStagesEvenWhenGateOff(t *testing.T) {
+	// propose_skill 工具走 stageSkillProposal，即使门控关闭也必须进入待审队列。
+	s, pg, dir := newSkillServer(t)
+	if err := pg.SetBool(settingSkillReviewGate, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.stageSkillProposal(context.Background(), "always-staged-skill", "", skillDoc("always-staged-skill"),
+		"缺口未命中记录", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if skillFileExists(dir, "always-staged-skill", "SKILL.md") {
+		t.Fatal("stageSkillProposal 即使在门控关闭时也不应直接落盘")
+	}
+	p := findProposal(t, pg, "always-staged-skill")
+	if p.Status != db.SkillProposalPending {
+		t.Fatalf("status=%q, want pending", p.Status)
+	}
+}
+
+func TestSkillProposalsHTTPAndContentEdit(t *testing.T) {
+	s, pg, dir := newSkillServer(t)
+	if err := pg.SetBool(settingSkillReviewGate, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.stageSkillProposal(context.Background(), "http-review-skill", "", skillDoc("http-review-skill"),
+		"测试 HTTP 审阅", "curator"); err != nil {
+		t.Fatal(err)
+	}
+	p := findProposal(t, pg, "http-review-skill")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/skills/proposals", s.fsListSkillProposals)
+	mux.HandleFunc("POST /api/skills/proposals/{id}/review", s.fsReviewSkillProposal)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills/proposals?status=all", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/skills/proposals status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	editedContent := buildSkillDocument("http-review-skill", "修订后的技能描述", "## 何时使用\n\n人工修订后批准。\n")
+	payload, _ := json.Marshal(map[string]any{
+		"decision": "approve",
+		"note":     "修订正文后批准",
+		"content":  editedContent,
+	})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/skills/proposals/"+p.ID+"/review", bytes.NewReader(payload))
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("POST review status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "http-review-skill", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("expected approved skill on disk: %v", err)
+	}
+	if string(raw) != editedContent {
+		t.Fatalf("disk content mismatch:\ngot:  %s\nwant: %s", string(raw), editedContent)
+	}
+}
+
+func TestSkillProposalsBatchReviewAndMerge(t *testing.T) {
+	s, pg, dir := newSkillServer(t)
+	if err := pg.SetBool(settingSkillReviewGate, true); err != nil {
+		t.Fatal(err)
+	}
+	doc1 := buildSkillDocument("case-web-101", "案例101", "## 已验证的有效路径\n\n- 路径A\n\n## 失败、误区与止损\n\n- 止损A\n")
+	doc2 := buildSkillDocument("case-web-102", "案例102", "## 已验证的有效路径\n\n- 路径B\n\n## 失败、误区与止损\n\n- 止损B\n")
+	if _, err := s.stageSkillProposal(context.Background(), "case-web-101", "", doc1, "task=101", "curator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.stageSkillProposal(context.Background(), "case-web-102", "", doc2, "task=102", "curator"); err != nil {
+		t.Fatal(err)
+	}
+	p1 := findProposal(t, pg, "case-web-101")
+	p2 := findProposal(t, pg, "case-web-102")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/skills/proposals/merge", s.fsMergeSkillProposals)
+	mux.HandleFunc("POST /api/skills/proposals/batch-review", s.fsBatchReviewSkillProposals)
+	mux.HandleFunc("GET /api/system/verification-capabilities", s.sysVerificationCapabilities)
+
+	mergePayload, _ := json.Marshal(map[string]any{
+		"ids":            []string{p1.ID, p2.ID},
+		"name":           "merged-coupon-tactics",
+		"description":    "合并优惠券并发与越权复盘经验",
+		"apply":          true,
+		"reject_sources": true,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/proposals/merge", bytes.NewReader(mergePayload))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST merge status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	mergedRaw, err := os.ReadFile(filepath.Join(dir, "merged-coupon-tactics", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("expected merged skill on disk: %v", err)
+	}
+	if !strings.Contains(string(mergedRaw), "路径A") || !strings.Contains(string(mergedRaw), "路径B") {
+		t.Fatalf("merged content missing source paths:\n%s", string(mergedRaw))
+	}
+
+	reqCap := httptest.NewRequest(http.MethodGet, "/api/system/verification-capabilities", nil)
+	recCap := httptest.NewRecorder()
+	mux.ServeHTTP(recCap, reqCap)
+	if recCap.Code != http.StatusOK || !strings.Contains(recCap.Body.String(), "altcha_v1_sha256_sha512") {
+		t.Fatalf("GET verification-capabilities unexpected response: %d %s", recCap.Code, recCap.Body.String())
 	}
 }
 

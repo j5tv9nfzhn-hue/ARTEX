@@ -238,14 +238,16 @@ func get(ctx context.Context, c *http.Client, rawURL string) (io.ReadCloser, err
 	return resp.Body, nil
 }
 
-// extractBinary 从发布包里取出 artex 可执行文件。
+// extractBinary 从发布包里取出 artex-rea 可执行文件（兼容旧版 artex 命名）。
 //
-// 包内结构是 artex-<版本>-<os>-<arch>/artex，但这里按**基名**匹配而不是拼完整
+// 包内结构是 artex-rea-<版本>-<os>-<arch>/artex-rea，但这里按**基名**匹配而不是拼完整
 // 路径：版本号在包名里出现过一次，拼错一个字符就整个升级失败，按基名找更耐改。
 func extractBinary(zipPath, dst string) error {
-	want := "artex"
+	want := "artex-rea"
+	legacy := "artex"
 	if runtime.GOOS == "windows" {
-		want = "artex.exe"
+		want = "artex-rea.exe"
+		legacy = "artex.exe"
 	}
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -254,7 +256,8 @@ func extractBinary(zipPath, dst string) error {
 	defer zr.Close()
 
 	for _, entry := range zr.File {
-		if entry.FileInfo().IsDir() || !strings.EqualFold(path.Base(entry.Name), want) {
+		base := path.Base(entry.Name)
+		if entry.FileInfo().IsDir() || (!strings.EqualFold(base, want) && !strings.EqualFold(base, legacy)) {
 			continue
 		}
 		rc, err := entry.Open()

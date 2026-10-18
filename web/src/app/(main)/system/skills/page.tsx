@@ -4,6 +4,7 @@ import * as React from "react";
 
 import {
   AlertTriangleIcon,
+  CheckCircle2Icon,
   ChevronRightIcon,
   FilePlusIcon,
   FileTextIcon,
@@ -11,8 +12,10 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   PlusIcon,
+  SparklesIcon,
   Trash2Icon,
   UploadIcon,
+  XCircleIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -39,7 +42,7 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
-import type { Agent, MCPServer, MissingSkill, SkillCall, SkillItem } from "@/lib/types";
+import type { Agent, MCPServer, MissingSkill, SkillCall, SkillItem, SkillProposal } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const BUILTIN_SKILL_NAMES = new Set([
@@ -50,6 +53,7 @@ const BUILTIN_SKILL_NAMES = new Set([
   "reverse-engineering",
   "exploit-kb-patterns",
   "expert-triage-pivot",
+  "human-verification",
 ]);
 
 function fmtTime(ts: string | undefined, never: string) {
@@ -155,11 +159,15 @@ type PendingDelete =
 function SkillsOverview({
   skills,
   missing,
+  pendingProposalsCount,
   onSelect,
+  onOpenProposals,
 }: {
   skills: SkillItem[];
   missing: MissingSkill[];
+  pendingProposalsCount: number;
   onSelect: (name: string) => void;
+  onOpenProposals: () => void;
 }) {
   const t = useTranslations("skillsPage");
   const agg = React.useMemo(() => {
@@ -212,6 +220,18 @@ function SkillsOverview({
         <h2 className="font-semibold text-base">{t("overviewTitle")}</h2>
         <p className="text-muted-foreground text-sm">{t("overviewDesc")}</p>
       </div>
+
+      {pendingProposalsCount > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3.5 py-2.5">
+          <div className="flex items-center gap-2 text-xs">
+            <SparklesIcon className="size-4 shrink-0 text-primary" />
+            <span className="font-medium">{t("pendingBannerText", { count: pendingProposalsCount })}</span>
+          </div>
+          <Button size="sm" variant="default" className="h-7 text-xs" onClick={onOpenProposals}>
+            {t("pendingBannerAction")}
+          </Button>
+        </div>
+      )}
 
       {/* 指标卡 */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -362,6 +382,45 @@ export default function SkillsPage() {
   const [usageLoading, setUsageLoading] = React.useState(false);
   const [missing, setMissing] = React.useState<MissingSkill[]>([]);
 
+  // AI 自主沉淀：技能提议审阅队列与任务手动提炼
+  const [proposalsOpen, setProposalsOpen] = React.useState(false);
+  const [proposals, setProposals] = React.useState<SkillProposal[]>([]);
+  const [proposalCounts, setProposalCounts] = React.useState<Record<string, number>>({});
+  const [proposalFilter, setProposalFilter] = React.useState<"pending" | "applied" | "rejected" | "all">("pending");
+  const [selectedProposalId, setSelectedProposalId] = React.useState<string | null>(null);
+  const [proposalContent, setProposalContent] = React.useState("");
+  const [reviewNote, setReviewNote] = React.useState("");
+  const [reviewingAction, setReviewingAction] = React.useState<"approve" | "reject" | null>(null);
+  const [distillTaskId, setDistillTaskId] = React.useState("");
+  const [distillApplyDirect, setDistillApplyDirect] = React.useState(false);
+  const [distilling, setDistilling] = React.useState(false);
+  const [checkedProposalIds, setCheckedProposalIds] = React.useState<string[]>([]);
+  const [batchBusy, setBatchBusy] = React.useState(false);
+  const [mergeOpen, setMergeOpen] = React.useState(false);
+  const [mergeName, setMergeName] = React.useState("merged-case-tactics");
+  const [mergeDesc, setMergeDesc] = React.useState("");
+  const [mergeApplyDirect, setMergeApplyDirect] = React.useState(false);
+  const [mergeRejectSources, setMergeRejectSources] = React.useState(true);
+  const [merging, setMerging] = React.useState(false);
+
+  const loadProposals = React.useCallback((status: "pending" | "applied" | "rejected" | "all" = "all") => {
+    api
+      .skillProposals(status, 100)
+      .then((res) => {
+        const list = res.proposals ?? [];
+        setProposals(list);
+        setProposalCounts(res.counts ?? {});
+        setCheckedProposalIds((cur) => cur.filter((id) => list.some((p) => p.id === id)));
+        setSelectedProposalId((cur) => {
+          if (cur && list.some((p) => p.id === cur)) return cur;
+          return list[0]?.id ?? null;
+        });
+      })
+      .catch(() => {
+        /* 忽略提议查询失败。 */
+      });
+  }, []);
+
   // ── Data ──────────────────────────────────────────────────────────────────
   const load = React.useCallback(() => {
     api
@@ -382,6 +441,7 @@ export default function SkillsPage() {
       .catch(() => {
         /* 查询失败时保留默认状态。 */
       });
+    loadProposals("all");
     api
       .skills()
       .then((ss) => {
@@ -398,10 +458,22 @@ export default function SkillsPage() {
       .catch(() => {
         /* 查询失败时保留默认状态。 */
       });
-  }, []);
+  }, [loadProposals]);
 
   React.useEffect(() => {
     load();
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const pid = sp.get("proposal");
+      const openFlag = sp.get("openProposals");
+      if (pid) {
+        setProposalFilter("all");
+        setSelectedProposalId(pid);
+        setProposalsOpen(true);
+      } else if (openFlag === "1" || openFlag === "true") {
+        setProposalsOpen(true);
+      }
+    }
   }, [load]);
 
   // ── Upload a .zip skill ───────────────────────────────────────────────────
@@ -671,6 +743,139 @@ export default function SkillsPage() {
     }
   }
 
+  const filteredProposals = React.useMemo(() => {
+    if (proposalFilter === "all") return proposals;
+    return proposals.filter((p) => p.status === proposalFilter);
+  }, [proposals, proposalFilter]);
+
+  const selectedProposal = React.useMemo(
+    () => filteredProposals.find((p) => p.id === selectedProposalId) ?? filteredProposals[0] ?? null,
+    [filteredProposals, selectedProposalId],
+  );
+
+  React.useEffect(() => {
+    if (!selectedProposal) {
+      setProposalContent("");
+      setReviewNote("");
+      return;
+    }
+    setProposalContent(selectedProposal.content ?? "");
+    setReviewNote(selectedProposal.note ?? "");
+  }, [selectedProposal]);
+
+  async function handleReviewProposal(decision: "approve" | "reject") {
+    if (!selectedProposal) return;
+    setReviewingAction(decision);
+    try {
+      const res = await api.reviewSkillProposal(selectedProposal.id, {
+        decision,
+        note: reviewNote.trim() || undefined,
+        content: decision === "approve" ? proposalContent : undefined,
+      });
+      toast.success(
+        decision === "approve"
+          ? t("proposalApprovedToast", { skill: res.proposal?.skill ?? selectedProposal.skill })
+          : t("proposalRejectedToast", { skill: res.proposal?.skill ?? selectedProposal.skill }),
+      );
+      load();
+    } catch (e) {
+      toast.error(t("opFailed", { msg: (e as Error).message }));
+    } finally {
+      setReviewingAction(null);
+    }
+  }
+
+  async function handleDistillTask() {
+    const taskId = Number(distillTaskId.trim());
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      toast.error(t("distillNeedTaskId"));
+      return;
+    }
+    setDistilling(true);
+    try {
+      const res = await api.distillTaskSkill({ task_id: taskId, apply: distillApplyDirect });
+      const prop = res.proposal;
+      toast.success(
+        prop.status === "applied"
+          ? t("distillSuccessApplied", { skill: prop.skill })
+          : t("distillSuccessPending", { skill: prop.skill }),
+      );
+      setDistillTaskId("");
+      setProposalFilter(prop.status === "applied" ? "applied" : "pending");
+      setSelectedProposalId(prop.id);
+      load();
+    } catch (e) {
+      toast.error(t("opFailed", { msg: (e as Error).message }));
+    } finally {
+      setDistilling(false);
+    }
+  }
+
+  function toggleCheckedProposal(id: string, on: boolean) {
+    setCheckedProposalIds((cur) => (on ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter((x) => x !== id)));
+  }
+
+  async function handleBatchReview(decision: "approve" | "reject") {
+    const pendingSelected = proposals
+      .filter((p) => checkedProposalIds.includes(p.id) && p.status === "pending")
+      .map((p) => p.id);
+    if (pendingSelected.length === 0) {
+      toast.error(t("batchNeedPending"));
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      const res = await api.batchReviewSkillProposals({
+        ids: pendingSelected,
+        decision,
+        note: reviewNote.trim() || undefined,
+      });
+      toast.success(
+        decision === "approve"
+          ? t("batchApprovedToast", { count: res.succeeded?.length ?? pendingSelected.length })
+          : t("batchRejectedToast", { count: res.succeeded?.length ?? pendingSelected.length }),
+      );
+      setCheckedProposalIds([]);
+      load();
+    } catch (e) {
+      toast.error(t("opFailed", { msg: (e as Error).message }));
+    } finally {
+      setBatchBusy(false);
+    }
+  }
+
+  async function handleMergeProposals() {
+    if (checkedProposalIds.length < 2) {
+      toast.error(t("mergeNeedTwo"));
+      return;
+    }
+    if (!mergeName.trim()) {
+      toast.error(t("needName"));
+      return;
+    }
+    setMerging(true);
+    try {
+      const res = await api.mergeSkillProposals({
+        ids: checkedProposalIds,
+        name: mergeName.trim(),
+        description: mergeDesc.trim() || undefined,
+        apply: mergeApplyDirect,
+        reject_sources: mergeRejectSources,
+      });
+      const prop = res.proposal;
+      toast.success(t("mergeSuccessToast", { skill: prop.skill }));
+      setMergeOpen(false);
+      setCheckedProposalIds([]);
+      setProposalFilter(prop.status === "applied" ? "applied" : "pending");
+      setSelectedProposalId(prop.id);
+      load();
+    } catch (e) {
+      toast.error(t("opFailed", { msg: (e as Error).message }));
+    } finally {
+      setMerging(false);
+    }
+  }
+
   // ── Inline input JSX helper (NOT a React component — avoids remount on re-render) ──
   // Defined as a plain function returning JSX so React never sees a new component type.
   function inlineInputJSX(indent: number) {
@@ -836,6 +1041,7 @@ export default function SkillsPage() {
   }
 
   const selectedSkill = selected ? (skills.find((s) => s.name === selected.skill) ?? null) : null;
+  const pendingProposalsCount = proposalCounts.pending ?? 0;
 
   return (
     <div data-content-padding="false" className="flex flex-1 flex-col overflow-hidden">
@@ -844,35 +1050,66 @@ export default function SkillsPage() {
           <h1 className="font-semibold text-sm leading-tight">{t("title")}</h1>
           <p className="text-muted-foreground text-xs">{t("subtitle")}</p>
         </div>
-        {/* 缺口清单：agent 点名调用、但库里没有的 skill —— 直接是该补什么的依据。 */}
-        {missing.length > 0 && (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button size="sm" variant="outline" className="ml-auto">
-                <AlertTriangleIcon className="size-3.5 text-amber-500" />
-                {t("missingCount", { count: missing.length })}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-80">
-              <p className="mb-2 text-muted-foreground text-xs">{t("missingHint")}</p>
-              <div className="space-y-1">
-                {missing.map((m) => (
-                  <div key={m.skill} className="flex items-center gap-2 text-sm">
-                    <code className="min-w-0 flex-1 truncate font-mono text-xs" title={m.skill}>
-                      {m.skill}
-                    </code>
-                    <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-                      {t("callsCount", { count: m.calls })}
-                    </span>
-                    <span className="shrink-0 text-muted-foreground text-xs">
-                      {fmtTime(m.last_used, t("neverCalled"))}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {/* 缺口清单：agent 点名调用、但库里没有的 skill —— 直接是该补什么的依据。 */}
+          {missing.length > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button size="sm" variant="outline">
+                  <AlertTriangleIcon className="size-3.5 text-amber-500" />
+                  {t("missingCount", { count: missing.length })}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-96">
+                <p className="mb-2 text-muted-foreground text-xs">{t("missingHint")}</p>
+                <div className="space-y-1.5">
+                  {missing.map((m) => (
+                    <div key={m.skill} className="flex items-center gap-2 text-sm">
+                      <code className="min-w-0 flex-1 truncate font-mono text-xs" title={m.skill}>
+                        {m.skill}
+                      </code>
+                      <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
+                        {t("callsCount", { count: m.calls })}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground text-xs">
+                        {fmtTime(m.last_used, t("neverCalled"))}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => {
+                          setNewName(m.skill);
+                          setNewDesc(`针对未命中技能缺口 ${m.skill}（被调用 ${m.calls} 次）补充的标准作业规程。`);
+                          setNewOpen(true);
+                        }}
+                      >
+                        <PlusIcon className="size-3" />
+                        {t("draftFromMissing")}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+          <Button
+            size="sm"
+            variant={pendingProposalsCount > 0 ? "default" : "outline"}
+            onClick={() => {
+              loadProposals("all");
+              setProposalsOpen(true);
+            }}
+          >
+            <SparklesIcon className="size-3.5" />
+            {t("proposalsBtn")}
+            {pendingProposalsCount > 0 && (
+              <span className="ml-1 rounded-full bg-background/20 px-1.5 py-0.2 font-mono text-[11px] tabular-nums">
+                {pendingProposalsCount}
+              </span>
+            )}
+          </Button>
+        </div>
       </div>
       <div className="flex flex-1 overflow-hidden">
         {/* ── 左侧文件树 ── */}
@@ -1022,7 +1259,12 @@ export default function SkillsPage() {
             <SkillsOverview
               skills={skills}
               missing={missing}
+              pendingProposalsCount={pendingProposalsCount}
               onSelect={(name) => setSelected({ skill: name, path: null })}
+              onOpenProposals={() => {
+                loadProposals("all");
+                setProposalsOpen(true);
+              }}
             />
           )}
 
@@ -1037,6 +1279,16 @@ export default function SkillsPage() {
                   {BUILTIN_SKILL_NAMES.has(selectedSkill.name) && (
                     <Badge variant="secondary" className="font-normal text-xs">
                       Built-in
+                    </Badge>
+                  )}
+                  {selectedSkill.name.startsWith("case-") && (
+                    <Badge variant="outline" className="border-primary/40 font-normal text-primary text-xs">
+                      {t("distilledCaseBadge")}
+                    </Badge>
+                  )}
+                  {selectedSkill.name.startsWith("merged-") && (
+                    <Badge variant="outline" className="border-emerald-500/40 font-normal text-emerald-600 text-xs dark:text-emerald-400">
+                      {t("mergedCaseBadge")}
                     </Badge>
                   )}
                   {selectedSkill.mcps?.map((m) => (
@@ -1374,6 +1626,331 @@ export default function SkillsPage() {
               {creatingSkill ? t("creating") : t("create")}
             </Button>
           </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      {/* ── AI 自主沉淀：技能提议审阅与手动任务提炼 ── */}
+      <Sheet open={proposalsOpen} onOpenChange={setProposalsOpen}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 data-[side=right]:sm:max-w-4xl">
+          <SheetHeader className="border-b px-4 py-3">
+            <SheetTitle className="flex items-center gap-2 text-sm">
+              <SparklesIcon className="size-4 text-primary" />
+              {t("proposalsTitle")}
+            </SheetTitle>
+            <p className="text-muted-foreground text-xs">{t("proposalsDesc")}</p>
+          </SheetHeader>
+
+          {/* 手动从任务提炼 */}
+          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-4 py-2.5">
+            <span className="font-medium text-xs">{t("distillSectionTitle")}</span>
+            <Input
+              className="h-7 w-40 font-mono text-xs"
+              placeholder={t("distillTaskPlaceholder")}
+              value={distillTaskId}
+              onChange={(e) => setDistillTaskId(e.target.value)}
+            />
+            <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground text-xs">
+              <Checkbox
+                checked={distillApplyDirect}
+                onCheckedChange={(on) => setDistillApplyDirect(!!on)}
+              />
+              {t("distillApplyDirect")}
+            </label>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="ml-auto h-7 text-xs"
+              disabled={distilling}
+              onClick={() => void handleDistillTask()}
+            >
+              <SparklesIcon className="size-3" />
+              {distilling ? t("distilling") : t("distillAction")}
+            </Button>
+          </div>
+
+          {/* 状态筛选与批量治理栏 */}
+          <div className="flex flex-wrap items-center gap-1.5 border-b px-4 py-2">
+            {(
+              [
+                { key: "pending", label: t("proposalFilterPending"), count: proposalCounts.pending ?? 0 },
+                { key: "applied", label: t("proposalFilterApplied"), count: proposalCounts.applied ?? 0 },
+                { key: "rejected", label: t("proposalFilterRejected"), count: proposalCounts.rejected ?? 0 },
+                {
+                  key: "all",
+                  label: t("proposalFilterAll"),
+                  count:
+                    (proposalCounts.pending ?? 0) +
+                    (proposalCounts.applied ?? 0) +
+                    (proposalCounts.rejected ?? 0),
+                },
+              ] as const
+            ).map((tab) => (
+              <Button
+                key={tab.key}
+                size="sm"
+                variant={proposalFilter === tab.key ? "default" : "ghost"}
+                className="h-7 px-2.5 text-xs"
+                onClick={() => setProposalFilter(tab.key)}
+              >
+                {tab.label}
+                <span className="ml-1 font-mono text-[11px] opacity-80 tabular-nums">({tab.count})</span>
+              </Button>
+            ))}
+
+            {checkedProposalIds.length > 0 && (
+              <div className="ml-auto flex items-center gap-1.5">
+                <span className="text-muted-foreground text-xs">
+                  {t("selectedCount", { count: checkedProposalIds.length })}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  disabled={batchBusy}
+                  onClick={() => void handleBatchReview("approve")}
+                >
+                  <CheckCircle2Icon className="size-3 text-emerald-500" />
+                  {t("batchApproveBtn")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  disabled={batchBusy}
+                  onClick={() => void handleBatchReview("reject")}
+                >
+                  <XCircleIcon className="size-3 text-destructive" />
+                  {t("batchRejectBtn")}
+                </Button>
+                {checkedProposalIds.length >= 2 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setMergeOpen((v) => !v)}
+                  >
+                    <SparklesIcon className="size-3 text-primary" />
+                    {t("mergeProposalsBtn")}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 跨任务合并提炼面板 */}
+          {mergeOpen && checkedProposalIds.length >= 2 && (
+            <div className="space-y-2 border-b bg-primary/5 px-4 py-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">{t("mergePanelTitle", { count: checkedProposalIds.length })}</span>
+                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setMergeOpen(false)}>
+                  {t("cancel")}
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input
+                  className="h-7 font-mono text-xs"
+                  placeholder="merged-web-tactics"
+                  value={mergeName}
+                  onChange={(e) => setMergeName(e.target.value)}
+                />
+                <Input
+                  className="h-7 text-xs"
+                  placeholder={t("mergeDescPlaceholder")}
+                  value={mergeDesc}
+                  onChange={(e) => setMergeDesc(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-4 pt-0.5">
+                <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground">
+                  <Checkbox checked={mergeApplyDirect} onCheckedChange={(on) => setMergeApplyDirect(!!on)} />
+                  {t("distillApplyDirect")}
+                </label>
+                <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground">
+                  <Checkbox checked={mergeRejectSources} onCheckedChange={(on) => setMergeRejectSources(!!on)} />
+                  {t("mergeRejectSourcesLabel")}
+                </label>
+                <Button
+                  size="sm"
+                  className="ml-auto h-7 text-xs"
+                  disabled={merging}
+                  onClick={() => void handleMergeProposals()}
+                >
+                  {merging ? t("distilling") : t("mergeConfirmBtn")}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* 提议列表 + 详情分栏 */}
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            {/* 左侧提议列表 */}
+            <div className="w-72 shrink-0 overflow-y-auto border-r p-2">
+              {filteredProposals.length === 0 ? (
+                <p className="p-4 text-center text-muted-foreground text-xs">{t("proposalEmpty")}</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {filteredProposals.map((p) => {
+                    const active = selectedProposal?.id === p.id;
+                    const checked = checkedProposalIds.includes(p.id);
+                    return (
+                      <div
+                        key={p.id}
+                        className={cn(
+                          "flex w-full items-start gap-2 rounded-md border p-2.5 text-left transition-colors",
+                          active ? "border-primary bg-accent" : "hover:bg-muted/60",
+                        )}
+                      >
+                        <Checkbox
+                          className="mt-0.5"
+                          checked={checked}
+                          onCheckedChange={(on) => toggleCheckedProposal(p.id, !!on)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProposalId(p.id)}
+                          className="flex min-w-0 flex-1 flex-col gap-1 text-left"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-mono font-semibold text-xs" title={p.skill}>
+                              {p.skill}
+                            </span>
+                            <Badge
+                              variant={
+                                p.status === "applied"
+                                  ? "secondary"
+                                  : p.status === "rejected"
+                                    ? "outline"
+                                    : "default"
+                              }
+                              className="shrink-0 px-1.5 py-0 font-normal text-[10px]"
+                            >
+                              {p.status === "applied"
+                                ? t("proposalStatusApplied")
+                                : p.status === "rejected"
+                                  ? t("proposalStatusRejected")
+                                  : t("proposalStatusPending")}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                            <span>
+                              {p.origin === "curator" ? t("proposalOriginCurator") : t("proposalOriginAgent")}
+                            </span>
+                            <span className="tabular-nums">{fmtTime(p.created_at, "—")}</span>
+                          </div>
+                          {p.lint && (
+                            <div className="flex items-center gap-1 text-[11px] text-amber-500">
+                              <AlertTriangleIcon className="size-3 shrink-0" />
+                              <span className="truncate">{p.lint}</span>
+                            </div>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* 右侧详情与在线修订审阅 */}
+            <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-4">
+              {!selectedProposal ? (
+                <div className="flex flex-1 items-center justify-center text-muted-foreground text-xs">
+                  {t("proposalEmpty")}
+                </div>
+              ) : (
+                <div className="flex flex-1 flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-mono font-semibold text-sm">
+                        {selectedProposal.skill}
+                        {selectedProposal.file && selectedProposal.file !== "SKILL.md"
+                          ? ` / ${selectedProposal.file}`
+                          : " / SKILL.md"}
+                      </h3>
+                      <p className="text-muted-foreground text-xs">
+                        ID: <code className="font-mono">{selectedProposal.id}</code> ·{" "}
+                        {selectedProposal.origin === "curator"
+                          ? t("proposalOriginCurator")
+                          : t("proposalOriginAgent")}
+                      </p>
+                    </div>
+                    {selectedProposal.status === "applied" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          setSelected({ skill: selectedProposal.skill, path: null });
+                          setProposalsOpen(false);
+                        }}
+                      >
+                        {t("openInLibrary")}
+                      </Button>
+                    )}
+                  </div>
+
+                  {selectedProposal.evidence && (
+                    <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                      <span className="font-medium text-muted-foreground">
+                        {t("proposalEvidenceLabel")}：
+                      </span>
+                      <code className="break-all font-mono text-[11px]">{selectedProposal.evidence}</code>
+                    </div>
+                  )}
+
+                  {selectedProposal.lint && (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-600 text-xs dark:text-amber-400">
+                      <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                      <span>{t("proposalLintWarning", { lint: selectedProposal.lint })}</span>
+                    </div>
+                  )}
+
+                  <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+                    <Label className="text-muted-foreground text-xs">{t("proposalContentLabel")}</Label>
+                    <Textarea
+                      className="min-h-64 flex-1 resize-none font-mono text-xs leading-relaxed"
+                      value={proposalContent}
+                      readOnly={selectedProposal.status !== "pending"}
+                      onChange={(e) => setProposalContent(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="grid gap-1.5">
+                    <Label className="text-muted-foreground text-xs">{t("proposalNoteLabel")}</Label>
+                    <Input
+                      className="h-8 text-xs"
+                      placeholder={t("proposalNotePlaceholder")}
+                      value={reviewNote}
+                      readOnly={selectedProposal.status !== "pending"}
+                      onChange={(e) => setReviewNote(e.target.value)}
+                    />
+                  </div>
+
+                  {selectedProposal.status === "pending" && (
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={reviewingAction !== null}
+                        onClick={() => void handleReviewProposal("reject")}
+                      >
+                        <XCircleIcon className="size-3.5 text-destructive" />
+                        {reviewingAction === "reject" ? t("rejectingProposal") : t("rejectProposal")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={reviewingAction !== null}
+                        onClick={() => void handleReviewProposal("approve")}
+                      >
+                        <CheckCircle2Icon className="size-3.5" />
+                        {reviewingAction === "approve" ? t("approvingProposal") : t("approveProposal")}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </SheetContent>
       </Sheet>
     </div>

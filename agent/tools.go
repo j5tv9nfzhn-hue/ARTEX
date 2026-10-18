@@ -51,15 +51,16 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 // ToolSet exposes the PG-backed dual graph (asset + exploration) to an LLM agent.
 // One ToolSet is created per planner/worker run; per-run signals live here.
 type ToolSet struct {
-	findingRecorder FindingRecorder
-	as              *db.AssetStore   // asset store (optional; nil = asset tools not available)
-	cs              *db.CompanyStore // company store (optional)
-	ts              *db.ExplorationStore
-	worker          string
-	taskID          int64  // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
-	proxyAddr       string // recording MITM or egress proxy URL for built-in HTTP tools
-	proxyCACert     string // recording MITM CA cert path for built-in HTTP tools
-	workDir         string // per-run working directory for built-in file/wordlist tools
+	verificationState verificationState // bounded verification state shared by this ToolSet
+	findingRecorder   FindingRecorder
+	as                *db.AssetStore   // asset store (optional; nil = asset tools not available)
+	cs                *db.CompanyStore // company store (optional)
+	ts                *db.ExplorationStore
+	worker            string
+	taskID            int64  // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
+	proxyAddr         string // recording MITM or egress proxy URL for built-in HTTP tools
+	proxyCACert       string // recording MITM CA cert path for built-in HTTP tools
+	workDir           string // per-run working directory for built-in file/wordlist tools
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
 	// zero value (all existing ToolSet constructions) means ENABLED — matching the
 	// DB default (true). When true: graphOverviewData drops the coverage block, the
@@ -2053,7 +2054,7 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 // PlannerTools is the read + intent-generation + goal-judgement tool set.
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
 	return []actool.CoreTool{
-		t.binaryInspectTool(), t.recordFact(),
+		t.verificationCapabilitiesTool(), t.binaryInspectTool(), t.recordFact(),
 		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),

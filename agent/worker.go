@@ -262,6 +262,7 @@ const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 - **确认漏洞 → report_finding（探索图，含 PoC，传 intent_id）**：**只有你本次真实触发过、拿到可复现证据（请求/响应或命令输出）才用**。严禁把"版本/指纹匹配到 CVE""参数看起来可注入""外部漏洞库/更新日志/代码 diff 推断"当已确认，也不要用查 CVE 库或对比补丁版本替代实际触发。触发不了但有嫌疑 → 用 record_fact 记一条 inferred 事实（嫌疑点+为何未触发）交规划者，别硬记成 finding。
 
 **执行工具优先级（原生 Go 工具优先，严禁编写临时 Python 脚本做常规探测）**：
+- **人机验证专用 → human_verification / human_verification_flow**：先用 human_verification_capabilities 获取真实能力；human_verification_solve 提供版本化 PoW。ALTCHA v1/v2、旧 Anubis 和只读协议路径可用 flow(protocol=altcha/anubis_sha256/protocol_only, mode=plan/run) 完成同源获取、同会话提交和业务确认；ALTCHA run 含 POST、Anubis run 含验证提交 GET，须符合既有任务授权。可选 fingerprint_profile=chrome/firefox 仅调用已安装的独立 Go helper，未安装不自动获取。每响应 32KiB、整链限时限请求；默认不带 OCR/音频模型或解码库，AI 仅按实际能力主动降级。先 inspect 已有响应；明确 ALTCHA salt+number SHA-256/SHA-512 挑战用 solve_pow 免费本地有界计算。橙色云或 widget 存在不等于阻断；http_request(http_version=auto/1.1/2) 可显式选协议。其他降级从已有工具选，不新增人工流程；相同失败策略停止，无支持模块则记录不支持而非无限写脚本。
 - **单步 HTTP/HTTPS 发包与上传 → http_request**：直接构造任意方法、Header(含 Host)、Cookie、表单(form)、multipart 文件上传与正则提取，自动落库返回 exchange_id，避免 PowerShell/Bash 引号与 & 截断问题。
 - **多步有状态会话链 / 并发条件竞争 / 时间盲注 / 响应差分 → http_sequence**：多步自动维护 CookieJar 并跨步提取 CSRF/Token 变量替换 {{var}}（mode="chain"）、微秒级同步屏障齐射测试并发条件竞争/双花（mode=\"race\"）、时间盲注基线测速（mode="timing"）、双响应行级差分与相似度对比（mode="diff"），**严禁编写 Python requests.Session / threading.Barrier / time.sleep / difflib 脚本**。
 - **并发目录/参数/IDOR 探测 → http_fuzz**：用 {{FUZZ}} 占位符配合 payloads、wordlist_file 或 range_spec（如 1-500、0-999:1:4）完成受控并发探测与软 404 自动过滤，**严禁编写 Python ThreadPoolExecutor/asyncio/requests 并发爆破脚本**。
@@ -533,7 +534,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 任务级 deadline(经 ctx 注入)夹逼本 run 的墙钟预算 + 决定收尾词(见 taskclock.go)。
 	tc := taskClockFrom(ctx)
 	maxDur, clamped := clampMaxDuration(tc.DeadlineUnix, w.runTimeout)
-	settleDisabled := []string{"Bash", "http_request", "http_fuzz", "http_sequence", "web_recon", "net_probe", "dns_probe"}
+	settleDisabled := []string{"human_verification_flow", "Bash", "http_request", "http_fuzz", "http_sequence", "web_recon", "net_probe", "dns_probe"}
 	settle := wrapupSettlement("worker", settleDisabled)
 	if tc.DeadlineUnix > 0 {
 		settle = wrapupSettlementForTask("worker", settleDisabled, clamped)

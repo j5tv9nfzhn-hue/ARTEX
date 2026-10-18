@@ -1,8 +1,8 @@
 <div align="center">
 
-# ARTEX 简体中文版
+# ARTEX-REA 简体中文版
 
-**由 LLM 多 Agent 自主执行渗透测试的系统**（Go 后端 + Next.js 前端）
+**由 LLM 多 Agent 自主执行渗透测试与逆向工程的系统**（Go 后端 + Next.js 前端）
 
 界面、报告、摘要、对话及后端消息**统一使用简体中文**，本仓库不再提供其他语言界面。界面语言属于浏览器本地偏好；报告、摘要、对话与后端消息的输出语言由服务端设置管理，固定为简体中文。历史遗留的其他语言配置一律回退为简体中文。
 
@@ -96,13 +96,13 @@ Autumn-27/ARTEX（国内原作者，中文原创）
 
 ### 方式一：下载发布包
 
-到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载对应平台的 `artex-<版本>-<平台>-<架构>.zip`（`linux` / `darwin` / `windows`），解压后得到：
+到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载对应平台的 `artex-rea-<版本>-<平台>-<架构>.zip`（`linux` / `darwin` / `windows`），解压后得到：
 
-- `artex` / `artex.exe` —— 程序本体（前端已内嵌）
+- `artex-rea` / `artex-rea.exe` —— 程序本体（前端已内嵌）
 - `start.bat`（Windows）/ `start.sh`（Linux、macOS）—— 启动监护脚本（页面一键更新依赖它重启进程）
 - `skills/`、`config.example.json`、`README.md`
 
-以下启动示例以 Windows 为例（Linux/macOS 为 `artex` 本体与 `start.sh`）：
+以下启动示例以 Windows 为例（Linux/macOS 为 `artex-rea` 本体与 `start.sh`）：
 
 ```bat
 copy config.example.json config.json   & rem 可选：指定数据库文件位置，留空自动创建 artex.db
@@ -119,7 +119,7 @@ start.bat                              & rem → http://localhost:8787
 cd web && npm ci && npm run build:static && cd ..
 rm -rf server/webui/dist && mkdir -p server/webui/dist
 cp -a web/out/. server/webui/dist/
-CGO_ENABLED=0 go build -tags embedui -o artex.exe ./cmd/artex
+CGO_ENABLED=0 go build -tags embedui -o artex-rea.exe ./cmd/artex
 copy config.example.json config.json
 start.bat
 ```
@@ -127,11 +127,11 @@ start.bat
 或直接使用打包脚本（自动完成前端构建、内嵌与 zip 打包）：
 
 ```bash
-./build.sh --release          # 三端（Linux/macOS/Windows）amd64/arm64，产出 dist/artex-<版本>-<os>-<arch>.zip
+./build.sh --release          # 三端（Linux/macOS/Windows）amd64/arm64，产出 dist/artex-rea-<版本>-<os>-<arch>.zip
 ```
 
 - `npm ci` 需要 devDependencies，例如 `@tailwindcss/postcss`。若环境为 `NODE_ENV=production`，使用 `npm ci --include=dev`，避免构建时缺包。
-- 正式启动使用 `start.bat`，不要直接运行 `artex.exe` —— 监护脚本负责在一键更新或回滚退出后重新拉起进程。
+- 正式启动使用 `start.bat`，不要直接运行 `artex-rea.exe` —— 监护脚本负责在一键更新或回滚退出后重新拉起进程。
 - 数据库文件位置通过 `config.json` 的 `database.path` 或环境变量 `ARTEX_SQLITE_PATH` 配置（留空则在配置文件旁自动创建 `artex.db`），见下节。
 
 ## 配置
@@ -166,13 +166,13 @@ LLM 可在环境变量或“LLM 设置”页面配置，相关环境变量包括
 
 ### 首次运行保护（设置令牌与绑定地址）
 
-管理员用户名固定为 `ARTEX`，首次通过 `/setup` 创建密码。
+管理员用户名固定为 `ARTEX-REA`，首次通过 `/setup` 创建密码。
 
 - 无密码时，启动日志打印设置令牌。`/setup` 和 `POST /api/auth/init` 的 `setup_token` 必须匹配，错误尝试限流。令牌不通过公开状态接口返回。
 - 无人值守部署可设置 `ARTEX_SETUP_TOKEN` 固定令牌，或用至少八字符的 `ARTEX_ADMIN_PASSWORD` 直接初始化。
 - 默认仅监听回环地址。开放到其他设备前先完成初始化，并优先部署 HTTPS；非回环且未初始化时会有启动警告。
 - 修改密码会使旧 JWT 会话在数秒内失效。若恢复泄露的管理员账户，还需检查自定义工具、MCP、LLM 与通知配置。
-- 忘记管理员密码时，可在本机运行仓库根目录的 `reset-password.sh`：脚本定位 `artex`/`artex.exe`（或回退 `go run ./cmd/artex`）调用 `-reset-password` 重写密码哈希，无需数据库服务与 psql；也可直接运行 `artex -reset-password`。
+- 忘记管理员密码时，可在本机运行仓库根目录的 `reset-password.sh`：脚本定位 `artex-rea`/`artex-rea.exe`（或回退 `go run ./cmd/artex`）调用 `-reset-password` 重写密码哈希，无需数据库服务与 psql；也可直接运行 `artex-rea -reset-password`。
 - CORS 允许列表为 `ARTEX_CORS_ORIGINS`，以逗号分隔；内嵌 UI 同源通常无需填写，开发默认允许 `http://localhost:5173`。
 
 ### 反向代理部署（HTTPS / 只开放 443）

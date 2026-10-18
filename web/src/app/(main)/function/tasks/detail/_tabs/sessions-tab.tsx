@@ -1575,7 +1575,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   function stop() {
     if (stopping) return;
     setStopping(true);
-    void api.stopChat(taskId).finally(() => setStopping(false));
+    chatStatusRequestRef.current++;
+    void api
+      .stopChat(taskId)
+      .then(() => {
+        chatStatusRequestRef.current++;
+        setMainChatRunning(false);
+      })
+      .finally(() => setStopping(false));
   }
 
   function send() {

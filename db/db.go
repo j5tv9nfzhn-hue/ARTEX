@@ -130,12 +130,15 @@ ON CONFLICT (agent_id, var_name) DO UPDATE
 INSERT INTO mcp_servers(name, transport, command, args, env, enabled)
 VALUES ('browser', 'stdio', 'npx', $1, '{}', false)
 ON CONFLICT (name) DO NOTHING`,
-		`["@playwright/mcp","--headless"]`); err != nil {
+		`["-y","@playwright/mcp","--headless"]`); err != nil {
 		return fmt.Errorf("seed browser mcp: %w", err)
 	}
 	// NOTE: the placeholder ScopeSentry data-source MCP (empty URL + empty X-API-Key,
 	// disabled) is seeded directly in schema_sqlite.sql §F so a raw `psql < schema_sqlite.sql` init
 	// also gets it. schema_sqlite.sql is Exec'd on every startup, so it stays idempotent.
+	if err := d.seedBuiltinMCPServersAndTools(); err != nil {
+		return fmt.Errorf("seed builtin mcp tools: %w", err)
+	}
 	if err := d.seedBuiltinSkillVisibility(); err != nil {
 		return fmt.Errorf("seed skill visibility: %w", err)
 	}
@@ -198,6 +201,7 @@ var builtinSkillVisibility = map[string][]string{
 	"reverse-engineering": {"auto", "pentest", "worker", "planner", "mainagent"},
 	"exploit-kb-patterns": {"auto", "pentest", "worker", "planner", "mainagent"},
 	"expert-triage-pivot": {"auto", "pentest", "worker", "planner", "mainagent"},
+	"human-verification":  {"auto", "pentest", "worker", "planner", "mainagent"},
 }
 
 // seedBuiltinSkillVisibility binds the shipped built-in skills to their default

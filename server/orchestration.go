@@ -529,6 +529,7 @@ func (s *Server) seedOrchestrationTools() {
 	s.reseedWorkerPrompt()            // worker 提示词:原生 Go 工具集 + 3-Strike 止损 + Skill/MCP 主动调用(一次性)
 	s.reseedPentestAndAutoPrompts()   // pentest/auto 提示词:加入 Skill/tactical_kb/MCP 主动调用规约(一次性)
 	s.seedDefaultSkillVisibility()    // 7 个内置专家技能包补齐默认 agent 可见性绑定(一次性)
+	s.seedSkillEvolutionBindings()    // human-verification 技能可见性 + 自主沉淀/审阅工具默认绑定(一次性)
 	s.seedReporterAgent()             // 预置“报告撰写” Agent、工具绑定与 finding 触发器，一次性初始化。
 	s.upgradeReporterTriggerMessage() // 老库补迁移:让 reporter 回传 evidence_version(一次性)
 	s.seedFindingTrafficTools()       // 增加可选证据参数及只读证据工具，保留用户配置
@@ -768,6 +769,30 @@ func (s *Server) seedDefaultSkillVisibility() {
 	}
 	for _, sk := range skills {
 		s.bindDefaultSkillVisibility(sk)
+	}
+}
+
+// seedSkillEvolutionBindings 为存量数据库补齐 human-verification 技能包默认可见性与
+// 自主沉淀/审阅平台工具（list_skill_gaps / propose_skill / list_skill_proposals /
+// review_skill_proposal / distill_task_skill）的默认 Agent 绑定。
+func (s *Server) seedSkillEvolutionBindings() {
+	const flag = "skill_evolution_bindings_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
+	s.bindDefaultSkillVisibility("human-verification")
+	if err := s.m.pg.AddAgentToToolBinding("auto", []string{
+		"list_skill_gaps", "propose_skill", "list_skill_proposals", "review_skill_proposal", "distill_task_skill",
+	}); err != nil {
+		log.Printf("[skills] auto 沉淀工具默认绑定失败: %v", err)
+	}
+	for _, ag := range []string{"mainagent", "pentest"} {
+		if err := s.m.pg.AddAgentToToolBinding(ag, []string{
+			"list_skill_gaps", "propose_skill", "distill_task_skill",
+		}); err != nil {
+			log.Printf("[skills] %s 沉淀工具默认绑定失败: %v", ag, err)
+		}
 	}
 }
 

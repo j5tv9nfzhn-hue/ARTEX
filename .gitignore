@@ -32,8 +32,14 @@ Thumbs.db
 .claude/
 
 # 内嵌前端的单二进制产物
+/artex-rea
 /artex
 # 一键更新在可执行文件旁留下的中间产物（暂存件 / 备份 / 失败版本 / 升级标记）
+/artex-rea.new
+/artex-rea.new.sha256
+/artex-rea.old
+/artex-rea.failed
+/artex-rea.upgrade.json
 /artex.new
 /artex.new.sha256
 /artex.old
@@ -74,13 +80,16 @@ agent/d2_models_live_test.go
 secrets.env
 
 # Windows 源码构建的本地产物不提交。
-# go build -o artex.exe 的 Windows 二进制，对应 Unix 的 /artex。
+# go build -o artex-rea.exe 的 Windows 二进制，对应 Unix 的 /artex-rea。
+/artex-rea.exe
 /artex.exe
 # 本地设置中的秘密，如 PostgreSQL 密码，严禁提交。
 /.secrets/
 # 项目内 SWC_NATIVE_BINDING_CACHE 的原生绑定缓存。
 /.swc-cache/
-# artex.exe 前台运行重定向的日志。
+# artex-rea.exe 前台运行重定向的日志。
+/artex-rea.out.log
+/artex-rea.err.log
 /artex.out.log
 /artex.err.log
 

@@ -119,7 +119,11 @@ func reValidateConfig(p db.REProvider) error {
 	if p.Config.Mode != "open" && p.Config.Mode != "attach" {
 		return errors.New("mode 必须为 open 或 attach")
 	}
-	allowed := map[string]bool{"open": true, "close": true, "identity": true, "status": true, "functions": true, "decompile": true, "xrefs": true, "callgraph": true, "types": true}
+	allowed := map[string]bool{
+		"open": true, "close": true, "identity": true, "status": true,
+		"functions": true, "decompile": true, "xrefs": true, "callgraph": true,
+		"types": true, "modules": true, "imports": true, "exports": true, "strings": true,
+	}
 	for name, op := range p.Config.Operations {
 		if !allowed[name] || op.Tool == "" {
 			return fmt.Errorf("操作映射无效：%s", name)
@@ -130,8 +134,9 @@ func reValidateConfig(p db.REProvider) error {
 		if len(op.Columns) > 16 {
 			return errors.New("字段映射超过上限")
 		}
-		if op.RowsPath != "" && op.AddressKind == "" && (name == "functions" || name == "xrefs" || name == "callgraph") {
-			return errors.New("函数/关系归一化必须指定 address_kind")
+		needsAddrKind := name == "functions" || name == "xrefs" || name == "callgraph" || name == "modules" || name == "imports" || name == "exports" || name == "strings"
+		if op.RowsPath != "" && op.AddressKind == "" && needsAddrKind {
+			return errors.New("函数/模块/符号/字符串/关系归一化必须指定 address_kind")
 		}
 	}
 	return nil
@@ -142,8 +147,18 @@ func reValidateCatalog(p db.REProvider, tools []actool.CoreTool) error {
 		have[t.Name()] = t
 	}
 	for name, op := range p.Config.Operations {
-		if have[op.Tool] == nil {
+		t := have[op.Tool]
+		if t == nil {
 			return fmt.Errorf("操作 %s 指向不存在的工具 %s", name, op.Tool)
+		}
+		if req, ok := t.InputSchema()["required"].([]any); ok {
+			for _, key := range req {
+				if k, ok := key.(string); ok && k != "" {
+					if _, exists := op.Input[k]; !exists {
+						return fmt.Errorf("操作 %s 映射的工具 %s 缺少必填参数 %s", name, op.Tool, k)
+					}
+				}
+			}
 		}
 	}
 	return nil
@@ -309,11 +324,16 @@ func reNormalize(operation string, op db.REOperation, output, sampleSHA string, 
 		v := db.REEntity{Kind: operation, Name: get("name"), Module: module, Address: get("address"), AddressKind: op.AddressKind}
 		payload := map[string]any{"row": json.RawMessage(row.Raw), "normalized_from": "operator-reviewed field mapping"}
 		switch operation {
-		case "functions":
+		case "functions", "exports", "strings":
 			if v.Address == "" {
 				continue
 			}
-			v.Identity = reEntityKey(module, v.AddressKind, v.Address)
+			v.Identity = reEntityKey(module, v.AddressKind, v.Address, v.Name)
+		case "modules", "imports":
+			if v.Name == "" && v.Address == "" {
+				continue
+			}
+			v.Identity = reEntityKey(module, v.AddressKind, v.Name, v.Address)
 		case "xrefs", "callgraph":
 			source, target := get("source"), get("target")
 			if source == "" || target == "" {
@@ -449,6 +469,9 @@ func (s *Server) reOpen(ctx context.Context, taskID int64, sha string, providerI
 	if !p.Config.ReviewedStatic || p.Discovery != "catalog_verified" {
 		return nil, errors.New("请先审核静态操作映射并完成工具目录发现；目录就绪不代表引擎支持此样本")
 	}
+	if capReport := reEvaluateCapabilities(*p); len(capReport.MissingTools) > 0 || len(capReport.SchemaMismatches) > 0 {
+		return nil, errors.New(capReport.GateReason)
+	}
 	m, err := s.reMCP(p.MCPID)
 	if err != nil {
 		return nil, err
@@ -579,7 +602,9 @@ func (s *Server) reOpen(ctx context.Context, taskID int64, sha string, providerI
 	return s.m.pg.RESession(taskID, session.ID)
 }
 func (s *Server) reQuery(ctx context.Context, taskID, sessionID int64, operation, address, query string, limit int) (map[string]any, error) {
-	if operation != "status" && operation != "functions" && operation != "decompile" && operation != "xrefs" && operation != "callgraph" && operation != "types" {
+	switch operation {
+	case "status", "functions", "decompile", "xrefs", "callgraph", "types", "modules", "imports", "exports", "strings":
+	default:
 		return nil, errors.New("只允许已审核的静态查询操作")
 	}
 	if len(address) > 256 || len(query) > 2000 {

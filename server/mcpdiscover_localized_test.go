@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Autumn-27/artex/db"
@@ -36,5 +39,51 @@ func TestConnectMCPErrorsLocalized(t *testing.T) {
 			t.Fatalf("%s：未返回错误（验证通过）", c.label)
 		}
 		assertChineseError(t, c.label, err.Error())
+	}
+}
+
+func TestPrepareStdioMCPInjectsNPXYesAndEnv(t *testing.T) {
+	_, args, env := prepareStdioMCP("npx", []string{"@playwright/mcp", "--headless"}, map[string]string{"FOO": "bar"})
+	if len(args) < 3 || args[0] != "-y" || args[1] != "@playwright/mcp" {
+		t.Fatalf("expected -y prepended to npx args, got %v", args)
+	}
+	if env["npm_config_yes"] != "true" || env["NPM_CONFIG_YES"] != "true" || env["FOO"] != "bar" {
+		t.Fatalf("unexpected stdio env: %v", env)
+	}
+
+	_, args2, _ := prepareStdioMCP("npx", []string{"-y", "@playwright/mcp", "--headless"}, nil)
+	if len(args2) != 3 || args2[0] != "-y" {
+		t.Fatalf("expected existing -y preserved without duplication, got %v", args2)
+	}
+}
+
+func TestSeedBuiltinMCPToolsPopulatesCache(t *testing.T) {
+	pg, err := db.Open("file:" + filepath.ToSlash(filepath.Join(t.TempDir(), "mcp-seed.sqlite")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pg.Close() })
+
+	servers, err := pg.ListMCP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]*db.MCPServer{}
+	for _, s := range servers {
+		byName[s.Name] = s
+	}
+
+	ss := byName["ScopeSentry"]
+	if ss == nil || len(ss.Tools) != 17 || !slices.Contains(ss.Tools, "mcp__ScopeSentry__list_assets") {
+		t.Fatalf("expected ScopeSentry seeded with 17 tools, got %+v", ss)
+	}
+
+	br := byName["browser"]
+	if br == nil || len(br.Tools) != 22 || !slices.Contains(br.Tools, "mcp__browser__browser_navigate") {
+		t.Fatalf("expected browser seeded with 22 tools, got %+v", br)
+	}
+	var brArgs []string
+	if err := json.Unmarshal(br.Args, &brArgs); err != nil || !slices.Contains(brArgs, "-y") {
+		t.Fatalf("expected browser args to include -y, got %s (%v)", string(br.Args), err)
 	}
 }

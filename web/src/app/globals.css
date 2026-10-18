@@ -1,11 +1,12 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
-/* Theme preset styles: these override CSS variables based on the selected data-theme-preset */
+/* 主题预设表 */
 @import "../styles/presets/amber-crt.css";
 @import "../styles/presets/brutalist.css";
 @import "../styles/presets/command.css";
+@import "../styles/presets/crimson-ops.css";
+@import "../styles/presets/cyber-violet.css";
 @import "../styles/presets/matrix.css";
 @import "../styles/presets/soft-pop.css";
 @import "../styles/presets/tangerine.css";
@@ -13,158 +14,243 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-display: var(--font-display);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
-  --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --font-heading: var(--font-sans);
-  --font-sans: var(--font-sans);
-  /* 与 --font-sans 同样的映射方式:让 Tailwind 的 font-mono 工具类实际消费运行时 --font-mono 变量 */
-  --font-mono: var(--font-mono);
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
 }
 
-/* Default theme styles (used when no data-theme-preset is set or when 'default' is selected).
-These serve as the fallback; there is no separate default.css file. */
+/* 默认主题令牌（当 data-theme-preset="default" 或未命中特定预设时生效） */
 :root {
   --radius: 0.625rem;
-
-  /* 动效令牌(主题重塑第 8 项):全站品牌动效的"同一支笔"。
-     为什么集中在 :root:各组件不再各写 ease-out/200ms,换质感只改这一处;
-     时长分三档:fast=微反馈/base=常规进场/slow=一次性高亮。 */
-  --ease-brand: cubic-bezier(0.22, 1, 0.36, 1);
-  --dur-fast: 150ms;
-  --dur-base: 220ms;
-  --dur-slow: 320ms;
-
+  --background: oklch(0.982 0.006 248);
+  --foreground: oklch(0.145 0.024 252);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.145 0.024 252);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.145 0.024 252);
+  --primary: oklch(0.52 0.175 248);
+  --primary-foreground: oklch(0.99 0.004 245);
+  --secondary: oklch(0.948 0.012 248);
+  --secondary-foreground: oklch(0.22 0.03 252);
+  --muted: oklch(0.952 0.01 248);
+  --muted-foreground: oklch(0.47 0.024 250);
+  --accent: oklch(0.935 0.02 246);
+  --accent-foreground: oklch(0.2 0.04 250);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  /* 图表系列色:槽位角色固定为 1 蓝/青(主数据)→ 2 紫/靛 → 3 翠/绿 → 4 琥珀 → 5 玫瑰,
-     各主题只偏转色相/饱和、不改角色顺序。此处替换原先的 0 彩度灰阶——灰阶导致图表
-     在所有主题下几乎无色,且亮暗完全相同、切换暗色时图表纹丝不动 */
-  --chart-1: oklch(0.55 0.16 250);
-  --chart-2: oklch(0.55 0.18 285);
-  --chart-3: oklch(0.6 0.13 165);
-  --chart-4: oklch(0.66 0.15 70);
-  --chart-5: oklch(0.6 0.19 15);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-
-  /* fonts */
-  --font-sans: var(--font-geist);
-  /* 数据/终端字体指向 JetBrains Mono;此处的 var 回退保证 :root 层(解析不到 body 上的 next/font 变量)仍得到合法值 */
-  --font-mono: var(--font-jetbrains-mono, ui-monospace), SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --border: oklch(0.905 0.014 248);
+  --input: oklch(0.905 0.014 248);
+  --ring: oklch(0.52 0.175 248);
+  /* 动效令牌(主题重塑第 8 项):全站品牌动效的"同一支笔" */
+  --ease-out-quart: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
+  /* 图表槽位统一角色:1 蓝/青 · 2 紫/靛 · 3 翠/绿 · 4 琥珀 · 5 玫瑰 */
+  --chart-1: oklch(0.55 0.17 248);
+  --chart-2: oklch(0.55 0.18 288);
+  --chart-3: oklch(0.6 0.15 162);
+  --chart-4: oklch(0.68 0.16 68);
+  --chart-5: oklch(0.6 0.19 16);
+  --sidebar: oklch(0.968 0.009 248);
+  --sidebar-foreground: oklch(0.145 0.024 252);
+  --sidebar-primary: oklch(0.52 0.175 248);
+  --sidebar-primary-foreground: oklch(0.99 0.004 245);
+  --sidebar-accent: oklch(0.935 0.02 246);
+  --sidebar-accent-foreground: oklch(0.2 0.04 250);
+  --sidebar-border: oklch(0.908 0.014 248);
+  --sidebar-ring: oklch(0.52 0.175 248);
+  --shadow-2xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --shadow-xs: 0 1px 3px 0 rgb(15 23 42 / 0.05), 0 1px 2px -1px rgb(15 23 42 / 0.04);
+  --shadow-sm: 0 2px 6px -1px rgb(15 23 42 / 0.07), 0 1px 3px -1px rgb(15 23 42 / 0.05);
+  --shadow: 0 4px 12px -2px rgb(15 23 42 / 0.08), 0 2px 4px -2px rgb(15 23 42 / 0.05);
+  --shadow-md: 0 8px 20px -4px rgb(15 23 42 / 0.1), 0 3px 6px -3px rgb(15 23 42 / 0.06);
+  --shadow-lg: 0 14px 28px -6px rgb(15 23 42 / 0.12), 0 4px 10px -4px rgb(15 23 42 / 0.07);
+  --shadow-xl: 0 22px 40px -8px rgb(15 23 42 / 0.15), 0 8px 16px -6px rgb(15 23 42 / 0.08);
+  --shadow-2xl: 0 28px 56px -12px rgb(15 23 42 / 0.24);
 }
 
 .dark {
-  --background: oklch(0.155 0.016 252);
-  --foreground: oklch(0.945 0.008 240);
-  --card: oklch(0.185 0.018 252);
-  --card-foreground: oklch(0.945 0.008 240);
-  --popover: oklch(0.215 0.02 252);
-  --popover-foreground: oklch(0.945 0.008 240);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.165 0.018 252);
-  --secondary: oklch(0.225 0.02 252);
-  --secondary-foreground: oklch(0.945 0.008 240);
-  --muted: oklch(0.205 0.018 252);
-  --muted-foreground: oklch(0.685 0.016 248);
-  --accent: oklch(0.245 0.022 250);
-  --accent-foreground: oklch(0.955 0.01 240);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.255 0.018 252);
-  --input: oklch(0.265 0.02 252);
-  --ring: oklch(0.76 0.145 212);
-  /* 暗色成对色板:与亮色同色相、提亮明度(冷色 ~0.7、暖色 ~0.8),保证深底上的可读性 */
-  --chart-1: oklch(0.76 0.145 212);
-  --chart-2: oklch(0.7 0.17 288);
-  --chart-3: oklch(0.74 0.14 165);
-  --chart-4: oklch(0.8 0.15 75);
-  --chart-5: oklch(0.72 0.17 10);
-  --sidebar: oklch(0.135 0.015 252);
-  --sidebar-foreground: oklch(0.92 0.01 240);
-  --sidebar-primary: oklch(0.76 0.145 212);
-  --sidebar-primary-foreground: oklch(0.145 0.02 252);
-  --sidebar-accent: oklch(0.22 0.02 250);
-  --sidebar-accent-foreground: oklch(0.95 0.01 240);
-  --sidebar-border: oklch(0.225 0.016 252);
-  --sidebar-ring: oklch(0.76 0.145 212);
+  --background: oklch(0.135 0.018 255);
+  --foreground: oklch(0.955 0.008 245);
+  --card: oklch(0.175 0.022 255);
+  --card-foreground: oklch(0.955 0.008 245);
+  --popover: oklch(0.195 0.024 255);
+  --popover-foreground: oklch(0.955 0.008 245);
+  --primary: oklch(0.58 0.185 248);
+  --primary-foreground: oklch(0.985 0.005 245);
+  --secondary: oklch(0.225 0.026 254);
+  --secondary-foreground: oklch(0.93 0.01 245);
+  --muted: oklch(0.205 0.022 254);
+  --muted-foreground: oklch(0.68 0.02 248);
+  --accent: oklch(0.245 0.036 250);
+  --accent-foreground: oklch(0.96 0.01 245);
+  --destructive: oklch(0.66 0.21 24);
+  --border: oklch(0.275 0.028 252);
+  --input: oklch(0.255 0.026 252);
+  --ring: oklch(0.62 0.18 246);
+  --chart-1: oklch(0.68 0.165 245);
+  --chart-2: oklch(0.68 0.175 288);
+  --chart-3: oklch(0.73 0.155 162);
+  --chart-4: oklch(0.77 0.155 72);
+  --chart-5: oklch(0.7 0.18 16);
+  --sidebar: oklch(0.152 0.02 255);
+  --sidebar-foreground: oklch(0.955 0.008 245);
+  --sidebar-primary: oklch(0.58 0.185 248);
+  --sidebar-primary-foreground: oklch(0.985 0.005 245);
+  --sidebar-accent: oklch(0.225 0.034 250);
+  --sidebar-accent-foreground: oklch(0.96 0.01 245);
+  --sidebar-border: oklch(0.245 0.025 252);
+  --sidebar-ring: oklch(0.62 0.18 246);
+  --shadow-2xs: 0 1px 2px 0 rgb(2 6 23 / 0.35);
+  --shadow-xs: 0 1px 3px 0 rgb(2 6 23 / 0.45), 0 1px 2px -1px rgb(2 6 23 / 0.35);
+  --shadow-sm: 0 2px 8px -1px rgb(2 6 23 / 0.5), 0 1px 3px -1px rgb(2 6 23 / 0.4);
+  --shadow: 0 4px 14px -2px rgb(2 6 23 / 0.55), 0 2px 6px -2px rgb(2 6 23 / 0.45);
+  --shadow-md: 0 8px 24px -4px rgb(2 6 23 / 0.6), 0 4px 8px -3px rgb(2 6 23 / 0.45);
+  --shadow-lg: 0 14px 32px -6px rgb(2 6 23 / 0.65), 0 6px 12px -4px rgb(2 6 23 / 0.5);
+  --shadow-xl: 0 24px 48px -8px rgb(2 6 23 / 0.72), 0 10px 20px -6px rgb(2 6 23 / 0.55);
+  --shadow-2xl: 0 32px 64px -12px rgb(2 6 23 / 0.85);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 28%, transparent) transparent;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklch, var(--primary) 26%, transparent);
+    color: var(--foreground);
   }
 
   body {
-    @apply bg-background text-foreground;
-    /* 西文由 --font-sans(next/font 注入)提供,其后为中文回退栈;system-ui 置于中文之后,避免抢占中文 glyph 归属。
-       var 内层 system-ui 兜底:万一 data-font 残留失效键导致 body 没有 --font-sans 声明,也不会整条 font-family 失效 */
+    @apply bg-background text-foreground antialiased;
     font-family:
-      var(--font-sans, system-ui), "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI",
-      "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
-    /* next/font 的字体变量挂在 <body> 类上,:root 解析不到;必须在 body 声明 --font-mono,font-mono 工具类才能拿到 JetBrains Mono */
-    --font-mono:
-      var(--font-jetbrains-mono, ui-monospace), SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      var(--font-sans, "Geist"),
+      "PingFang SC",
+      "Hiragino Sans GB",
+      "Microsoft YaHei UI",
+      "Microsoft YaHei",
+      "Noto Sans CJK SC",
+      "Source Han Sans SC",
+      system-ui,
+      -apple-system,
+      sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
-  html {
-    @apply font-sans;
+
+  /* 主工作区顶部双轴张力环境光:主色(--primary)与次级电光色(--chart-2)对撞,营造现代指挥舱纵深感与视觉张力 */
+  [data-slot="sidebar-inset"] {
+    background-image:
+      radial-gradient(
+        ellipse 80% 42% at 32% -14%,
+        color-mix(in oklch, var(--primary) 8%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        ellipse 60% 36% at 86% -10%,
+        color-mix(in oklch, var(--chart-2) 5.5%, transparent),
+        transparent 66%
+      );
   }
+
+  .dark [data-slot="sidebar-inset"] {
+    background-image:
+      radial-gradient(
+        ellipse 82% 46% at 32% -14%,
+        color-mix(in oklch, var(--primary) 13.5%, transparent),
+        transparent 72%
+      ),
+      radial-gradient(
+        ellipse 62% 40% at 86% -10%,
+        color-mix(in oklch, var(--chart-2) 8.5%, transparent),
+        transparent 68%
+      );
+  }
+
+  /* 暗色模式下卡片顶部能量棱线,结合主题主色形成微光张力边界 */
+  .dark [data-slot="card"] {
+    box-shadow:
+      inset 0 1px 0 0 color-mix(in oklch, var(--primary) 14%, color-mix(in oklch, var(--foreground) 6%, transparent)),
+      var(--shadow-xs);
+  }
+
+  code,
+  kbd,
+  samp,
+  pre,
+  .font-mono {
+    font-family:
+      var(--font-mono, "Geist Mono"),
+      "JetBrains Mono",
+      "Cascadia Mono",
+      "Sarasa Mono SC",
+      "Microsoft YaHei Mono",
+      ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Consolas,
+      monospace;
+  }
+}
+
+.font-display {
+  font-family:
+    var(--font-display),
+    var(--font-sans, "Geist"),
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Microsoft YaHei UI",
+    "Microsoft YaHei",
+    "Noto Sans CJK SC",
+    "Source Han Sans SC",
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 
 @layer utilities {
@@ -200,54 +286,44 @@ These serve as the fallback; there is no separate default.css file. */
     box-shadow: var(--shadow-2xl);
   }
 
-  /* 字体选项(与 lib/fonts/registry.ts 的 fontRegistry 一一对应)。
-     旧的 15 个无效选项(inter/lora/notoSerif 等)已下线;
-     旧 cookie 中的失效字体键由 theme-boot 白名单校验回退到 geist,这里无需再保留规则。 */
+  html[data-font="inter"] body {
+    --font-sans: var(--font-inter);
+  }
+  html[data-font="roboto"] body {
+    --font-sans: var(--font-roboto);
+  }
+  html[data-font="poppins"] body {
+    --font-sans: var(--font-poppins);
+  }
   html[data-font="geist"] body {
     --font-sans: var(--font-geist);
   }
-  html[data-font="spaceGrotesk"] body {
-    --font-sans: var(--font-space-grotesk);
+  html[data-font="geistMono"] body {
+    --font-sans: var(--font-geist-mono);
   }
-  html[data-font="jetBrainsMono"] body {
-    --font-sans: var(--font-jetbrains-mono);
+  html[data-font="jakarta"] body {
+    --font-sans: var(--font-jakarta);
   }
-
-  /* 空态标题等装饰性文本:西文固定 Space Grotesk 点缀,CJK 回退到中文正文字体栈。
-     不随 data-font 切换 —— 用户换的是正文字体,该点缀保持一致,避免标题与正文双双换脸的杂乱。 */
-  .font-display {
-    font-family:
-      var(--font-space-grotesk, var(--font-sans)), "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI",
-      "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  html[data-font="nunito"] body {
+    --font-sans: var(--font-nunito);
   }
-
-  /* 动效工具类(主题重塑第 8 项):与 tw-animate-css 的 animate-* 同前缀习惯,
-     但独立成一批 —— 只包含本批品牌动效,reduced-motion 开关见文件末尾。
-     fill-mode: both 保证动画延迟期间元素保持 from 帧(进场前不可见),
-     不会出现"先闪一下再进场"。 */
-  .animate-fade-up {
-    animation: fade-up var(--dur-base) var(--ease-brand) both;
+  html[data-font="gabriela"] body {
+    --font-sans: var(--font-gabriela);
   }
-
-  .animate-scale-in {
-    animation: scale-in var(--dur-fast) var(--ease-brand) both;
+  html[data-font="outfit"] body {
+    --font-sans: var(--font-outfit);
   }
-
-  /* 呼吸点:柔和低幅透明度变化;周期固定 2.4s(呼吸感需要慢速,不套 --dur-*)。 */
-  .animate-pulse-soft {
-    animation: pulse-soft 2.4s var(--ease-brand) infinite;
+  html[data-font="manrope"] body {
+    --font-sans: var(--font-manrope);
   }
-
-  /* 一次性高亮:调用方提供一个与被高亮对象同色的覆盖层(见发现战报卡),从半透明淡出。
-     只动 opacity;reduced-motion 下会被静态隐藏(见文末),不会残留色块。 */
-  .animate-glow-once {
-    animation: glow-once var(--dur-slow) var(--ease-brand) both;
+  html[data-font="dmSans"] body {
+    --font-sans: var(--font-dm-sans);
+  }
+  html[data-font="greatVibes"] body {
+    --font-sans: var(--font-great-vibes);
   }
 }
 
-/* ── 动效 keyframes(主题重塑第 8 项)─────────────────────────────────────────
-   本批品牌动画全部只动 transform / opacity:GPU 合成路径,不触发布局与重绘,
-   对轮询高频重渲染的页面(仪表盘/发现)也保持廉价。 */
 @keyframes fade-up {
   from {
     opacity: 0;
@@ -259,119 +335,41 @@ These serve as the fallback; there is no separate default.css file. */
   }
 }
 
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* pulse-soft:实时语义圆点的"呼吸"(录制中/会话运行),低透明度摆动、不缩放。 */
 @keyframes pulse-soft {
   0%,
   100% {
-    opacity: 1;
+    opacity: 0.4;
   }
   50% {
-    opacity: 0.35;
+    opacity: 1;
   }
 }
 
-@keyframes glow-once {
-  from {
-    opacity: 0.5;
-  }
-  to {
-    opacity: 0;
-  }
+.animate-fade-up {
+  animation: fade-up var(--dur-slow) var(--ease-out-quart) both;
 }
 
-/* 统一 reduced-motion:关闭本批品牌动画的"运动"部分。
-   - scale-in / pulse-soft / glow-once 完全停用(缩放、循环呼吸、高亮扫过);
-   - fade-up 去掉 translateY 位移,只保留 opacity 淡入 —— 产品明确要求
-     "新发现战报卡"在 reduced-motion 下仍可感知地出现(纯透明度变化不属于
-     前庭刺激类运动),其余带 fade-up 的进场同规则、语义一致。
-   - glow-once 额外静态隐藏,避免原来的"淡出到 0"失效后残留一层严重度色覆盖。
-   注意:此块只覆盖本批新增动画类,不动 shadcn / tw-animate-css 的既有小过渡,
-   也不动探索图内部自带的 motion-reduce: 开关。 */
+.animate-pulse-soft {
+  animation: pulse-soft 2s var(--ease-in-out) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-scale-in,
-  .animate-pulse-soft {
-    animation: none;
-  }
-
-  .animate-glow-once {
-    animation: none;
-    opacity: 0;
-  }
-
-  .animate-fade-up {
-    animation-name: fade-soft;
-  }
-
-  @keyframes fade-soft {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
-html {
-  overscroll-behavior: none;
-}
-
-.disable-transitions * {
-  transition: none !important;
-}
-
-[data-print-root] {
-  display: none;
-}
-
-@media print {
-  @page {
-    size: Letter;
-    margin: 0;
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
   }
-
-  html,
-  body {
-    width: 8.5in !important;
-    height: 11in !important;
-    margin: 0 !important;
-    overflow: hidden !important;
-  }
-
-  body > *:not([data-print-root]) {
-    display: none !important;
-  }
-
-  [data-print-root] {
-    display: block !important;
-    width: 8.5in !important;
-    height: 11in !important;
-    margin: 0 !important;
-    overflow: hidden !important;
-    background: white !important;
-  }
-
-  [data-print-root] [data-print-paper] {
-    width: 8.5in !important;
-    height: 11in !important;
-    margin: 0 !important;
-    box-shadow: none !important;
-  }
-
-  [data-print-root] [data-print-paper],
-  [data-print-root] [data-print-paper] * {
-    print-color-adjust: exact;
-    -webkit-print-color-adjust: exact;
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 }

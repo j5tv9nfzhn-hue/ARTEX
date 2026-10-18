@@ -1,0 +1,63 @@
+name: Verification helper (opt-in)
+
+# Manual only: no push/PR build of the optional second TLS stack.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Runner platform (both/all runs sequentially across selected OS targets)'
+        type: choice
+        options: [linux, macos, windows, both, all]
+        default: linux
+      root_ipc_tests:
+        description: 'Also compile agent and run only IPC hardening fixtures (no ARTEX service)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verification-helper-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  helper:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: ${{ fromJSON(inputs.platform == 'all' && '["ubuntu-latest","macos-latest","windows-latest"]' || inputs.platform == 'both' && '["ubuntu-latest","windows-latest"]' || inputs.platform == 'macos' && '["macos-latest"]' || inputs.platform == 'windows' && '["windows-latest"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: integrations/verification-http
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache-dependency-path: |
+            go.sum
+            integrations/verification-http/go.sum
+      - name: Test isolated helper against local fixtures only
+        run: go test -mod=readonly -count=1 ./...
+      - name: Vet isolated helper
+        run: go vet -mod=readonly ./...
+      - name: Build isolated helper
+        run: |
+          ext=""
+          if [ "${RUNNER_OS}" = "Windows" ]; then ext=".exe"; fi
+          out="${RUNNER_TEMP}/artex-verification-http${ext}"
+          go build -mod=readonly -trimpath -o "$out" .
+          test -s "$out"
+      - name: Verify downloaded modules and immutable metadata
+        run: |
+          go mod verify
+          git diff --exit-code -- go.mod go.sum
+      - name: Optional agent IPC subprocess fixtures
+        if: ${{ inputs.root_ipc_tests }}
+        working-directory: .
+        run: go test -mod=readonly -count=1 ./agent -run '^TestVerificationIPC'

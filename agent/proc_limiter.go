@@ -74,12 +74,10 @@ func runManagedExternalCommand(ctx context.Context, binPath string, args []strin
 	if len(extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), extraEnv...)
 	}
+	configureExternalProc(cmd)
 	cmd.WaitDelay = 3 * time.Second
 	cmd.Cancel = func() error {
-		if cmd.Process != nil {
-			return cmd.Process.Kill()
-		}
-		return nil
+		return terminateExternalProc(cmd)
 	}
 
 	var buf bytes.Buffer
