@@ -744,7 +744,7 @@ func mergeSkillProposalDocuments(name, description string, sources []db.SkillPro
 	if description == "" {
 		description = fmt.Sprintf("跨任务合并提炼经验（源自 %s 等 %d 份复盘提议）：汇总已验证路径、漏洞证据与 3-Strike 止损规范。", strings.Join(sourceNames, "、"), len(sources))
 	}
-	description = curatorSingleLine(description, 240)
+	description = curatorInline(description, 240)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s · 跨任务合并复盘手册\n\n", name)

@@ -3391,7 +3391,8 @@ export const skills: SkillItem[] = [
   },
   {
     name: "human-verification",
-    description: "人机验证、挑战识别与有界免费 PoW 求解（ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis 确定性求解及协议门禁）。",
+    description:
+      "人机验证、挑战识别与有界免费 PoW 求解（ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis 确定性求解及协议门禁）。",
     files: ["SKILL.md"],
     calls: 6,
     tasks: 2,

@@ -553,7 +553,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2">
             <h1 className="font-display text-lg font-semibold tracking-tight">{t("title")}</h1>
             <span className="rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wider text-primary ring-1 ring-primary/25">
-              ARTEX-REA // TELEMETRY
+              {"ARTEX-REA // TELEMETRY"}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">{t("subtitle")}</p>
@@ -580,7 +580,7 @@ export default function DashboardPage() {
               </span>
               {t("activeTasks")}
             </span>
-            <span className="font-mono text-[9px] font-semibold tracking-wider text-primary/80">REA // CORE</span>
+            <span className="font-mono text-[9px] font-semibold tracking-wider text-primary/80">{"REA // CORE"}</span>
           </div>
           <div className="flex items-baseline gap-2.5">
             <span className="font-display font-semibold text-5xl tabular-nums leading-none tracking-tight lg:text-6xl">

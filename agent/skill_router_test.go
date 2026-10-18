@@ -13,8 +13,8 @@ func dummyTool(name, desc string) actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name:        name,
 		Description: desc,
-		InputSchema: map[string]any{"type": "object"},
-		Run: func(_ context.Context, _ json.RawMessage) (actool.Result, error) {
+		Schema:      map[string]any{"type": "object"},
+		Run: func(_ context.Context, _ json.RawMessage, _ *actool.ToolContext) (actool.Result, error) {
 			return actool.Text("ok"), nil
 		},
 	})

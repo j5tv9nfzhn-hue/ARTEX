@@ -4,9 +4,9 @@ export const THEME_MODE_OPTIONS = [
   { label: "跟随系统", value: "system" },
 ] as const;
 
-export const THEME_MODE_VALUES = THEME_MODE_OPTIONS.map((m) => m.value);
-
+export const THEME_MODE_VALUES = THEME_MODE_OPTIONS.map((o) => o.value);
 export type ThemeMode = (typeof THEME_MODE_VALUES)[number];
+export type ResolvedThemeMode = "light" | "dark";
 
 // --- generated:themePresets:start ---
 

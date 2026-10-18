@@ -170,27 +170,15 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family:
-      var(--font-sans, "Geist"),
-      "PingFang SC",
-      "Hiragino Sans GB",
-      "Microsoft YaHei UI",
-      "Microsoft YaHei",
-      "Noto Sans CJK SC",
-      "Source Han Sans SC",
-      system-ui,
-      -apple-system,
-      sans-serif;
+      var(--font-sans, "Geist"), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei",
+      "Noto Sans CJK SC", "Source Han Sans SC", system-ui, -apple-system, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   /* 主工作区顶部双轴张力环境光:主色(--primary)与次级电光色(--chart-2)对撞,营造现代指挥舱纵深感与视觉张力 */
   [data-slot="sidebar-inset"] {
     background-image:
-      radial-gradient(
-        ellipse 80% 42% at 32% -14%,
-        color-mix(in oklch, var(--primary) 8%, transparent),
-        transparent 70%
-      ),
+      radial-gradient(ellipse 80% 42% at 32% -14%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 70%),
       radial-gradient(
         ellipse 60% 36% at 86% -10%,
         color-mix(in oklch, var(--chart-2) 5.5%, transparent),
@@ -225,32 +213,15 @@
   pre,
   .font-mono {
     font-family:
-      var(--font-mono, "Geist Mono"),
-      "JetBrains Mono",
-      "Cascadia Mono",
-      "Sarasa Mono SC",
-      "Microsoft YaHei Mono",
-      ui-monospace,
-      SFMono-Regular,
-      Menlo,
-      Consolas,
-      monospace;
+      var(--font-mono, "Geist Mono"), "JetBrains Mono", "Cascadia Mono", "Sarasa Mono SC", "Microsoft YaHei Mono",
+      ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 }
 
 .font-display {
   font-family:
-    var(--font-display),
-    var(--font-sans, "Geist"),
-    "PingFang SC",
-    "Hiragino Sans GB",
-    "Microsoft YaHei UI",
-    "Microsoft YaHei",
-    "Noto Sans CJK SC",
-    "Source Han Sans SC",
-    system-ui,
-    -apple-system,
-    sans-serif;
+    var(--font-display), var(--font-sans, "Geist"), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI",
+    "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, -apple-system, sans-serif;
 }
 
 @layer utilities {

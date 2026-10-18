@@ -1045,15 +1045,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/skills", s.fsCreateSkill)
 	mux.HandleFunc("POST /api/skills/upload", s.fsUploadSkill)
 	mux.HandleFunc("DELETE /api/skills/{name}", s.fsDeleteSkill)
-	mux.HandleFunc("GET /api/skills/missing", s.fsMissingSkills)                     // 未命中(想调但不存在)的 skill 名
-	mux.HandleFunc("GET /api/skills/gaps", s.fsSkillGaps)                                    // 结构化技能缺口与审计依据
-	mux.HandleFunc("GET /api/skills/proposals", s.fsListSkillProposals)                      // 待审阅/已批准/已否决技能提议列表
-	mux.HandleFunc("POST /api/skills/proposals/{id}/review", s.fsReviewSkillProposal)         // 审阅技能提议(批准/否决/修订后批准)
-	mux.HandleFunc("POST /api/skills/proposals/batch-review", s.fsBatchReviewSkillProposals) // 批量审阅技能提议
-	mux.HandleFunc("POST /api/skills/proposals/merge", s.fsMergeSkillProposals)              // 多份提议合并提炼为通用技能
-	mux.HandleFunc("POST /api/skills/distill", s.fsDistillTaskSkill)                         // 手动将指定任务沉淀为复盘技能
+	mux.HandleFunc("GET /api/skills/missing", s.fsMissingSkills)                               // 未命中(想调但不存在)的 skill 名
+	mux.HandleFunc("GET /api/skills/gaps", s.fsSkillGaps)                                      // 结构化技能缺口与审计依据
+	mux.HandleFunc("GET /api/skills/proposals", s.fsListSkillProposals)                        // 待审阅/已批准/已否决技能提议列表
+	mux.HandleFunc("POST /api/skills/proposals/{id}/review", s.fsReviewSkillProposal)          // 审阅技能提议(批准/否决/修订后批准)
+	mux.HandleFunc("POST /api/skills/proposals/batch-review", s.fsBatchReviewSkillProposals)   // 批量审阅技能提议
+	mux.HandleFunc("POST /api/skills/proposals/merge", s.fsMergeSkillProposals)                // 多份提议合并提炼为通用技能
+	mux.HandleFunc("POST /api/skills/distill", s.fsDistillTaskSkill)                           // 手动将指定任务沉淀为复盘技能
 	mux.HandleFunc("GET /api/system/verification-capabilities", s.sysVerificationCapabilities) // 人机验证协议与可选指纹 helper 就绪快照
-	mux.HandleFunc("GET /api/skills/{name}/usage", s.fsSkillUsage)                   // 单个 skill 的最近调用
+	mux.HandleFunc("GET /api/skills/{name}/usage", s.fsSkillUsage)                             // 单个 skill 的最近调用
 	mux.HandleFunc("PUT /api/skills/{name}/meta", s.fsUpdateSkillMeta)
 	mux.HandleFunc("POST /api/skills/{name}/dirs", s.fsCreateDir)
 	mux.HandleFunc("GET /api/skills/{name}/files", s.fsListFiles)

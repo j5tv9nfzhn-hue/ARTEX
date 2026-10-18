@@ -242,8 +242,8 @@ type Manager struct {
 	skillHookMu    sync.RWMutex
 	onTaskTerminal func(taskID, status string)
 	onTaskDeleted  func(taskID string, snapshot *pgdb.Task)
-	trafficOn   bool // 流量捕获开关（默认关；settings.traffic_capture）
-	llmRecOn    bool // LLM 录制开关（默认关；settings.llm_record）
+	trafficOn      bool // 流量捕获开关（默认关；settings.traffic_capture）
+	llmRecOn       bool // LLM 录制开关（默认关；settings.llm_record）
 	// 联网搜索开关与来源（默认关；settings.web_search_*）。brave-free 需要 braveKey；tavily 需要 tavilyKey。
 	// webSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关。
 	webSearchOn      bool

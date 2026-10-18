@@ -2610,7 +2610,7 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/skills/missing") return { missing: D.missingSkills };
   if (path === "/skills/gaps") return { gaps: D.missingSkills };
   if (path === "/skills/proposals" && m === "GET") {
-    const status = sp.get("status") ?? "all";
+    const status = q.get("status") ?? "all";
     const list = status === "all" ? D.skillProposals : D.skillProposals.filter((p) => p.status === status);
     const counts: Record<string, number> = { pending: 0, applied: 0, rejected: 0 };
     for (const p of D.skillProposals) {

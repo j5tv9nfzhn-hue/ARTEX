@@ -1287,7 +1287,10 @@ export default function SkillsPage() {
                     </Badge>
                   )}
                   {selectedSkill.name.startsWith("merged-") && (
-                    <Badge variant="outline" className="border-emerald-500/40 font-normal text-emerald-600 text-xs dark:text-emerald-400">
+                    <Badge
+                      variant="outline"
+                      className="border-emerald-500/40 font-normal text-emerald-600 text-xs dark:text-emerald-400"
+                    >
                       {t("mergedCaseBadge")}
                     </Badge>
                   )}
@@ -1650,10 +1653,7 @@ export default function SkillsPage() {
               onChange={(e) => setDistillTaskId(e.target.value)}
             />
             <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground text-xs">
-              <Checkbox
-                checked={distillApplyDirect}
-                onCheckedChange={(on) => setDistillApplyDirect(!!on)}
-              />
+              <Checkbox checked={distillApplyDirect} onCheckedChange={(on) => setDistillApplyDirect(!!on)} />
               {t("distillApplyDirect")}
             </label>
             <Button
@@ -1678,10 +1678,7 @@ export default function SkillsPage() {
                 {
                   key: "all",
                   label: t("proposalFilterAll"),
-                  count:
-                    (proposalCounts.pending ?? 0) +
-                    (proposalCounts.applied ?? 0) +
-                    (proposalCounts.rejected ?? 0),
+                  count: (proposalCounts.pending ?? 0) + (proposalCounts.applied ?? 0) + (proposalCounts.rejected ?? 0),
                 },
               ] as const
             ).map((tab) => (
@@ -1816,11 +1813,7 @@ export default function SkillsPage() {
                             </span>
                             <Badge
                               variant={
-                                p.status === "applied"
-                                  ? "secondary"
-                                  : p.status === "rejected"
-                                    ? "outline"
-                                    : "default"
+                                p.status === "applied" ? "secondary" : p.status === "rejected" ? "outline" : "default"
                               }
                               className="shrink-0 px-1.5 py-0 font-normal text-[10px]"
                             >
@@ -1869,9 +1862,7 @@ export default function SkillsPage() {
                       </h3>
                       <p className="text-muted-foreground text-xs">
                         ID: <code className="font-mono">{selectedProposal.id}</code> ·{" "}
-                        {selectedProposal.origin === "curator"
-                          ? t("proposalOriginCurator")
-                          : t("proposalOriginAgent")}
+                        {selectedProposal.origin === "curator" ? t("proposalOriginCurator") : t("proposalOriginAgent")}
                       </p>
                     </div>
                     {selectedProposal.status === "applied" && (
@@ -1891,9 +1882,7 @@ export default function SkillsPage() {
 
                   {selectedProposal.evidence && (
                     <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
-                      <span className="font-medium text-muted-foreground">
-                        {t("proposalEvidenceLabel")}：
-                      </span>
+                      <span className="font-medium text-muted-foreground">{t("proposalEvidenceLabel")}：</span>
                       <code className="break-all font-mono text-[11px]">{selectedProposal.evidence}</code>
                     </div>
                   )}

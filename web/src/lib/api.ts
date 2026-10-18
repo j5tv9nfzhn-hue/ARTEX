@@ -1293,10 +1293,11 @@ export const api = {
     get<{ missing: MissingSkill[] }>(`/skills/missing?limit=${limit}`).then((r) => arr(r.missing)),
   skillProposals: (status: "pending" | "applied" | "rejected" | "all" = "all", limit = 50) =>
     get<SkillProposalListResponse>(`/skills/proposals?status=${status}&limit=${limit}`),
-  reviewSkillProposal: (
-    id: string,
-    body: { decision: "approve" | "reject"; note?: string; content?: string },
-  ) => post<{ ok: boolean; message: string; proposal: SkillProposal }>(`/skills/proposals/${encodeURIComponent(id)}/review`, body),
+  reviewSkillProposal: (id: string, body: { decision: "approve" | "reject"; note?: string; content?: string }) =>
+    post<{ ok: boolean; message: string; proposal: SkillProposal }>(
+      `/skills/proposals/${encodeURIComponent(id)}/review`,
+      body,
+    ),
   batchReviewSkillProposals: (body: { ids: string[]; decision: "approve" | "reject"; note?: string }) =>
     post<{ ok: boolean; succeeded: string[]; failed: Record<string, string> }>("/skills/proposals/batch-review", body),
   mergeSkillProposals: (body: {

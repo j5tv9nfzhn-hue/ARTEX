@@ -110,7 +110,7 @@ export default function LoginPage() {
           </div>
           <div className="relative space-y-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary-foreground/25 bg-primary-foreground/12 px-3.5 py-1 font-mono text-[11px] font-semibold tracking-widest uppercase">
-              ARTEX-REA // TACTICAL COMMAND
+              {"ARTEX-REA // TACTICAL COMMAND"}
             </div>
             <p className="font-mono text-[10px] tracking-widest text-primary-foreground/75 uppercase">
               AUTONOMOUS OFFENSIVE &amp; REVERSE ENGINEERING ENGINE

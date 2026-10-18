@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import { useShallow } from "zustand/react/shallow";
+
 import {
   Sidebar,
   SidebarContent,
@@ -12,34 +14,54 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { APP_CONFIG } from "@/config/app-config";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { sidebarItems } from "@/navigation/sidebar/sidebar-items";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 import { NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
+import { SidebarCustomize } from "./sidebar-customize-dialog";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const sidebarVariant = usePreferencesStore((s) => s.sidebarVariant);
-  const sidebarCollapsible = usePreferencesStore((s) => s.sidebarCollapsible);
+  const currentUser = useCurrentUser();
+  const { sidebarVariant, sidebarCollapsible, isSynced } = usePreferencesStore(
+    useShallow((s) => ({
+      sidebarVariant: s.sidebarVariant,
+      sidebarCollapsible: s.sidebarCollapsible,
+      isSynced: s.isSynced,
+    })),
+  );
+
+  const variant = isSynced ? sidebarVariant : props.variant;
+  const collapsible = isSynced ? sidebarCollapsible : props.collapsible;
 
   return (
-    <Sidebar {...props} variant={sidebarVariant} collapsible={sidebarCollapsible}>
-      <SidebarHeader className="border-b border-sidebar-border/60 pb-2.5">
+    <Sidebar {...props} variant={variant} collapsible={collapsible}>
+      <SidebarHeader className="pb-1">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild className="h-10 gap-2.5 px-2 hover:bg-sidebar-accent/70">
-              <Link prefetch={false} href="/dashboard" aria-label={APP_CONFIG.name}>
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-primary/20 to-chart-2/15 shadow-2xs ring-1 ring-primary/35">
+            <SidebarMenuButton
+              asChild
+              size="lg"
+              className="group/brand relative overflow-hidden rounded-lg border border-sidebar-border/60 bg-gradient-to-br from-primary/10 via-sidebar-accent/40 to-transparent transition-all duration-200 hover:border-primary/40 hover:from-primary/15 data-[slot=sidebar-menu-button]:p-2!"
+            >
+              <Link prefetch={false} href="/function/tasks">
+                <div className="relative flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30 transition-transform duration-200 group-hover/brand:scale-105">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/logo.png" alt="ARTEX-REA" width={20} height={20} className="size-5 shrink-0 dark:invert" />
-                </span>
-                <div className="flex min-w-0 flex-1 items-center justify-between gap-1.5 group-data-[collapsible=icon]:hidden">
-                  <span className="truncate font-display text-base font-bold tracking-tight">
-                    <span>ARTEX</span>
-                    <span className="bg-linear-to-r from-primary to-chart-2 bg-clip-text text-transparent">-REA</span>
-                  </span>
-                  <span className="shrink-0 rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wider text-primary ring-1 ring-primary/25">
-                    OPS // REA
+                  <img src="/logo.png" alt="ARTEX-REA" width={24} height={24} className="shrink-0" />
+                  <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-emerald-500 ring-2 ring-sidebar" />
+                </div>
+                <div className="grid flex-1 text-left leading-tight">
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate font-display font-semibold text-sm tracking-tight">
+                      {APP_CONFIG.name}
+                    </span>
+                    <span className="shrink-0 rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wider text-primary ring-1 ring-primary/25">
+                      {"OPS // REA"}
+                    </span>
+                  </div>
+                  <span className="truncate font-mono text-[10px] text-muted-foreground/85 tracking-tight">
+                    AUTONOMOUS OFFENSIVE &amp; RE
                   </span>
                 </div>
               </Link>
@@ -50,8 +72,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent>
         <NavMain items={sidebarItems} />
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border/60 pt-2">
-        <NavUser />
+      <SidebarFooter>
+        <SidebarCustomize />
+        <NavUser user={currentUser} />
       </SidebarFooter>
     </Sidebar>
   );

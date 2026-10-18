@@ -36,10 +36,10 @@ function extractMetadata(content: string, fileName: string) {
   }
 
   const derivedValue = fileName.replace(/\.css$/, "");
-  const finalValue = value || derivedValue;
+  const finalValue = value ?? derivedValue;
 
   const finalLabel =
-    label ||
+    label ??
     finalValue
       .split("-")
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
