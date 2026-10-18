@@ -120,7 +120,7 @@ function SectionTitle({
   return (
     <div className="mb-3 flex items-center justify-between">
       <div className="flex items-center gap-1.5 text-xs font-semibold">
-        <Icon className="size-3.5 text-primary" />
+        <Icon className="size-3.5 text-muted-foreground" />
         {children}
       </div>
       {sub && <span className="text-[10px] text-muted-foreground">{sub}</span>}
@@ -548,14 +548,9 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-1 flex-col gap-5 pb-6">
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-display text-lg font-semibold tracking-tight">{t("title")}</h1>
-            <span className="rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wider text-primary ring-1 ring-primary/25">
-              {"ARTEX-REA // TELEMETRY"}
-            </span>
-          </div>
+          <h1 className="text-lg font-semibold tracking-tight">{t("title")}</h1>
           <p className="text-xs text-muted-foreground">{t("subtitle")}</p>
           {/* 作战状态摘要(页头小字):数据为 0 的段已省略,全空不渲染 */}
           {headerSummary.length > 0 && (
@@ -572,15 +567,9 @@ export default function DashboardPage() {
         {/* 主 KPI:活跃任务(running 大排印,数字走 Space Grotesk + 等宽数字)。
             进场用 .animate-fade-up 直接挂 Card(不包 div)—— 该卡是栅格子项、要跟着
             右侧矩阵拉伸对齐,包装层会把"卡片本身"替换成 div、破坏等高。 */}
-        <Card className="animate-fade-up relative justify-between gap-4 overflow-hidden bg-linear-to-br from-primary/[0.08] via-card to-card p-5 ring-primary/25 before:pointer-events-none before:absolute before:inset-x-6 before:top-0 before:h-px before:bg-linear-to-r before:from-transparent before:via-primary/60 before:to-transparent dark:from-primary/[0.12] dark:ring-primary/35">
-          <div className="flex items-center justify-between gap-2 font-medium text-[10px] text-muted-foreground uppercase tracking-widest">
-            <span className="flex items-center gap-2">
-              <span className="flex size-5 items-center justify-center rounded-md bg-primary/12 text-primary ring-1 ring-primary/20">
-                <TargetIcon className="size-3" />
-              </span>
-              {t("activeTasks")}
-            </span>
-            <span className="font-mono text-[9px] font-semibold tracking-wider text-primary/80">{"REA // CORE"}</span>
+        <Card className="animate-fade-up justify-between gap-4 p-5">
+          <div className="flex items-center gap-1.5 font-medium text-[10px] text-muted-foreground uppercase tracking-widest">
+            <TargetIcon className="size-3" /> {t("activeTasks")}
           </div>
           <div className="flex items-baseline gap-2.5">
             <span className="font-display font-semibold text-5xl tabular-nums leading-none tracking-tight lg:text-6xl">
@@ -590,17 +579,17 @@ export default function DashboardPage() {
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
             {(tasksByStatus.running ?? 0) > 0 && (
-              <span className="text-sky-600 dark:text-sky-400">
+              <span className="text-blue-400">
                 {t("statExplore")} {tasksByStatus.running}
               </span>
             )}
             {(tasksByStatus.paused ?? 0) > 0 && (
-              <span className="text-amber-600 dark:text-amber-400">
+              <span className="text-amber-400">
                 {t("statPaused")} {tasksByStatus.paused}
               </span>
             )}
             {(tasksByStatus.done ?? 0) > 0 && (
-              <span className="text-emerald-600 dark:text-emerald-400">
+              <span className="text-emerald-400">
                 {t("statDone")} {tasksByStatus.done}
               </span>
             )}
@@ -616,7 +605,7 @@ export default function DashboardPage() {
           <Card size="sm" className="gap-1">
             <CardHeader className="pb-0">
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider">
-                <BugIcon className="size-3 text-primary" /> {t("confirmedFindings")}
+                <BugIcon className="size-3" /> {t("confirmedFindings")}
               </div>
               <div className="font-display font-semibold text-2xl tabular-nums leading-none">{findings.length}</div>
             </CardHeader>
@@ -641,7 +630,7 @@ export default function DashboardPage() {
           <Card size="sm" className="gap-1">
             <CardHeader className="pb-0">
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider">
-                <NetworkIcon className="size-3 text-primary" /> {t("assetNodes")}
+                <NetworkIcon className="size-3" /> {t("assetNodes")}
               </div>
               <div className="font-display font-semibold text-2xl tabular-nums leading-none">{totalAssets}</div>
             </CardHeader>
@@ -652,7 +641,7 @@ export default function DashboardPage() {
           <Card size="sm" className="gap-1">
             <CardHeader className="pb-0">
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider">
-                <ActivityIcon className="size-3 text-primary" /> {t("trafficExchanges")}
+                <ActivityIcon className="size-3" /> {t("trafficExchanges")}
               </div>
               <div className="font-display font-semibold text-2xl tabular-nums leading-none">{traffic.length}</div>
             </CardHeader>
@@ -672,7 +661,7 @@ export default function DashboardPage() {
           <Card size="sm" className="gap-1">
             <CardHeader className="pb-0">
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider">
-                <ZapIcon className="size-3 text-primary" /> {t("tokenUsage")}
+                <ZapIcon className="size-3" /> {t("tokenUsage")}
               </div>
               <div className="font-display font-semibold text-2xl tabular-nums leading-none">
                 {fmtTokens(displayedTokens.input + displayedTokens.output) || "—"}
@@ -732,8 +721,8 @@ export default function DashboardPage() {
               className={cn(
                 "rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors",
                 tokenTab === "all"
-                  ? "bg-primary text-primary-foreground shadow-2xs"
-                  : "bg-muted/40 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                  ? "bg-foreground text-background"
+                  : "bg-muted/30 text-muted-foreground hover:text-foreground",
               )}
             >
               {t("all")}
@@ -750,8 +739,8 @@ export default function DashboardPage() {
                   className={cn(
                     "flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors",
                     tokenTab === resolvedKey
-                      ? "bg-primary text-primary-foreground shadow-2xs"
-                      : "bg-muted/40 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                      ? "bg-foreground text-background"
+                      : "bg-muted/30 text-muted-foreground hover:text-foreground",
                     !hasData && "opacity-40",
                   )}
                 >
@@ -761,8 +750,8 @@ export default function DashboardPage() {
                       className={cn(
                         "rounded px-1 py-0 text-[8px]",
                         tokenTab === resolvedKey
-                          ? "bg-primary-foreground/20 text-primary-foreground"
-                          : "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+                          ? "bg-background/20 text-background"
+                          : "bg-emerald-500/20 text-emerald-400",
                       )}
                     >
                       {t("default")}
@@ -1079,7 +1068,7 @@ export default function DashboardPage() {
         </div>
         <table className="w-full border-collapse text-xs">
           <thead>
-            <tr className="border-b bg-muted/35">
+            <tr className="border-b">
               {[
                 t("colTask"),
                 t("colStatus"),

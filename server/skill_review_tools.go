@@ -431,6 +431,22 @@ func (s *Server) reviewProposal(ctx context.Context, id, decision, note string) 
 	if _, err := s.m.pg.ReviewSkillProposal(ctx, id, resolved, note); err != nil {
 		return "", err
 	}
+	// 当审阅的是外部报告导入生成的主 SKILL.md 提议时，联动批准/否决同一技能包下的待审支撑文件（references/*）。
+	if (p.File == "" || p.File == "SKILL.md") && strings.HasPrefix(p.Evidence, "report_import ") {
+		if pendingList, err := s.m.pg.ListSkillProposals(ctx, db.SkillProposalPending, 200); err == nil {
+			for _, comp := range pendingList {
+				if comp.ID == p.ID || comp.Skill != p.Skill || comp.File == "" {
+					continue
+				}
+				if resolved == db.SkillProposalApplied {
+					if err := s.applySkillFile(comp.Skill, comp.File, comp.Content); err != nil {
+						continue
+					}
+				}
+				_, _ = s.m.pg.ReviewSkillProposal(ctx, comp.ID, resolved, note)
+			}
+		}
+	}
 	verb := "已否决，留档未落盘"
 	if resolved == db.SkillProposalApplied {
 		verb = "已批准并写入磁盘"

@@ -91,6 +91,58 @@ func TestReportMarkdownLocalized(t *testing.T) {
 	}
 }
 
+// TestReportMarkdownWithProcessAndPitfalls 验证导出报告包含探索过程、关键事实与踩坑止损章节。
+func TestReportMarkdownWithProcessAndPitfalls(t *testing.T) {
+	donePayload, _ := json.Marshal(map[string]any{"summary": "枚举 /api/v1/upload/sign-url 签名算法并逆向 WASM 模块"})
+	blockedPayload, _ := json.Marshal(map[string]any{"summary": "使用常规 HTTP 客户端发送 ../ 路径穿越 PUT"})
+	factPayload, _ := json.Marshal(map[string]any{
+		"summary":    "WASM 模块 crypto_util_bg.wasm 包含固定盐值 MD5 签名逻辑",
+		"confidence": "observed",
+		"evidence":   "md5(t + nonce + salt)",
+	})
+	hintPayload, _ := json.Marshal(map[string]any{"text": "优先使用原始 socket 或未归一化 URL 路径发送 PUT"})
+
+	out := Markdown(Input{
+		Title:       "云存储与WASM逆向任务",
+		Goal:        "验证预签名上传目录穿越与SSRF",
+		GeneratedAt: time.Date(2026, 10, 4, 2, 30, 0, 0, time.UTC),
+		AssetCounts: map[string]int{"endpoint": 12},
+		Findings:    []*db.Node{sampleFindingNode(t)},
+		Intents: []*db.Node{
+			{ID: 1, Kind: db.KindIntent, State: "done", Payload: donePayload},
+			{ID: 2, Kind: db.KindIntent, State: "blocked", BlockedReason: "标准 HTTP 客户端会自动归一化 ../ 导致 OSS 签名校验 403", Payload: blockedPayload},
+		},
+		Facts: []*db.Node{
+			{ID: 3, Kind: db.KindFact, State: "confirmed", Payload: factPayload},
+		},
+		Hints: []*db.Node{
+			{ID: 4, Kind: db.KindHint, State: "active", Payload: hintPayload},
+		},
+		Activities: []db.Activity{
+			{Kind: "tool_use", Tool: "http_request"},
+			{Kind: "tool_result", Tool: "http_request", IsError: true, Summary: "403 SignatureDoesNotMatch（专家战术熔断提醒 3-Strike）"},
+		},
+	})
+	if r, ok := containsHangul(out); ok {
+		t.Fatalf("报告含韩文残留 %q：\n%s", string(r), out)
+	}
+	for _, want := range []string{
+		"## 探索过程与推导链",
+		"枚举 /api/v1/upload/sign-url 签名算法并逆向 WASM 模块",
+		"## 关键技术事实与槽位定性",
+		"**[观察]** WASM 模块 crypto_util_bg.wasm 包含固定盐值 MD5 签名逻辑",
+		"## 踩坑记录、受阻陷阱与 3-Strike 止损",
+		"标准 HTTP 客户端会自动归一化 ../ 导致 OSS 签名校验 403",
+		"**[3-Strike 止损铁律]**",
+		"## 人工提示与战术转向",
+		"优先使用原始 socket 或未归一化 URL 路径发送 PUT",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("导出报告缺少预期过程/踩坑段落 %q：\n%s", want, out)
+		}
+	}
+}
+
 // TestReportMarkdownEmptyLocalized 验证没有漏洞时的中文提示。
 func TestReportMarkdownEmptyLocalized(t *testing.T) {
 	out := Markdown(Input{Title: "空任务", GeneratedAt: time.Now()})

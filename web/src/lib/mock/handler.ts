@@ -2732,6 +2732,39 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     D.skillProposals.unshift(created);
     return { ok: true, proposal: created };
   }
+  if (path === "/skills/import-report" && m === "POST") {
+    const skillName = String(b.name || "report-imported-tactics");
+    const apply = Boolean(b.apply ?? true);
+    const created = {
+      id: `report-import-${Date.now()}`,
+      skill: skillName,
+      file: "SKILL.md",
+      action: "create",
+      content: `---\nname: ${skillName}\ndescription: 外部报告沉淀技能包：含攻击推导过程、踩坑陷阱与绕过手册。\n---\n\n# ${skillName} · 实战过程推导与防踩坑专家手册\n`,
+      origin: "curator",
+      evidence: "report_import files=report.md domain=web_security engine=llm findings=5 pitfalls=4 steps=5",
+      lint: "",
+      status: (apply ? "applied" : "pending") as "applied" | "pending",
+      note: "",
+      created_at: new Date().toISOString(),
+      reviewed_at: apply ? new Date().toISOString() : "",
+    };
+    D.skillProposals.unshift(created);
+    return {
+      ok: true,
+      skill: skillName,
+      status: created.status,
+      engine: "llm",
+      files_written: apply
+        ? ["SKILL.md", "references/pitfalls-and-bypasses.md", "references/attack-chains-and-pocs.md"]
+        : [],
+      proposals: [created],
+      proposal: created,
+      findings_count: 5,
+      pitfalls_count: 4,
+      chains_count: 5,
+    };
+  }
   if (seg[0] === "skills" && seg[2] === "usage") return { calls: D.skillCalls };
   if (path === "/skills" && m === "POST") return { name: String(b.name ?? "new-skill") };
   if (seg[0] === "skills" && seg[2] === "files" && seg.length === 3) return { files: ["SKILL.md"] };

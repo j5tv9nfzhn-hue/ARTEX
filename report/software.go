@@ -17,6 +17,9 @@ type SoftwareInput struct {
 	GeneratedAt time.Time
 	Goals       []*db.Node
 	Facts       []*db.Node
+	Intents     []*db.Node
+	Hints       []*db.Node
+	Activities  []db.Activity
 	Samples     []db.RESample
 	Sessions    []db.RESession
 	Evidences   []db.REEvidence
@@ -54,6 +57,68 @@ func SoftwareMarkdown(in SoftwareInput) string {
 		}
 		fmt.Fprintf(&b, "- #%d · %s · %s\n", n.ID, state, reportText(p.Text, 2000))
 	}
+
+	doneIntents, pitfallIntents := parseReportIntents(in.Intents)
+	toolPitfalls, loopTripped := summarizeToolPitfalls(in.Activities)
+
+	if len(doneIntents) > 0 {
+		b.WriteString("\n## 逆向推导过程与验证路径\n\n")
+		for i, it := range doneIntents {
+			if i >= 25 {
+				fmt.Fprintf(&b, "- …（其余 %d 条已完成逆向步骤已省略）\n", len(doneIntents)-i)
+				break
+			}
+			fmt.Fprintf(&b, "%d. %s\n", i+1, reportText(it.Summary, 400))
+		}
+	}
+
+	if len(pitfallIntents) > 0 || len(toolPitfalls) > 0 || loopTripped {
+		b.WriteString("\n## 逆向踩坑记录、误区陷阱与止损\n\n")
+		b.WriteString("> 以下记录逆向分析过程中遇到的壳/混淆陷阱、工具报错、死胡同与止损切换点，供后续复盘与沉淀技能包防错使用。\n\n")
+		for i, it := range pitfallIntents {
+			if i >= 20 {
+				break
+			}
+			reason := it.Reason
+			if reason == "" {
+				reason = "静态/动态分析受阻，已止损切换路径"
+			}
+			fmt.Fprintf(&b, "- **[意图%s]** %s —— **踩坑/止损原因**：%s\n",
+				strings.ToUpper(it.State), reportText(it.Summary, 320), reportText(reason, 360))
+		}
+		for i, tp := range toolPitfalls {
+			if i >= 10 {
+				break
+			}
+			fmt.Fprintf(&b, "- **[工具异常 · `%s`]** 累计调用 %d 次，失败 %d 次", reportText(tp.Tool, 80), tp.Calls, tp.Errors)
+			if tp.Tripped {
+				b.WriteString("（触发 3-Strike 同键止损熔断）")
+			}
+			if len(tp.Samples) > 0 {
+				fmt.Fprintf(&b, "；典型报错特征：%s", reportText(strings.Join(tp.Samples, "；"), 300))
+			}
+			b.WriteString("\n")
+		}
+		if loopTripped {
+			b.WriteString("- **[3-Strike 止损铁律]** 同一静态/动态分析命令连续三次失败或无新增符号/控制流信息时，必须切换定位锚点（字符串/导入表/交叉引用/动态断点），禁止原样重试。\n")
+		}
+	}
+
+	if len(in.Hints) > 0 {
+		b.WriteString("\n## 人工提示与逆向转向\n\n")
+		for i, h := range in.Hints {
+			if h == nil || i >= 12 {
+				continue
+			}
+			var m map[string]any
+			_ = json.Unmarshal(h.Payload, &m)
+			txt := compactInline(firstMapString(m, "text", "summary"), 360)
+			if txt != "" {
+				fmt.Fprintf(&b, "- %s\n", reportText(txt, 360))
+			}
+		}
+	}
+
 	b.WriteString("\n## 分析事实与证据\n\n")
 	count := 0
 	for _, n := range in.Facts {

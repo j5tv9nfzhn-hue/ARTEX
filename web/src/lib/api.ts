@@ -85,6 +85,7 @@ import type {
   RESample,
   RESession,
   ReliabilityMetrics,
+  ReportImportResult,
   SessionTokenUsage,
   Settings,
   Severity,
@@ -1309,6 +1310,67 @@ export const api = {
   }) => post<{ ok: boolean; proposal: SkillProposal }>("/skills/proposals/merge", body),
   distillTaskSkill: (body: { task_id: number; apply?: boolean }) =>
     post<{ ok: boolean; proposal: SkillProposal }>("/skills/distill", body),
+  importReportSkill: async (opts: {
+    files?: File[];
+    content?: string;
+    filename?: string;
+    name?: string;
+    description?: string;
+    domain?: string;
+    focus?: string;
+    use_llm?: boolean;
+    apply?: boolean;
+    overwrite?: boolean;
+  }): Promise<ReportImportResult> => {
+    if (MOCK) {
+      return mockHandle("POST", "/skills/import-report", {
+        ...opts,
+        files: opts.files?.map((f) => ({ filename: f.name, content: "" })) ?? [],
+      }) as Promise<ReportImportResult>;
+    }
+    const fd = new FormData();
+    if (opts.name) fd.append("name", opts.name);
+    if (opts.description) fd.append("description", opts.description);
+    if (opts.domain) fd.append("domain", opts.domain);
+    if (opts.focus) fd.append("focus", opts.focus);
+    if (opts.content) fd.append("content", opts.content);
+    if (opts.filename) fd.append("filename", opts.filename);
+    if (opts.use_llm !== undefined) fd.append("use_llm", String(opts.use_llm));
+    if (opts.apply !== undefined) fd.append("apply", String(opts.apply));
+    if (opts.overwrite !== undefined) fd.append("overwrite", String(opts.overwrite));
+    for (const f of opts.files ?? []) {
+      fd.append("files", f);
+    }
+    const token = getToken();
+    const r = await fetch(`/api/skills/import-report${opts.overwrite ? "?overwrite=true" : ""}`, {
+      method: "POST",
+      body: fd,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new ApiError(body?.error || `导入提炼失败 (${r.status})`, r.status);
+    return body as ReportImportResult;
+  },
+  downloadSkillZip: async (name: string): Promise<void> => {
+    if (MOCK) return;
+    const token = getToken();
+    const r = await fetch(`/api/skills/${encodeURIComponent(name)}/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new ApiError(body?.error || `导出失败 (${r.status})`, r.status);
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
   verificationCapabilities: () => get<VerificationCapabilities>("/system/verification-capabilities"),
 
   // ---- visibility (MCP resource side) ---- (agent ids are strings per spec)

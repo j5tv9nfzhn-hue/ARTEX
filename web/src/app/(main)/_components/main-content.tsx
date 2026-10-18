@@ -54,9 +54,8 @@ export function MainContent({ children }: { children: ReactNode }) {
     <>
       <header
         className={cn(
-          "relative flex h-12 shrink-0 items-center gap-2 border-b border-border/70 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12",
-          "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-gradient-to-r after:from-transparent after:via-primary/35 after:to-transparent",
-          "[html[data-navbar-style=sticky]_&]:sticky [html[data-navbar-style=sticky]_&]:top-0 [html[data-navbar-style=sticky]_&]:z-50 [html[data-navbar-style=sticky]_&]:overflow-hidden [html[data-navbar-style=sticky]_&]:rounded-t-[inherit] [html[data-navbar-style=sticky]_&]:bg-background/75 [html[data-navbar-style=sticky]_&]:backdrop-blur-xl",
+          "flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12",
+          "[html[data-navbar-style=sticky]_&]:sticky [html[data-navbar-style=sticky]_&]:top-0 [html[data-navbar-style=sticky]_&]:z-50 [html[data-navbar-style=sticky]_&]:overflow-hidden [html[data-navbar-style=sticky]_&]:rounded-t-[inherit] [html[data-navbar-style=sticky]_&]:bg-background/50 [html[data-navbar-style=sticky]_&]:backdrop-blur-md",
         )}
       >
         <div className="flex w-full items-center justify-between px-4 lg:px-6">
@@ -69,10 +68,6 @@ export function MainContent({ children }: { children: ReactNode }) {
             <SearchDialog />
           </div>
           <div className="flex items-center gap-2">
-            <span className="mr-1 hidden items-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-2.5 py-0.5 font-mono text-[10px] font-medium tracking-wider text-primary lg:inline-flex">
-              <span className="size-1.5 animate-pulse-soft rounded-full bg-primary" />
-              {"ARTEX-REA // COMMAND"}
-            </span>
             {version && (
               <span className="font-medium text-muted-foreground text-xs tabular-nums">
                 {t("version", { version })}

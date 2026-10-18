@@ -26,6 +26,26 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action:    "加载 Skill(human-verification)，先用 human_verification_capabilities 核对可用协议/helper，再识别响应；human_verification_solve 支持明确的 ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis，flow 支持端到端及 protocol_only。可选 fingerprint_profile 依赖独立 Go helper，缺失不自动下载；不重复失败策略、不默认转人工。",
 	},
 	{
+		skillName: "ai-coding-sandbox-tactics",
+		title:     "AI 编程平台、Next.js Server Actions、云沙箱穿透与 Supabase 审计",
+		keywords: []string{
+			"sandbox", "沙箱", "next.js", "nextjs", "server action", "next-action", "_next/static",
+			"supabase", "anon key", "service_role", "rls", "e2b", "vercel", "在线编程", "ai 编程",
+			"代码生成", "容器逃逸", "单行编码", "free.ai",
+		},
+		action: "优先调用 `Skill({\"name\":\"ai-coding-sandbox-tactics\"})` 加载 AI 编程平台与沙箱穿透实战包（自动附带 `references/pitfalls-and-bypasses.md` 单行 Base64 防截断绕过与 `references/attack-chains-and-pocs.md` 攻击推导链）。",
+	},
+	{
+		skillName: "wasm-cloud-saas-tactics",
+		title:     "WebAssembly (Go WASM) 逆向、WebSocket 越权、预签名云存储与 AI SaaS 计费绕过",
+		keywords: []string{
+			"wasm", "webassembly", "wasm_exec", "go wasm", "websocket", "ws://", "wss://",
+			"presigned", "预签名", "oss", "s3", "cos", "r2", "bucket", "积分", "配额",
+			"credits", "quota", "consume", "计费", "扣费", "ai saas", "notegpt",
+		},
+		action: "优先调用 `Skill({\"name\":\"wasm-cloud-saas-tactics\"})` 加载 Go WASM 内存钩子取密钥、WebSocket 帧级越权、预签名 Bucket 列举与客户端积分拦截实战包（自动附带 `references/*` 防踩坑与 PoC 手册）。",
+	},
+	{
 		skillName: "api-recon",
 		title:     "REST/GraphQL API 枚举与未授权测试",
 		keywords: []string{
@@ -42,7 +62,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 			"spa", "vue", "react", "angular", "dom", "xss", "前端渲染", "单页应用",
 			"浏览器", "playwright", "登录态", "验证码", "滑块", "弹窗", "截图", "headless",
 		},
-		action: "优先调用 `Skill({\"name\":\"playwright-cli\"})` 加载无头浏览器交互规约；若已挂载 Playwright MCP，可直接通过 `ExecuteExtraTool` 调用 `mcp__Playwright__*` 工具执行页面导航与 DOM 交互。",
+		action: "优先调用 `Skill({\"name\":\"playwright-cli\"})` 加载无头浏览器交互规约；若已挂载 Playwright MCP，可直接调用 `mcp__Playwright__*` 工具或通过 `ExecuteExtraTool` 执行页面导航与 DOM 交互。",
 	},
 	{
 		skillName: "scopesentry-mcp",
@@ -52,7 +72,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 			"scopesentry", "scope-sentry", "子域名收集", "泛域名", "资产测绘",
 			"全量资产", "外网测绘", "外部扫描", "端口扫描任务",
 		},
-		action: "立即调用 `Skill({\"name\":\"scopesentry-mcp\"})` 解锁并加载 ScopeSentry 联动手册，随后通过 `ExecuteExtraTool` 直接调用 `mcp__ScopeSentry__*` 工具拉取/下发测绘任务。",
+		action: "立即调用 `Skill({\"name\":\"scopesentry-mcp\"})` 解锁并加载 ScopeSentry 联动手册，随后直接调用 `mcp__ScopeSentry__*` 工具或通过 `ExecuteExtraTool` 拉取/下发测绘任务。",
 	},
 	{
 		skillName: "web-vuln-tactics",
@@ -145,7 +165,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		}
 	}
 
-	// Match distilled case-* skills and custom skills from <available_skills>
+	// Match distilled case-* skills and custom/report-imported skills from <available_skills>
 	dynamicMatched := matchDynamicSkills(lower, availableSkills, builtinNames)
 	if len(dynamicMatched) > 0 {
 		// Put highest-relevance distilled/custom skills at the front (up to 2), followed by builtin routes
@@ -155,11 +175,17 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		matched = combined
 	}
 
-	// Collect active MCP server names from def.GlobalNames / def.Deferred
+	// Collect active MCP server names from def.GlobalNames and gated MCPs from def.Deferred
 	activeServers := map[string]bool{}
 	for _, name := range def.GlobalNames {
 		if srv := extractMCPServerName(name); srv != "" {
 			activeServers[srv] = true
+		}
+	}
+	gatedServers := map[string]bool{}
+	for _, name := range def.Deferred {
+		if srv := extractMCPServerName(name); srv != "" && !activeServers[srv] {
+			gatedServers[srv] = true
 		}
 	}
 
@@ -168,7 +194,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 	b.WriteString("【关键词路由建议（不是能力就绪证明）】\n")
 
 	if len(matched) > 0 && hasSkillTool {
-		b.WriteString("系统检测到当前任务/指令命中以下专业领域场景，**仅当下列技能出现在当前可见清单时，才调用对应 `Skill`；缺失时明确报告未配置。知识库调用以真实 mode 为准**：\n")
+		b.WriteString("系统检测到当前任务/指令命中以下专业领域场景，**仅当下列技能出现在当前可见清单时，必须在第一轮优先调用对应 `Skill`（多文件技能包会自动附带加载 `references/*` 防踩坑与攻击链手册）；缺失时明确报告未配置。知识库调用以真实 mode 为准**：\n")
 		for i, m := range matched {
 			if i >= 4 {
 				break // 最多展示前 4 条最相关路由（含沉淀复盘技能与内置专家技能），保持精炼高信噪比
@@ -176,11 +202,11 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 			fmt.Fprintf(&b, "- 🎯 **%s** (`%s`)：%s\n", m.title, m.skillName, m.action)
 		}
 	} else if hasSkillTool {
-		b.WriteString("- 💡 **技能库先行**：当前已挂载 `Skill` 工具，具体技能以可见清单为准。遇到具体渗透/逆向/侦察子方向时，**请先调用 `Skill({\"name\":\"<技能名>\"})` 加载专家 SOP**，切忌盲目硬猜。\n")
+		b.WriteString("- 💡 **技能库先行**：当前已挂载 `Skill` 工具，具体技能以可见清单为准。遇到具体渗透/逆向/侦察子方向时，**请先调用 `Skill({\"name\":\"<技能名>\"})` 加载专家 SOP（含配套 `references/*` 防踩坑与 PoC 手册）**，切忌盲目硬猜。\n")
 	}
 
 	if hasTacticalKB {
-		b.WriteString("- 📚 **知识库联动**：遇到特定中间件/框架指纹、报错特征或 WAF 拦截时，主动调用 `tactical_kb({\"mode\":\"vuln_patterns\",\"query\":\"<关键词>\"})` 查阅历史漏洞规律与绕过载荷。\n")
+		b.WriteString("- 📚 **知识库联动**：遇到特定中间件/框架指纹、报错特征、逆向样本或 WAF 拦截时，主动调用 `tactical_kb({\"mode\":\"vuln_patterns\"|\"case_skills\"|\"skill_search\",\"query\":\"<关键词>\"})` 查阅历史漏洞规律、沉淀技能与绕过载荷。\n")
 	}
 
 	if len(activeServers) > 0 {
@@ -189,7 +215,15 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 			srvs = append(srvs, s)
 		}
 		sort.Strings(srvs)
-		fmt.Fprintf(&b, "- 🔌 **已解锁 MCP 外部工具直调**：当前已连接并解锁 MCP 服务 `[%s]`。凡任务涉及对应能力，**无需先调 SearchExtraTools，直接调用 `ExecuteExtraTool({\"tool_name\":\"mcp__<服务名>__<工具名>\",\"params\":{...}})` 一步执行**（详见系统提示词底部【已挂载 MCP 扩展工具速查】）。\n", strings.Join(srvs, ", "))
+		fmt.Fprintf(&b, "- 🔌 **已解锁 MCP 外部工具直调**：当前已连接并解锁 MCP 服务 `[%s]`。凡任务涉及对应能力，**可直接以工具全名 `mcp__<服务名>__<工具名>({...})` 发起工具调用，或通过 `ExecuteExtraTool({\"tool_name\":\"mcp__<服务名>__<工具名>\",\"params\":{...}})` 一步执行（无需先调 SearchExtraTools）**（详见系统提示词底部【已挂载 MCP 扩展工具速查】）。\n", strings.Join(srvs, ", "))
+	}
+	if len(gatedServers) > 0 {
+		var gsrvs []string
+		for s := range gatedServers {
+			gsrvs = append(gsrvs, s)
+		}
+		sort.Strings(gsrvs)
+		fmt.Fprintf(&b, "- 🔐 **技能关联 MCP 待解锁**：检测到技能门控 MCP 服务 `[%s]`，调用对应关联 `Skill` 后即可自动解锁并直接调用其工具。\n", strings.Join(gsrvs, ", "))
 	}
 	b.WriteString("</tactical_skill_mcp_routing>")
 	return b.String()
@@ -224,11 +258,12 @@ func parseAvailableSkillsFromToolDesc(desc string) []availableSkillEntry {
 }
 
 var dynamicSkillStopwords = map[string]bool{
-	"case": true, "web": true, "re": true, "skill": true, "test": true,
+	"case": true, "web": true, "re": true, "skill": true, "test": true, "report": true,
 	"web_security": true, "software_re": true,
 	"任务复盘经验": true, "围绕": true, "已验证": true, "条路径": true,
 	"发现": true, "个漏洞": true, "复测": true, "个样本": true, "含关键词": true,
 	"遇到同类目标或同类故障时加载": true, "安全测试": true, "渗透测试": true,
+	"含配套": true, "references": true, "防踩坑与攻击链": true, "手册": true, "调用即自动加载": true,
 }
 
 func extractDynamicSkillKeywords(name, desc string) []string {
@@ -265,7 +300,7 @@ func extractDynamicSkillKeywords(name, desc string) []string {
 		}
 	}
 
-	// Extract explicit keywords after "含关键词 "
+	// Extract explicit keywords after "含关键词"
 	if idx := strings.Index(desc, "含关键词"); idx >= 0 {
 		rest := strings.TrimSpace(desc[idx+len("含关键词"):])
 		if dot := strings.Index(rest, "。"); dot >= 0 {
@@ -290,7 +325,7 @@ func extractDynamicSkillKeywords(name, desc string) []string {
 func splitSkillTokens(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool {
 		return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) ||
-			r == '（' || r == '）' || r == '「' || r == '」' || r == '、' || r == '，' || r == '。' || r == '：' || r == '；'
+			r == '（' || r == '）' || r == '「' || r == '」' || r == '、' || r == '，' || r == '。' || r == '：' || r == '；' || r == '[' || r == ']'
 	})
 }
 
@@ -331,15 +366,17 @@ func matchDynamicSkills(lowerTask string, available []availableSkillEntry, built
 			continue
 		}
 		title := "平台沉淀/自定义专家技能"
-		if strings.HasPrefix(entry.name, "case-") {
+		if strings.HasPrefix(entry.name, "case-") || strings.HasPrefix(entry.name, "merged-") {
 			title = "历史任务沉淀复盘经验"
+		} else if strings.HasPrefix(entry.name, "report-") {
+			title = "外部报告蒸馏实战技能包"
 		}
 		matches = append(matches, scored{
 			score: score,
 			rule: tacticalRouteRule{
 				skillName: entry.name,
 				title:     title,
-				action:    fmt.Sprintf("当前任务与已沉淀技能高度相关（%s），优先调用 `Skill({\"name\":%q})` 复用已验证路径、关键证据与止损规则。", entry.description, entry.name),
+				action:    fmt.Sprintf("当前任务与已沉淀技能高度相关（%s），优先调用 `Skill({\"name\":%q})` 复用已验证路径、关键证据与止损规则（含配套 `references/*` 手册）。", entry.description, entry.name),
 			},
 		})
 	}

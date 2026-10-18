@@ -647,7 +647,7 @@ func (s *Server) reseedGoalsPrompt() {
 // 保留在历史里,用户若自定义过可从版本记录找回。settings flag 守卫 → 只做一次。全新库无需处理
 // (SeedPromptIfEmpty 已 seed 最新默认)。与 reseedGoalsPrompt 完全同构。
 func (s *Server) reseedMainAgentPrompt() {
-	const flag = "mainagent_prompt_goalless_intent_v2"
+	const flag = "mainagent_prompt_goalless_intent_v3"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -673,12 +673,12 @@ func (s *Server) reseedMainAgentPrompt() {
 
 // reseedPlannerPrompt 把 planner 提示词刷成【当前代码默认】——默认正文做了精简重构,并把「克制」降级为
 // 仅去重、新增「深度优先于覆盖度」「硬底线:目标未达成且无在跑意图必须产出」、给否定结论复核加上界。
-// 每次默认有实质变更就 bump 下面的 flag(当前 v3)让存量旧库再刷一次。SeedPromptIfEmpty 首插入only,旧库已有版本收不到,故用版本管理
+// 每次默认有实质变更就 bump 下面的 flag(当前 v4)让存量旧库再刷一次。SeedPromptIfEmpty 首插入only,旧库已有版本收不到,故用版本管理
 // 【追加一个新版本】并切过去(ResetPromptToDefault),旧版本仍保留在历史里,用户若自定义过可从版本记录
 // 找回。settings flag 守卫 → 只做一次。全新库无需处理(SeedPromptIfEmpty 已 seed 最新默认)。与
 // reseedGoalsPrompt 完全同构。
 func (s *Server) reseedPlannerPrompt() {
-	const flag = "planner_prompt_compact_realistic_v3"
+	const flag = "planner_prompt_compact_realistic_v4"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -703,9 +703,9 @@ func (s *Server) reseedPlannerPrompt() {
 }
 
 // reseedWorkerPrompt 把 worker 提示词刷成【当前代码默认】——包含原生 Go 渗透工具集、3-Strike 止损纪律、
-// 以及第一轮主动触发 Skill / tactical_kb / MCP 扩展工具规约。bump flag 至 v5 让存量旧库再刷一次。
+// 以及第一轮主动触发 Skill / tactical_kb / MCP 扩展工具规约。bump flag 至 v6 让存量旧库再刷一次。
 func (s *Server) reseedWorkerPrompt() {
-	const flag = "worker_prompt_compact_v5"
+	const flag = "worker_prompt_compact_v6"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -732,7 +732,7 @@ func (s *Server) reseedWorkerPrompt() {
 // reseedPentestAndAutoPrompts 把 pentest 与 auto 提示词刷成【当前代码默认】（含第一轮主动触发
 // Skill / tactical_kb / MCP 扩展工具规约），让存量旧库自动升级。
 func (s *Server) reseedPentestAndAutoPrompts() {
-	const flag = "pentest_auto_prompt_skill_mcp_v1"
+	const flag = "pentest_auto_prompt_skill_mcp_v2"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -774,24 +774,37 @@ func (s *Server) seedDefaultSkillVisibility() {
 
 // seedSkillEvolutionBindings 为存量数据库补齐 human-verification 技能包默认可见性与
 // 自主沉淀/审阅平台工具（list_skill_gaps / propose_skill / list_skill_proposals /
-// review_skill_proposal / distill_task_skill）的默认 Agent 绑定。
+// review_skill_proposal / distill_task_skill / distill_report_skill）的默认 Agent 绑定。
 func (s *Server) seedSkillEvolutionBindings() {
 	const flag = "skill_evolution_bindings_v1"
-	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+	if v, _, _ := s.m.pg.GetSetting(flag); v != "true" {
+		s.bindDefaultSkillVisibility("human-verification")
+		if err := s.m.pg.AddAgentToToolBinding("auto", []string{
+			"list_skill_gaps", "propose_skill", "list_skill_proposals", "review_skill_proposal", "distill_task_skill",
+		}); err != nil {
+			log.Printf("[skills] auto 沉淀工具默认绑定失败: %v", err)
+		}
+		for _, ag := range []string{"mainagent", "pentest"} {
+			if err := s.m.pg.AddAgentToToolBinding(ag, []string{
+				"list_skill_gaps", "propose_skill", "distill_task_skill",
+			}); err != nil {
+				log.Printf("[skills] %s 沉淀工具默认绑定失败: %v", ag, err)
+			}
+		}
+		_ = s.m.pg.SetSetting(flag, "true")
+	}
+
+	const flagV2 = "skill_evolution_bindings_v2"
+	if v, _, _ := s.m.pg.GetSetting(flagV2); v == "true" {
 		return
 	}
-	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
-	s.bindDefaultSkillVisibility("human-verification")
-	if err := s.m.pg.AddAgentToToolBinding("auto", []string{
-		"list_skill_gaps", "propose_skill", "list_skill_proposals", "review_skill_proposal", "distill_task_skill",
-	}); err != nil {
-		log.Printf("[skills] auto 沉淀工具默认绑定失败: %v", err)
+	defer func() { _ = s.m.pg.SetSetting(flagV2, "true") }()
+	for _, sk := range []string{"ai-coding-sandbox-tactics", "wasm-cloud-saas-tactics"} {
+		s.bindDefaultSkillVisibility(sk)
 	}
-	for _, ag := range []string{"mainagent", "pentest"} {
-		if err := s.m.pg.AddAgentToToolBinding(ag, []string{
-			"list_skill_gaps", "propose_skill", "distill_task_skill",
-		}); err != nil {
-			log.Printf("[skills] %s 沉淀工具默认绑定失败: %v", ag, err)
+	for _, ag := range []string{"auto", "mainagent", "pentest"} {
+		if err := s.m.pg.AddAgentToToolBinding(ag, []string{"distill_report_skill"}); err != nil {
+			log.Printf("[skills] %s 报告沉淀工具默认绑定失败: %v", ag, err)
 		}
 	}
 }

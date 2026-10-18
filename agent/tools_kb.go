@@ -349,6 +349,30 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 	)
 }
 
+func readSkillReferencesText(skillDir string) string {
+	if strings.TrimSpace(skillDir) == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(filepath.Join(skillDir, "references"))
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext != ".md" && ext != ".txt" && ext != ".json" {
+			continue
+		}
+		if b, err := os.ReadFile(filepath.Join(skillDir, "references", e.Name())); err == nil && len(b) > 0 {
+			parts = append(parts, "## references/"+e.Name()+"\n"+strings.TrimSpace(string(b)))
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 func searchDistilledCaseSkills(query string, limit int) (actool.Result, error) {
 	type caseSkillCard struct {
 		Skill             string `json:"skill"`
@@ -368,11 +392,15 @@ func searchDistilledCaseSkills(query string, limit int) (actool.Result, error) {
 			if s.Dir != "" {
 				name = filepath.Base(s.Dir)
 			}
-			isCase := strings.HasPrefix(name, "case-") || strings.HasPrefix(name, "merged-")
+			refText := readSkillReferencesText(s.Dir)
+			isCase := strings.HasPrefix(name, "case-") || strings.HasPrefix(name, "merged-") || strings.HasPrefix(name, "report-") || refText != ""
 			if !isCase {
 				continue
 			}
 			body := s.Instructions
+			if refText != "" {
+				body = body + "\n\n" + refText
+			}
 			combined := strings.ToLower(name + "\n" + s.Description + "\n" + body)
 			if ql != "" && !strings.Contains(combined, ql) {
 				continue
@@ -382,13 +410,22 @@ func searchDistilledCaseSkills(query string, limit int) (actool.Result, error) {
 				domain = "software_re"
 			}
 			verified := extractMarkdownSection(body, "已验证的有效路径", 450)
+			if verified == "" {
+				verified = extractMarkdownSection(body, "核心战术推导链", 450)
+			}
 			var evidenceParts []string
-			for _, secTitle := range []string{"已确认漏洞与可利用点", "漏洞复测与修复验证", "逆向样本与静态分析证据", "关键事实与证据"} {
+			for _, secTitle := range []string{"已确认漏洞与可利用点", "漏洞复测与修复验证", "逆向样本与静态分析证据", "关键事实与证据", "references/attack-chains-and-pocs.md"} {
 				if sec := extractMarkdownSection(body, secTitle, 320); sec != "" {
 					evidenceParts = append(evidenceParts, sec)
 				}
 			}
 			pitfalls := extractMarkdownSection(body, "失败、误区与止损", 400)
+			if pitfalls == "" {
+				pitfalls = extractMarkdownSection(body, "踩坑记录与 3-Strike 止损红线", 400)
+			}
+			if pitfalls == "" {
+				pitfalls = extractMarkdownSection(body, "references/pitfalls-and-bypasses.md", 400)
+			}
 			var matchedSec string
 			if ql != "" {
 				for _, sec := range strings.Split(body, "\n## ") {
@@ -456,7 +493,7 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 			seen[skillName] = true
 			sec := body
 			if len(sec) > 500 {
-				sec = clipUTF8(sec, 500) + "...(可调用 Skill 工具加载完整技能包)"
+				sec = clipUTF8(sec, 500) + "...(可调用 Skill 工具加载完整技能包及 references 手册)"
 			}
 			results = append(results, skillSnippet{
 				Skill:       skillName,
@@ -494,7 +531,7 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 		})
 	}
 
-	// 1. Read from runtime SkillDir on disk (includes user edits and custom skills)
+	// 1. Read from runtime SkillDir on disk (includes user edits, custom skills, and references/*.md)
 	skillDir := config.SkillDir()
 	if reg, err := skill.LoadDir(skillDir); err == nil && reg != nil {
 		for _, s := range reg.List() {
@@ -502,7 +539,11 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 			if s.Dir != "" {
 				name = filepath.Base(s.Dir)
 			}
-			collectFromContent(name, s.Description, s.Instructions)
+			fullBody := s.Instructions
+			if refText := readSkillReferencesText(s.Dir); refText != "" {
+				fullBody += "\n\n" + refText
+			}
+			collectFromContent(name, s.Description, fullBody)
 			if len(results) >= limit {
 				break
 			}
@@ -519,9 +560,20 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 			if rerr != nil {
 				return nil
 			}
-			dirName := filepath.Base(filepath.Dir(rel))
+			skillSubDir := filepath.Dir(rel)
+			dirName := filepath.Base(skillSubDir)
 			raw := string(data)
 			desc, body := splitSkillFrontmatter(raw)
+			if refEntries, rerr := fs.ReadDir(skills.Bundled, filepath.ToSlash(filepath.Join(skillSubDir, "references"))); rerr == nil {
+				for _, re := range refEntries {
+					if re.IsDir() {
+						continue
+					}
+					if rb, rerr2 := skills.Bundled.ReadFile(filepath.ToSlash(filepath.Join(skillSubDir, "references", re.Name()))); rerr2 == nil && len(rb) > 0 {
+						body += "\n\n## references/" + re.Name() + "\n" + strings.TrimSpace(string(rb))
+					}
+				}
+			}
 			collectFromContent(dirName, desc, body)
 			return nil
 		})

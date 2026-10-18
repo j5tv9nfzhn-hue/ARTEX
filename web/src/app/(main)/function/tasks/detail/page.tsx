@@ -416,7 +416,7 @@ function TaskDetailInner() {
         </Alert>
       )}
       {/* Unified Mission Control Header */}
-      <header className="sticky top-0 z-10 flex flex-col gap-2 border-border/80 border-b bg-background/88 px-4 py-2.5 shadow-2xs backdrop-blur-md lg:px-6">
+      <header className="sticky top-0 z-10 flex flex-col gap-2 border-border/80 border-b bg-background/90 px-4 py-2 backdrop-blur-md lg:px-6">
         <div className="flex flex-wrap items-center gap-2">
           <SidebarTrigger className="-ml-1" />
           <Button asChild variant="ghost" size="icon-sm" className="size-7 rounded-lg">

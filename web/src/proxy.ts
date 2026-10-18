@@ -1,15 +1,26 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import { DEV_BYPASS } from "@/lib/dev-mode";
+
 const AUTH_PAGES = ["/login", "/setup"];
+const HOME = "/function/tasks";
 
 export function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const isAuthPage = AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+
   // Mock demo：无真实登录，放行所有页面（客户端 auth 守卫也会放行）。
   if (process.env.NEXT_PUBLIC_MOCK === "1") return NextResponse.next();
 
-  const { pathname } = request.nextUrl;
+  // 本机调试旁路（lib/dev-mode.ts）：放行所有页面，并把登录/初始化页直接送到主界面。
+  // 于是 `next dev` 不需要登录、也不需要后端在线就能进面板看改动。
+  if (DEV_BYPASS) {
+    if (isAuthPage) return NextResponse.redirect(new URL(HOME, request.url));
+    return NextResponse.next();
+  }
+
   const token = request.cookies.get("artex_token")?.value;
-  const isAuthPage = AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   // 未登录 → 跳转登录页
   if (!token && !isAuthPage) {
@@ -18,7 +29,7 @@ export function proxy(request: NextRequest) {
 
   // 已登录时访问登录/初始化页 → 跳转主界面
   if (token && isAuthPage) {
-    return NextResponse.redirect(new URL("/function/tasks", request.url));
+    return NextResponse.redirect(new URL(HOME, request.url));
   }
 
   return NextResponse.next();

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/Autumn-27/norma/llm"
@@ -9,22 +10,15 @@ import (
 )
 
 // deferredSystem builds an agent's system-prompt segments and cache boundary from
-// its DeferredInfo. When globally-available MCP tools are present, their names + a
-// "prefer core tools" instruction render into a <available-deferred-tools> block
+// its DeferredInfo. When globally-available MCP tools are present, their names +
+// proactive invocation guidance render into an <available-deferred-tools> block
 // placed as the LAST system-prompt segment, with DynamicBoundary set so the whole
 // (session-fixed) system prompt — including the block — is cached (design doc
 // §2.1 / C1). Skill-gated MCP names are NOT in this block; they surface when their
-// skill loads. Without a global block the single plain segment is still placed
-// inside the boundary: norma only sends cache_control when boundary>0, so
-// returning 0 here would leave the default path re-billing the entire system
-// prompt at full price on every request. 无块时也整段缓存的依据：worker 的
-// system 虽混入 per-intent 数据，但在单次 run 内恒定（跨轮复用命中），
-// planner/chat 的 system 跨轮/跨唤醒稳定；Anthropic 缓存区间内每轮复用，
-// 首轮 1.25x write 一次即回本。boundary=len(system) 命中 SDK 的“b>=len →
-// 整段一个块”分支。
+// skill loads.
 func deferredSystem(sysText string, def DeferredInfo) (system []string, boundary int) {
 	sysText += def.FindingGuidance
-	block := actool.RenderDeferredToolsBlock(def.GlobalNames)
+	block := renderActiveMCPBlock(def.GlobalNames)
 	if block == "" {
 		system = []string{sysText}
 		boundary = len(system) // b >= len → 整段 system 一个缓存块
@@ -36,6 +30,25 @@ func deferredSystem(sysText string, def DeferredInfo) (system []string, boundary
 	system = []string{sysText, block}
 	boundary = len(system) // b >= len → whole system prompt cached (SDK guard)
 	return system, boundary
+}
+
+func renderActiveMCPBlock(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	var b strings.Builder
+	b.WriteString("<available-deferred-tools>\n")
+	for _, n := range sorted {
+		b.WriteString(n)
+		b.WriteByte('\n')
+	}
+	b.WriteString("</available-deferred-tools>\n")
+	b.WriteString("IMPORTANT / 主动调用规约：上方列出的外部 MCP / 扩展工具已在当前会话中挂载并解锁就绪。当任务涉及对应能力时，请主动优先调用：\n")
+	b.WriteString("1. 直接调用（推荐）：若工具已在当前工具列表中，直接以工具全名（如 mcp__<服务名>__<工具名>）发起调用；\n")
+	b.WriteString("2. 通过 " + actool.ExecuteExtraToolName + " 一步直调：调用 " + actool.ExecuteExtraToolName + "({\"tool_name\":\"<工具全名>\",\"params\":{...}}) 一步执行（仅当复杂参数结构不明确时，才先调 " + actool.SearchExtraToolsName + " 查询 Schema）。")
+	return b.String()
 }
 
 // seedUnlockFromHistory restores only successfully completed Skill calls.

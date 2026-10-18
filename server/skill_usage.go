@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Autumn-27/artex/agent"
@@ -35,7 +37,12 @@ type meteredSkill struct {
 	intentID      int64
 }
 
-func (m *meteredSkill) Description() string { return m.Prompt() }
+func (m *meteredSkill) Description() string { return m.renderListing() }
+
+// Prompt returns "" because Description() already carries the full <available_skills>
+// block; returning it again in Prompt() would cause tool.Registry.Schemas() to
+// duplicate the listing in every model request.
+func (m *meteredSkill) Prompt() string { return "" }
 
 // The canonical field is SDK v0.4.3's name. Legacy spellings are advertised as
 // compatibility alternatives so validation does not reject them before repair.
@@ -53,16 +60,35 @@ func (m *meteredSkill) InputSchema() map[string]any {
 	}
 }
 
-func (m *meteredSkill) Prompt() string {
+func hasSkillReferences(skillDir string) bool {
+	if strings.TrimSpace(skillDir) == "" {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Join(skillDir, "references"))
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *meteredSkill) renderListing() string {
 	if m.reg == nil || len(m.reg.List()) == 0 {
 		return m.CoreTool.Description()
 	}
 	var b strings.Builder
-	b.WriteString("加载当前可见专业技能包及其操作规约。任务匹配时先调用 Skill({\"name\":\"<下方技能全名>\"})；仅使用真实目录中的名称，不猜测未配置的 MCP 或能力。\n<available_skills>\n")
+	b.WriteString("加载当前可见专业技能包及其标准化操作规约（多文件技能包在调用时会自动一并加载 references/* 防踩坑与攻击链 PoC 手册）。任务匹配或受阻时必须在第一轮优先调用 Skill({\"name\":\"<下方技能全名>\"})；仅使用真实目录中的名称，不猜测未配置的 MCP 或能力。\n<available_skills>\n")
 	for _, s := range m.reg.List() {
 		tag := ""
 		if len(s.MCPs) > 0 {
 			tag = fmt.Sprintf(" [关联 MCP：%s；调用成功后按既有权限解锁]", strings.Join(s.MCPs, ", "))
+		}
+		if hasSkillReferences(s.Dir) {
+			tag += " [含配套 references 实战手册，调用即自动附带加载]"
 		}
 		fmt.Fprintf(&b, "- %s: %s%s\n", s.Name, s.Description, tag)
 	}

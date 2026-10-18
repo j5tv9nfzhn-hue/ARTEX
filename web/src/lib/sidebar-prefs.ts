@@ -18,13 +18,16 @@ export interface SidebarPrefs {
 
 export const SIDEBAR_PREFS_KEY = "artex_sidebar_prefs";
 
-// 默认置顶四个核心入口（#180 一键可达）：未设置过偏好的浏览器首屏即生效；
-// 用户可在「自定义侧边栏」中取消置顶或复位。
+// 默认置顶四个核心入口（#180 一键可达），顺序与「功能」分组保持一致：
+// 仪表盘 (dashboard) → 对话 (chat) → 任务 (tasks) → 发现 (findings)。
+// 未设置过偏好的浏览器首屏即生效；用户可在「自定义侧边栏」中取消置顶或复位。
 export const DEFAULT_SIDEBAR_PREFS: SidebarPrefs = {
-  pinned: ["tasks", "chat", "findings", "dashboard"],
+  pinned: ["dashboard", "chat", "tasks", "findings"],
   hidden: [],
   collapsedGroups: [],
 };
+
+const LEGACY_DEFAULT_PINNED = "tasks,chat,findings,dashboard";
 
 function sanitizeIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -62,7 +65,8 @@ function parsePrefs(raw: string | null): SidebarPrefs {
   }
   if (typeof data !== "object" || data === null) return DEFAULT_SIDEBAR_PREFS;
   const record = data as Partial<SidebarPrefs>;
-  const pinned = sanitizeIds(record.pinned);
+  const rawPinned = sanitizeIds(record.pinned);
+  const pinned = rawPinned.join(",") === LEGACY_DEFAULT_PINNED ? [...DEFAULT_SIDEBAR_PREFS.pinned] : rawPinned;
   // 不变量：同一 id 至多出现在 pinned / hidden 之一（置顶优先，损坏的数据在此收敛）。
   const hidden = sanitizeIds(record.hidden).filter((id) => !pinned.includes(id));
   return { pinned, hidden, collapsedGroups: sanitizeGroupIds(record.collapsedGroups) };

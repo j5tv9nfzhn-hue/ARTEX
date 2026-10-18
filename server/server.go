@@ -1052,6 +1052,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/skills/proposals/batch-review", s.fsBatchReviewSkillProposals)   // 批量审阅技能提议
 	mux.HandleFunc("POST /api/skills/proposals/merge", s.fsMergeSkillProposals)                // 多份提议合并提炼为通用技能
 	mux.HandleFunc("POST /api/skills/distill", s.fsDistillTaskSkill)                           // 手动将指定任务沉淀为复盘技能
+	mux.HandleFunc("POST /api/skills/import-report", s.fsImportReportSkill)                    // 导入外部报告(TXT/JSON/MD)提炼为多文件技能包
+	mux.HandleFunc("GET /api/skills/{name}/export", s.fsExportSkillZip)                        // 导出完整技能包为 .zip
 	mux.HandleFunc("GET /api/system/verification-capabilities", s.sysVerificationCapabilities) // 人机验证协议与可选指纹 helper 就绪快照
 	mux.HandleFunc("GET /api/skills/{name}/usage", s.fsSkillUsage)                             // 单个 skill 的最近调用
 	mux.HandleFunc("PUT /api/skills/{name}/meta", s.fsUpdateSkillMeta)
@@ -4196,6 +4198,10 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "no active task")
 		return
 	}
+	intents, _ := t.Store.ListByKind(db.KindIntent, 300)
+	hints, _ := t.Store.ListByKind(db.KindHint, 100)
+	activities, _, _ := t.Store.ActivityList(nil, 0, 1500)
+
 	if t.AnalysisDomain == db.AnalysisDomainSoftwareRE {
 		facts, moreFacts, err := t.Store.ListByKindPage(db.KindFact, 0, 200)
 		if err != nil {
@@ -4230,14 +4236,16 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 		}
 		md := report.SoftwareMarkdown(report.SoftwareInput{
 			Title: t.Description, Goal: t.Goal, GeneratedAt: time.Now(),
-			Facts: facts, Goals: goals, Samples: samples, Sessions: sessions, Evidences: evidences,
+			Facts: facts, Goals: goals, Intents: intents, Hints: hints, Activities: activities,
+			Samples: samples, Sessions: sessions, Evidences: evidences,
 			Truncated: moreFacts || moreGoals,
 		})
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		_, _ = w.Write([]byte(md))
 		return
 	}
-	findings, _ := t.Store.ListByKind(db.KindFinding, 1000) // 纯漏洞（事实是独立的 KindFact，不进报告）
+	findings, _ := t.Store.ListByKind(db.KindFinding, 1000) // 纯漏洞（事实是独立的 KindFact）
+	facts, _ := t.Store.ListByKind(db.KindFact, 200)
 	counts := map[string]int{}
 	for _, ty := range []string{"root_domain", "ip", "subdomain", "app", "service", "endpoint"} {
 		ns, _ := s.m.Assets().QueryByType(ty, 100000, 0)
@@ -4248,6 +4256,7 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 	md := report.Markdown(report.Input{
 		Title: t.Description, Goal: t.Goal, GeneratedAt: time.Now(),
 		AssetCounts: counts, Findings: findings,
+		Intents: intents, Facts: facts, Hints: hints, Activities: activities,
 	})
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.WriteHeader(200)

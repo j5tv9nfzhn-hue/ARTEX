@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Autumn-27/artex/metrics"
@@ -21,7 +24,7 @@ import (
 // from history on a resumed session (design doc C2).
 type DeferredInfo struct {
 	FindingGuidance string            // derived from the final permitted tools, including DB overrides
-	Deferred        []string          // all MCP tool names (schema withheld)
+	Deferred        []string          // MCP/custom tool names whose schemas are withheld
 	GlobalNames     []string          // MCP names to list in the system-prompt block
 	MCPCatalog      string            // structured Chinese descriptions + parameter hints for active global MCP tools
 	Unlock          *actool.UnlockSet // shared call-gate; nil when no MCP tools
@@ -81,7 +84,8 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 //
 // 这一层同时是平台对工具执行的统一边界（批次 5 / #1–3、#14）：
 //   - 调用/错误计数（按工具名 + 阶段）进 metrics；
-//   - 入参结构防御：畸形 JSON / 非对象入参在这里被换成可读中文错误；
+//   - 入参结构防御与智能纠偏：畸形 JSON / 非对象入参在这里被换成可读中文错误，
+//     常见类型错配（字符串整数/布尔值、误包一层 params/arguments）自动修复；
 //   - 兜底超时：无 deadline 的运行给一个宽松上限，防工具把整条运行钉死。
 func guardPanic(t actool.CoreTool) actool.CoreTool { return &guardedTool{CoreTool: t} }
 
@@ -98,6 +102,20 @@ type guardedTool struct {
 	breaker *loopBreaker
 }
 
+// AcceptsRawInput opts guardedTool into handling its own pre-call input
+// normalization and schema validation so stringified numbers/booleans or
+// accidental {"params":{...}} wrappers are repaired before validation.
+func (g *guardedTool) AcceptsRawInput() bool { return true }
+
+type rawInputAware interface{ AcceptsRawInput() bool }
+
+func innerAcceptsRawInput(t actool.CoreTool) bool {
+	if r, ok := t.(rawInputAware); ok {
+		return r.AcceptsRawInput()
+	}
+	return false
+}
+
 // toolFallbackTimeout 是无 deadline 运行（没有墙钟预算的对话轮/规划轮）下单个工具
 // 调用的兜底上限。多数工具自身另有更短的超时（Bash 默认 120s、上限 600s；自定义
 // command/script 120s；http 30s），这里只防「既不认 ctx 超时也永不返回」的工具把
@@ -105,11 +123,7 @@ type guardedTool struct {
 const toolFallbackTimeout = 30 * time.Minute
 
 // maxToolOutputChars 是单条工具输出进入对话历史的字符上限（映射到 agentcore 的
-// MaxToolOutputChars；SDK 默认 30000，我们收紧到 12000）。为什么敢收紧：超限部分
-// 不会丢——SDK 把全文落盘到 run 的 ToolOutputDir（cmd-output/），历史里只留头部
-// 12k + 落盘指针，需要时 agent 可用 Read/Bash 重读全文；而每轮对话都会把历史
-// 里的工具输出重新发给模型，30000 字符的旧输出等于每轮多烧约 8k token。12k 头部
-// 足以判断绝大多数命令结果，仅扫描器全量列表这类大输出会被截断换指针。
+// MaxToolOutputChars；SDK 默认 30000，我们收紧到 12000）。
 const maxToolOutputChars = 12000
 
 func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (res actool.Result, err error) {
@@ -123,9 +137,17 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 				"工具 %s 内部错误：%v（本次调用已失败，可换个参数或改用别的工具）", name, r).Error()), nil
 		}
 	}()
-	if msg, stage := toolInputError(in, g.InputSchema()); msg != "" {
+	schema := g.InputSchema()
+	if msg, stage := toolInputError(in, schema); msg != "" {
 		metrics.ObserveToolError(name, stage)
 		return actool.Errorf(msg), nil
+	}
+	in = normalizeToolInput(name, in, schema)
+	if name != "Skill" && !innerAcceptsRawInput(g.CoreTool) && len(schema) > 0 {
+		if verr := actool.ValidateInput(schema, in); verr != nil {
+			metrics.ObserveToolError(name, metrics.StageValidate)
+			return actool.Errorf(fmt.Sprintf("参数校验未通过（stage=tool_validate，工具 %s）：%v。请核对工具参数说明后重新调用。", name, verr)), nil
+		}
 	}
 	callCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
@@ -153,10 +175,7 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 	return res, err
 }
 
-// toolInputError 是协议防御的第一道闸（#14）。SDK 在分发前已按 schema 校验过一次，
-// 但声明 AcceptsRawInput 的工具（自解析参数）会跳过该校验；这里补与 schema 无关的
-// 结构校验：空入参放过；非法 JSON → stage=parse；schema 声明 object 而实参不是对象
-// → stage=validate。返回空串表示通过。错误文案面向模型，强调「怎么改」。
+// toolInputError 是协议防御的第一道闸（#14）。
 func toolInputError(in json.RawMessage, schema map[string]any) (msg, stage string) {
 	trimmed := bytes.TrimSpace(in)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -172,4 +191,167 @@ func toolInputError(in json.RawMessage, schema map[string]any) (msg, stage strin
 		}
 	}
 	return "", ""
+}
+
+// normalizeToolInput repairs common non-semantic LLM argument mistakes before
+// schema validation and execution:
+//  1. Unwraps accidental {"params":{...}} or {"arguments":{...}} envelopes when
+//     the tool schema itself does not declare a "params"/"arguments" property.
+//  2. Maps common field aliases when a required field is missing (path <-> file_path,
+//     q <-> query, cmd -> command).
+//  3. Coerces stringified integers/numbers/booleans ("10" -> 10, "true" -> true)
+//     and single strings for string-array fields to match the declared schema.
+func normalizeToolInput(toolName string, in json.RawMessage, schema map[string]any) json.RawMessage {
+	if toolName == "Skill" || len(schema) == 0 {
+		return in
+	}
+	trimmed := bytes.TrimSpace(in)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return in
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &obj); err != nil || obj == nil {
+		return in
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if len(props) == 0 {
+		return in
+	}
+	changed := false
+
+	// 1. Unwrap accidental {"params":{...}} or {"arguments":{...}} envelopes.
+	for _, wrapKey := range []string{"params", "arguments"} {
+		if _, declared := props[wrapKey]; declared {
+			continue
+		}
+		rawWrap, exists := obj[wrapKey]
+		if !exists {
+			continue
+		}
+		var inner map[string]json.RawMessage
+		if json.Unmarshal(rawWrap, &inner) == nil && len(inner) > 0 {
+			for k, v := range inner {
+				if _, already := obj[k]; !already {
+					obj[k] = v
+				}
+			}
+			delete(obj, wrapKey)
+			changed = true
+		}
+	}
+
+	// 2. Common alias repair for missing required properties.
+	aliasPairs := [][2]string{
+		{"file_path", "path"},
+		{"file_path", "filepath"},
+		{"path", "file_path"},
+		{"path", "filepath"},
+		{"query", "q"},
+		{"q", "query"},
+		{"command", "cmd"},
+	}
+	for _, pair := range aliasPairs {
+		canon, alt := pair[0], pair[1]
+		if _, canonDeclared := props[canon]; !canonDeclared {
+			continue
+		}
+		if _, altDeclared := props[alt]; altDeclared {
+			continue
+		}
+		if _, hasCanon := obj[canon]; !hasCanon {
+			if altVal, hasAlt := obj[alt]; hasAlt && len(altVal) > 0 && string(altVal) != "null" {
+				obj[canon] = altVal
+				delete(obj, alt)
+				changed = true
+			}
+		}
+	}
+
+	// 3. Scalar type coercion based on declared schema property types.
+	for k, rawVal := range obj {
+		pRaw, ok := props[k]
+		if !ok || len(rawVal) == 0 || string(rawVal) == "null" {
+			continue
+		}
+		pm, ok := pRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := pm["type"].(string)
+		switch typ {
+		case "integer":
+			var s string
+			if json.Unmarshal(rawVal, &s) == nil {
+				if iv, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
+					if b, err := json.Marshal(iv); err == nil {
+						obj[k] = b
+						changed = true
+					}
+				}
+			}
+		case "number":
+			var s string
+			if json.Unmarshal(rawVal, &s) == nil {
+				if fv, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+					if b, err := json.Marshal(fv); err == nil {
+						obj[k] = b
+						changed = true
+					}
+				}
+			}
+		case "boolean":
+			var s string
+			if json.Unmarshal(rawVal, &s) == nil {
+				switch strings.ToLower(strings.TrimSpace(s)) {
+				case "true", "1", "yes":
+					obj[k] = json.RawMessage("true")
+					changed = true
+				case "false", "0", "no":
+					obj[k] = json.RawMessage("false")
+					changed = true
+				}
+			}
+		case "string":
+			var s string
+			if json.Unmarshal(rawVal, &s) != nil {
+				// Coerce numeric or boolean scalar into string if property expects string
+				var num json.Number
+				dec := json.NewDecoder(bytes.NewReader(rawVal))
+				dec.UseNumber()
+				if err := dec.Decode(&num); err == nil {
+					if b, err := json.Marshal(num.String()); err == nil {
+						obj[k] = b
+						changed = true
+					}
+				} else {
+					var bv bool
+					if json.Unmarshal(rawVal, &bv) == nil {
+						if b, err := json.Marshal(strconv.FormatBool(bv)); err == nil {
+							obj[k] = b
+							changed = true
+						}
+					}
+				}
+			}
+		case "array":
+			if items, ok := pm["items"].(map[string]any); ok && items["type"] == "string" {
+				var s string
+				if json.Unmarshal(rawVal, &s) == nil {
+					if b, err := json.Marshal([]string{s}); err == nil {
+						obj[k] = b
+						changed = true
+					}
+				}
+			}
+		}
+	}
+
+	if !changed {
+		return in
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return in
+	}
+	return out
 }

@@ -1366,6 +1366,19 @@ export interface SkillProposalListResponse {
   auto_distill_apply: boolean;
 }
 
+export interface ReportImportResult {
+  ok: boolean;
+  skill: string;
+  status: SkillProposalStatus;
+  engine: "llm" | "deterministic";
+  files_written: string[];
+  proposals: SkillProposal[];
+  proposal: SkillProposal | null;
+  findings_count: number;
+  pitfalls_count: number;
+  chains_count: number;
+}
+
 export interface VerificationCapabilities {
   native_protocols: string[];
   fingerprint_helper: {

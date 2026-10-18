@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 // EmptyState 空态组件:插画 + 标题 + 说明 + 行动按钮 + 建议 chips。
 // 设计口径(与主题重塑一致):
 // - 插画一律内联 SVG 线稿,用 currentColor 绘制、主色仅作点缀(stroke=currentColor + className="text-primary"),
-//   所有颜色都走主题令牌(muted-foreground / primary),不硬编码色值 —— 亮/暗与 7 套预设下自动成立;
+//   所有颜色都走主题令牌(muted-foreground / primary),不硬编码色值 —— 亮/暗与预设主题下自动成立;
 // - 标题用 .font-display(Space Grotesk 点缀,中文自动沿 body 的 CJK 回退栈);
 // - compact 变体给侧栏/窄面板用(更小的插画与间距)。
 export type EmptyStateIllustration = "radar" | "nodes" | "terminal" | "chat" | "flag" | "shield";
@@ -70,15 +70,11 @@ function TerminalArt(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-// 对话气泡:对话 / 通知类空态。
+// ARTEX 官方品牌图标（与侧边栏左上角 /logo.png 完全一致，裁切透明留白后居中高清展示）。
 function ChatArt(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg {...svgProps} aria-hidden="true" {...props}>
-      <path d="M30 18h60a6 6 0 0 1 6 6v18a6 6 0 0 1-6 6H52l-14 10v-10h-8a6 6 0 0 1-6-6V24a6 6 0 0 1 6-6z" />
-      <circle cx="46" cy="33" r="1.6" fill="currentColor" stroke="none" />
-      <circle cx="60" cy="33" r="1.6" fill="currentColor" stroke="none" className="text-primary" />
-      <circle cx="74" cy="33" r="1.6" fill="currentColor" stroke="none" />
-      <path d="M22 66h76" className="opacity-50" />
+    <svg viewBox="260 460 1400 980" fill="none" aria-hidden="true" {...props}>
+      <image href="/logo.png" x="0" y="0" width="1920" height="1920" />
     </svg>
   );
 }
@@ -136,6 +132,12 @@ export function EmptyState({
   className?: string;
 }) {
   const Art = ILLUSTRATIONS[illustration];
+  let artClass = "w-24 text-muted-foreground/70";
+  if (illustration === "chat") {
+    artClass = compact ? "w-20" : "w-32";
+  } else if (compact) {
+    artClass = "w-16 text-muted-foreground/70";
+  }
   return (
     <div
       data-slot="empty-state"
@@ -145,7 +147,7 @@ export function EmptyState({
         className,
       )}
     >
-      <Art aria-hidden="true" className={cn("h-auto shrink-0 text-muted-foreground/70", compact ? "w-16" : "w-24")} />
+      <Art aria-hidden="true" className={cn("h-auto shrink-0", artClass)} />
       <div className={cn("font-display font-medium tracking-tight", compact ? "text-sm" : "text-base")}>{title}</div>
       {description ? (
         <div className={cn("text-muted-foreground max-w-md", compact ? "text-xs" : "text-sm/relaxed")}>

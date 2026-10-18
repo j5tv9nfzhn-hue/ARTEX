@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 // nginx web 根目录运行。开发(next dev)不设该变量，保留 /api 反代与热更新。
 const isExport = process.env.NEXT_EXPORT === "1";
 // Vercel demo：整站走 mock，无后端，无需 /api 反代。
-const isMock = process.env.NEXT_PUBLIC_MOCK === "1";
+const explicitMock = process.env.NEXT_PUBLIC_MOCK === "1";
+// 本机调试旁路：与 src/lib/dev-mode.ts 保持同一套判断（dev 默认开启，build 默认关闭）。
+// 开启后前端全部走 lib/mock，不再反代 /api，因此这里也不要求后端在跑。
+const bypassFlag = process.env.NEXT_PUBLIC_DEV_BYPASS;
+const isDevBypass = bypassFlag === "0" ? false : bypassFlag === "1" || process.env.NODE_ENV !== "production";
+const isMock = explicitMock || isDevBypass;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

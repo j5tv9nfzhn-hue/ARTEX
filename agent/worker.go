@@ -270,10 +270,10 @@ const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 - **编解码/哈希/加解密/JWT → codec_crypto**：Base64/Hex/URL/HTML/Gzip/Zlib、MD5/SHA/HMAC、AES(CBC/ECB/GCM)/XOR、JWT 解码/签名/alg=none 伪造/弱口令爆破一律直接调 codec_crypto，**不要调 python -c 单行脚本**。
 - **数据提取与压缩包免解压分析 → extract_data / Grep / Glob / Read**：提取正则、GJSON 路径、HTML 链接与表单参数、JS 路由与敏感密钥，以及 .zip/.tar.gz/.jar 压缩包列表(archive_list)与提取(archive_extract)一律调 extract_data；本地文件定位与内容检索直接调原生 Glob / Grep / Read。
 - **端口连通、协议 Banner 与 DNS/子域枚举 → net_probe / dns_probe**：TCP/TLS 端口扫描、证书 SANs 提取与原始 Socket 载荷交互调 net_probe；跨平台 DNS 全记录查询(A/AAAA/CNAME/TXT/MX/NS/PTR)与带泛解析过滤的子域枚举调 dns_probe。
-- **专家技能包 (Skill)、战术知识库 (tactical_kb) 与外部 MCP (ExecuteExtraTool) 主动触发（第一轮必查）**：
-  1. **动手前先调 Skill**：本轮领到意图后，若涉及 Web 漏洞利用 (web-vuln-tactics)、REST/GraphQL/Swagger 接口枚举 (api-recon)、SPA 前端渲染/登录态/DOM XSS (playwright-cli)、ScopeSentry 外网测绘与资产同步 (scopesentry-mcp，调用后自动解锁 ScopeSentry MCP)、二进制/APK/固件/JS 逆向与源码审计 (reverse-engineering)、CVE/Nday 组件指纹与 PoC 匹配 (exploit-kb-patterns) 或连续受阻/403/WAF 分诊转向 (expert-triage-pivot)，**必须在第一轮优先调用 Skill({"name":"<技能名>"}) 加载标准化专家 SOP**！
-  2. **跨任务记忆召回 (tactical_kb)**：动手前或遇阻时，调 tactical_kb 检索跨任务已确认漏洞 (past_findings)、历史资产 (past_assets)、高危模式 (vuln_patterns) 或技能全文 (skill_search)。
-  3. **一步直调 MCP 扩展工具 (ExecuteExtraTool)**：若系统提示词底部列出了已挂载的 MCP 工具（如 mcp__Playwright__*、mcp__ScopeSentry__*），无需繁琐搜索，直接调用 ExecuteExtraTool({"tool_name":"<工具全名>","params":{...}}) 一步执行！
+- **专家技能包 (Skill)、战术知识库 (tactical_kb) 与外部 MCP 主动触发（第一轮必查）**：
+  1. **动手前先调 Skill**：本轮领到意图后，若涉及 Web 漏洞利用 (web-vuln-tactics)、REST/GraphQL/Swagger 接口枚举 (api-recon)、AI 编程沙箱/Next.js/Supabase 渗透 (ai-coding-sandbox-tactics)、WASM/WebSocket/云存储/SaaS 计费与额度绕过 (wasm-cloud-saas-tactics)、SPA 前端渲染/登录态/DOM XSS (playwright-cli)、ScopeSentry 外网测绘与资产同步 (scopesentry-mcp，调用后自动解锁 ScopeSentry MCP)、二进制/APK/固件/JS 逆向与源码审计 (reverse-engineering)、CVE/Nday 组件指纹与 PoC 匹配 (exploit-kb-patterns) 或连续受阻/403/WAF 分诊转向 (expert-triage-pivot)，**必须在第一轮优先调用 Skill({"name":"<技能名>"}) 加载标准化专家 SOP（多文件技能包会自动一并加载 references/* 防踩坑与攻击链手册）**！
+  2. **跨任务记忆召回 (tactical_kb)**：动手前或遇阻时，调 tactical_kb 检索跨任务已确认漏洞 (past_findings)、历史案例技能 (case_skills)、历史资产 (past_assets)、高危模式 (vuln_patterns) 或技能全文 (skill_search)。
+  3. **直接或一步调用 MCP 扩展工具**：若系统提示词底部列出了已挂载的 MCP 工具（如 mcp__Playwright__*、mcp__ScopeSentry__*），无需繁琐搜索，直接调用工具全名 mcp__<服务名>__<工具名>({...}) 或调用 ExecuteExtraTool({"tool_name":"<工具全名>","params":{...}}) 一步执行！
 - **Bash 仅作兜底**：仅在确需调用外部二进制工具（如 sqlmap、nmap、nuclei 等）或目标系统交互命令时使用 Bash。
 
 完成本意图后用一句话总结你做了什么、写回了哪些事实。`
@@ -295,7 +295,7 @@ func workerTrafficBlock(recording bool) string {
 // dir, never /tmp. Guaranteed present regardless of how the DB body is edited.
 func artifactSpec(dir string) string {
 	return "\n\n**中间产物输出规约**：脚本、payload、抓到的响应体、临时数据等一切中间产物，**一律写到本任务工作目录 " + dir + "**（相对路径即写在这里，也可用该绝对路径）——**不要写 /tmp、不要用其它绝对路径**。\n" +
-		"**专家知识库与止损督导规约**：规划或执行前可调 `tactical_kb`（检索跨任务历史漏洞 `past_findings`、历史资产 `past_assets`、高危模式 `vuln_patterns`、技能包检索 `skill_search`）及 `Skill` 工具；发现 Worker 在强类型校验（HTTP 422）或静态错误（固定 500/403）上重复打转时，立即用 `steer_work` 或 `kill_work` 止损转向。"
+		"**专家知识库与止损督导规约**：规划或执行前可调 `tactical_kb`（检索跨任务历史漏洞 `past_findings`、历史案例技能 `case_skills`、历史资产 `past_assets`、高危模式 `vuln_patterns`、技能包检索 `skill_search`）及 `Skill` 工具；发现 Worker 在强类型校验（HTTP 422）或静态错误（固定 500/403）上重复打转时，立即用 `steer_work` 或 `kill_work` 止损转向。"
 }
 
 // workerArtifactSpec is the worker's 段 [C]: its per-intent run dir is pre-created
@@ -304,7 +304,7 @@ func artifactSpec(dir string) string {
 func workerArtifactSpec(runDir string) string {
 	return "\n\n**中间产物输出规约**：常规发包、多步链/BOLA/并发竞争、并发探测、前端/源码收割、编解码、提取与历史战果检索请直接使用内置 Go 原生工具（http_request / http_sequence / http_fuzz / web_recon / codec_crypto / extract_data / net_probe / dns_probe / tactical_kb / Grep / Glob），不要落盘写临时 .py 脚本；确需保存的字典、payload、抓到的响应体或临时数据等一切中间产物，**一律写到本次意图的专属工作目录 " + runDir + "**（已自动建好，直接用相对路径写在这里即可，无需再手动建目录）——**不要写 /tmp、不要用其它绝对路径**。\n" +
 		"**专家认知与 3-Strike 止损纪律（代码级强制）**：\n" +
-		"1. 【先查经验与主动触发 Skill/MCP】进入具体攻击面或遇复杂鉴权/加密逆向/受阻时，第一轮优先调用 `Skill`（加载 `web-vuln-tactics` / `api-recon` / `playwright-cli` / `scopesentry-mcp` / `reverse-engineering` / `exploit-kb-patterns` / `expert-triage-pivot`）与 `tactical_kb`；若已挂载 MCP 工具，直接用 `ExecuteExtraTool({\"tool_name\":\"...\",\"params\":{...}})` 一步调用。\n" +
+		"1. 【先查经验与主动触发 Skill/MCP】进入具体攻击面或遇复杂鉴权/加密逆向/受阻时，第一轮优先调用 `Skill`（加载 `web-vuln-tactics` / `api-recon` / `ai-coding-sandbox-tactics` / `wasm-cloud-saas-tactics` / `playwright-cli` / `scopesentry-mcp` / `reverse-engineering` / `exploit-kb-patterns` / `expert-triage-pivot`）与 `tactical_kb`；若已挂载 MCP 工具，直接调工具全名 `mcp__<服务名>__<工具名>({...})` 或用 `ExecuteExtraTool({\"tool_name\":\"...\",\"params\":{...}})` 一步调用。\n" +
 		"2. 【3-Strike 熔断】同一端点/参数连续 3 次收到同质化负面响应（如 FastAPI `422 string_type`、恒定长度 `500`、固定 `403`）或触发 `[⚡ 专家战术熔断提醒]` 时，**严禁发送第 4 次同类变体**！立即调 `record_fact` 记录防御特征并转向正交维度（如双会话越权 `http_sequence(mode=\"bola\")`、并发 `mode=\"race\"`）或直接输出证伪结论结束本轮，严禁死磕至超时(exhausted)。\n" +
 		"3. 【上报五问门禁】调用 `report_finding` 前必须确认已突破真实权限边界且响应含非公开业务数据/状态变更；框架默认行为或不同错误码差分（如不存在返回 500 vs 过期返回 400）一律只记 `record_fact`。"
 }
@@ -522,10 +522,14 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	}
 	sysBody += intentBlock
 	if hint := func() string {
+		tactical := BuildTacticalRoutingHint(intentBlock, tools, def)
 		if isRE {
+			if tactical != "" {
+				return softwareREHint() + "\n\n" + tactical
+			}
 			return softwareREHint()
 		}
-		return BuildTacticalRoutingHint(intentBlock, tools, def)
+		return tactical
 	}(); hint != "" {
 		sysBody += "\n\n" + hint
 	}

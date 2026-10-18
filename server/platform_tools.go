@@ -26,6 +26,7 @@ func (s *Server) platformTools() []actool.CoreTool {
 		s.toolListSkillProposals(),
 		s.toolReviewSkillProposal(),
 		s.toolDistillTaskSkill(),
+		s.toolDistillReportSkill(),
 		s.toolCreateCustomTool(),
 		s.toolUpdateCustomTool(),
 		s.toolCreateMCP(),
@@ -37,7 +38,7 @@ func (s *Server) platformTools() []actool.CoreTool {
 // platformToolKeys are the tool keys the Auto agent gets bound by default.
 var platformToolKeys = []string{
 	"create_skill", "update_skill_file",
-	"list_skill_gaps", "propose_skill", "list_skill_proposals", "review_skill_proposal", "distill_task_skill",
+	"list_skill_gaps", "propose_skill", "list_skill_proposals", "review_skill_proposal", "distill_task_skill", "distill_report_skill",
 	"create_custom_tool", "update_custom_tool",
 	"create_mcp", "update_mcp",
 	"delete_assets_by_host",

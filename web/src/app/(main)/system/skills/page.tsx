@@ -6,6 +6,7 @@ import {
   AlertTriangleIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
+  DownloadIcon,
   FilePlusIcon,
   FileTextIcon,
   FolderIcon,
@@ -54,7 +55,11 @@ const BUILTIN_SKILL_NAMES = new Set([
   "exploit-kb-patterns",
   "expert-triage-pivot",
   "human-verification",
+  "ai-coding-sandbox-tactics",
+  "wasm-cloud-saas-tactics",
 ]);
+
+const REPORT_TACTIC_SKILL_NAMES = new Set(["ai-coding-sandbox-tactics", "wasm-cloud-saas-tactics"]);
 
 function fmtTime(ts: string | undefined, never: string) {
   if (!ts) return never;
@@ -402,6 +407,20 @@ export default function SkillsPage() {
   const [mergeApplyDirect, setMergeApplyDirect] = React.useState(false);
   const [mergeRejectSources, setMergeRejectSources] = React.useState(true);
   const [merging, setMerging] = React.useState(false);
+
+  // 外部报告（TXT / JSON / MD）导入沉淀为多文件技能包
+  const [importReportOpen, setImportReportOpen] = React.useState(false);
+  const [importFiles, setImportFiles] = React.useState<File[]>([]);
+  const [importPaste, setImportPaste] = React.useState("");
+  const [importName, setImportName] = React.useState("");
+  const [importDomain, setImportDomain] = React.useState<"auto" | "web_security" | "software_re">("auto");
+  const [importFocus, setImportFocus] = React.useState("");
+  const [importUseLLM, setImportUseLLM] = React.useState(true);
+  const [importApplyDirect, setImportApplyDirect] = React.useState(true);
+  const [importOverwrite, setImportOverwrite] = React.useState(true);
+  const [importingReport, setImportingReport] = React.useState(false);
+  const importFileRef = React.useRef<HTMLInputElement>(null);
+  const [exportingSkill, setExportingSkill] = React.useState(false);
 
   const loadProposals = React.useCallback((status: "pending" | "applied" | "rejected" | "all" = "all") => {
     api
@@ -876,6 +895,100 @@ export default function SkillsPage() {
     }
   }
 
+  function onImportFilesPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (picked.length === 0) return;
+    setImportFiles((prev) => {
+      const next = [...prev];
+      for (const f of picked) {
+        if (!next.some((x) => x.name === f.name && x.size === f.size)) {
+          next.push(f);
+        }
+      }
+      return next.slice(0, 12);
+    });
+    if (!importName.trim() && picked[0]) {
+      const stem = picked[0].name
+        .replace(/\.(md|markdown|txt|json|log|csv)$/i, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      if (stem && /^[a-z]/.test(stem)) {
+        setImportName(stem.startsWith("report-") ? stem.slice(0, 56) : `report-${stem}`.slice(0, 56));
+      }
+    }
+  }
+
+  async function handleImportReport() {
+    if (importFiles.length === 0 && !importPaste.trim()) {
+      toast.error(t("importReportNeedInput"));
+      return;
+    }
+    setImportingReport(true);
+    try {
+      const res = await api.importReportSkill({
+        files: importFiles,
+        content: importPaste.trim() || undefined,
+        name: importName.trim() || undefined,
+        domain: importDomain,
+        focus: importFocus.trim() || undefined,
+        use_llm: importUseLLM,
+        apply: importApplyDirect,
+        overwrite: importOverwrite,
+      });
+      if (res.status === "applied") {
+        toast.success(
+          t("importReportSuccessApplied", {
+            skill: res.skill,
+            pitfalls: res.pitfalls_count,
+            findings: res.findings_count,
+            files: res.files_written?.length ?? 3,
+          }),
+        );
+        setImportReportOpen(false);
+        setImportFiles([]);
+        setImportPaste("");
+        setImportName("");
+        setImportFocus("");
+        load();
+        ensureExpanded(res.skill, "references");
+        setSelected({ skill: res.skill, path: "SKILL.md" });
+      } else {
+        toast.success(
+          t("importReportSuccessPending", {
+            skill: res.skill,
+            pitfalls: res.pitfalls_count,
+            findings: res.findings_count,
+          }),
+        );
+        setImportReportOpen(false);
+        setImportFiles([]);
+        setImportPaste("");
+        setProposalFilter("pending");
+        if (res.proposal?.id) setSelectedProposalId(res.proposal.id);
+        load();
+        setProposalsOpen(true);
+      }
+    } catch (e) {
+      toast.error(t("opFailed", { msg: (e as Error).message }));
+    } finally {
+      setImportingReport(false);
+    }
+  }
+
+  async function handleExportSkillZip(skillName: string) {
+    setExportingSkill(true);
+    try {
+      await api.downloadSkillZip(skillName);
+      toast.success(t("exportZipSuccess", { name: skillName }));
+    } catch (e) {
+      toast.error(t("opFailed", { msg: (e as Error).message }));
+    } finally {
+      setExportingSkill(false);
+    }
+  }
+
   // ── Inline input JSX helper (NOT a React component — avoids remount on re-render) ──
   // Defined as a plain function returning JSX so React never sees a new component type.
   function inlineInputJSX(indent: number) {
@@ -1093,6 +1206,10 @@ export default function SkillsPage() {
               </PopoverContent>
             </Popover>
           )}
+          <Button size="sm" variant="outline" onClick={() => setImportReportOpen(true)}>
+            <SparklesIcon className="size-3.5 text-primary" />
+            {t("importReportBtn")}
+          </Button>
           <Button
             size="sm"
             variant={pendingProposalsCount > 0 ? "default" : "outline"}
@@ -1136,6 +1253,16 @@ export default function SkillsPage() {
             >
               <UploadIcon className="size-3.5" />
               {uploading ? t("uploading") : t("uploadZip")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="w-full"
+              onClick={() => setImportReportOpen(true)}
+              title={t("importReportTitle")}
+            >
+              <SparklesIcon className="size-3.5 text-primary" />
+              {t("importReportBtn")}
             </Button>
           </div>
           {/* Radix viewport wraps children in a display:table div that grows with
@@ -1271,7 +1398,19 @@ export default function SkillsPage() {
           {selected && selected.path === null && selectedSkill && (
             <div className="max-w-5xl space-y-5">
               <div>
-                <h2 className="font-mono font-semibold text-base">{selectedSkill.name}</h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-mono font-semibold text-base">{selectedSkill.name}</h2>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={exportingSkill}
+                    onClick={() => void handleExportSkillZip(selectedSkill.name)}
+                  >
+                    <DownloadIcon className="size-3.5" />
+                    {t("exportZipBtn")}
+                  </Button>
+                </div>
                 {selectedSkill.description && (
                   <p className="mt-1 text-muted-foreground text-sm">{selectedSkill.description}</p>
                 )}
@@ -1279,6 +1418,11 @@ export default function SkillsPage() {
                   {BUILTIN_SKILL_NAMES.has(selectedSkill.name) && (
                     <Badge variant="secondary" className="font-normal text-xs">
                       Built-in
+                    </Badge>
+                  )}
+                  {(selectedSkill.name.startsWith("report-") || REPORT_TACTIC_SKILL_NAMES.has(selectedSkill.name)) && (
+                    <Badge variant="outline" className="border-primary/40 font-normal text-primary text-xs">
+                      {t("reportDistilledBadge")}
                     </Badge>
                   )}
                   {selectedSkill.name.startsWith("case-") && (
@@ -1940,6 +2084,177 @@ export default function SkillsPage() {
               )}
             </div>
           </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* ── 外部报告（TXT / JSON / MD）导入沉淀为多文件技能包 ── */}
+      <Sheet open={importReportOpen} onOpenChange={setImportReportOpen}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 data-[side=right]:sm:max-w-2xl">
+          <SheetHeader className="border-b px-4 py-3">
+            <SheetTitle className="flex items-center gap-2 text-sm">
+              <SparklesIcon className="size-4 text-primary" />
+              {t("importReportTitle")}
+            </SheetTitle>
+            <p className="text-muted-foreground text-xs leading-relaxed">{t("importReportDesc")}</p>
+          </SheetHeader>
+
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            {/* 1. 选择报告文件 */}
+            <div className="space-y-2">
+              <Label className="text-xs">{t("importReportFilesLabel")}</Label>
+              <input
+                ref={importFileRef}
+                type="file"
+                multiple
+                accept=".md,.markdown,.txt,.json,.log,.csv"
+                className="hidden"
+                onChange={onImportFilesPick}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => importFileRef.current?.click()}
+                  disabled={importingReport}
+                >
+                  <UploadIcon className="size-3.5" />
+                  {t("importReportPickFiles")}
+                </Button>
+                {importFiles.length > 0 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-muted-foreground text-xs"
+                    onClick={() => setImportFiles([])}
+                    disabled={importingReport}
+                  >
+                    {t("importReportClearFiles")}
+                  </Button>
+                )}
+              </div>
+              {importFiles.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 rounded-md border bg-muted/30 p-2.5">
+                  {importFiles.map((f) => (
+                    <Badge key={`${f.name}-${f.size}`} variant="secondary" className="gap-1.5 font-mono text-xs">
+                      <span>{f.name}</span>
+                      <span className="text-[10px] text-muted-foreground">({Math.ceil(f.size / 1024)} KB)</span>
+                      <button
+                        type="button"
+                        className="ml-0.5 text-muted-foreground hover:text-foreground"
+                        onClick={() => setImportFiles((cur) => cur.filter((x) => x !== f))}
+                      >
+                        ×
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 2. 技能包名称与分析领域 */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label className="text-xs">{t("importReportNameLabel")}</Label>
+                <Input
+                  className="h-8 font-mono text-xs"
+                  placeholder={t("importReportNamePlaceholder")}
+                  value={importName}
+                  onChange={(e) => setImportName(e.target.value)}
+                  disabled={importingReport}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label className="text-xs">{t("importReportDomainLabel")}</Label>
+                <div className="flex gap-1">
+                  {(
+                    [
+                      { key: "auto", label: t("importReportDomainAuto").split("（")[0] },
+                      { key: "web_security", label: "Web/云安全" },
+                      { key: "software_re", label: "软件/WASM逆向" },
+                    ] as const
+                  ).map((opt) => (
+                    <Button
+                      key={opt.key}
+                      type="button"
+                      size="sm"
+                      variant={importDomain === opt.key ? "default" : "outline"}
+                      className="h-8 flex-1 px-2 text-xs"
+                      onClick={() => setImportDomain(opt.key)}
+                      disabled={importingReport}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 3. 重点提炼方向 */}
+            <div className="grid gap-1.5">
+              <Label className="text-xs">{t("importReportFocusLabel")}</Label>
+              <Input
+                className="h-8 text-xs"
+                placeholder={t("importReportFocusPlaceholder")}
+                value={importFocus}
+                onChange={(e) => setImportFocus(e.target.value)}
+                disabled={importingReport}
+              />
+            </div>
+
+            {/* 4. 直接粘贴报告内容 */}
+            <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+              <Label className="text-xs">{t("importReportPasteLabel")}</Label>
+              <Textarea
+                className="min-h-40 flex-1 resize-none font-mono text-xs leading-relaxed"
+                placeholder={t("importReportPastePlaceholder")}
+                value={importPaste}
+                onChange={(e) => setImportPaste(e.target.value)}
+                disabled={importingReport}
+              />
+            </div>
+
+            {/* 5. 提炼与落盘选项 */}
+            <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-xs">
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={importUseLLM}
+                  onCheckedChange={(on) => setImportUseLLM(!!on)}
+                  disabled={importingReport}
+                />
+                <span>{t("importReportUseLLM")}</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={importApplyDirect}
+                  onCheckedChange={(on) => setImportApplyDirect(!!on)}
+                  disabled={importingReport}
+                />
+                <span className="font-medium">{t("importReportApplyDirect")}</span>
+              </label>
+              {importApplyDirect && (
+                <label className="flex cursor-pointer items-center gap-2 pl-6 text-muted-foreground">
+                  <Checkbox
+                    checked={importOverwrite}
+                    onCheckedChange={(on) => setImportOverwrite(!!on)}
+                    disabled={importingReport}
+                  />
+                  <span>{t("importReportOverwrite")}</span>
+                </label>
+              )}
+            </div>
+          </div>
+
+          <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
+            <Button variant="outline" onClick={() => setImportReportOpen(false)} disabled={importingReport}>
+              {t("cancel")}
+            </Button>
+            <Button onClick={() => void handleImportReport()} disabled={importingReport}>
+              <SparklesIcon className="size-3.5" />
+              {importingReport ? t("importReportSubmitting") : t("importReportSubmit")}
+            </Button>
+          </SheetFooter>
         </SheetContent>
       </Sheet>
     </div>
