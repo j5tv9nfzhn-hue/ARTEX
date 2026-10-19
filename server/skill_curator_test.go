@@ -194,7 +194,7 @@ func TestCuratorPersistStagesThenApplies(t *testing.T) {
 	}
 
 	docA := buildSkillDocument("case-web-1", "任务复盘 A", "## 已验证路径\n\n- A")
-	p, err := s.persistCuratorSkill(context.Background(), "case-web-1", docA, "task=1", false)
+	p, err := s.persistCuratorSkill(context.Background(), "case-web-1", docA, "task=1", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestCuratorPersistStagesThenApplies(t *testing.T) {
 	}
 
 	docB := buildSkillDocument("case-web-2", "任务复盘 B", "## 已验证路径\n\n- B")
-	p2, err := s.persistCuratorSkill(context.Background(), "case-web-2", docB, "task=2", true)
+	p2, err := s.persistCuratorSkill(context.Background(), "case-web-2", docB, "task=2", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
