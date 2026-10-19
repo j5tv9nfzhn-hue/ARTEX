@@ -625,6 +625,12 @@ func (s *Server) persistCuratorSkill(ctx context.Context, name, doc, evidence st
 		markApplied(skillProposalID(name, ex.rel, ex.body))
 	}
 	markApplied(p.ID)
+	// 文件已落盘即沉淀成功：同步返回对象状态，避免调用方读到陈旧的 pending。
+	if cur, gerr := s.m.pg.GetSkillProposal(ctx, p.ID); gerr == nil && cur != nil {
+		p = cur
+	} else {
+		p.Status = db.SkillProposalApplied
+	}
 	return p, nil
 }
 

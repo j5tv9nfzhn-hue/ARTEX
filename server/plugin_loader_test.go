@@ -116,9 +116,7 @@ func TestExternalProcessLifecycle(t *testing.T) {
 		"tools": []map[string]any{{"name": "echo"}},
 		"exec":  []string{exe, "-test.run=TestPluginHelperProcess"},
 	})
-	if err := os.WriteFile(filepath.Join(root, "plugin.json"), mf, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writePlugin(t, root, "helper", string(mf))
 	t.Setenv("GO_PLUGIN_HELPER", "1")
 
 	reg := NewPluginRegistry()
