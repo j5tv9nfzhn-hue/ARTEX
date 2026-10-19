@@ -274,22 +274,32 @@ func (s *Server) waitTaskQuiescent(ctx context.Context, taskID string) error {
 	// 两处条件变更都会 Broadcast：in-flight 归零在 decInflight，
 	// chatBusy 清除在 finishTaskChat / runConversationTurn 的收尾路径。
 	e := s.engine
-	if e == nil || e.drainCond == nil {
-		// 极少数测试构造的 Engine 未初始化 drainCond：退回一次性检查。
-		s.chatMu.Lock()
-		busy := s.chatBusy[taskID]
-		s.chatMu.Unlock()
-		return nil
+	if e == nil {
+		// 没有引擎就等不到 drain 通知，只能确认 chatBusy 后阻塞到 ctx 结束。
+		// 生产路径不会走到这里（Server 总是带 engine），仅为手工构造的
+		// Server 字面量保留一个语义正确的兜底。
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			s.chatMu.Lock()
+			busy := s.chatBusy[taskID]
+			s.chatMu.Unlock()
+			if !busy {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-tick.C:
+			}
+		}
 	}
 
 	// ctx 取消时唤醒所有等待者，让 Wait 返回后能看到 ctx.Err()。
-	stop := context.AfterFunc(ctx, func() {
-		e.drainMu.Lock()
-		e.drainCond.Broadcast()
-		e.drainMu.Unlock()
-	})
+	stop := context.AfterFunc(ctx, e.notifyDrain)
 	defer stop()
 
+	cond := e.drainCondOrInit()
 	e.drainMu.Lock()
 	defer e.drainMu.Unlock()
 	for {
@@ -303,8 +313,8 @@ func (s *Server) waitTaskQuiescent(ctx context.Context, taskID string) error {
 			return nil
 		}
 		// 两类事件都会 Broadcast：in-flight 归零（decInflight）与 chatBusy
-		// 清除（chat 收尾路径，见 server.go 的 delete(s.chatBusy, taskID) 旁）。
-		e.drainCond.Wait()
+		// 清除（finishTaskChat / runConversationTurn 的收尾路径）。
+		cond.Wait()
 	}
 }
 

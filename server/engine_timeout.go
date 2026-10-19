@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -57,15 +58,31 @@ func (e *Engine) beginTaskOperation(taskID string) bool {
 	return true
 }
 
+// drainCondOrInit returns the drain condition variable, creating it on first use.
+//
+// 惰性初始化而不是在 NewEngine 里一次性创建：测试会用 &Engine{} 字面量构造
+// 引擎（不经过 NewEngine），若等待方要求 drainCond 非 nil，就只能留一个
+// 「跳过检查直接返回」的分支——那会让删除流程在未静默时提前放行。
+func (e *Engine) drainCondOrInit() *sync.Cond {
+	e.drainMu.Lock()
+	defer e.drainMu.Unlock()
+	if e.drainCond == nil {
+		e.drainCond = sync.NewCond(&e.drainMu)
+	}
+	return e.drainCond
+}
+
 // notifyDrain broadcasts to every waitTaskQuiescent waiter. Callers that change
 // a condition waitTaskQuiescent reads (in-flight count, chatBusy) must call this
 // after the change, inside the corresponding lock.
 func (e *Engine) notifyDrain() {
-	if e == nil || e.drainCond == nil {
+	if e == nil {
 		return
 	}
 	e.drainMu.Lock()
-	e.drainCond.Broadcast()
+	if e.drainCond != nil {
+		e.drainCond.Broadcast()
+	}
 	e.drainMu.Unlock()
 }
 
@@ -73,14 +90,9 @@ func (e *Engine) decInflight(taskID string) {
 	if atomic.AddInt64(e.inflightCounter(taskID), -1) != 0 {
 		return
 	}
-	// 归零时在 drainMu 临界区内广播。Broadcast 必须在临界区内：否则等待方
-	// 可能刚判定"计数不为零"、尚未进入 Wait，就错过了这次唤醒，随后一直
-	// 阻塞到下一条无关记录归零——正是这类丢失唤醒让轮询版本当初不敢改成通知。
-	if e.drainCond != nil {
-		e.drainMu.Lock()
-		e.drainCond.Broadcast()
-		e.drainMu.Unlock()
-	}
+	// 归零时广播：等待方在 drainMu 临界区内检查条件并 Wait，Broadcast 也在
+	// 同一临界区内发出，因此不会出现「检查完、还没 Wait 就错过唤醒」。
+	e.notifyDrain()
 }
 func (e *Engine) inflightCount(taskID string) int64 {
 	return atomic.LoadInt64(e.inflightCounter(taskID))
