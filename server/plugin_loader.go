@@ -236,7 +236,7 @@ func (r *PluginRegistry) loadManifest(ctx context.Context, mf PluginManifest, ro
 					rt.err = fmt.Sprintf("内置工具名 %q 不在注册表", t.Name)
 					r.plugins[mf.ID] = rt
 					r.mu.Unlock()
-					return fmt.Errorf(rt.err)
+					return fmt.Errorf("%s", rt.err)
 				}
 			}
 		}
