@@ -60,6 +60,45 @@ var builtinBrowserMCPTools = []MCPTool{
 	{Name: "mcp__browser__browser_install", Description: "安装或修复 Playwright 所需的受管浏览器内核"},
 }
 
+// builtinReaMCPTools 预置 REA (Reverse Engineering Assistant) 引擎 MCP 的标准
+// 工具集，命名与 server/software_re_presets.go 的 rea 预设契约一致，便于启用
+// 前在 /system/mcp 预览，并作为 software_re REProvider 的绑定候选。
+var builtinReaMCPTools = []MCPTool{
+	{Name: "mcp__rea__rea_open_sample", Description: "打开样本并创建静态分析会话（返回 session_id）"},
+	{Name: "mcp__rea__rea_close_sample", Description: "关闭样本会话并释放引擎侧资源"},
+	{Name: "mcp__rea__rea_session_status", Description: "查询 REA 会话状态、架构与加载模块摘要"},
+	{Name: "mcp__rea__rea_list_functions", Description: "按关键词分页列出函数（RVA、名称、所属模块）"},
+	{Name: "mcp__rea__rea_decompile", Description: "按 RVA 或符号反编译函数伪代码"},
+	{Name: "mcp__rea__rea_list_xrefs", Description: "列出地址的交叉引用（from/to 与引用类型）"},
+	{Name: "mcp__rea__rea_callgraph", Description: "导出函数调用图边（caller/callee）"},
+	{Name: "mcp__rea__rea_list_types", Description: "列出类型/结构体定义（名称、模块）"},
+	{Name: "mcp__rea__rea_list_modules", Description: "列出多模块清单（模块名、基址）"},
+	{Name: "mcp__rea__rea_list_imports", Description: "列出导入表（符号、RVA、来源库）"},
+	{Name: "mcp__rea__rea_list_exports", Description: "列出导出表（符号、RVA、模块）"},
+	{Name: "mcp__rea__rea_list_strings", Description: "按关键词列出字符串索引（值、file_offset、区段）"},
+}
+
+// builtinWPE64MCPTools 预置 WPE64 封包实验 MCP 的标准工具集（抓包/改包/重放/
+// 规则）。WPE64 与 REA 内置 mitmproxy 流量记录代理协同：记录代理负责 HTTP(S)
+// 解密取证，WPE64 负责 Winsock 层截获、编辑与重放，见 skills/wpe64-mcp 与
+// skills/mitmproxy-traffic。启用前仅作工具目录预览；实际工具以启用后实时发现为准。
+var builtinWPE64MCPTools = []MCPTool{
+	{Name: "mcp__wpe64__status", Description: "查询 WPE64 引擎状态、驱动可用性与当前抓包/规则计数"},
+	{Name: "mcp__wpe64__list_adapters", Description: "枚举网卡、进程与套接字（进程名、PID、五元组）"},
+	{Name: "mcp__wpe64__start_capture", Description: "开始抓包（进程/端口/协议/方向/截断长度过滤）"},
+	{Name: "mcp__wpe64__stop_capture", Description: "停止抓包并固化 trace（返回 trace 标识）"},
+	{Name: "mcp__wpe64__list_packets", Description: "分页列出数据包（序号、时间、方向、五元组、长度）"},
+	{Name: "mcp__wpe64__get_packet", Description: "读取单包十六进制与解析字段（头/载荷）"},
+	{Name: "mcp__wpe64__edit_packet", Description: "编辑待发包（十六进制补丁或字段替换，长度校验）"},
+	{Name: "mcp__wpe64__send_packet", Description: "单包注入发送（须显式授权目标）"},
+	{Name: "mcp__wpe64__replay_trace", Description: "按时序/变速/区段重放 trace（speed/loop/range）"},
+	{Name: "mcp__wpe64__apply_rule", Description: "添加持续改包规则（match→replace，长度保持或修正）"},
+	{Name: "mcp__wpe64__list_rules", Description: "列出当前生效的改包规则"},
+	{Name: "mcp__wpe64__clear_rules", Description: "清除全部或指定改包规则"},
+	{Name: "mcp__wpe64__save_trace", Description: "导出 trace 文件到指定路径"},
+	{Name: "mcp__wpe64__load_trace", Description: "加载既有 trace 文件用于重放或编辑"},
+}
+
 // seedBuiltinMCPServersAndTools 幂等确保内置的 browser 与 ScopeSentry MCP 具备正确的
 // 启动参数及初始工具缓存，使打包分发后开箱即可看到完整内置工具集并能非交互启动。
 func (d *DB) seedBuiltinMCPServersAndTools() error {
@@ -96,6 +135,8 @@ func (d *DB) seedBuiltinMCPServersAndTools() error {
 	}{
 		{serverName: "ScopeSentry", tools: builtinScopeSentryTools},
 		{serverName: "browser", tools: builtinBrowserMCPTools},
+		{serverName: "rea", tools: builtinReaMCPTools},
+		{serverName: "wpe64", tools: builtinWPE64MCPTools},
 	}
 
 	for _, item := range builtinCatalogs {

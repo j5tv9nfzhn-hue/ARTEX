@@ -143,6 +143,14 @@ function getToken(): string | null {
   return localStorage.getItem("artex_token");
 }
 
+// clipErrMsg 限制进入弹窗/toast 的错误文本长度：底层 err.Error() 偶尔会夹带
+// 大段响应体或模型输出，直接渲染会把弹窗撑爆（弹窗超长）。完整内容仍在
+// 服务端日志与浏览器网络面板里。
+function clipErrMsg(m: string, n = 200): string {
+  const s = (m ?? "").trim();
+  return s.length > n ? `${s.slice(0, n)}…（完整错误见服务端日志）` : s;
+}
+
 export async function http<T>(path: string, init?: RequestInit): Promise<T> {
   if (MOCK) return mockHandle<T>(init?.method ?? "GET", path, init?.body ?? null);
   const token = getToken();
@@ -168,7 +176,7 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const payload = (await r.json()) as { error?: unknown };
       if (typeof payload.error === "string" && payload.error.trim()) {
-        message = payload.error.trim();
+        message = clipErrMsg(payload.error);
       }
     } catch {
       // Keep the status-based fallback for empty or non-JSON error responses.
@@ -991,7 +999,7 @@ export const api = {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: fd,
     });
-    if (!r.ok) throw new Error(`上传失败： ${r.status} ${await r.text()}`);
+    if (!r.ok) throw new Error(clipErrMsg(`上传失败： ${r.status} ${await r.text()}`));
     return r.json() as Promise<{ attachments: ChatAttachment[] }>;
   },
   stopChat: (taskId: string) => post<{ status: string }>(`/tasks/${taskId}/chat/stop`, {}),
@@ -1216,7 +1224,7 @@ export const api = {
 
   // ---- mcp ----
   mcpServers: () => get<{ servers: MCPServer[] }>("/mcp").then((r) => arr(r.servers)),
-  saveMcpServer: (m: Partial<MCPServer>) => post<{ id: number }>("/mcp", m),
+  saveMcpServer: (m: Partial<MCPServer>) => post<{ id: number; renamed_from?: string; migrated?: Record<string, number> }>("/mcp", m),
   deleteMcpServer: (id: number) => del<{ deleted: number }>(`/mcp/${id}`),
   mcpTools: (id: number) => get<{ tools: MCPTool[] }>(`/mcp/${id}/tools`).then((r) => arr(r.tools)),
   refreshMcpServer: (id: number) => post<{ tools: MCPTool[] }>(`/mcp/${id}/refresh`, {}).then((r) => arr(r.tools)),
@@ -1277,6 +1285,8 @@ export const api = {
     return body;
   },
   deleteSkill: (name: string) => del<{ deleted: string }>(`/skills/${name}`),
+  renameSkill: (name: string, newName: string) =>
+    patch<{ ok: boolean; name: string }>(`/skills/${name}`, { name: newName }),
   updateSkillMeta: (
     name: string,
     meta: { mcps?: string[]; description?: string; license?: string; compatibility?: string },
@@ -1352,7 +1362,7 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new ApiError(body?.error || `导入提炼失败 (${r.status})`, r.status);
+    if (!r.ok) throw new ApiError(clipErrMsg(body?.error || `导入提炼失败 (${r.status})`), r.status);
     return body as ReportImportResult;
   },
   downloadSkillZip: async (name: string): Promise<void> => {
@@ -1363,7 +1373,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new ApiError(body?.error || `导出失败 (${r.status})`, r.status);
+      throw new ApiError(clipErrMsg(body?.error || `导出失败 (${r.status})`), r.status);
     }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
@@ -1443,7 +1453,7 @@ export const api = {
     const r = await fetch("/api/intercept/tool-config", {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (!r.ok) throw new Error(await r.text());
+    if (!r.ok) throw new Error(clipErrMsg(await r.text()));
     return r.json();
   },
   interceptSetToolConfig: async (enabledTools: string[]): Promise<void> => {
@@ -1457,7 +1467,7 @@ export const api = {
       },
       body: JSON.stringify({ enabled_tools: enabledTools }),
     });
-    if (!r.ok) throw new Error(await r.text());
+    if (!r.ok) throw new Error(clipErrMsg(await r.text()));
   },
 
   // ---- intercept LLM judge (模型兜底审批,全局配置) ----

@@ -81,6 +81,17 @@ type ToolSet struct {
 	// intent id (engine callback, wired by the planner): the worker injects it before
 	// its next tool call and re-plans, without being killed. nil = tool unavailable.
 	steerWork func(intentID int64, msg string) error
+	// dirEpoch, if set, reports the task's current direction epoch (engine callback).
+	// kill_work/steer_work bump it mid-round; roundEpoch is the value captured when
+	// this ToolSet was created, so the planner's add_intent can refuse dispatching
+	// under a direction that changed after the round started (nil = no gating).
+	dirEpoch func() uint64
+	// roundEpoch is dirEpoch() at ToolSet creation (planner rounds only; 0 = unset).
+	roundEpoch uint64
+	// dirAck, if set, is called after each successful intent dispatch to release the
+	// engine's dispatch hold (kill_work 冻结的派发闸). Wired for planner/mainagent and
+	// the cross-task orchestrator; nil = no ack (tests / goals decomposer).
+	dirAck func()
 	// enrich, if set, receives async auto-completion triggers (DNS resolve for a
 	// domain, HTTP probe for a site). nil = no engine enrichment.
 	enrich EnrichTrigger
@@ -137,6 +148,23 @@ func (t *ToolSet) SetNotify(fn func()) { t.notify = fn }
 
 // SetNotifyFinding wires the finding-wake callback (see ToolSet.notifyFinding).
 func (t *ToolSet) SetNotifyFinding(fn func(int64, string)) { t.notifyFinding = fn }
+
+// SetKillWork wires the engine's per-work terminate callback (see ToolSet.killWork).
+// Set by the main-agent chat and the cross-task orchestration delegate; the planner
+// assigns the field directly.
+func (t *ToolSet) SetKillWork(fn func(intentID int64) error) { t.killWork = fn }
+
+// SetDirectionGate wires the direction-epoch/ack callbacks used by the add_intent
+// dispatch gate (see ToolSet.dirEpoch/dirAck). epochFn may be nil (no stale-round
+// check — main-agent/orchestrator direct dispatch is never gated); when non-nil the
+// current epoch is captured as this run's roundEpoch. ackFn (may be nil) releases
+// the engine's dispatch hold after each successful dispatch.
+func (t *ToolSet) SetDirectionGate(epochFn func() uint64, ackFn func()) {
+	t.dirEpoch, t.dirAck = epochFn, ackFn
+	if epochFn != nil {
+		t.roundEpoch = epochFn()
+	}
+}
 
 // EnrichTrigger is the enrichment engine seen from the tool layer (see package
 // enrich). Kept as an interface here to avoid coupling agent → enrich.
@@ -238,6 +266,8 @@ func (t *ToolSet) ListWorkerTracesTool() actool.CoreTool   { return t.listWorker
 func (t *ToolSet) SearchWorkerTracesTool() actool.CoreTool { return t.searchAllWorkerTraces() }
 func (t *ToolSet) NodeDetailTool() actool.CoreTool         { return t.nodeDetail() }
 func (t *ToolSet) AddHintTool() actool.CoreTool            { return t.addHint() }
+func (t *ToolSet) KillWorkTool() actool.CoreTool            { return t.killWorkTool() }
+func (t *ToolSet) RestartWorkTool() actool.CoreTool         { return t.restartWorkTool() }
 
 // SetEnrich wires the async enrichment engine (DNS/HTTP auto-completion).
 func (t *ToolSet) SetEnrich(e EnrichTrigger) { t.enrich = e }
@@ -1052,6 +1082,13 @@ type intentItem struct {
 // 节点（不能挂在别的意图/目标/提示上）。顶层全新方向留空 parent_ids，兜底连 origin fact。
 // 这样"每个意图都连到 fact 节点、且是发现驱动而非凭空规划"从创建路径上被强制。
 func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
+	// 方向代际门控：kill_work/steer_work 会推进方向代际。规划者本轮内若已发生强制
+	// 终止/纠偏（方向可能已变），本轮余下的派发一律拒绝——先结束本轮，下一轮基于最新
+	// graph_overview 重新评估方向后再派发，避免按旧方向继续派发浪费算力。
+	// 人（mainagent/编排层）直投不受此门控（dirEpoch 为 nil）。
+	if t.dirEpoch != nil && t.roundEpoch != 0 && t.dirEpoch() != t.roundEpoch {
+		return 0, fmt.Errorf("方向代际已变化（本轮内有 work 被强制终止/纠偏，方向可能已变），本轮不再派发新意图；请结束本轮规划，下一轮基于最新 graph_overview 重新评估方向后再派发")
+	}
 	if strings.TrimSpace(it.Summary) == "" {
 		return 0, fmt.Errorf("summary 不能为空")
 	}
@@ -1106,6 +1143,10 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 		if origin, _ := t.ts.OriginFactID(); origin > 0 {
 			_ = t.ts.Link(origin, db.RelDerivedFrom, id)
 		}
+	}
+	// 派发成功 = 有人在最新方向上做了决策 → 解除 kill_work 冻结的派发闸（幂等）。
+	if t.dirAck != nil {
+		t.dirAck()
 	}
 	return id, nil
 }
@@ -1696,7 +1737,7 @@ func (t *ToolSet) addHint() actool.CoreTool {
 
 // killWorkTool lets the planner terminate a single running work (by intent id).
 func (t *ToolSet) killWorkTool() actool.CoreTool {
-	return t.writeExpTool("kill_work", "终止一条正在运行的意图(work)。用于叫停跑偏/无意义的探索；被终止的意图标记为 stopped，不再自动重领。先用 get_worker_output 看看它在干嘛再决定。",
+	return t.writeExpTool("kill_work", "终止一条正在运行的意图(work)。用于叫停跑偏/无意义的探索；被终止的意图标记为 stopped，不再自动重领。终止后本任务会暂停派发新 work、待规划者重新评估方向后再继续。先用 get_worker_output 看看它在干嘛再决定；被终止的 work 之后可用 restart_work 重启重跑。",
 		obj(map[string]any{"intent_id": idp("要终止的意图 id（= work 句柄）")}, "intent_id"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			if t.killWork == nil {
@@ -1755,6 +1796,59 @@ func (t *ToolSet) steerWorkTool() actool.CoreTool {
 				return actool.Errorf(err.Error()), nil
 			}
 			return actool.Text(fmt.Sprintf("已向意图 %d 的 work 注入纠偏指令（下一步生效）", id)), nil
+		})
+}
+
+// restartWorkTool re-dispatches one NOT-successfully-finished work (blocked/
+// exhausted/stopped — including works killed via kill_work) so a worker re-claims
+// it and resumes from its prior LLM transcript (graph writes already produced stay).
+// done/open/running/paused are not restartable: done finished fine (use add_intent
+// for a new direction), open is already queued, running must be kill_work'ed first,
+// paused resumes via the task UI. 与 UI「重跑」同一原语（ReopenIntent）。
+func (t *ToolSet) restartWorkTool() actool.CoreTool {
+	return t.writeExpTool("restart_work",
+		"重启一条已终止/受阻/耗尽的意图(work)（含被 kill_work 终止的）：重新放回 frontier，由 worker 重新领取并从其历史会话续跑，已产出的事实/资产/漏洞保留。仅支持 stopped/blocked/exhausted 状态；running 请先 kill_work 终止后再重启，open（已排队）无需重启，done（已完成）请改用 add_intent 另下新方向，paused 请走任务页恢复/继续对话。",
+		obj(map[string]any{"intent_id": idp("要重启的意图 id（= work 句柄）")}, "intent_id"),
+		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+			var a struct {
+				IntentID json.RawMessage `json:"intent_id"`
+			}
+			_ = json.Unmarshal(in, &a)
+			id := pid(a.IntentID)
+			if id <= 0 {
+				return actool.Errorf("intent_id 必填"), nil
+			}
+			node, err := t.ts.GetNode(id)
+			if err != nil || node == nil || node.Kind != db.KindIntent {
+				return actool.Errorf("intent_id 必须是本任务的意图（关联任务意图只读）"), nil
+			}
+			switch node.State {
+			case "running":
+				return actool.Errorf(fmt.Sprintf("意图 %d 的 work 正在运行：请先用 kill_work 终止，待其落为 stopped 后再 restart_work 重启", id)), nil
+			case "open":
+				return actool.Errorf(fmt.Sprintf("意图 %d 已在 frontier 排队等待领取，无需重启", id)), nil
+			case "done":
+				return actool.Errorf(fmt.Sprintf("意图 %d 已正常完成，不支持重启；如需继续该方向请用 add_intent 另下新意图", id)), nil
+			case "paused":
+				return actool.Errorf(fmt.Sprintf("意图 %d 处于 paused：请通过任务页恢复/继续对话让 Worker 带消息续跑，而不是 restart_work", id)), nil
+			case "deleted":
+				return actool.Errorf(fmt.Sprintf("意图 %d 已删除，无法重启", id)), nil
+			}
+			changed, err := t.ts.ReopenIntent(id)
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			if !changed {
+				return actool.Errorf(fmt.Sprintf("意图 %d 当前状态不支持重启（仅 stopped/blocked/exhausted 可重启）", id)), nil
+			}
+			// 重新入队也算一次派发决策：解除 kill_work 冻结的派发闸，并唤醒 planner 复盘。
+			if t.dirAck != nil {
+				t.dirAck()
+			}
+			if t.notify != nil {
+				t.notify()
+			}
+			return actool.Text(fmt.Sprintf("意图 %d 已重启并回到 frontier，worker 将重新领取并从历史会话续跑", id)), nil
 		})
 }
 
@@ -2059,7 +2153,7 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
-		t.killWorkTool(), t.steerWorkTool(),
+		t.killWorkTool(), t.restartWorkTool(), t.steerWorkTool(),
 		// report_finding：规划态势研判时若自身已确证漏洞，可直接登记（与 worker 同工具）。
 		t.addFinding(),
 		// list_companies：查看企业列表 + scope + 资产数（拿 company_id / 理解归属范围）。

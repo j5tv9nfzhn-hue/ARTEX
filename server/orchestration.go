@@ -75,6 +75,8 @@ func (s *Server) orchestrationTools() []actool.CoreTool {
 		s.toolGetWorkerTrace(),
 		s.toolListWorkerTraces(),
 		s.toolSearchWorkerTraces(),
+		s.toolKillWorker(),
+		s.toolRestartWorker(),
 		s.toolGetTaskNodeDetail(),
 		s.toolUpdateFindingReport(),
 		s.toolGetFindingTraffic(),
@@ -169,6 +171,8 @@ func (s *Server) delegateToTask(ctx context.Context, in json.RawMessage, pick fu
 	}
 	tsx.SetNotify(t.Notify)         // 通用唤醒（无专用回调的写操作走它；读工具为 no-op）
 	tsx.SetNotifyHint(t.NotifyHint) // add_hint → 记一条「人新增了 N 条战略提示：…」触发并唤醒 planner
+	tsx.SetKillWork(s.engine.KillWork)     // kill_task_worker → 终止指定 work
+	tsx.SetDirectionGate(nil, func() { s.engine.AckDispatch(t.ID) }) // 直投成功解冻派发闸
 	return pick(tsx).Call(ctx, inner, nil)
 }
 
@@ -428,6 +432,37 @@ func (s *Server) toolSearchWorkerTraces() actool.CoreTool {
 		})
 }
 
+// toolKillWorker ends one running work of a task (cross-task kill_work for Auto):
+// same semantics as the in-task kill_work — the intent settles as stopped and is
+// not auto-reclaimed; the direction gate freezes further dispatch until the
+// planner re-evaluates.
+func (s *Server) toolKillWorker() actool.CoreTool {
+	return wrTool("kill_task_worker",
+		"终止指定任务里正在运行的一条 work(意图)。用于叫停跑偏/无意义的探索；被终止的意图落为 stopped，不再自动重领。终止后该任务会暂停派发新 work、待其规划者重新评估方向后再继续。先用 get_task_worker_trace 看它在干嘛；之后可 restart_task_worker 重启。",
+		objSchema(map[string]any{
+			"task_id":   strParam("任务 id"),
+			"intent_id": map[string]any{"type": "integer", "description": "意图 id(该任务里的 work)"},
+		}, "task_id", "intent_id"),
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
+			return s.delegateToTask(ctx, in, (*agent.ToolSet).KillWorkTool)
+		})
+}
+
+// toolRestartWorker re-dispatches one not-successfully-finished work of a task
+// (cross-task restart_work for Auto): same semantics as the in-task restart_work —
+// the worker re-claims it and resumes from its prior transcript.
+func (s *Server) toolRestartWorker() actool.CoreTool {
+	return wrTool("restart_task_worker",
+		"重启指定任务里一条已终止/受阻/耗尽的 work(意图)（含被 kill_task_worker 终止的）：重新放回 frontier，worker 重新领取并从历史会话续跑，已产出保留。仅支持 stopped/blocked/exhausted 状态；running 请先 kill_task_worker 终止后再重启，open（已排队）无需重启，done（已完成）请用 add_task_hint 等另下新方向。",
+		objSchema(map[string]any{
+			"task_id":   strParam("任务 id"),
+			"intent_id": map[string]any{"type": "integer", "description": "意图 id(该任务里的 work)"},
+		}, "task_id", "intent_id"),
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
+			return s.delegateToTask(ctx, in, (*agent.ToolSet).RestartWorkTool)
+		})
+}
+
 func (s *Server) toolGetTaskNodeDetail() actool.CoreTool {
 	return roTool("get_task_node_detail",
 		"读指定任务里某个探索图节点的完整内容(发现/事实/意图/目标：摘要 + 详情/证据/PoC)。id 为探索节点 id(如 report_finding 返回、或 list_task_findings 里的 id)。写漏洞报告前用它取该漏洞的完整证据。",
@@ -522,6 +557,7 @@ func (s *Server) seedOrchestrationTools() {
 	s.seedWorkerReadToolsUnbind() // list_facts/list_companies/list_worker_traces 从 worker 默认解绑(一次性)
 	s.seedWorkerReadbackRebind()  // 修复旧迁移误删：把 search_all_worker_traces/get_worker_trace/node_detail 补绑回 worker(一次性)
 	s.seedAutoReportFindingBinding()
+	s.seedMainAgentWorkControlBindings() // kill_work/restart_work 补绑 mainagent(一次性)
 	s.unbindGoalMetDefault()
 	s.reseedGoalsPrompt()             // goals 提示词加入「抽操作约束」步 → 旧库追加一版新默认(一次性)
 	s.reseedMainAgentPrompt()         // mainagent 提示词加入「目标达成后 add_intent 反问是否建目标」与 Skill/MCP 路由(一次性)
@@ -923,6 +959,23 @@ func (s *Server) seedAutoReportFindingBinding() {
 	if err := s.m.pg.AddAgentToToolBinding("auto", []string{"report_finding"}); err != nil {
 		log.Printf("[auto] report_finding 默认绑定失败: %v", err)
 		return
+	}
+	_ = s.m.pg.SetSetting(flag, "true")
+}
+
+// seedMainAgentWorkControlBindings adds "mainagent" to kill_work/restart_work
+// bindings ONCE (guarded by a settings flag), so existing DBs — whose kill_work row
+// was seeded as planner-only — also let the task-panel main agent end/restart works.
+// Fresh DBs already get them via MainAgentTools(); this only backfills old rows
+// without overriding a user unbind.
+func (s *Server) seedMainAgentWorkControlBindings() {
+	const flag = "mainagent_work_control_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	if err := s.m.pg.AddAgentToToolBinding("mainagent", []string{"kill_work", "restart_work"}); err != nil {
+		log.Printf("[mainagent] kill_work/restart_work 默认绑定失败: %v", err)
+		return // 出错则不落 flag，下次启动重试
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
 }

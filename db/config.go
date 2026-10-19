@@ -1194,6 +1194,60 @@ ON CONFLICT (agent_id,skill_name) DO UPDATE SET enabled=true`, agentID, skillNam
 	return err
 }
 
+// RenameSkillRefs 把技能旧名的所有引用迁移到新名：agent_skill_visibility /
+// skill_proposals / skill_usage 三张表都按 skill 名关联，改名不迁移等于静默断链
+// （可见性丢失、提议与调用统计归到不存在的技能下）。单事务，失败整体回滚。
+func (d *DB) RenameSkillRefs(oldName, newName string) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, q := range []string{
+		`UPDATE agent_skill_visibility SET skill_name=$1 WHERE skill_name=$2`,
+		`UPDATE skill_proposals SET skill=$1 WHERE skill=$2`,
+		`UPDATE skill_usage SET skill=$1 WHERE skill=$2`,
+	} {
+		if _, err := tx.Exec(q, newName, oldName); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// RenameMCPRefs 迁移 MCP 服务器改名带来的名字引用：mcp_tools_cache 的工具全名
+// （mcp__<服务名>__<工具名>）与 agent_triggers.tool_names（JSON 文本）都嵌着旧
+// 服务名。返回触发器与工具缓存各自迁移的行数。
+func (d *DB) RenameMCPRefs(serverID int64, oldName, newName string) (triggers, tools int, err error) {
+	oldPrefix := "mcp__" + oldName + "__"
+	newPrefix := "mcp__" + newName + "__"
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE mcp_tools_cache SET tool_name=REPLACE(tool_name,$1,$2) WHERE server_id=$3 AND tool_name LIKE $1 || '%'`,
+		oldPrefix, newPrefix, serverID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		tools = int(n)
+	}
+	res, err = tx.Exec(`UPDATE agent_triggers SET tool_names=REPLACE(tool_names,$1,$2) WHERE tool_names LIKE '%' || $1 || '%'`,
+		oldPrefix, newPrefix)
+	if err != nil {
+		return 0, 0, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		triggers = int(n)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return triggers, tools, nil
+}
+
 // DeleteSkillVisibility removes all visibility rows for a skill (called on skill delete).
 func (d *DB) DeleteSkillVisibility(skillName string) error {
 	_, err := d.Exec(`DELETE FROM agent_skill_visibility WHERE skill_name=$1`, skillName)

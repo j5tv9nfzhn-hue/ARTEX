@@ -173,13 +173,25 @@ export default function MCPPage() {
               env: parseEnv(form.env),
               insecure: false,
             };
-      await api.saveMcpServer({
+      const res = await api.saveMcpServer({
         ...(editing ? { id: editing.id } : {}),
         name: form.name.trim(),
         enabled: editing ? editing.enabled : true,
         ...base,
       });
-      toast.success(editing ? t("saved") : t("added"));
+      if (res.renamed_from && res.migrated) {
+        toast.success(
+          t("renamedMigrated", {
+            from: res.renamed_from,
+            name: form.name.trim(),
+            skills: res.migrated.skills ?? 0,
+            triggers: res.migrated.triggers ?? 0,
+            tools: res.migrated.tools ?? 0,
+          }),
+        );
+      } else {
+        toast.success(editing ? t("saved") : t("added"));
+      }
       if (!editing) setOpen(false);
       load();
     } catch (e) {

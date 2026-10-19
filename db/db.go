@@ -133,6 +133,23 @@ ON CONFLICT (name) DO NOTHING`,
 		`["-y","@playwright/mcp","--headless"]`); err != nil {
 		return fmt.Errorf("seed browser mcp: %w", err)
 	}
+	// Seed placeholder REA (Reverse Engineering Assistant) 与 WPE64 封包实验 MCP
+	// 行 —— 默认禁用、stdio、command 留空（操作员在 /system/mcp 填启动器）。
+	// REA 供 software_re REProvider 预设绑定；WPE64 与内置 mitmproxy 记录代理
+	// 协同（skills/wpe64-mcp + skills/mitmproxy-traffic）。仅在缺失时插入，不覆盖
+	// 用户后续对 args/env/enabled/可见性的修改。
+	if _, err := d.Exec(`
+INSERT INTO mcp_servers(name, transport, command, args, env, enabled)
+VALUES ('rea', 'stdio', NULL, '[]', '{}', false)
+ON CONFLICT (name) DO NOTHING`); err != nil {
+		return fmt.Errorf("seed rea mcp: %w", err)
+	}
+	if _, err := d.Exec(`
+INSERT INTO mcp_servers(name, transport, command, args, env, enabled)
+VALUES ('wpe64', 'stdio', NULL, '[]', '{}', false)
+ON CONFLICT (name) DO NOTHING`); err != nil {
+		return fmt.Errorf("seed wpe64 mcp: %w", err)
+	}
 	// NOTE: the placeholder ScopeSentry data-source MCP (empty URL + empty X-API-Key,
 	// disabled) is seeded directly in schema_sqlite.sql §F so a raw `psql < schema_sqlite.sql` init
 	// also gets it. schema_sqlite.sql is Exec'd on every startup, so it stays idempotent.
@@ -141,6 +158,9 @@ ON CONFLICT (name) DO NOTHING`,
 	}
 	if err := d.seedBuiltinSkillVisibility(); err != nil {
 		return fmt.Errorf("seed skill visibility: %w", err)
+	}
+	if err := d.seedBuiltinSkillVisibilityV2(); err != nil {
+		return fmt.Errorf("seed skill visibility v2: %w", err)
 	}
 	if err := d.seedDefaultInterceptRules(); err != nil {
 		return fmt.Errorf("seed intercept rules: %w", err)
@@ -155,6 +175,32 @@ ON CONFLICT (name) DO NOTHING`,
 		return fmt.Errorf("seed asset intercept rules: %w", err)
 	}
 	return nil
+}
+
+// seedBuiltinSkillVisibilityV2 为 2026-10 新增的逆向引擎契约与封包实验技能包
+// （rea-mcp / wpe64-mcp / mitmproxy-traffic）绑定默认可见性。独立开关：只补
+// 新增包，不动用户对旧包的开关状态；表结构同 agent_skill_visibility。
+func (d *DB) seedBuiltinSkillVisibilityV2() error {
+	if v, _, _ := d.GetSetting("builtin_skill_visibility_v2"); v == "done" {
+		return nil
+	}
+	packs := map[string][]string{
+		"rea-mcp":           {"auto", "pentest", "worker", "planner", "mainagent"},
+		"wpe64-mcp":         {"auto", "pentest", "worker", "planner", "mainagent"},
+		"mitmproxy-traffic": {"auto", "pentest", "worker", "planner", "mainagent"},
+	}
+	for skill, keys := range packs {
+		for _, key := range keys {
+			var agentID int64
+			if err := d.QueryRow(`SELECT id FROM agents WHERE key=$1`, key).Scan(&agentID); err != nil {
+				continue
+			}
+			if _, err := d.Exec(`INSERT INTO agent_skill_visibility(agent_id, skill_name, enabled) VALUES ($1,$2,true) ON CONFLICT DO NOTHING`, agentID, skill); err != nil {
+				return fmt.Errorf("skill visibility %s/%s: %w", skill, key, err)
+			}
+		}
+	}
+	return d.SetSetting("builtin_skill_visibility_v2", "done")
 }
 
 // seedDefaultAssetInterceptRules inserts the built-in asset blocklist (fuzzy

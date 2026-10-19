@@ -75,6 +75,35 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "立即调用 `Skill({\"name\":\"scopesentry-mcp\"})` 解锁并加载 ScopeSentry 联动手册，随后直接调用 `mcp__ScopeSentry__*` 工具或通过 `ExecuteExtraTool` 拉取/下发测绘任务。",
 	},
 	{
+		skillName: "rea-mcp",
+		mcpServer: "rea",
+		title:     "REA 逆向引擎契约会话、能力分级与整包导出",
+		keywords: []string{
+			"rea", "逆向引擎", "软件逆向", "反编译", "decompile", "调用图",
+			"callgraph", "交叉引用", "xref", "函数表", "rva", "多模块",
+		},
+		action: "优先调用 `Skill({\"name\":\"rea-mcp\"})` 加载 REA 引擎契约手册；software_re 工作台 mode=capabilities 核对 tier，mode=open/query 按 RVA 纪律查询，mode=export 整包导出，mode=quota 查配额。",
+	},
+	{
+		skillName: "wpe64-mcp",
+		mcpServer: "wpe64",
+		title:     "WPE64 Winsock 抓包、改包与重放（配合 mitmproxy 记录代理）",
+		keywords: []string{
+			"wpe", "wpe64", "抓包", "改包", "重放", "replay", "winsock",
+			"封包", "发包", "packet", "套接字",
+		},
+		action: "优先调用 `Skill({\"name\":\"wpe64-mcp\"})` 加载封包实验手册；启用 wpe64 MCP 后调用 `mcp__wpe64__*` 抓取/编辑/重放，与 mitmproxy 流量记录按五元组+时间对齐取证。",
+	},
+	{
+		skillName: "mitmproxy-traffic",
+		title:     "mitmproxy 流量录制、解密取证与精确重放",
+		keywords: []string{
+			"mitmproxy", "流量记录", "流量取证", "流量回放", "https 解密",
+			"http 代理", "har", "抓包分析",
+		},
+		action: "优先调用 `Skill({\"name\":\"mitmproxy-traffic\"})` 加载记录代理工作流（任务 -proxy 端口落库）；非 HTTP/自定义协议切换 Skill(wpe64-mcp) 帧层联合作战。",
+	},
+	{
 		skillName: "web-vuln-tactics",
 		title:     "Web 核心漏洞深度利用 (SQLi/SSRF/RCE/SSTI/XXE/上传/越权)",
 		keywords: []string{

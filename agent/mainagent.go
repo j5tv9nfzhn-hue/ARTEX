@@ -30,6 +30,8 @@ type MainAgent struct {
 	webSearch       WebSearchOpts                          // web_search tool backend selection (off by default)
 	workDir         string                                 // shared work dir (surfaced in prompt as artifact-output target)
 	steerWork       func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
+	killWork        func(intentID int64) error             // engine callback: terminate a running work (nil = off)
+	dirAck          func()                                 // engine callback: release dispatch hold after a dispatch (nil = off)
 	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
 	noaEnabledFn    func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
@@ -81,6 +83,14 @@ func (m *MainAgent) SetWebSearch(o WebSearchOpts) { m.webSearch = o }
 // tool inject a mid-run course-correction into a running work (nil = tool off).
 func (m *MainAgent) SetSteerWork(fn func(intentID int64, msg string) error) { m.steerWork = fn }
 
+// SetKillWork wires the engine callback that lets the main agent's kill_work tool
+// terminate a single running work (nil = tool off).
+func (m *MainAgent) SetKillWork(fn func(intentID int64) error) { m.killWork = fn }
+
+// SetDirectionGate wires the dispatch-ack callback (see ToolSet.SetDirectionGate).
+// The human's direct dispatch is never epoch-gated; it only releases the hold.
+func (m *MainAgent) SetDirectionGate(ackFn func()) { m.dirAck = ackFn }
+
 // mainAgentDefaultTmpl is the built-in EDITABLE body (段 [A]) of the main agent
 // prompt, seeded into agent_prompts. Goal is a {{.Goal}} template var; the 中间
 // 产物输出规约 tail is code-owned (artifactSpec), appended after rendering.
@@ -92,12 +102,13 @@ const mainAgentDefaultTmpl = `你是一个授权渗透测试系统的"主 agent"
    - 人想"立刻测某个具体目标" → 用 add_intent 直接注入一条高优先级意图（priority 8-10）。系统会自动把已完成的任务拉回运行态、让 worker 领这条意图执行，跑完即回到已完成状态。
      **当任务目标已全部达成时**（graph_overview 里 goals 均为 met）：下发前先判断这条意图背后是否隐含一个"新的、要达成的结果"。若隐含，用一句话把你猜测的目标复述给人，并**反问是否要登记为正式目标**——人要 → 用 set_goals 登记（任务随后进入常规规划、规划者会自主往下推进）；人不要 / 只是想临时探一下 → 只 add_intent 下发这一条，worker 执行完任务即回到已完成状态（不会自主继续）。若这条意图明显只是一次性查证、不隐含新目标，直接 add_intent 即可，不必每次都问。
    - 人想"对某条正在运行的意图(work)实时纠偏（别再走 X、聚焦 Y）" → 用 steer_work（不打断、不丢已有进展，worker 下一步动作前生效）；先用 get_worker_output 看它在干嘛。方向整个错了则改用 add_intent 另下新意图。
+   - 人想"结束某条正在跑的 work" → 用 kill_work（意图落为 stopped，不再自动重领；本任务会暂停派发新 work、待规划者重新评估方向后再继续）。人想"重启某条被终止/受阻/耗尽的 work" → 用 restart_work（回到 frontier，worker 重新领取并从历史会话续跑，已产出保留）。先用 get_worker_output/get_worker_trace 看它在干嘛再决定。
    - 人想"新增一个要达成的最终目标" → 用 set_goals 增补目标。系统会把该目标写入任务图并**自动把已完成/暂停的任务拉回运行态继续跑**（规划者随后会据此重新判断是否达成），无需人工再点恢复。
    - 人想"增/改测试约束（允许/禁止某类操作，如『仅测当前端口』『禁止爆破』『只做被动侦察』）" → 用 set_constraints 登记（type=allow 允许 / type=deny 禁止）。约束会在下一轮规划时注入 planner/worker 的提示词以框定探索边界；也可在总览「约束管理」里增删改。
 3. 用人话简洁回复，说明你做了什么。
 
 4. **主动触发技能 (Skill) 与外部 MCP 能力**：
-   - 遇到具体渗透或逆向方向（Web 漏洞、API 侦察、AI 编程沙箱/Next.js/Supabase、WASM/WebSocket/云存储/AI SaaS 计费、SPA 浏览器交互、ScopeSentry 测绘、逆向审计、受阻研判），主动调用 Skill 加载对应战法 SOP（多文件技能包会自动一并加载 references/* 防踩坑与 PoC 手册），或在用 add_intent / steer_work 下发意图时明确点名让 Worker 调用该技能（如 web-vuln-tactics、api-recon、ai-coding-sandbox-tactics、wasm-cloud-saas-tactics、playwright-cli、scopesentry-mcp、reverse-engineering、exploit-kb-patterns、expert-triage-pivot）；若用户要求将外部渗透/逆向报告提炼为技能包，调用 distill_report_skill。
+   - 遇到具体渗透或逆向方向（Web 漏洞、API 侦察、AI 编程沙箱/Next.js/Supabase、WASM/WebSocket/云存储/AI SaaS 计费、SPA 浏览器交互、ScopeSentry 测绘、逆向审计、REA 引擎契约、封包重放与流量取证、受阻研判），主动调用 Skill 加载对应战法 SOP（多文件技能包会自动一并加载 references/* 防踩坑与 PoC 手册），或在用 add_intent / steer_work 下发意图时明确点名让 Worker 调用该技能（如 web-vuln-tactics、api-recon、ai-coding-sandbox-tactics、wasm-cloud-saas-tactics、playwright-cli、scopesentry-mcp、reverse-engineering、exploit-kb-patterns、expert-triage-pivot、rea-mcp、wpe64-mcp、mitmproxy-traffic）；若用户要求将外部渗透/逆向报告提炼为技能包，调用 distill_report_skill。
    - 若系统提示词底部列出了已挂载的 MCP 工具，可直接调用工具全名 mcp__<服务名>__<工具名>({...}) 或通过 ExecuteExtraTool({"tool_name":"<工具全名>","params":{...}}) 一步执行。
 
 当前任务目标：{{.Goal}}
@@ -126,6 +137,8 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	tsx.SetNotifyGoal(notifyGoal) // set_goals 新增目标 → 给 planner 记一条「人新增了目标：…」触发
 	tsx.SetNotifyHint(notifyHint) // add_hint 新增提示 → 给 planner 记一条「人新增了 N 条战略提示：…」触发
 	tsx.steerWork = m.steerWork   // enable steer_work tool (nil = unavailable)
+	tsx.killWork = m.killWork     // enable kill_work tool (nil = unavailable)
+	tsx.SetDirectionGate(nil, m.dirAck) // 人直投不受代际门控；派发成功解冻派发闸
 	// 领域工具 + 基础默认工具集（Read/Write/Edit/MultiEdit/LS/Glob/Grep/Bash）
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
 	base := append(tsx.DropCoverageTools(tsx.MainAgentTools()), actool.DefaultTools()...)

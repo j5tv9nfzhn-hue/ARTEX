@@ -1018,6 +1018,23 @@ func (s *Server) pgSaveMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isNew := m.ID == 0
+	// MCP 改名会改写工具全名（mcp__<服务名>__<工具名>）与技能 mcps 引用：先取旧名，
+	// 保存成功后统一迁移；被系统集成按名引用的名称禁止改名。
+	var oldName string
+	if !isNew {
+		if all, lerr := pg.ListMCP(); lerr == nil {
+			for _, it := range all {
+				if it != nil && it.ID == m.ID {
+					oldName = it.Name
+					break
+				}
+			}
+		}
+		if oldName != "" && oldName != m.Name && isReservedMCPName(oldName) {
+			writeErr(w, 400, fmt.Sprintf("MCP 名称 %q 被系统集成占用（browser 浏览器代理注入 / ScopeSentry 数据源同步按名查找服务器），禁止改名；可另建其他名称的服务器", oldName))
+			return
+		}
+	}
 	id, err := pg.SaveMCP(&m)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -1035,7 +1052,18 @@ func (s *Server) pgSaveMCP(w http.ResponseWriter, r *http.Request) {
 			cancel()
 		}
 	}
-	writeJSON(w, 200, map[string]any{"id": id})
+	migrated := map[string]int{}
+	if oldName != "" && oldName != m.Name {
+		trig, tools, terr := pg.RenameMCPRefs(id, oldName, m.Name)
+		if terr != nil {
+			log.Printf("[mcp] %s 改名引用迁移失败: %v", m.Name, terr)
+		}
+		migrated["skills"] = s.migrateSkillMCPSRefs(oldName, m.Name)
+		migrated["triggers"] = trig
+		migrated["tools"] = tools
+		log.Printf("[mcp] 服务器改名 %q -> %q：技能 %d、触发器 %d、工具缓存 %d 处引用已迁移", oldName, m.Name, migrated["skills"], trig, tools)
+	}
+	writeJSON(w, 200, map[string]any{"id": id, "renamed_from": oldName, "migrated": migrated})
 }
 
 func (s *Server) pgDeleteMCP(w http.ResponseWriter, r *http.Request) {
@@ -1334,7 +1362,7 @@ func (s *Server) fsUpdateSkillMeta(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "skill not found")
 		return
 	}
-	updated, err := rewriteSkillFrontmatter(raw, body.MCPs, body.Description, body.License, body.Compatibility)
+	updated, err := rewriteSkillFrontmatter(raw, nil, body.MCPs, body.Description, body.License, body.Compatibility)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
@@ -1349,7 +1377,7 @@ func (s *Server) fsUpdateSkillMeta(w http.ResponseWriter, r *http.Request) {
 // rewriteSkillFrontmatter parses the SKILL.md YAML frontmatter and replaces the
 // fields given as non-nil pointers. The instruction body (after the closing ---) is
 // preserved verbatim. Returns an error if the file has no recognisable frontmatter.
-func rewriteSkillFrontmatter(content []byte, mcps *[]string, description, license, compatibility *string) ([]byte, error) {
+func rewriteSkillFrontmatter(content []byte, name *string, mcps *[]string, description, license, compatibility *string) ([]byte, error) {
 	lines := strings.Split(string(content), "\n")
 	if len(lines) < 2 || strings.TrimSpace(lines[0]) != "---" {
 		return nil, fmt.Errorf("SKILL.md has no YAML frontmatter")
@@ -1387,6 +1415,7 @@ func rewriteSkillFrontmatter(content []byte, mcps *[]string, description, licens
 		}
 		pairs = append(pairs, kv{key, strings.TrimSpace(*val)})
 	}
+	applyStr("name", name)
 	applyStr("description", description)
 	applyStr("license", license)
 	applyStr("compatibility", compatibility)
@@ -1620,6 +1649,147 @@ func readZipEntry(f *zip.File) ([]byte, error) {
 	}
 	defer rc.Close()
 	return io.ReadAll(io.LimitReader(rc, maxSkillFileBytes))
+}
+
+// isReservedMCPName 报告名称是否被系统内部集成按名引用（manager 的浏览器代理
+// 注入与 ScopeSentry 数据源同步都用常量名查找服务器）。
+func isReservedMCPName(name string) bool {
+	return strings.EqualFold(name, browserMCPName) || strings.EqualFold(name, scopeSentryMCPName)
+}
+
+// skillFrontmatterMCPs 解析 SKILL.md frontmatter 的 mcps 列表（逗号分隔，已 trim）。
+func skillFrontmatterMCPs(content []byte) []string {
+	lines := strings.Split(string(content), "\n")
+	if len(lines) < 2 || strings.TrimSpace(lines[0]) != "---" {
+		return nil
+	}
+	for _, l := range lines[1:] {
+		if strings.TrimSpace(l) == "---" {
+			return nil
+		}
+		if idx := strings.IndexByte(l, ':'); idx >= 0 && strings.TrimSpace(l[:idx]) == "mcps" {
+			return cleanStrs(strings.Split(l[idx+1:], ","))
+		}
+	}
+	return nil
+}
+
+// migrateSkillMCPSRefs 把所有技能包 frontmatter mcps 列表里的旧 MCP 名替换为
+// 新名（去重）。返回改写的技能包数量。
+func (s *Server) migrateSkillMCPSRefs(oldName, newName string) int {
+	entries, err := os.ReadDir(s.skillDir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		path := filepath.Join(s.skillDir, e.Name(), "SKILL.md")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		list := skillFrontmatterMCPs(raw)
+		changed := false
+		for i, n := range list {
+			if n == oldName {
+				list[i] = newName
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		seen := map[string]bool{}
+		dedup := list[:0]
+		for _, n := range list {
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			dedup = append(dedup, n)
+		}
+		updated, err := rewriteSkillFrontmatter(raw, nil, &dedup, nil, nil, nil)
+		if err != nil {
+			continue
+		}
+		if err := fsutil.WriteFileAtomic(path, updated, 0o644); err != nil {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// fsRenameSkill 重命名技能包：目录 + SKILL.md frontmatter name + 数据库引用
+// （agent_skill_visibility / skill_proposals / skill_usage）一次迁移。任何一步
+// 失败都回滚磁盘改动，保持盘面与引用一致——半截改名比失败更难排查。
+func (s *Server) fsRenameSkill(w http.ResponseWriter, r *http.Request) {
+	old := r.PathValue("name")
+	if !validSkillName(old) {
+		writeErr(w, 400, errMgmtSkillNameInvalid)
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	next := strings.TrimSpace(body.Name)
+	if !validSkillName(next) {
+		writeErr(w, 400, errMgmtSkillNameInvalid)
+		return
+	}
+	if next == old {
+		writeJSON(w, 200, map[string]any{"ok": true, "name": old})
+		return
+	}
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	oldDir := filepath.Join(s.skillDir, old)
+	newDir := filepath.Join(s.skillDir, next)
+	if _, err := os.Stat(oldDir); err != nil {
+		writeErr(w, 404, "skill not found")
+		return
+	}
+	if _, err := os.Stat(newDir); err == nil {
+		writeErr(w, 409, "目标技能名已存在")
+		return
+	}
+	oldMD := filepath.Join(oldDir, "SKILL.md")
+	raw, readErr := os.ReadFile(oldMD)
+	if err := os.Rename(oldDir, newDir); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	rollback := func() {
+		_ = os.Rename(newDir, oldDir)
+		if readErr == nil {
+			_ = fsutil.WriteFileAtomic(oldMD, raw, 0o644)
+		}
+	}
+	if readErr == nil {
+		if updated, err := rewriteSkillFrontmatter(raw, &next, nil, nil, nil, nil); err == nil {
+			if werr := fsutil.WriteFileAtomic(filepath.Join(newDir, "SKILL.md"), updated, 0o644); werr != nil {
+				rollback()
+				writeErr(w, 500, werr.Error())
+				return
+			}
+		}
+		// 无 frontmatter 的裸 SKILL.md 只改目录名，不强求 name 字段。
+	}
+	if err := pg.RenameSkillRefs(old, next); err != nil {
+		rollback()
+		writeErr(w, 500, "引用迁移失败，已回滚: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "name": next})
 }
 
 func (s *Server) fsDeleteSkill(w http.ResponseWriter, r *http.Request) {

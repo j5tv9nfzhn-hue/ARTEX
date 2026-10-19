@@ -296,7 +296,7 @@ func (s *Server) toolProposeSkill() actool.CoreTool {
 // toolDistillTaskSkill 手动将指定任务的结构化产出沉淀为复盘技能提议。
 func (s *Server) toolDistillTaskSkill() actool.CoreTool {
 	return wrTool("distill_task_skill",
-		"将指定任务的已完成意图、关键事实、确认漏洞、复测记录、软件逆向证据与 3-Strike 止损经验确定性沉淀为 case-web-<id> / case-re-<id> 复盘技能。",
+		"将指定任务的已完成意图、关键事实、确认漏洞、复测记录、软件逆向证据与 3-Strike 止损经验确定性沉淀为 case-<域>-<语义词>-<id> 复盘技能（如 case-web-sqli-weak-pass-42；语义词取自任务名/漏洞类型，无可用词时退化为 case-web-42）。",
 		objSchema(map[string]any{
 			"task_id": numParam("目标任务 ID（正整数）"),
 			"apply":   map[string]any{"type": "boolean", "description": "当审阅门控开启时，是否直接落盘（默认跟随系统设置 skill_auto_distill_apply）"},
@@ -428,11 +428,20 @@ func (s *Server) reviewProposal(ctx context.Context, id, decision, note string) 
 			return "", fmt.Errorf("写盘失败，提议仍为 pending 可重试: %w", err)
 		}
 	}
+	var reviewErr error
 	if _, err := s.m.pg.ReviewSkillProposal(ctx, id, resolved, note); err != nil {
-		return "", err
+		// 写盘成功后的状态回写失败不再上报「失败」：文件已经落盘就是本次批准
+		// 的既成事实，谎报失败会诱导重复批准/重复沉淀（假失败）。仅否决
+		// （未写盘）时状态回写失败才是真失败。
+		if resolved != db.SkillProposalApplied {
+			return "", err
+		}
+		reviewErr = err
 	}
-	// 当审阅的是外部报告导入生成的主 SKILL.md 提议时，联动批准/否决同一技能包下的待审支撑文件（references/*）。
-	if (p.File == "" || p.File == "SKILL.md") && strings.HasPrefix(p.Evidence, "report_import ") {
+	// 当审阅的是报告导入 / 任务复盘自动生成的主 SKILL.md 提议时，联动批准/否决
+	// 同一技能包下的待审支撑文件（references/*）。
+	if (p.File == "" || p.File == "SKILL.md") &&
+		(strings.HasPrefix(p.Evidence, "report_import ") || strings.HasPrefix(p.Evidence, "task=")) {
 		if pendingList, err := s.m.pg.ListSkillProposals(ctx, db.SkillProposalPending, 200); err == nil {
 			for _, comp := range pendingList {
 				if comp.ID == p.ID || comp.Skill != p.Skill || comp.File == "" {
@@ -450,6 +459,9 @@ func (s *Server) reviewProposal(ctx context.Context, id, decision, note string) 
 	verb := "已否决，留档未落盘"
 	if resolved == db.SkillProposalApplied {
 		verb = "已批准并写入磁盘"
+		if reviewErr != nil {
+			return fmt.Sprintf("提议 %s（技能 %s）已批准并写入磁盘；状态回写失败：%v（文件已生效，重复批准幂等可修复状态）", id, p.Skill, reviewErr), nil
+		}
 	}
 	return fmt.Sprintf("提议 %s（技能 %s）%s", id, p.Skill, verb), nil
 }
@@ -683,7 +695,7 @@ func (s *Server) fsMergeSkillProposals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	doc, evidence := mergeSkillProposalDocuments(name, strings.TrimSpace(body.Description), sources)
-	merged, err := s.persistCuratorSkill(r.Context(), name, doc, evidence, body.Apply)
+	merged, err := s.persistCuratorSkill(r.Context(), name, doc, evidence, body.Apply, nil)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return

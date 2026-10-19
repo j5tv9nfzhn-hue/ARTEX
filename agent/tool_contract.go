@@ -30,6 +30,12 @@ func CanonicalSkillAlias(name string) string {
 		"wasm-saas":                 "wasm-cloud-saas-tactics",
 		"cloud-saas":                "wasm-cloud-saas-tactics",
 		"wasm-cloud":                "wasm-cloud-saas-tactics",
+		"rea":                       "rea-mcp",
+		"rea-engine":                "rea-mcp",
+		"wpe":                       "wpe64-mcp",
+		"wpe64":                     "wpe64-mcp",
+		"mitmproxy":                 "mitmproxy-traffic",
+		"traffic-capture":           "mitmproxy-traffic",
 	}
 	name = strings.TrimSpace(name)
 	if v, ok := aliases[strings.ToLower(name)]; ok {

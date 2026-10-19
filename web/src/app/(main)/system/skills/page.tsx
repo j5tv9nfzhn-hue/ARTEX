@@ -12,6 +12,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  PencilIcon,
   PlusIcon,
   SparklesIcon,
   Trash2Icon,
@@ -380,6 +381,8 @@ export default function SkillsPage() {
   // delete confirmation
   const [pendingDelete, setPendingDelete] = React.useState<PendingDelete>(null);
   const [deleting, setDeleting] = React.useState(false);
+  const [renaming, setRenaming] = React.useState<{ skill: string; value: string } | null>(null);
+  const [renameBusy, setRenameBusy] = React.useState(false);
 
   // 调用统计：列表页的次数/最近调用随 api.skills() 一起回来；选中某个 skill 时再拉它的
   // 最近调用明细。missing = 被点名但不存在的 skill（想用但没有）。
@@ -656,6 +659,27 @@ export default function SkillsPage() {
       load();
     } catch (e) {
       toast.error(t("deleteFailed", { msg: (e as Error).message }));
+    }
+  }
+
+  async function commitSkillRename() {
+    if (!renaming) return;
+    const next = renaming.value.trim();
+    if (!next || next === renaming.skill) {
+      setRenaming(null);
+      return;
+    }
+    setRenameBusy(true);
+    try {
+      const res = await api.renameSkill(renaming.skill, next);
+      toast.success(t("renameSuccess", { name: res.name }));
+      setRenaming(null);
+      setSelected((cur) => (cur && cur.skill === renaming.skill ? { skill: res.name, path: cur.path } : cur));
+      load();
+    } catch (e) {
+      toast.error(t("renameFailed", { msg: (e as Error).message }));
+    } finally {
+      setRenameBusy(false);
     }
   }
 
@@ -1351,6 +1375,18 @@ export default function SkillsPage() {
                           size="icon"
                           variant="ghost"
                           className="size-5"
+                          title={t("renameAction")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenaming({ skill: s.name, value: s.name });
+                          }}
+                        >
+                          <PencilIcon className="size-3 text-muted-foreground" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-5"
                           title={t("deleteSkillAction")}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1400,6 +1436,15 @@ export default function SkillsPage() {
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="font-mono font-semibold text-base">{selectedSkill.name}</h2>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => setRenaming({ skill: selectedSkill.name, value: selectedSkill.name })}
+                  >
+                    <PencilIcon className="size-3.5" />
+                    {t("renameAction")}
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -1593,6 +1638,42 @@ export default function SkillsPage() {
           )}
         </div>
       </div>
+
+      {/* ── 技能包重命名 ── */}
+      <AlertDialog
+        open={!!renaming}
+        onOpenChange={(o) => {
+          if (!o && !renameBusy) setRenaming(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("renameTitle", { name: renaming?.skill ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("renameDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            value={renaming?.value ?? ""}
+            onChange={(e) => setRenaming((cur) => (cur ? { ...cur, value: e.target.value } : cur))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !renameBusy) void commitSkillRename();
+            }}
+            placeholder={t("renamePlaceholder")}
+            autoFocus
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={renameBusy}>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={renameBusy}
+              onClick={(e) => {
+                e.preventDefault();
+                void commitSkillRename();
+              }}
+            >
+              {renameBusy ? t("renaming") : t("renameConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ── 删除二次确认 ── */}
       <AlertDialog

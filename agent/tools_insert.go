@@ -670,8 +670,9 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.verificationCapabilitiesTool(), t.binaryInspectTool(), t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
 		t.expandDigest(), // cold-digest §6.1
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.addHint(), t.addIntent(),
-		// steer_work：人可对某条正在运行的意图(work)实时注入纠偏指令（不打断、不丢进展）。
-		t.steerWorkTool(),
+		// kill_work / restart_work / steer_work：人可结束指定 work、重启已终止/受阻/耗尽的
+		// work、或对运行中 work 实时纠偏（不打断、不丢进展）——完整的 worker 管理能力。
+		t.killWorkTool(), t.restartWorkTool(), t.steerWorkTool(),
 		// set_goals：人可在运行时给本任务补一个新的最终目标（规划者据此重判是否达成）。
 		t.setGoals(),
 		// set_constraints：人可在运行时给本任务补/改操作约束（allow/deny），约束 planner/worker 的探索边界。

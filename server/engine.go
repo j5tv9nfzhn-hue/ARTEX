@@ -15,6 +15,7 @@ import (
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/artex/metrics"
+	"github.com/Autumn-27/artex/tracelog"
 	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
 )
@@ -107,6 +108,7 @@ func retryableWorkerModelError(reason harness.TerminalReason, err error) bool {
 type Engine struct {
 	m        *Manager
 	debounce time.Duration
+	tr       *tracelog.Store // P0 会话语义旁路转录（nil = off）
 
 	bc *Broadcaster // live activity pub/sub (SSE)
 
@@ -150,6 +152,11 @@ type Engine struct {
 
 	plannerRound sync.Map // taskID -> int, planner round counter (for UI round separators)
 
+	// dirGates 是方向代际门控（防强制终止后仍按旧方向派发浪费算力）：kill_work/steer_work
+	// 推进方向代际；kill 额外冻结新意图领取（claimNext），直到新一轮规划开始/任一次
+	// add_intent 成功解冻，或 dispatchHoldWindow 超时兜底。
+	dirGates sync.Map // taskID -> *dirGate
+
 	// 任务级超时(见 docs/任务级超时与收尾设计.md):
 	settling     sync.Map // taskID -> bool, 任务已进入收尾时序(停止派/领新意图)
 	deadline     sync.Map // taskID -> int64 unix, 绝对截止时刻(首次运行时盖章;0/缺省=不限)
@@ -180,6 +187,7 @@ func (e *Engine) SetIntentSettledHook(fn func(t *Task, intentID int64, state str
 
 // notifyIntentSettled invokes the settle hook defensively (foreign goroutine).
 func (e *Engine) notifyIntentSettled(t *Task, intentID int64, state string) {
+	e.traceIntentEv(t, intentID, "engine", "intent.settle", state, "")
 	if e.intentSettledHook == nil || t == nil {
 		return
 	}
@@ -201,6 +209,7 @@ type workExecution struct {
 	cancel context.CancelCauseFunc
 	done   chan error
 	action string // user action: pause | cancel
+	taskID string // owning task (direction gate in KillWork/SteerWork; empty = unknown)
 }
 
 // nextPlannerRound returns the next planner round number for a task (1-based).
@@ -211,10 +220,77 @@ func (e *Engine) nextPlannerRound(taskID string) int {
 	return n
 }
 
+// dirGate is the per-task direction-generation gate (see Engine.dirGates).
+type dirGate struct {
+	epoch  atomic.Uint64 // 方向代际：每次 kill/steer 递增
+	hold   atomic.Bool   // true = 暂停领取新意图（kill 后、重评估前）
+	holdAt atomic.Int64  // 冻结起始 unixnano（0=未冻结），超时自解除兜底
+}
+
+// dispatchHoldWindow 是 kill_work 冻结派发的兜底时长：正常情况下新一轮规划开始或任一次
+// add_intent/restart 成功即提前解冻；规划者已停/goalless 任务无人派发时，超时后自动恢复
+// 领取，避免把没有规划者的任务永久卡死。
+const dispatchHoldWindow = 2 * time.Minute
+
+// dirGateFor returns (creating on first use) the task's direction gate.
+func (e *Engine) dirGateFor(taskID string) *dirGate {
+	v, _ := e.dirGates.LoadOrStore(taskID, &dirGate{})
+	return v.(*dirGate)
+}
+
+// DirectionEpoch returns the task's current direction epoch (0 = never bumped).
+func (e *Engine) DirectionEpoch(taskID string) uint64 {
+	return e.dirGateFor(taskID).epoch.Load()
+}
+
+// bumpDirection records a direction change for the task. hard=true (kill_work)
+// additionally freezes new claims until AckDispatch/dispatchHoldWindow; soft bumps
+// (steer_work) only invalidate in-flight planner rounds (the add_intent gate).
+func (e *Engine) bumpDirection(taskID string, hard bool) {
+	g := e.dirGateFor(taskID)
+	g.epoch.Add(1)
+	if hard {
+		g.hold.Store(true)
+		g.holdAt.Store(time.Now().UnixNano())
+	}
+	name := "soft"
+	if hard {
+		name = "hard"
+	}
+	e.traceEv(taskID, "engine", "dir.gate", name, "")
+}
+
+// AckDispatch releases the dispatch freeze after a fresh decision was made: a new
+// planner round starting (re-evaluation underway) or a successful add_intent /
+// restart dispatch. Idempotent; a later kill re-freezes via bumpDirection.
+func (e *Engine) AckDispatch(taskID string) {
+	g := e.dirGateFor(taskID)
+	g.hold.Store(false)
+	g.holdAt.Store(0)
+}
+
+// dispatchHeld reports whether claimNext should skip claiming new intents.
+func (e *Engine) dispatchHeld(taskID string) bool {
+	g := e.dirGateFor(taskID)
+	if !g.hold.Load() {
+		return false
+	}
+	at := g.holdAt.Load()
+	if at == 0 {
+		return false
+	}
+	if time.Since(time.Unix(0, at)) >= dispatchHoldWindow {
+		g.hold.Store(false) // 兜底解冻，防永久卡死
+		return false
+	}
+	return true
+}
+
 // Pause stops a task: marks it paused AND cancels any in-flight planner/worker run
 // for it (a long worker.Execute would otherwise keep going until it finishes).
 func (e *Engine) Pause(taskID string, cause error) {
 	e.paused.Store(taskID, true)
+	e.traceEv(taskID, "engine", "task.control", "pause", errDetail(cause))
 	e.cancelExec(taskID, cause)
 }
 
@@ -406,6 +482,7 @@ func (e *Engine) Resume(t *Task) {
 		return
 	}
 	e.paused.Delete(t.ID)
+	e.traceEv(t.ID, "engine", "task.control", "resume", "")
 	t.Notify()
 }
 
@@ -456,6 +533,7 @@ func (e *Engine) LastActivity(taskID string) int64 {
 func (e *Engine) BeginLLMCall(taskID string) {
 	v, _ := e.llmCalls.LoadOrStore(taskID, new(int64))
 	atomic.AddInt64(v.(*int64), 1)
+	e.traceEv(taskID, "engine", "llm.call.begin", "", "")
 }
 
 func (e *Engine) EndLLMCall(taskID string) {
@@ -465,6 +543,7 @@ func (e *Engine) EndLLMCall(taskID string) {
 			atomic.StoreInt64(p, 0)
 		}
 	}
+	e.traceEv(taskID, "engine", "llm.call.end", "", "")
 }
 
 func (e *Engine) ActiveLLMCalls(taskID string) int64 {
@@ -484,9 +563,17 @@ func NewEngine(m *Manager) *Engine {
 }
 
 // registerWork records the cancel for the work currently running intentID.
+// Kept for callers that don't know the owning task (tests); production runs use
+// registerWorkFor so KillWork/SteerWork can drive the per-task direction gate.
 func (e *Engine) registerWork(intentID int64, cancel context.CancelCauseFunc) {
+	e.registerWorkFor("", intentID, cancel)
+}
+
+// registerWorkFor records the cancel AND the owning task id for the work currently
+// running intentID (taskID powers the direction gate in KillWork/SteerWork).
+func (e *Engine) registerWorkFor(taskID string, intentID int64, cancel context.CancelCauseFunc) {
 	e.workMu.Lock()
-	e.work[intentID] = &workExecution{cancel: cancel, done: make(chan error, 1)}
+	e.work[intentID] = &workExecution{cancel: cancel, done: make(chan error, 1), taskID: taskID}
 	e.workMu.Unlock()
 }
 
@@ -589,14 +676,20 @@ func (e *Engine) SteerWork(intentID int64, msg string) error {
 		return fmt.Errorf("纠偏消息不能为空")
 	}
 	e.workMu.Lock()
-	running := e.work[intentID] != nil
+	run := e.work[intentID]
 	e.workMu.Unlock()
-	if !running {
+	if run == nil {
 		return fmt.Errorf("意图 %d 当前没有运行中的 work（可能已结束或未被领取）", intentID)
+	}
+	// 纠偏 = 方向变化信号（软）：推进方向代际，让规划者本轮余下的派发被门控拒绝、
+	// 下一轮重新评估后再派发；不冻结领取（纠偏不打断运行中的 work）。
+	if run.taskID != "" {
+		e.bumpDirection(run.taskID, false)
 	}
 	e.steerMu.Lock()
 	e.steerBox[intentID] = append(e.steerBox[intentID], msg)
 	e.steerMu.Unlock()
+	e.traceWorkEv(run.taskID, intentID, "planner", "steer.order", "", tracelog.Clip(msg, 200))
 	return nil
 }
 
@@ -720,9 +813,16 @@ func (e *Engine) KillWork(intentID int64) error {
 	run := e.work[intentID]
 	e.workMu.Unlock()
 	if run == nil {
-		// KillWork 连接 Planner 的 kill_work 工具，错误是模型输入，处理原则与 SteerWork 一致。
+		// KillWork 连接 Planner/MainAgent/Auto 的 kill_work 工具，错误是模型输入，
+		// 处理原则与 SteerWork 一致。
 		return fmt.Errorf("意图 %d 当前没有运行中的 work（可能已结束或未被领取）", intentID)
 	}
+	// 强制终止 = 方向级信号：推进方向代际并冻结新派发，直到规划者重新评估
+	// （见 dirGate / claimNext / addOneIntent 门控），避免按旧方向继续派发浪费算力。
+	if run.taskID != "" {
+		e.bumpDirection(run.taskID, true)
+	}
+	e.traceWorkEv(run.taskID, intentID, "planner", "kill.order", "", "")
 	run.cancel(agent.AbortKilledByPlanner)
 	return nil
 }
@@ -880,6 +980,7 @@ func (e *Engine) Run(ctx context.Context, t *Task) {
 	rt := e.registerTaskRoutines(ctx, t.ID, 1+workers)
 	e.deleteMu.RUnlock()
 	e.touch(t.ID)
+	e.traceEv(t.ID, "engine", "thread.start", "", fmt.Sprintf("workers=%d", workers))
 	runTaskRoutine(rt, func(loopCtx context.Context) { e.plannerLoop(loopCtx, t) })
 	for i := 0; i < workers; i++ {
 		name := fmt.Sprintf("work#%d", i+1)
@@ -1001,6 +1102,9 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 			return
 		}
 		defer e.decInflight(t.ID)
+		// 新一轮规划即将开始 = 重新评估方向：解除 kill_work 冻结的派发闸（本轮内的
+		// add_intent 仍受方向代际门控，见 ToolSet.addOneIntent）。
+		e.AckDispatch(t.ID)
 		e.stampFirstRun(t) // 首次真正规划 → 盖 first_run_at + 算 deadline(仅带 timeout 的任务)
 		e.touch(t.ID)
 		emit := func(r db.Activity) { e.emitActivity(t, r) }
@@ -1011,8 +1115,10 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		log.Printf("[planner] task %s 规划中…(%s 触发)", t.ID, src)
 		// round marker: each Plan() is one planner round; emit a boundary so the
 		// UI can separate rounds in the transcript (kind='round').
+		round := e.nextPlannerRound(t.ID)
 		e.emitActivity(t, db.Activity{Worker: "planner", Kind: "round",
-			Summary: fmt.Sprintf(plannerRoundSummaryFmt, e.nextPlannerRound(t.ID))})
+			Summary: fmt.Sprintf(plannerRoundSummaryFmt, round)})
+		e.traceTurnEv(t.ID, round, src, "turn.start")
 		// what fired this round (worker done / finding; may be several — debounce
 		// coalesces a burst; empty for time/heartbeat wakes).
 		triggers := t.drainTriggers()
@@ -1036,6 +1142,7 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		default:
 			log.Printf("[planner] task %s 规划完成", t.ID)
 		}
+		e.traceTurnEv(t.ID, round, src, "turn.end")
 		// 每轮规划收尾复查 Token 预算（见 checkTokenBudget）；met→done 等终态/暂停/
 		// 收尾场景由闸内守卫自动早退，不重复动作。
 		e.checkTokenBudget(t)
@@ -1113,6 +1220,7 @@ func (e *Engine) runWorkerStep(ctx context.Context, t *Task, name string, worker
 		return false
 	}
 	log.Printf("[worker %s] task %s 领取意图 #%d", name, t.ID, intent.ID)
+	e.traceIntentEv(t, intent.ID, name, "intent.claim", "", "")
 	return e.runIntent(ctx, t, name, worker, intent, "", "")
 }
 
@@ -1132,6 +1240,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	hasChatMessage := message != ""
 	e.stampFirstRun(t) // 首次真正执行 → 盖 first_run_at + 算 deadline(仅带 timeout 的任务)
 	e.touch(t.ID)
+	e.traceIntentEv(t, intent.ID, name, "intent.start", "", "")
 	emit := func(r db.Activity) { e.emitActivity(t, r) }
 	ectx := e.clockCtx(e.execContextFor(ctx, t.ID), t, false) // cancellable by Pause; 带任务 deadline
 	if ectx.Err() != nil || e.IsDeleting(t.ID) {
@@ -1142,7 +1251,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	}
 	// per-work child context so the planner's kill_work can stop just this work.
 	workCtx, workCancel := context.WithCancelCause(ectx)
-	e.registerWork(intent.ID, workCancel)
+	e.registerWorkFor(t.ID, intent.ID, workCancel)
 	// wrap the guard hooks so steer_work can inject a mid-run course-correction
 	// for THIS intent (drained before the worker's next tool call).
 	iid := intent.ID
@@ -1155,12 +1264,16 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	workCtx = intercept.WithTaskContext(workCtx, t.ID, label, taskEmit)
 	// nudges 有意建在 model_error 重跑循环之外:空转续跑的上限是「这条意图」的总量，
 	// 重跑一轮不该把额度清零重来。
-	hooks := steerHooks{
+	var hooks harness.HookRunner = steerHooks{
 		inner:  t.Guard.Hooks(),
 		drain:  func() (string, bool) { return e.drainSteer(iid) },
 		nudges: &atomic.Int64{},
 		limit:  e.emptyTurnNudgeLimit(),
 		label:  label,
+	}
+	hooks = buildHookChain(hooks) // P1 插桩链：默认空注册=恒等透传，零行为影响
+	if e.tr != nil { // P0 旁路语义转录：观测钩子包装（先记后委派，零行为影响）
+		hooks = traceHooks{inner: hooks, tr: e.tr, taskID: t.ID, intentID: iid, thread: agent.WorkerSessionID(t.ExpID, iid), label: label}
 	}
 	wTaskID, _ := strconv.ParseInt(t.ID, 10, 64)
 	e.BeginLLMCall(t.ID)
@@ -1408,6 +1521,11 @@ func sleepCtx(ctx context.Context, d time.Duration) (done bool) {
 }
 
 func (e *Engine) claimNext(t *Task, name string) *db.Node {
+	// 方向代际门控：kill_work 冻结期间不领新意图——强制终止后方向可能已变，先让
+	// 规划者重新评估（新一轮规划开始 / add_intent 或 restart 成功会解冻，超时兜底）。
+	if e.dispatchHeld(t.ID) {
+		return nil
+	}
 	fr, _ := t.Store.Frontier(20)
 	for _, in := range fr {
 		if ok, _ := t.Store.ClaimIntent(in.ID, name); ok {

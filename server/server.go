@@ -30,6 +30,7 @@ import (
 	"github.com/Autumn-27/artex/metrics"
 	"github.com/Autumn-27/artex/notify"
 	"github.com/Autumn-27/artex/report"
+	"github.com/Autumn-27/artex/tracelog"
 	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
@@ -251,6 +252,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		profChatAgents: map[int64]*agent.ChatAgent{},
 		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
+	// P0 会话语义旁路转录：append-only JSONL 账本，写失败静默丢弃，绝不影响控制流。
+	s.engine.SetTraceLog(tracelog.NewStore(filepath.Join(m.dir, "traces")))
 	// First-run protection: cache the password hash and, while none is set, issue
 	// the console setup token (or apply ARTEX_ADMIN_PASSWORD) before any request.
 	s.bootstrapAuth()
@@ -1040,10 +1043,30 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sync/scopesentry/projects", s.syncSSProjects)
 	mux.HandleFunc("GET /api/sync/scopesentry/tasks", s.syncSSTasks)
 	mux.HandleFunc("POST /api/sync/scopesentry/sync", s.syncSSRun)
+	// P0 会话语义转录（trace）只读回放面
+	mux.HandleFunc("GET /api/traces", s.apiTraceList)
+	mux.HandleFunc("GET /api/traces/{thread}", s.apiTraceEvents)
+	// P1 协议面（Thread/Turn/Item/Approval 薄壳转发+聚合）+ P2 会话树/OpenAPI
+	mux.HandleFunc("GET /api/protocol/threads", s.protoListThreads)
+	mux.HandleFunc("POST /api/protocol/threads", s.protoCreateThread)
+	mux.HandleFunc("GET /api/protocol/threads/{id}", s.protoGetThread)
+	mux.HandleFunc("POST /api/protocol/threads/{id}/turns", s.protoCreateTurn)
+	mux.HandleFunc("POST /api/protocol/threads/{id}/steer", s.protoSteer)
+	mux.HandleFunc("POST /api/protocol/threads/{id}/kill", s.protoKill)
+	mux.HandleFunc("POST /api/protocol/threads/{id}/control", s.protoControl)
+	mux.HandleFunc("POST /api/protocol/threads/{id}/work/{iid}/control", s.protoWorkControl)
+	mux.HandleFunc("GET /api/protocol/threads/{id}/items", s.protoItems)
+	mux.HandleFunc("GET /api/protocol/threads/{id}/tree", s.protoTree)
+	mux.HandleFunc("GET /api/protocol/approvals", s.protoListApprovals)
+	mux.HandleFunc("GET /api/protocol/approvals/{id}", s.protoGetApproval)
+	mux.HandleFunc("POST /api/protocol/approvals/{id}", s.protoDecideApproval)
+	mux.HandleFunc("GET /api/protocol/hooks", s.protoHooks)
+	mux.HandleFunc("GET /api/openapi.json", s.apiOpenAPI)
 	// Skill CRUD (文件系统)
 	mux.HandleFunc("GET /api/skills", s.fsListSkills)
 	mux.HandleFunc("POST /api/skills", s.fsCreateSkill)
 	mux.HandleFunc("POST /api/skills/upload", s.fsUploadSkill)
+	mux.HandleFunc("PATCH /api/skills/{name}", s.fsRenameSkill)
 	mux.HandleFunc("DELETE /api/skills/{name}", s.fsDeleteSkill)
 	mux.HandleFunc("GET /api/skills/missing", s.fsMissingSkills)                               // 未命中(想调但不存在)的 skill 名
 	mux.HandleFunc("GET /api/skills/gaps", s.fsSkillGaps)                                      // 结构化技能缺口与审计依据
@@ -4083,9 +4106,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			// taskDir = agent 的工作目录(CWD),与 chatUpload 落盘、ensureRunDir 一致。
 			taskDir := filepath.Join(s.m.dir, "tasks", t.ID)
 			agentMsg := composeAgentMessage(agentMessage, req.Attachments, taskDir)
+			s.engine.TraceChatTurn(t, mainSeg, "chat.turn.start", "")
 			s.engine.BeginLLMCall(t.ID)
 			_, err := ma.Chat(ctx, maTaskID, mainSeg, s.m.Assets(), t.Store, t.Goal, agentMsg, emit, t.Notify, resume, t.NotifyGoal, t.NotifyHint)
 			s.engine.EndLLMCall(t.ID)
+			s.engine.TraceChatTurn(t, mainSeg, "chat.turn.end", "")
 			if err != nil && ctx.Err() == nil {
 				s.engine.emitActivity(t, db.Activity{Worker: "mainagent", Kind: "text", IsError: true, Summary: transcriptErrorSummary("主 Agent", err.Error()), MainSeg: segPtr})
 			}

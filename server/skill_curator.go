@@ -335,8 +335,12 @@ func curatorSubstantive(d *curatorData) bool {
 	return false
 }
 
-// curatorSkillName is ASCII-only (the skill name contract): case-<domain>-<id>.
-func curatorSkillName(t *db.Task) string {
+// curatorSkillName is ASCII-only (the skill name contract):
+// case-<domain>-<slug>-<id>。旧命名 case-<domain>-<id> 只有序号，任务一多就
+// 无法区分、也不利于按语义调用。slug 取自语义信号（任务名英文词 → 漏洞类型/名
+// 称 → 逆向证据 → 目标，中文安全词过词库映射），无可用词时省略 slug 回退
+// case-<domain>-<id>。尾部任务 ID 保证唯一且可与任务 #互相追溯。
+func curatorSkillName(t *db.Task, signals ...string) string {
 	domain := "task"
 	switch t.AnalysisDomain {
 	case db.AnalysisDomainSoftwareRE:
@@ -344,17 +348,150 @@ func curatorSkillName(t *db.Task) string {
 	case "web_security", "":
 		domain = "web"
 	}
-	name := fmt.Sprintf("case-%s-%d", domain, t.ID)
-	if len(name) > 64 {
-		name = name[:64]
+	idStr := strconv.FormatInt(t.ID, 10)
+	slug := curatorNameSlug(signals)
+	// 版本后缀 "-"+6 位哈希（shortContentHash）也要塞进 64：先把总名压到 ≤57，
+	// slug 超预算按词截断，尾部任务 ID 永不被截掉。
+	slugBudget := 50 - len(domain) - len(idStr)
+	if slugBudget > 32 {
+		slugBudget = 32
 	}
-	return name
+	if slugBudget < 0 {
+		slugBudget = 0
+	}
+	if len(slug) > slugBudget {
+		slug = strings.TrimRight(slug[:slugBudget], "-")
+	}
+	if slug != "" {
+		return "case-" + domain + "-" + slug + "-" + idStr
+	}
+	return "case-" + domain + "-" + idStr
 }
 
 func shortContentHash(s string) string {
 	// Reuse the proposal id helper's hash shape but keep a short suffix for versioned
 	// names. skillProposalID is content-addressed and already collision-resistant.
 	return skillProposalID("curator", "", s)[:6]
+}
+
+// curatorNameSignals 汇总命名用的语义信号，取值越靠前优先级越高：任务名 →
+// 漏洞类型/名称 → 复测结论 → 逆向样本与操作 → 任务目标。空信号跳过。
+func curatorNameSignals(d *curatorData) []string {
+	if d == nil || d.Task == nil {
+		return nil
+	}
+	out := []string{d.Task.Name}
+	for _, f := range d.Findings {
+		m := curatorNodeMap(f)
+		out = append(out, curatorFirstString(m, "vulnclass"), curatorFirstString(m, "name"))
+		if len(out) >= 7 {
+			break
+		}
+	}
+	for _, rt := range d.Retests {
+		out = append(out, rt.VulnClass, rt.FindingName)
+		if len(out) >= 11 {
+			break
+		}
+	}
+	for _, sp := range d.RESamples {
+		out = append(out, sp.Name)
+		if len(out) >= 13 {
+			break
+		}
+	}
+	for _, ev := range d.REEvidences {
+		out = append(out, ev.Operation)
+		if len(out) >= 15 {
+			break
+		}
+	}
+	return append(out, d.Task.Goal)
+}
+
+// slugStopwords 是命名里的虚词与无区分度词。
+var slugStopwords = map[string]bool{
+	"a": true, "an": true, "the": true, "of": true, "and": true, "or": true,
+	"for": true, "to": true, "in": true, "on": true, "at": true, "with": true,
+	"via": true, "by": true, "use": true, "using": true,
+	"test": true, "tests": true, "testing": true, "task": true, "case": true, "report": true,
+}
+
+var (
+	slugWordRe = regexp.MustCompile(`[a-z0-9]+`)
+	slugYearRe = regexp.MustCompile(`^(19|20)[0-9]{2}$`)
+)
+
+// cnSkillTerms 把常见中文安全/技术词映射成英文命名词。只服务命名 slug，不影响
+// 正文；匹配按词条长度降序，保证「SQL注入」先于「注入」命中。
+var cnSkillTerms = []struct{ cn, en string }{
+	{"服务端请求伪造", "ssrf"}, {"跨站请求伪造", "csrf"}, {"敏感信息泄露", "info-leak"},
+	{"任意文件读取", "file-read"}, {"任意文件上传", "file-upload"}, {"缓冲区溢出", "overflow"},
+	{"跨站脚本", "xss"}, {"命令注入", "cmd-inj"}, {"命令执行", "rce"}, {"代码执行", "code-exec"},
+	{"文件上传", "file-upload"}, {"文件包含", "file-incl"}, {"文件读取", "file-read"},
+	{"目录遍历", "dir-traversal"}, {"弱口令", "weak-pass"}, {"弱密码", "weak-pass"},
+	{"默认口令", "default-pass"}, {"默认密码", "default-pass"}, {"sql注入", "sqli"},
+	{"越权访问", "idor"}, {"水平越权", "idor"}, {"垂直越权", "priv-esc"}, {"越权", "idor"},
+	{"未授权", "unauth"}, {"未鉴权", "unauth"}, {"权限提升", "privesc"}, {"提权", "privesc"},
+	{"权限绕过", "priv-bypass"}, {"信息泄露", "info-leak"}, {"源码泄露", "src-leak"},
+	{"逻辑漏洞", "logic-flaw"}, {"逻辑缺陷", "logic-flaw"}, {"反序列化", "deser"},
+	{"配置错误", "misconfig"}, {"注入", "injection"}, {"泄露", "leak"}, {"重放", "replay"},
+	{"竞态", "race"}, {"并发", "concurrency"}, {"会话", "session"}, {"认证", "auth"},
+	{"鉴权", "authz"}, {"授权", "authz"}, {"令牌", "token"}, {"绕过", "bypass"},
+	{"穿透", "bypass"}, {"加密", "crypto"}, {"硬编码", "hardcode"}, {"逆向", "reverse"},
+	{"反编译", "decompile"}, {"脱壳", "unpack"}, {"溢出", "overflow"}, {"漏洞", "vuln"},
+	{"渗透", "pentest"}, {"审计", "audit"}, {"登录", "login"}, {"接口", "api"},
+	{"后台", "admin"}, {"网关", "gateway"}, {"服务端", "server"}, {"客户端", "client"},
+	{"数据库", "db"}, {"表单", "form"}, {"参数", "param"}, {"权限", "priv"},
+	{"密钥", "key"}, {"配置", "config"}, {"上传", "upload"}, {"爆破", "brute"},
+}
+
+var cnSkillReplacer = func() *strings.Replacer {
+	terms := append([]struct{ cn, en string }(nil), cnSkillTerms...)
+	sort.SliceStable(terms, func(i, j int) bool { return len(terms[i].cn) > len(terms[j].cn) })
+	pairs := make([]string, 0, 2*len(terms))
+	for _, t := range terms {
+		pairs = append(pairs, t.cn, " "+t.en+" ")
+	}
+	return strings.NewReplacer(pairs...)
+}()
+
+// curatorNameSlug 把语义信号压成技能名 slug：小写 ASCII 词、连字符连接、最多 4 词、
+// 总长 ≤32。中文安全词先过词库映射；虚词、纯数字与年份丢弃；按出现顺序取词，
+// 结果确定可复现。
+func curatorNameSlug(signals []string) string {
+	var tokens []string
+	seen := map[string]bool{}
+	for _, sig := range signals {
+		lowered := strings.ToLower(sig)
+		for _, word := range slugWordRe.FindAllString(cnSkillReplacer.Replace(lowered), -1) {
+			if len(word) > 12 {
+				word = word[:12]
+			}
+			if len(word) < 2 || seen[word] || slugStopwords[word] || slugYearRe.MatchString(word) {
+				continue
+			}
+			if _, err := strconv.Atoi(word); err == nil {
+				continue // 纯数字无区分度
+			}
+			seen[word] = true
+			tokens = append(tokens, word)
+		}
+	}
+	const (
+		maxTokens = 4
+		budget    = 32
+	)
+	var out []string
+	total := 0
+	for _, w := range tokens {
+		if len(out) >= maxTokens || total+len(w)+1 > budget {
+			break
+		}
+		out = append(out, w)
+		total += len(w) + 1
+	}
+	return strings.Join(out, "-")
 }
 
 func (s *Server) depositTaskSkill(ctx context.Context, task *db.Task, trigger string) error {
@@ -379,11 +516,13 @@ func (s *Server) distillTask(ctx context.Context, task *db.Task, trigger string,
 		}
 		return nil, nil
 	}
-	name := curatorSkillName(task)
+	name := curatorSkillName(task, curatorNameSignals(d)...)
 	doc := buildCuratorSkillDocument(d)
-	if len([]rune(doc)) > 24000 {
-		return nil, fmt.Errorf("生成内容 %d 字符，超过技能正文上限", len([]rune(doc)))
-	}
+	// 旧实现在这里硬闸 24000 字符并整体报错（弹窗「字符过大」）：大任务的
+	// 正文明明已经成型，却什么都不落盘，还把已写入的旧包一起误报成失败——
+	// 纯假失败。现改为确定性分包：主文保留核心章节，溢出章节整体拆进
+	// references/，全文不删减，大任务照常沉淀成功。
+	doc, extras := splitCuratorOverflow(doc)
 
 	// Never clobber an existing skill. An identical file means this task was already
 	// distilled (terminal then deletion, or a restart retry). Different content gets a
@@ -416,22 +555,29 @@ func (s *Server) distillTask(ctx context.Context, task *db.Task, trigger string,
 			apply = *applyOverride
 		}
 	}
-	p, err := s.persistCuratorSkill(ctx, name, doc, evidence, apply)
+	p, err := s.persistCuratorSkill(ctx, name, doc, evidence, apply, extras)
 	if err != nil {
 		return nil, err
 	}
 	if p == nil {
 		return nil, nil
 	}
-	log.Printf("[skills] 任务 %d 自动沉淀：skill=%s id=%s status=%s apply=%t trigger=%s",
-		task.ID, p.Skill, p.ID, p.Status, apply, trigger)
+	log.Printf("[skills] 任务 %d 自动沉淀：skill=%s id=%s status=%s apply=%t trigger=%s files=%d",
+		task.ID, p.Skill, p.ID, p.Status, apply, trigger, 1+len(extras))
 	return p, nil
 }
 
-// persistCuratorSkill stages the proposal first (audit trail), then optionally
-// writes and marks it applied. A failed write leaves the proposal pending so the
-// operator can retry from the review queue.
-func (s *Server) persistCuratorSkill(ctx context.Context, name, doc, evidence string, apply bool) (*db.SkillProposal, error) {
+// persistCuratorSkill stages the proposals first (audit trail), then optionally
+// writes the skill pack and marks them applied. A failed write leaves the
+// proposals pending so the operator can retry from the review queue.
+//
+// 沉淀包可能是多文件的（splitCuratorOverflow 把溢出章节拆进 references/）：
+// 所有提议先入账，写盘时先写支撑文件、最后写 SKILL.md——主文件是本次沉淀
+// 的「提交标记」，只有支撑文件都落好之后才会出现，中断不会留下残缺包。
+//
+// 写盘成功后回写 applied 状态失败时只记录日志并照常返回成功：文件已经落盘
+// 就是沉淀成功，谎报失败会诱导重复沉淀（假失败）。
+func (s *Server) persistCuratorSkill(ctx context.Context, name, doc, evidence string, apply bool, extras []skillExtraFile) (*db.SkillProposal, error) {
 	if s == nil || s.m == nil || s.m.pg == nil {
 		return nil, errors.New("数据库不可用")
 	}
@@ -446,13 +592,40 @@ func (s *Server) persistCuratorSkill(ctx context.Context, name, doc, evidence st
 	if err != nil {
 		return nil, err
 	}
+	for _, ex := range extras {
+		if _, err := s.m.pg.ProposeSkill(ctx, db.SkillProposal{
+			ID:       skillProposalID(name, ex.rel, ex.body),
+			Skill:    name,
+			File:     ex.rel,
+			Action:   "create",
+			Content:  ex.body,
+			Origin:   "curator",
+			Evidence: evidence,
+		}); err != nil {
+			return nil, fmt.Errorf("登记分包支撑文件提议失败 (%s): %w", ex.rel, err)
+		}
+	}
 	if !apply || p.Status != db.SkillProposalPending {
 		return p, nil
+	}
+	for _, ex := range extras {
+		if err := s.applySkillFile(name, ex.rel, ex.body); err != nil {
+			return p, fmt.Errorf("自动沉淀写盘失败（%s），提议仍为 pending 可重试: %w", ex.rel, err)
+		}
 	}
 	if err := s.applySkillFile(name, "", doc); err != nil {
 		return p, fmt.Errorf("自动沉淀写盘失败，提议仍为 pending 可重试: %w", err)
 	}
-	return s.m.pg.ReviewSkillProposal(ctx, p.ID, db.SkillProposalApplied, "自动沉淀：任务完成或删除后由系统生成，可审计")
+	markApplied := func(pID string) {
+		if _, err := s.m.pg.ReviewSkillProposal(ctx, pID, db.SkillProposalApplied, "自动沉淀：任务完成或删除后由系统生成，可审计"); err != nil {
+			log.Printf("[skills] %s 落盘后状态回写失败（文件已写入，不再上报失败）: %v", name, err)
+		}
+	}
+	for _, ex := range extras {
+		markApplied(skillProposalID(name, ex.rel, ex.body))
+	}
+	markApplied(p.ID)
+	return p, nil
 }
 
 // ---- deterministic document composition ----
@@ -466,7 +639,7 @@ type curatorToolStat struct {
 }
 
 func buildCuratorSkillDocument(d *curatorData) string {
-	name := curatorSkillName(d.Task)
+	name := curatorSkillName(d.Task, curatorNameSignals(d)...)
 	description := curatorDescription(d)
 	var b strings.Builder
 
@@ -721,6 +894,110 @@ func buildCuratorSkillDocument(d *curatorData) string {
 	b.WriteString("- 环境、版本、WAF/网关策略、账号权限变化都可能让旧路径失效；失效时记录新事实并重新规划。\n")
 
 	return buildSkillDocument(name, description, b.String())
+}
+
+// curatorDocMax 是 SKILL.md 正文的目标上限（runes，与 db.maxBodyChars 同源）：
+// 超过后一次加载会把整份长文常驻会话，成本开始超过收益。超长时按 lint 的
+// 建议「把细节拆进 references/」自动分包，而不是整包拒绝。
+const curatorDocMax = 24 * 1000
+
+// skillExtraFile 是自动分包产出的技能支撑文件（相对技能根目录）。
+type skillExtraFile struct {
+	rel  string
+	body string
+}
+
+// curatorSection 是复盘正文的一个「## 」小节。
+type curatorSection struct{ title, text string }
+
+func joinCuratorSections(sections []curatorSection) string {
+	parts := make([]string, 0, len(sections))
+	for _, s := range sections {
+		parts = append(parts, s.text)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// splitCuratorOverflow 对超长复盘正文做确定性分包。
+//
+// 规则：frontmatter 与前言永远留在主文；小节（以「## 」开头）按出现顺序
+// 从后往前整体迁出，直到主文回到上限内；附录同时收录完整未删减正文；若
+// 前言加首个小节仍超预算，主文截断并标注指针，全文仍在附录。任何情况下
+// 正文不丢失、结果可复现——超长本身不再算失败。
+func splitCuratorOverflow(doc string) (string, []skillExtraFile) {
+	if len([]rune(doc)) <= curatorDocMax {
+		return doc, nil
+	}
+	// buildSkillDocument 的固定布局：---\nname…\ndescription…\n---\n\n + 正文。
+	body := doc
+	if strings.HasPrefix(doc, "---\n") {
+		if rest := strings.SplitN(doc, "\n---\n", 2); len(rest) == 2 {
+			body = strings.TrimPrefix(rest[1], "\n")
+		}
+	}
+	lines := strings.Split(body, "\n")
+	var starts []int
+	for i, ln := range lines {
+		if strings.HasPrefix(ln, "## ") {
+			starts = append(starts, i)
+		}
+	}
+	head := body
+	var sections []curatorSection
+	if len(starts) > 0 {
+		head = strings.Join(lines[:starts[0]], "\n")
+		for i, st := range starts {
+			end := len(lines)
+			if i+1 < len(starts) {
+				end = starts[i+1]
+			}
+			sections = append(sections, curatorSection{
+				title: strings.TrimSpace(strings.TrimPrefix(lines[st], "## ")),
+				text:  strings.Join(lines[st:end], "\n"),
+			})
+		}
+	}
+	headBody := func(kept []curatorSection) string {
+		if len(kept) == 0 {
+			return head
+		}
+		return head + "\n" + joinCuratorSections(kept)
+	}
+	// 指针块预算：固定文案 + 小节标题清单。
+	budget := curatorDocMax - 600
+	kept := sections
+	for len(kept) > 1 && len([]rune(headBody(kept))) > budget {
+		kept = kept[:len(kept)-1]
+	}
+	moved := sections[len(kept):]
+	mainBody := headBody(kept)
+	if len([]rune(mainBody)) > budget {
+		// 极端情况：前言加首个小节（或纯前言）自己就超预算。主文保留前
+		// budget 个字符并标注指针，未删减全文进附录——正文永不丢失。
+		r := []rune(mainBody)
+		mainBody = string(r[:budget]) + "\n\n……（正文超长已截断，未删减全文见 `references/full-review.md`）"
+		moved = sections
+	}
+	var movedTitles []string
+	for _, sct := range moved {
+		movedTitles = append(movedTitles, sct.title)
+	}
+	var main strings.Builder
+	main.WriteString(mainBody)
+	main.WriteString("\n\n## 内容分包\n\n")
+	fmt.Fprintf(&main, "- 本手册正文超过 %d 字符上限，已按章节自动分包：完整未删减正文见 `references/full-review.md`。\n", curatorDocMax)
+	if len(movedTitles) > 0 {
+		fmt.Fprintf(&main, "- 已拆出章节：%s。\n", strings.Join(movedTitles, "、"))
+	}
+	main.WriteString("- 需要细节（长证据、完整列表）时读取该引用文件，主文只保留核心结论。\n")
+	var appendix strings.Builder
+	appendix.WriteString("# 任务复盘完整正文（自动分包）\n\n")
+	appendix.WriteString("> 本文件由沉淀时自动分包生成：SKILL.md 保留核心章节，这里是未删减全文。按需读取，不要一次性注入会话。\n\n")
+	appendix.WriteString(body)
+	if !strings.HasSuffix(body, "\n") {
+		appendix.WriteString("\n")
+	}
+	return main.String(), []skillExtraFile{{rel: "references/full-review.md", body: appendix.String()}}
 }
 
 func curatorRetestVerdictLabel(verdict string) string {

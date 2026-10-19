@@ -49,6 +49,17 @@ func TestCuratorSkillNameIsValidAndDomainAware(t *testing.T) {
 	}
 }
 
+func TestCuratorSkillNameAddsSemanticSlug(t *testing.T) {
+	name := curatorSkillName(&db.Task{ID: 42, AnalysisDomain: "web_security"}, "登录接口安全测试", "SQL Injection", "auth_gateway.elf")
+	if name != "case-web-login-api-sql-injection-42" {
+		t.Fatalf("semantic name = %q (want %q)", name, "case-web-login-api-sql-injection-42")
+	}
+	// 无语义信号时回退旧命名，保持与既有提议/磁盘目录兼容。
+	if back := curatorSkillName(&db.Task{ID: 42, AnalysisDomain: "web_security"}); back != "case-web-42" {
+		t.Fatalf("fallback name = %q (want %q)", back, "case-web-42")
+	}
+}
+
 func TestCuratorSubstantiveFiltersThinTasks(t *testing.T) {
 	if curatorSubstantive(&curatorData{Task: &db.Task{ID: 1}}) {
 		t.Fatal("empty task must not be distilled")
@@ -124,7 +135,7 @@ func TestBuildCuratorSkillDocumentCarriesArtifactsAndPitfalls(t *testing.T) {
 
 	doc := buildCuratorSkillDocument(d)
 	for _, want := range []string{
-		"---\nname: case-web-42\n",
+		"---\nname: case-web-login-api-sql-injection-42\n",
 		"# 登录接口安全测试 · 任务复盘手册",
 		"## 何时使用",
 		"## 已验证的有效路径",

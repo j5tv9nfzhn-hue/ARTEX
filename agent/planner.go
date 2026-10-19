@@ -30,6 +30,8 @@ type Planner struct {
 	maxTurns          int                                    // max agent turns per run (0 = unlimited)
 	killWork          func(intentID int64) error             // engine callback to terminate a running work (nil = off)
 	steerWork         func(intentID int64, msg string) error // engine callback to steer a running work mid-run (nil = off)
+	dirEpoch          func() uint64                          // engine callback: current direction epoch (nil = off)
+	dirAck            func()                                 // engine callback: release dispatch hold after a dispatch (nil = off)
 	proxyAddr         string                                 // recording proxy for WebFetch (empty = direct)
 	proxyCACert       string                                 // recording proxy's CA cert path (HTTPS verify)
 	webSearch         WebSearchOpts                          // web_search tool backend selection (off by default)
@@ -142,6 +144,12 @@ func (p *Planner) SetKillWork(fn func(intentID int64) error) { p.killWork = fn }
 // SetSteerWork wires the engine's per-work steering callback so the planner's
 // steer_work tool can inject a mid-run course-correction into a running worker.
 func (p *Planner) SetSteerWork(fn func(intentID int64, msg string) error) { p.steerWork = fn }
+
+// SetDirectionGate wires the direction-epoch gate callbacks (engine) into this
+// planner: each Plan() round samples the epoch at start (ToolSet.roundEpoch) and
+// add_intent refuses dispatch once kill_work/steer_work bumps it mid-round, so the
+// planner re-evaluates direction before dispatching more subagents.
+func (p *Planner) SetDirectionGate(epochFn func() uint64, ackFn func()) { p.dirEpoch, p.dirAck = epochFn, ackFn }
 
 // renderPlannerTodos formats the persistent planning todo for injection into the
 // wake-up prompt (empty when there are no todos yet — first wake-up).
@@ -394,6 +402,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	tsx.SetCoverageEnabled(as == nil || as.CoverageEnabled(taskID))
 	tsx.killWork = p.killWork   // enable kill_work tool (nil = unavailable)
 	tsx.steerWork = p.steerWork // enable steer_work tool (nil = unavailable)
+	// 方向代际门控（本轮开始时取样）+ 派发确认：kill/steer 后本轮余下派发被拒绝，
+	// 下一轮基于最新 graph_overview 重新评估后再派发（见 ToolSet.addOneIntent）。
+	tsx.SetDirectionGate(p.dirEpoch, p.dirAck)
 	if origin, _ := ts.OriginFactID(); origin > 0 {
 		tsx.SetOwnerNode(origin) // planner-side anchors default to the task root (origin fact)
 	}

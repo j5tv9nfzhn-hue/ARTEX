@@ -35,6 +35,11 @@ func (s *Server) reRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/tasks/{id}/re/sessions/{session}/data", s.reDataHTTP)
 	mux.HandleFunc("GET /api/tasks/{id}/re/evidence/{evidence}", s.reEvidenceHTTP)
 	mux.HandleFunc("POST /api/tasks/{id}/re/observations", s.reObservation)
+	mux.HandleFunc("GET /api/re/engine-contract", s.reContractHTTP)
+	mux.HandleFunc("GET /api/re/providers/{provider}/contract", s.reProviderContractHTTP)
+	mux.HandleFunc("GET /api/tasks/{id}/re/quota", s.reQuotaHTTP)
+	mux.HandleFunc("POST /api/tasks/{id}/re/sessions/{session}/export", s.reExportHTTP)
+	mux.HandleFunc("POST /api/re/sweep", s.reSweepHTTP)
 }
 
 func (s *Server) rePresetsHTTP(w http.ResponseWriter, r *http.Request) {
@@ -555,7 +560,7 @@ func (s *Server) reObservation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) softwareAnalysisTools() []actool.CoreTool {
 	return []actool.CoreTool{wrTool("software_analysis", "软件逆向受管样本、独占会话、函数/调用链/模块/符号/证据工作台。仅限当前 software_re 任务；不会安装 Provider。先 overview（或 capabilities）核对真实 Provider 能力门控与样本哈希，按 core_ready 的 Provider open，再 query/data；close 显式关闭。Provider 必须已经由操作员审核。",
 		objSchema(map[string]any{
-			"mode":       map[string]any{"type": "string", "enum": []string{"overview", "capabilities", "open", "query", "data", "evidence", "close"}},
+			"mode":       map[string]any{"type": "string", "enum": []string{"overview", "capabilities", "open", "query", "data", "evidence", "close", "export", "quota"}},
 			"sample_sha": strParam("已关联样本 SHA-256"), "provider_id": map[string]any{"type": "integer"}, "session_id": map[string]any{"type": "integer"}, "evidence_id": map[string]any{"type": "integer"},
 			"operation": strParam("status/functions/decompile/xrefs/callgraph/types/modules/imports/exports/strings；data 模式也可 evidence"), "address": strParam("Provider 明确支持的地址，不得混淆 RVA/VA/文件偏移"), "query": strParam("有限查询关键词"), "before": map[string]any{"type": "integer"}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 		}, "mode"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
@@ -616,6 +621,14 @@ func (s *Server) softwareAnalysisTools() []actool.CoreTool {
 			case "close":
 				err = s.reEnd(ctx, info.TaskID, a.SessionID, "close", false)
 				v = map[string]any{"ok": err == nil}
+			case "export":
+				v, err = s.reExportBundle(ctx, info.TaskID, a.SessionID, a.Operation, a.Address, a.Query, a.Limit)
+			case "quota":
+				var sessions []db.RESession
+				sessions, err = s.m.pg.RESessions(info.TaskID)
+				if err == nil {
+					v = reQuotaStatus(info.TaskID, sessions)
+				}
 			default:
 				err = errors.New("mode 无效")
 			}
