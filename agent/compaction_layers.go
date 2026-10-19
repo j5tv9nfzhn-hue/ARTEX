@@ -21,10 +21,10 @@ import "fmt"
 type LayerKind string
 
 const (
-	LayerToolClip     LayerKind = "tool_output_clip"
-	LayerWindow       LayerKind = "conversation_window"
-	LayerNoa          LayerKind = "noa_conversation"
-	LayerGraphDigest  LayerKind = "cold_graph_digest"
+	LayerToolClip    LayerKind = "tool_output_clip"
+	LayerWindow      LayerKind = "conversation_window"
+	LayerNoa         LayerKind = "noa_conversation"
+	LayerGraphDigest LayerKind = "cold_graph_digest"
 )
 
 // LayerPlan 是单层压缩的策略快照。

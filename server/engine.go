@@ -1272,7 +1272,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		label:  label,
 	}
 	hooks = buildHookChain(hooks) // P1 插桩链：默认空注册=恒等透传，零行为影响
-	if e.tr != nil { // P0 旁路语义转录：观测钩子包装（先记后委派，零行为影响）
+	if e.tr != nil {              // P0 旁路语义转录：观测钩子包装（先记后委派，零行为影响）
 		hooks = traceHooks{inner: hooks, tr: e.tr, taskID: t.ID, intentID: iid, thread: agent.WorkerSessionID(t.ExpID, iid), label: label}
 	}
 	wTaskID, _ := strconv.ParseInt(t.ID, 10, 64)

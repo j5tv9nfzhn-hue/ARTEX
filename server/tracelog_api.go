@@ -1,6 +1,7 @@
 // P0 会话语义转录的只读回放 API（纯新增路由，不碰任何写路径）：
-//   GET /api/traces                — 线程列表（任务线/意图线/主 Agent 线）
-//   GET /api/traces/{thread}       — 事件时间线（行偏移游标分页，支持回放）
+//
+//	GET /api/traces                — 线程列表（任务线/意图线/主 Agent 线）
+//	GET /api/traces/{thread}       — 事件时间线（行偏移游标分页，支持回放）
 package server
 
 import (

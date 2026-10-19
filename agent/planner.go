@@ -149,7 +149,9 @@ func (p *Planner) SetSteerWork(fn func(intentID int64, msg string) error) { p.st
 // planner: each Plan() round samples the epoch at start (ToolSet.roundEpoch) and
 // add_intent refuses dispatch once kill_work/steer_work bumps it mid-round, so the
 // planner re-evaluates direction before dispatching more subagents.
-func (p *Planner) SetDirectionGate(epochFn func() uint64, ackFn func()) { p.dirEpoch, p.dirAck = epochFn, ackFn }
+func (p *Planner) SetDirectionGate(epochFn func() uint64, ackFn func()) {
+	p.dirEpoch, p.dirAck = epochFn, ackFn
+}
 
 // renderPlannerTodos formats the persistent planning todo for injection into the
 // wake-up prompt (empty when there are no todos yet — first wake-up).

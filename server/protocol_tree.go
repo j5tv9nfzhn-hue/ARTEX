@@ -71,10 +71,10 @@ func (s *Server) protoTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, map[string]any{
-		"protocol":      protoVersion,
-		"resource":      "session_tree",
-		"id":            thread,
-		"data":          map[string]any{
+		"protocol": protoVersion,
+		"resource": "session_tree",
+		"id":       thread,
+		"data": map[string]any{
 			"checkpoints":   checkpoints,
 			"main_sessions": mains,
 			"trace_threads": threads,

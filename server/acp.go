@@ -4,11 +4,12 @@
 // 明确错误（fail-secure），既有执行路径零改动，可零成本回滚。
 //
 // 协议形态（对齐 agentclientprotocol.com 的核心面）：
-//   请求：initialize / session/new / session/prompt / session/cancel /
-//         session/request_permission 的响应（permission response）
-//   通知：session/update（thought/tool_call/tool_call_update/agent_message_chunk/
-//         plan/agent_thought_chunk）、session/request_permission
-//   能力协商：fs.readTextFile / fs.writeTextFile（登记位；文件面权限仍走 G2 出范围）。
+//
+//	请求：initialize / session/new / session/prompt / session/cancel /
+//	      session/request_permission 的响应（permission response）
+//	通知：session/update（thought/tool_call/tool_call_update/agent_message_chunk/
+//	      plan/agent_thought_chunk）、session/request_permission
+//	能力协商：fs.readTextFile / fs.writeTextFile（登记位；文件面权限仍走 G2 出范围）。
 package server
 
 import (
@@ -99,8 +100,8 @@ type AcpRunner interface {
 
 // AcpFuncRunner 把函数适配成 AcpRunner。
 type AcpFuncRunner struct {
-	RunFn     func(ctx context.Context, sessionID, prompt string, onEvent func(AcpEvent)) error
-	CancelFn  func(sessionID string) error
+	RunFn    func(ctx context.Context, sessionID, prompt string, onEvent func(AcpEvent)) error
+	CancelFn func(sessionID string) error
 }
 
 func (f *AcpFuncRunner) RunPrompt(ctx context.Context, sessionID, prompt string, onEvent func(AcpEvent)) error {
@@ -119,11 +120,11 @@ func (f *AcpFuncRunner) Cancel(sessionID string) error {
 
 // AcpPermissionRequest 是 session/request_permission 的请求体。
 type AcpPermissionRequest struct {
-	SessionID string `json:"session_id"`
-	ToolCall  string `json:"tool_call"`
-		Title   string `json:"title"`
-	Reason  string `json:"reason"`
-	Options []string `json:"options"` // allow_once | allow_always | reject_once | reject_always
+	SessionID string   `json:"session_id"`
+	ToolCall  string   `json:"tool_call"`
+	Title     string   `json:"title"`
+	Reason    string   `json:"reason"`
+	Options   []string `json:"options"` // allow_once | allow_always | reject_once | reject_always
 }
 
 // AcpPermissionDecision 是权限裁决。
@@ -220,9 +221,9 @@ func (a *AcpServer) onInitialize(req acpRequest, note bool) (*acpResponse, error
 		"protocol_version": AcpProtocolVersion,
 		"agent_capabilities": map[string]any{
 			"prompt_capabilities": map[string]any{
-				"image":                false,
-				"audio":                false,
-				"embedded_context":     true,
+				"image":            false,
+				"audio":            false,
+				"embedded_context": true,
 			},
 			"fs": map[string]any{
 				"text_document": false, // 文件面读写属 G2 权限引擎，出范围：登记能力但不启用

@@ -620,8 +620,8 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	main.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	main.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	main.SetWebSearch(s.webSearchFor("mainagent"))
-	main.SetSteerWork(s.engine.SteerWork) // steer_work：人对运行中 work 实时纠偏
-	main.SetKillWork(s.engine.KillWork)   // kill_work：人结束指定 work
+	main.SetSteerWork(s.engine.SteerWork)                        // steer_work：人对运行中 work 实时纠偏
+	main.SetKillWork(s.engine.KillWork)                          // kill_work：人结束指定 work
 	main.SetDirectionGate(func() { s.engine.AckDispatch(t.ID) }) // 直投成功解冻派发闸
 	bundle := &taskAgentBundle{
 		runtime: goalRuntime, plannerRuntime: plannerRuntime, workerRuntime: workerRuntime,

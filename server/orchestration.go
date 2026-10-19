@@ -169,9 +169,9 @@ func (s *Server) delegateToTask(ctx context.Context, in json.RawMessage, pick fu
 	if s.m.Assets() != nil {
 		tsx.SetAssetStore(s.m.Assets(), s.m.Assets().Companies())
 	}
-	tsx.SetNotify(t.Notify)         // 通用唤醒（无专用回调的写操作走它；读工具为 no-op）
-	tsx.SetNotifyHint(t.NotifyHint) // add_hint → 记一条「人新增了 N 条战略提示：…」触发并唤醒 planner
-	tsx.SetKillWork(s.engine.KillWork)     // kill_task_worker → 终止指定 work
+	tsx.SetNotify(t.Notify)                                          // 通用唤醒（无专用回调的写操作走它；读工具为 no-op）
+	tsx.SetNotifyHint(t.NotifyHint)                                  // add_hint → 记一条「人新增了 N 条战略提示：…」触发并唤醒 planner
+	tsx.SetKillWork(s.engine.KillWork)                               // kill_task_worker → 终止指定 work
 	tsx.SetDirectionGate(nil, func() { s.engine.AckDispatch(t.ID) }) // 直投成功解冻派发闸
 	return pick(tsx).Call(ctx, inner, nil)
 }

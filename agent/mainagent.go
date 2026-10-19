@@ -132,12 +132,12 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	}
 	tsx.SetTaskID(taskID)
 	tsx.SetCoverageEnabled(as == nil || as.CoverageEnabled(taskID))
-	tsx.SetNotify(notify)         // 通用唤醒（无专用回调的写操作走它，debounced）
-	tsx.SetResumeTask(resume)     // set_goals 新增目标 → 把已完成/暂停的任务拉回 running
-	tsx.SetNotifyGoal(notifyGoal) // set_goals 新增目标 → 给 planner 记一条「人新增了目标：…」触发
-	tsx.SetNotifyHint(notifyHint) // add_hint 新增提示 → 给 planner 记一条「人新增了 N 条战略提示：…」触发
-	tsx.steerWork = m.steerWork   // enable steer_work tool (nil = unavailable)
-	tsx.killWork = m.killWork     // enable kill_work tool (nil = unavailable)
+	tsx.SetNotify(notify)               // 通用唤醒（无专用回调的写操作走它，debounced）
+	tsx.SetResumeTask(resume)           // set_goals 新增目标 → 把已完成/暂停的任务拉回 running
+	tsx.SetNotifyGoal(notifyGoal)       // set_goals 新增目标 → 给 planner 记一条「人新增了目标：…」触发
+	tsx.SetNotifyHint(notifyHint)       // add_hint 新增提示 → 给 planner 记一条「人新增了 N 条战略提示：…」触发
+	tsx.steerWork = m.steerWork         // enable steer_work tool (nil = unavailable)
+	tsx.killWork = m.killWork           // enable kill_work tool (nil = unavailable)
 	tsx.SetDirectionGate(nil, m.dirAck) // 人直投不受代际门控；派发成功解冻派发闸
 	// 领域工具 + 基础默认工具集（Read/Write/Edit/MultiEdit/LS/Glob/Grep/Bash）
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。

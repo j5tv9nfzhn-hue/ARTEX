@@ -9,10 +9,10 @@
 //     不重复注册、不改变既有工具行为）。
 //  3. 外部进程：type=external 的插件按 manifest.exec（exec_windows 优先）拉起子进程，
 //     以「一行一报文」JSON-RPC over stdio 协议握手：
-//       → {"jsonrpc":"2.0","id":1,"method":"plugin.initialize","params":{"id":...}}
-//       ← {"jsonrpc":"2.0","id":1,"result":{"name":...,"version":...,"tools":[...]}}
-//       → {"jsonrpc":"2.0","id":2,"method":"plugin.call_tool","params":{"name":...,"args":{...}}}
-//       ← {"jsonrpc":"2.0","id":2,"result":{...}} 或 {"error":{...}}
+//     → {"jsonrpc":"2.0","id":1,"method":"plugin.initialize","params":{"id":...}}
+//     ← {"jsonrpc":"2.0","id":1,"result":{"name":...,"version":...,"tools":[...]}}
+//     → {"jsonrpc":"2.0","id":2,"method":"plugin.call_tool","params":{"name":...,"args":{...}}}
+//     ← {"jsonrpc":"2.0","id":2,"result":{...}} 或 {"error":{...}}
 //     任何握手/通信失败只把该插件标记为 failed（fail-soft），服务主体不受影响。
 //  4. 生命周期：Load / Enable / Disable / Reload / CallTool / List，全程加锁；
 //     Disable 即终止子进程并摘除工具绑定，Reload = Disable+Load。
@@ -79,7 +79,7 @@ type pluginRuntime struct {
 	err      string
 
 	cmd    *exec.Cmd
-	stdin  jsonWriter   // 向子进程写请求
+	stdin  jsonWriter    // 向子进程写请求
 	stdout *json.Decoder // 从子进程读响应
 	nextID int64
 	pend   map[int64]chan pluginResp
@@ -317,7 +317,12 @@ func (rt *pluginRuntime) start(ctx context.Context) error {
 	return nil
 }
 
-type wcWriter struct{ w interface{ Write([]byte) (int, error); Close() error } }
+type wcWriter struct {
+	w interface {
+		Write([]byte) (int, error)
+		Close() error
+	}
+}
 
 func (w *wcWriter) WriteJSON(v any) error {
 	b, err := json.Marshal(v)

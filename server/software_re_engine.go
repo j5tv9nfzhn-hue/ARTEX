@@ -196,7 +196,7 @@ func (s *Server) reContractHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{
-		"contracts":   []REEngineContract{reEngineContract("rea"), reEngineContract("ghidra"), reEngineContract("ida")},
+		"contracts":    []REEngineContract{reEngineContract("rea"), reEngineContract("ghidra"), reEngineContract("ida")},
 		"quota_policy": reQuotaDefaults,
 		"export": map[string]any{
 			"default_operations": reExportDefaultOps,
