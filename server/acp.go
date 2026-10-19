@@ -293,7 +293,7 @@ func (a *AcpServer) onSessionPrompt(ctx context.Context, req acpRequest, note bo
 		s.mu.Unlock()
 		return errResp(req.ID, -32000, "session stopped"), nil
 	}
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancelCause(ctx)
 	s.state = AcpSessionBusy
 	s.cancel = cancel
 	s.lastRound = time.Now().UnixNano()
