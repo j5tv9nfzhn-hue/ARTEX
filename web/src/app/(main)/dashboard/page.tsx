@@ -15,7 +15,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Bar, BarChart, CartesianGrid, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import { EmptyState } from "@/components/empty-state";
 import { useNewFindingsAlert } from "@/components/finding-alert";
@@ -23,26 +23,22 @@ import { LiveDot } from "@/components/live-dot";
 import { FadeIn, Stagger } from "@/components/motion";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from "@/components/ui/progress";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import { severityTextClass } from "@/lib/severity";
 import type {
   Activity,
-  Agent,
   ConvTokenSummary,
   Finding,
   InterceptPending,
   LLMProfile,
-  MCPServer,
   ReliabilityMetrics,
   Settings,
-  SkillItem,
   Stats,
   Task,
-  TokenTotal,
-  Tool,
   TrafficExchange,
   UsageStats,
 } from "@/lib/types";
@@ -157,15 +153,12 @@ export default function DashboardPage() {
   const [settings, setSettings] = React.useState<Settings | null>(null);
   const [pending, setPending] = React.useState<InterceptPending[]>([]);
   const [activity, setActivity] = React.useState<Activity[]>([]);
-  const [tokens, setTokens] = React.useState<TokenTotal | null>(null);
+
   const [convTokens, setConvTokens] = React.useState<ConvTokenSummary[]>([]);
   const [usageStats, setUsageStats] = React.useState<UsageStats | null>(null);
   const [assetCounts, setAssetCounts] = React.useState<Record<string, number>>({});
   const [traffic, setTraffic] = React.useState<TrafficExchange[]>([]);
-  const [agents, setAgents] = React.useState<Agent[]>([]);
-  const [mcpServers, setMcpServers] = React.useState<MCPServer[]>([]);
-  const [skills, setSkills] = React.useState<SkillItem[]>([]);
-  const [tools, setTools] = React.useState<Tool[]>([]);
+
   const [llmProfiles, setLLMProfiles] = React.useState<LLMProfile[]>([]);
   const [reliability, setReliability] = React.useState<ReliabilityMetrics | null>(null);
 
@@ -177,112 +170,67 @@ export default function DashboardPage() {
 
   // The task list is the most expensive dashboard source. Poll it independently
   // so a large history cannot hold back every other dashboard panel.
-  React.useEffect(() => {
-    let alive = true;
-    let loading = false;
-    let signature = "";
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const tr = await api.tasks();
-        if (!alive) return;
-        const nextSignature = JSON.stringify(tr.tasks);
-        if (nextSignature !== signature) {
-          signature = nextSignature;
-          setTasks(tr.tasks);
-        }
-      } catch {
-        /* transient errors — next poll retries */
-      } finally {
-        loading = false;
-      }
-    };
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+  //
+  // 签名比对仍然保留（内容没变就不 setState，避免整页重渲染）；去重、可见性
+  // 暂停与失败退避已由 usePolling 统一承担，这里不再自己维护 loading 标志。
+  const tasksSignature = React.useRef("");
+  usePolling(
+    async () => {
+      const tr = await api.tasks();
+      const nextSignature = JSON.stringify(tr.tasks);
+      if (nextSignature === tasksSignature.current) return;
+      tasksSignature.current = nextSignature;
+      setTasks(tr.tasks);
+    },
+    { intervalMs: 5000 },
+  );
 
   // The remaining fast sources stay batched so one poll causes a single render.
-  React.useEffect(() => {
-    let alive = true;
-    let loading = false;
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const [findings, stats, settings, pending, activity, tokens, conversationTokens, reliabilityMetrics] =
-          await Promise.all([
-            api.findings(),
-            api.stats(),
-            api.settings(),
-            api.interceptPending(),
-            api.activity(undefined, { limit: 30 }),
-            api.tokenStats(),
-            api.conversationTokens(),
-            api.metrics(),
-          ]);
-        if (!alive) return;
-        setFindings(findings);
-        setStats(stats);
-        setSettings(settings);
-        setPending(pending);
-        setActivity(activity.items);
-        setTokens(tokens.total ?? null);
-        setConvTokens(conversationTokens);
-        setReliability(reliabilityMetrics);
-      } catch {
-        // Preserve stale data and retry on the next interval.
-      } finally {
-        loading = false;
-      }
-    };
-    void load();
-    const timer = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, []);
+  // 失败时保留上一批数据：usePolling 只在回调 reject 时计一次失败并退避，
+  // 不会清空已渲染内容。
+  usePolling(
+    async () => {
+      // tokenStats 返回的总量与 conversationTokens 有重叠，且卡片实际只用后者
+      // 派生出的分桶数据——原实现每 5s 多打一个 /tokens 接口却从不渲染它。
+      const [findings, stats, settings, pending, activity, conversationTokens, reliabilityMetrics] = await Promise.all([
+        api.findings(),
+        api.stats(),
+        api.settings(),
+        api.interceptPending(),
+        api.activity(undefined, { limit: 30 }),
+        api.conversationTokens(),
+        api.metrics(),
+      ]);
+      setFindings(findings);
+      setStats(stats);
+      setSettings(settings);
+      setPending(pending);
+      setActivity(activity.items);
+      setConvTokens(conversationTokens);
+      setReliability(reliabilityMetrics);
+    },
+    { intervalMs: 5000 },
+  );
 
   // slow poll: traffic, assets, system-static (every 15s)
-  React.useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const [traf, counts, agentList, mcpList, skillList, toolList, profileList, usage] = await Promise.all([
-          api.traffic(0, 50),
-          api.assetCounts(),
-          api.agents(),
-          api.mcpServers(),
-          api.skills(),
-          api.tools(),
-          api.llmProfiles(),
-          api.usageStats(365),
-        ]);
-        if (!alive) return;
-        setTraffic(traf.exchanges ?? []);
-        setAssetCounts(counts ?? {});
-        setAgents(agentList);
-        setMcpServers(mcpList);
-        setSkills(skillList);
-        setTools(toolList);
-        setLLMProfiles(profileList);
-        setUsageStats(usage);
-      } catch {
-        /* transient errors */
-      }
-    };
-    void load();
-    const t = setInterval(load, 15000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+  usePolling(
+    async () => {
+      // agents / mcpServers / skills / tools 原本每 15s 各拉一次，但页面上
+      // 没有任何组件消费它们——纯粹是历史遗留的空转请求。删掉四个大列表的
+      // 拉取，慢轮询只剩真正渲染的四个数据源。
+      const [traf, counts, profileList, usage] = await Promise.all([
+        api.traffic(0, 50),
+        api.assetCounts(),
+        api.llmProfiles(),
+        api.usageStats(365),
+      ]);
+      setTraffic(traf.exchanges ?? []);
+      setAssetCounts(counts ?? {});
+      setLLMProfiles(profileList);
+      setUsageStats(usage);
+    },
+    { intervalMs: 15_000 },
+  );
 
   // ── derived ───────────────────────────────────────────────────────────────
 
@@ -351,7 +299,6 @@ export default function DashboardPage() {
 
   // system
   const activeProfile = llmProfiles.find((p) => p.is_default);
-  const enabledTools = tools.filter((t) => t.enabled);
   const pendingCount = pending.length;
 
   // 页头「作战状态摘要」:探索中/暂停/待审批/发现,全部复用上面的派生值(零新增请求)。
@@ -529,12 +476,6 @@ export default function DashboardPage() {
     if (a.kind === "tool_use") return a.tool ?? "tool_use";
     if (a.kind === "tool_result") return "tool_result";
     return a.kind;
-  }
-
-  function workerColor(w: string): string {
-    if (w === "planner") return "text-violet-400";
-    if (w === "mainagent") return "text-cyan-400";
-    return "text-blue-400";
   }
 
   function workerBg(w: string): string {

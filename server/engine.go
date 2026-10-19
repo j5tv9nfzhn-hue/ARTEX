@@ -164,6 +164,15 @@ type Engine struct {
 	inflight     sync.Map // taskID -> *int64, 在跑的 planner.Plan + worker.Execute 计数(用于 drain)
 	coordStarted sync.Map // taskID -> bool, deadline 协调器是否已启动(Run/reload 去重)
 
+	// drainMu guards drainCond and is held while a delete waits for in-flight
+	// work to reach zero. Every decInflight that drops a task's counter to 0
+	// broadcasts on drainCond, so waitTaskQuiescent blocks on a condition
+	// variable instead of polling with a 10ms ticker. Under a burst of task
+	// deletions the ticker version woke each waiter 100x/second purely to
+	// re-read two fields — measurable CPU with no work done.
+	drainMu   sync.Mutex
+	drainCond *sync.Cond
+
 	// resolve returns a task's dedicated planner/worker (wired by the server as the
 	// authoritative task-router). nil,nil means this task is deliberately unavailable
 	// (for example an exhausted failover chain) — there is no global-pair fallback.
@@ -556,10 +565,12 @@ func (e *Engine) ActiveLLMCalls(taskID string) int64 {
 func (e *Engine) touch(taskID string) { e.lastAct.Store(taskID, time.Now().Unix()) }
 
 func NewEngine(m *Manager) *Engine {
-	return &Engine{m: m, debounce: 800 * time.Millisecond, bc: NewBroadcaster(),
+	e := &Engine{m: m, debounce: 800 * time.Millisecond, bc: NewBroadcaster(),
 		execCancel: map[string]context.CancelCauseFunc{}, execCtx: map[string]context.Context{},
 		work: map[int64]*workExecution{}, steerBox: map[int64][]string{},
 		runtimes: map[string]*taskRuntime{}}
+	e.drainCond = sync.NewCond(&e.drainMu)
+	return e
 }
 
 // registerWork records the cancel for the work currently running intentID.

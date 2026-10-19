@@ -40,6 +40,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import { parseCompanyScopeText } from "@/lib/company-scope";
 import type { Asset, NewAssetType } from "@/lib/types";
@@ -383,53 +384,55 @@ export function AssetsTab({ taskId }: { taskId: string }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: these controls intentionally reset server pagination.
   React.useEffect(() => setPage(0), [tab, size, query]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is an explicit manual-reload trigger.
-  React.useEffect(() => {
-    let active = true;
+  // load 提到 useCallback：条件变化时立即加载一次（带 DSL 防抖），
+  // 周期性刷新交给 usePolling。两者共用同一份请求逻辑与 request-id 守卫，
+  // 慢响应不会覆盖新条件的结果。
+  const load = React.useCallback(async () => {
     const dsl = query.trim();
     const request = ++assetsRequestRef.current;
-    const load = async () => {
-      setLoading(true);
-      try {
-        // The search always stays within this task's assets: taskAssets and
-        // searchTaskAssets both pin task_id server-side.
-        const [current, nextCounts] = await Promise.all([
-          dsl
-            ? api.searchTaskAssets(taskId, dsl, tab, size, page * size)
-            : api.taskAssets(taskId, tab, size, page * size),
-          api.assetCounts(taskId),
-        ]);
-        if (!active || assetsRequestRef.current !== request) return;
-        setRows(current.assets);
-        setTotal(current.total);
-        setCounts(nextCounts ?? {});
-        setDslError("");
-      } catch (reason) {
-        if (!active || assetsRequestRef.current !== request) return;
-        const message = String((reason as Error)?.message ?? reason);
-        if (dsl) {
-          setDslError(message);
-          setRows([]);
-          setTotal(0);
-        } else {
-          toast.error(t("loadError", { message }));
-        }
-      } finally {
-        if (active && assetsRequestRef.current === request) {
-          setLoading(false);
-          setLoaded(true);
-        }
+    setLoading(true);
+    try {
+      // The search always stays within this task's assets: taskAssets and
+      // searchTaskAssets both pin task_id server-side.
+      const [current, nextCounts] = await Promise.all([
+        dsl
+          ? api.searchTaskAssets(taskId, dsl, tab, size, page * size)
+          : api.taskAssets(taskId, tab, size, page * size),
+        api.assetCounts(taskId),
+      ]);
+      if (assetsRequestRef.current !== request) return;
+      setRows(current.assets);
+      setTotal(current.total);
+      setCounts(nextCounts ?? {});
+      setDslError("");
+    } catch (reason) {
+      if (assetsRequestRef.current !== request) return;
+      const message = String((reason as Error)?.message ?? reason);
+      if (dsl) {
+        setDslError(message);
+        setRows([]);
+        setTotal(0);
+      } else {
+        toast.error(t("loadError", { message }));
       }
-    };
-    // Debounce DSL keystrokes; plain (re)loads and polling run immediately.
+    } finally {
+      if (assetsRequestRef.current === request) {
+        setLoading(false);
+        setLoaded(true);
+      }
+    }
+  }, [page, query, size, tab, taskId, t]);
+
+  // 条件变化（含手动 refreshKey 与翻页）立即重新加载；DSL 输入带 400ms 防抖。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is an explicit manual-reload trigger.
+  React.useEffect(() => {
+    const dsl = query.trim();
     const debounce = setTimeout(() => void load(), dsl ? 400 : 0);
-    const timer = setInterval(() => void load(), 10_000);
-    return () => {
-      active = false;
-      clearTimeout(debounce);
-      clearInterval(timer);
-    };
-  }, [page, query, refreshKey, size, tab, taskId]);
+    return () => clearTimeout(debounce);
+  }, [load, refreshKey]);
+
+  // 周期刷新：10s 一次，保持原有实时性。
+  usePolling(load, { intervalMs: 10_000, enabled: Boolean(taskId) });
 
   React.useEffect(() => {
     const maxPage = Math.max(0, Math.ceil(total / size) - 1);

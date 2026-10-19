@@ -3,7 +3,6 @@ package db
 import (
 	"net"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -69,35 +68,86 @@ func TechKey(name, version string) string {
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
-var (
-	reNumeric = regexp.MustCompile(`^\d+$`)
-	reUUID    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	reHex     = regexp.MustCompile(`^[0-9a-fA-F]{16,}$`)
-	reLong    = regexp.MustCompile(`^[A-Za-z0-9_-]{24,}$`)
-)
-
 // TemplatePath collapses high-cardinality path segments into placeholders so the
 // graph is not flooded by instances: /user/123 -> /user/{id}.
+//
+// 用字符扫描代替正则：这条路径在每个被抓取的请求上都会跑一遍（每个路径段
+// 最多 4 次 regexp.MatchString）。正则引擎的固定开销在抓包热路径上是纯浪费，
+// 而这里要判断的形态（纯数字、UUID、长十六进制、长 token）都能用 O(len) 的
+// 逐字符判断等价表达，且不需要分配。
 func TemplatePath(path string) string {
 	if path == "" {
 		return "/"
 	}
 	segs := strings.Split(path, "/")
 	for i, s := range segs {
-		switch {
-		case s == "":
+		if s == "" {
 			continue
-		case reNumeric.MatchString(s):
+		}
+		switch {
+		case isAllDigits(s):
 			segs[i] = "{id}"
-		case reUUID.MatchString(s):
+		case isUUID(s):
 			segs[i] = "{uuid}"
-		case reHex.MatchString(s):
+		case len(s) >= 16 && isAllHex(s):
 			segs[i] = "{hex}"
-		case reLong.MatchString(s):
+		case len(s) >= 24 && isTokenChars(s):
 			segs[i] = "{token}"
 		}
 	}
 	return strings.Join(segs, "/")
+}
+
+// isAllDigits reports whether s is one or more ASCII digits (reNumeric).
+func isAllDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// isAllHex reports whether s is exclusively ASCII hex digits (reHex body).
+func isAllHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// isTokenChars reports whether s consists only of [A-Za-z0-9_-] (reLong body).
+func isTokenChars(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// isUUID matches the 8-4-4-4-12 hex form without a regex.
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < 36; i++ {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if s[i] != '-' {
+				return false
+			}
+			continue
+		}
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // SplitURL parses a raw URL into scheme/host/port/urlTemplate/params for building

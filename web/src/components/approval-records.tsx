@@ -26,6 +26,7 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import type {
   InterceptApprovalFilter,
@@ -738,14 +739,11 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
   const latestLoad = React.useRef(load);
   latestLoad.current = load;
 
+  // 条件变化（筛选/分页）立即加载一次；周期刷新交给 usePolling（5s，去重+退避）。
   React.useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 5000);
-    return () => {
-      request.current++;
-      clearInterval(timer);
-    };
   }, [load]);
+  usePolling(() => latestLoad.current(), { intervalMs: 5000 });
 
   const changePageSize = (next: number) => {
     setPageSize(next);

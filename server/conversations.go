@@ -596,6 +596,8 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 		delete(s.chatBusy, busyKey)
 		delete(s.chatCancel, busyKey)
 		s.chatMu.Unlock()
+		// busyKey 也是 waitTaskQuiescent 读取的条件，清除后唤醒等待者。
+		s.engine.notifyDrain()
 	}()
 	// Only the first turn executes a historical retest. Follow-up conversation
 	// turns may explain the sealed result; the result tool refuses to overwrite it.

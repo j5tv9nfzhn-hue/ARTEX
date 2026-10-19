@@ -136,9 +136,17 @@ func (s *logSinkT) add(l LogLine) {
 		s.ring = s.ring[len(s.ring)-s.cap:]
 	}
 	ch := s.dbCh
-	subs := make([]chan LogLine, 0, len(s.subs))
+	// 直接在持锁状态下非阻塞投递，不再把订阅者复制成切片。
+	//
+	// 原实现每行日志都 make 一个 len(subs) 的切片再遍历——日志是高频写入
+	// （每次 log.Printf 一次），多开几个 /logs 页面就有多个订阅者，这条路径
+	// 会持续产生小对象分配并加重 GC。非阻塞 send 本身不会阻塞，持锁时间与
+	// 复制切片时相当，但省掉了分配与后续的第二次遍历。
 	for sub := range s.subs {
-		subs = append(subs, sub)
+		select {
+		case sub <- l:
+		default:
+		}
 	}
 	s.mu.Unlock()
 
@@ -146,13 +154,6 @@ func (s *logSinkT) add(l LogLine) {
 	if ch != nil {
 		select {
 		case ch <- dbWriteReq{seq: l.Seq, line: l}:
-		default:
-		}
-	}
-
-	for _, sub := range subs {
-		select {
-		case sub <- l:
 		default:
 		}
 	}

@@ -57,7 +57,31 @@ func (e *Engine) beginTaskOperation(taskID string) bool {
 	return true
 }
 
-func (e *Engine) decInflight(taskID string) { atomic.AddInt64(e.inflightCounter(taskID), -1) }
+// notifyDrain broadcasts to every waitTaskQuiescent waiter. Callers that change
+// a condition waitTaskQuiescent reads (in-flight count, chatBusy) must call this
+// after the change, inside the corresponding lock.
+func (e *Engine) notifyDrain() {
+	if e == nil || e.drainCond == nil {
+		return
+	}
+	e.drainMu.Lock()
+	e.drainCond.Broadcast()
+	e.drainMu.Unlock()
+}
+
+func (e *Engine) decInflight(taskID string) {
+	if atomic.AddInt64(e.inflightCounter(taskID), -1) != 0 {
+		return
+	}
+	// 归零时在 drainMu 临界区内广播。Broadcast 必须在临界区内：否则等待方
+	// 可能刚判定"计数不为零"、尚未进入 Wait，就错过了这次唤醒，随后一直
+	// 阻塞到下一条无关记录归零——正是这类丢失唤醒让轮询版本当初不敢改成通知。
+	if e.drainCond != nil {
+		e.drainMu.Lock()
+		e.drainCond.Broadcast()
+		e.drainMu.Unlock()
+	}
+}
 func (e *Engine) inflightCount(taskID string) int64 {
 	return atomic.LoadInt64(e.inflightCounter(taskID))
 }

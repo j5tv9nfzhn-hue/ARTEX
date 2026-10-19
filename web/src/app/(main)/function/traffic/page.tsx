@@ -44,6 +44,7 @@ import { SortableHead } from "@/components/ui/sortable-head";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import { useStoredSortPreference } from "@/lib/sort-preference";
 import type { TrafficDetail, TrafficExchange, TrafficHost, TrafficResp } from "@/lib/types";
@@ -202,45 +203,31 @@ export default function TrafficPage() {
 
   // Load the current page. Auto-refresh only on page 0 (newest) so paging back
   // through history isn't yanked out from under the user.
+  const loadTraffic = React.useCallback(async () => {
+    const [r, hostsResp] = await Promise.all([
+      api.traffic(page, size, hostQ, method, queryQ, {
+        body: bodyQ,
+        path: pathQ,
+        status: statusFilter,
+        respMin: respMinQ,
+        respMax: respMaxQ,
+        sort: sort.field,
+        order: sort.direction,
+      }),
+      api.trafficHosts(),
+    ]);
+    setTraffic(r);
+    setHosts(hostsResp.hosts ?? []);
+  }, [page, size, hostQ, method, queryQ, bodyQ, pathQ, statusFilter, respMinQ, respMaxQ, sort]);
+
+  // 条件变化与手动刷新（reloadTick）立即取一次。
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadTick is an explicit manual-refetch trigger.
   React.useEffect(() => {
-    let alive = true;
-    const load = () => {
-      api
-        .traffic(page, size, hostQ, method, queryQ, {
-          body: bodyQ,
-          path: pathQ,
-          status: statusFilter,
-          respMin: respMinQ,
-          respMax: respMaxQ,
-          sort: sort.field,
-          order: sort.direction,
-        })
-        .then((r) => {
-          if (alive) setTraffic(r);
-        })
-        .catch(() => {
-          // Keep the last successful snapshot during transient refresh failures.
-        });
-      api
-        .trafficHosts()
-        .then((r) => {
-          if (alive) setHosts(r.hosts ?? []);
-        })
-        .catch(() => {
-          // Keep the last successful host list during transient refresh failures.
-        });
-    };
-    load();
-    const t = setInterval(() => {
-      if (page !== 0) return; // only auto-refresh the newest page
-      load();
-    }, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [page, size, hostQ, method, queryQ, bodyQ, pathQ, statusFilter, respMinQ, respMaxQ, sort, reloadTick]);
+    void loadTraffic();
+  }, [loadTraffic, reloadTick]);
+
+  // 只自动刷新最新一页（page === 0），往回翻历史时不被拽走。
+  usePolling(loadTraffic, { intervalMs: 5000, enabled: page === 0 });
 
   // Delete traffic for the current host filter (substring) or the checked
   // hosts (exact batch), then refetch.

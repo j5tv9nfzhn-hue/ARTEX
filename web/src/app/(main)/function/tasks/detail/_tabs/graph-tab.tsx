@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { ExplorationGraph } from "@/components/exploration-graph";
 import { Card, CardContent } from "@/components/ui/card";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import type { Edge, TaskNode } from "@/lib/types";
 
@@ -14,36 +15,29 @@ export function GraphTab({ taskId }: { taskId: string }) {
   // 才不会被 20s 轮询打断而顿挫)。只取影响渲染的字段。
   const sigRef = React.useRef("");
 
+  // 换任务时清掉签名，强制下一次刷新重建。
   React.useEffect(() => {
-    let cancelled = false;
-    sigRef.current = ""; // 换任务:强制下一次刷新
-    const load = () => {
-      api
-        .explorationGraph(taskId)
-        .then((g) => {
-          if (cancelled) return;
-          const ns = g.nodes ?? [];
-          const es = g.edges ?? [];
-          const sig = JSON.stringify([
-            ns.map((n) => [n.id, n.type, n.state, n.priority, n.payload]),
-            es.map((e) => [e.src, e.dst, e.rel]),
-          ]);
-          if (sig === sigRef.current) return; // 无变化 → 不重建
-          sigRef.current = sig;
-          setNodes(ns);
-          setEdges(es);
-        })
-        .catch(() => {
-          /* keep last good data */
-        });
-    };
-    load();
-    const timer = setInterval(load, 20000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [taskId]);
+    sigRef.current = "";
+  }, []);
+
+  // 图数据 20s 刷新一次：节点/边数量大，重建成本高，保持原间隔。
+  // 签名比对避免无变化时重建整张力导向图（拖动会被无谓重建打断）。
+  usePolling(
+    async () => {
+      const g = await api.explorationGraph(taskId);
+      const ns = g.nodes ?? [];
+      const es = g.edges ?? [];
+      const sig = JSON.stringify([
+        ns.map((n) => [n.id, n.type, n.state, n.priority, n.payload]),
+        es.map((e) => [e.src, e.dst, e.rel]),
+      ]);
+      if (sig === sigRef.current) return;
+      sigRef.current = sig;
+      setNodes(ns);
+      setEdges(es);
+    },
+    { intervalMs: 20_000, enabled: Boolean(taskId) },
+  );
 
   return (
     <Card>

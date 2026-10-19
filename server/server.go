@@ -4140,6 +4140,9 @@ func (s *Server) finishTaskChat(taskID string, cancel context.CancelCauseFunc) {
 	delete(s.chatBusy, taskID)
 	delete(s.chatCancel, taskID)
 	s.chatMu.Unlock()
+	// chatBusy 是 waitTaskQuiescent 读的第二个条件；清除后必须唤醒等待者，
+	// 否则等待方要等下一次 in-flight 归零才被唤醒。
+	s.engine.notifyDrain()
 }
 
 // taskChatStatus reports the authoritative state of the task's main-agent turn.

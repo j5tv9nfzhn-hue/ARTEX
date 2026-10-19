@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import { useStoredSortPreference } from "@/lib/sort-preference";
 import type { Finding, FindingStatus } from "@/lib/types";
@@ -151,25 +152,13 @@ export function FindingsTab({ taskId }: { taskId: string }) {
     "desc",
   );
 
-  React.useEffect(() => {
-    let active = true;
-    const load = () => {
-      api
-        .findings(taskId)
-        .then((fs) => {
-          if (active) setFindings(fs);
-        })
-        .catch(() => {
-          // Keep the last successful snapshot during transient refresh failures.
-        });
-    };
-    load();
-    const t = setInterval(load, 3000);
-    return () => {
-      active = false;
-      clearInterval(t);
-    };
-  }, [taskId]);
+  usePolling(
+    async () => {
+      const fs = await api.findings(taskId);
+      setFindings(fs);
+    },
+    { intervalMs: 3000, enabled: Boolean(taskId) },
+  );
 
   const onStatus = React.useCallback(
     async (f: Finding, next: FindingStatus) => {

@@ -62,6 +62,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { usePolling } from "@/hooks/use-polling";
 import { useSideQuestions } from "@/hooks/use-side-questions";
 import { api, sseUrl } from "@/lib/api";
 import { shouldSubmitOnKey, useChatSendMode } from "@/lib/chat-send-mode";
@@ -826,94 +827,53 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   );
 
   // ── task token total (whole task, all agents) ───────────────────────────────────
-  React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .tokenStats(taskId)
-        .then((r) => {
-          if (!alive) return;
-          setTaskTokens(r.total);
-          setSessionTokens(Object.fromEntries(r.sessions.map((item) => [item.session, item])));
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [taskId]);
+  usePolling(
+    async () => {
+      const r = await api.tokenStats(taskId);
+      setTaskTokens(r.total);
+      setSessionTokens(Object.fromEntries(r.sessions.map((item) => [item.session, item])));
+    },
+    { intervalMs: 5000, enabled: Boolean(taskId) },
+  );
 
   React.useEffect(() => {
-    let alive = true;
     setMainChatRunning(null);
-    const load = () => {
-      const request = ++chatStatusRequestRef.current;
-      return api
-        .chatStatus(taskId)
-        .then(({ running }) => {
-          if (alive && chatStatusRequestRef.current === request) setMainChatRunning(running);
-        })
-        .catch(() => {
-          // Keep the last authoritative value. Before the first success, recent
-          // activity remains a conservative fallback.
-        });
-    };
-    void load();
-    const timer = setInterval(load, 2000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [taskId]);
-
-  React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .taskLLMResolution(taskId)
-        .then((value) => {
-          if (alive) setLLMResolutions(value);
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const timer = setInterval(load, 10_000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [taskId]);
-
-  React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .interceptTask(taskId)
-        .then((rows) => {
-          if (alive) setPendingIntercepts(rows.filter((r) => r.status === "pending"));
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [taskId]);
-
-  // Re-render on a timer so "streaming" liveness recomputes as activity goes stale.
-  const [, setTick] = React.useState(0);
-  React.useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1500);
-    return () => clearInterval(id);
   }, []);
+  // chatStatus 是「主 Agent 是否在跑」的唯一权威来源：2s 间隔保持不变，
+  // 由 usePolling 负责在途去重（原实现用 chatStatusRequestRef 手工挡重复响应，
+  // 现在不需要了，因为同一时刻只有一轮在跑）。
+  usePolling(
+    async () => {
+      const { running } = await api.chatStatus(taskId);
+      setMainChatRunning(running);
+    },
+    { intervalMs: 2000, enabled: Boolean(taskId) },
+  );
+
+  usePolling(
+    async () => {
+      const value = await api.taskLLMResolution(taskId);
+      setLLMResolutions(value);
+    },
+    { intervalMs: 10_000, enabled: Boolean(taskId) },
+  );
+
+  usePolling(
+    async () => {
+      const rows = await api.interceptTask(taskId);
+      setPendingIntercepts(rows.filter((r) => r.status === "pending"));
+    },
+    { intervalMs: 5000, enabled: Boolean(taskId) },
+  );
+
+  // 让「最后活动距今多久」这类相对时间文本自己走字。
+  //
+  // 原实现是固定 1.5s 的 setInterval：不管有没有新活动，整棵 session 树每秒
+  // 重建两次。而它真正需要的只是把「3 秒前」更新成「8 秒前」——10 秒粒度对
+  // 这个文案完全够用。这里改成 10s 一次的可见性感知时钟：页面在后台时停掉，
+  // 切回来立即补一次。活动到达时的即时更新由上面的 SSE 负责，不依赖这个时钟。
+  const [, setTick] = React.useState(0);
+  usePolling(() => setTick((t) => t + 1), { intervalMs: 10_000 });
 
   // ── first load + single task SSE ────────────────────────────────────────────────
   // On task open: load Main's latest page, take the task-level snapshot cursor from

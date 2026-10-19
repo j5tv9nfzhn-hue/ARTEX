@@ -30,6 +30,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import { severityDotClass, severitySoftChipClass } from "@/lib/severity";
 import { type Tone, toneClasses, toneDot } from "@/lib/status";
@@ -459,11 +460,8 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
   // 不动列表，免得翻页/展开时内容在脚下变。
   const atLive = page === 1 && order === "desc";
 
-  React.useEffect(() => {
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 30000);
-    return () => clearInterval(t);
-  }, []);
+  // 「刚刚 / N 分钟前」的走字时钟：30s 一次，页面在后台时由 usePolling 暂停。
+  usePolling(() => setNow(Date.now()), { intervalMs: 30_000 });
 
   // 输入防抖:打字停 300ms 才真正查询,并回到第一页。
   React.useEffect(() => {
@@ -474,59 +472,58 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
     return () => clearTimeout(t);
   }, [queryInput]);
 
+  // 换流（任务/筛选/排序）时清空「新」标记与未读基线；翻页不算换流，
+  // 否则回到最新时就没有未读计数可算。
+  const streamSig = `${taskId}|${kinds.join(",")}|${query}|${order}`;
   React.useEffect(() => {
-    let alive = true;
-    let rendered = false; // 本次查询是否已经把内容渲染出来过
-    // 换任务/筛选/排序 = 换了一条播报流:清掉「新」标记和未读基线。翻页不算换流,
-    // 否则回到最新时就没有未读计数可算了。
-    const stream = `${taskId}|${kinds.join(",")}|${query}|${order}`;
-    if (streamRef.current !== stream) {
-      streamRef.current = stream;
-      seenRef.current = new Set();
-      baselineRef.current = null;
+    if (streamRef.current === streamSig) return;
+    streamRef.current = streamSig;
+    seenRef.current = new Set();
+    baselineRef.current = null;
+    setPending(0);
+  }, [streamSig]);
+
+  // 只有「最新在前的第 1 页」是直播位：每轮刷新列表；其余位置只更新未读计数，
+  // 不动列表，免得翻页/展开时内容在脚下变。
+  //
+  // renderedRef 记录「当前流是否已经渲染过」：直播位之外的首次加载需要填充列表，
+  // 之后交给轮询只更新计数。换流时由下面的 effect 复位。
+  const renderedRef = React.useRef(false);
+  // 换流/翻页/改页大小时复位：这些是"当前这批数据是否已渲染过"的上下文。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只写 ref，不读任何响应式值。
+  React.useEffect(() => {
+    renderedRef.current = false;
+  }, [streamSig, page, size]);
+
+  const load = React.useCallback(async () => {
+    const r = await api.explorationNodes(taskId, { page, size, kinds, q: query, order });
+    if (atLive || !renderedRef.current) {
+      renderedRef.current = true;
+      setItems(r.items);
+      setEdges(r.edges);
+      setRefs(r.refs);
+      setAssets(r.assets);
+    }
+    setTotal(r.total);
+    if (atLive) {
+      const seen = seenRef.current;
+      setFreshIDs(seen.size === 0 ? new Set() : new Set(r.items.filter((n) => !seen.has(n.id)).map((n) => n.id)));
+      seenRef.current = new Set(r.items.map((n) => n.id));
+      baselineRef.current = r.total;
       setPending(0);
+    } else {
+      const base = baselineRef.current;
+      setPending(base === null ? 0 : Math.max(0, r.total - base));
     }
-    const load = () =>
-      api
-        .explorationNodes(taskId, { page, size, kinds, q: query, order })
-        .then((r) => {
-          if (!alive) return;
-          // 直播位每轮都刷新;其它位置只渲染第一次,之后轮询仅更新未读计数。
-          if (atLive || !rendered) {
-            rendered = true;
-            setItems(r.items);
-            setEdges(r.edges);
-            setRefs(r.refs);
-            setAssets(r.assets);
-          }
-          setTotal(r.total);
-          if (atLive) {
-            const seen = seenRef.current;
-            setFreshIDs(seen.size === 0 ? new Set() : new Set(r.items.filter((n) => !seen.has(n.id)).map((n) => n.id)));
-            seenRef.current = new Set(r.items.map((n) => n.id));
-            baselineRef.current = r.total;
-            setPending(0);
-          } else {
-            const base = baselineRef.current;
-            setPending(base === null ? 0 : Math.max(0, r.total - base));
-          }
-          setLoaded(true);
-        })
-        .catch(() => {
-          // 轮询是尽力而为:保留上一次成功的播报内容,下一轮自动重试。
-        });
+    setLoaded(true);
+  }, [taskId, page, size, kinds, query, order, atLive]);
+
+  // 条件变化立即加载一次；live 开启时再由 usePolling 按 POLL_MS 持续刷新。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 条件变化需要立刻重取，不等下一轮。
+  React.useEffect(() => {
     void load();
-    if (!live) {
-      return () => {
-        alive = false;
-      };
-    }
-    const timer = setInterval(load, POLL_MS);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [taskId, page, size, kinds, query, order, live, atLive]);
+  }, [load]);
+  usePolling(load, { intervalMs: POLL_MS, enabled: live && Boolean(taskId) });
 
   const toggleKind = (kind: ExploreKind) => {
     setKinds((cur) => (cur.includes(kind) ? cur.filter((k) => k !== kind) : [...cur, kind]));

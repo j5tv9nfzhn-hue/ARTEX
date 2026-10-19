@@ -30,6 +30,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import type {
   AssetInterceptKind,
@@ -395,70 +396,56 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     }
   };
 
+  // load 提到 useCallback：条件变化时立即刷新一次，周期刷新交给 usePolling。
+  // 两者共用同一份请求逻辑，usePolling 保证同一时刻只有一轮在跑。
+  const load = React.useCallback(async () => {
+    const [taskResp, statsResp, intentsResp, findingsResp] = await Promise.all([
+      api.task(taskId),
+      api.stats(taskId),
+      api.intents(taskId),
+      api.findings(taskId),
+    ]);
+    const activeTask = statsResp.active_task;
+    setTask(
+      activeTask
+        ? {
+            ...taskResp,
+            in_flight: activeTask.in_flight,
+            goals_total: activeTask.goals_total,
+            goals_met: activeTask.goals_met,
+            engine_mode: statsResp.engine_mode ?? activeTask.engine_mode,
+            paused: activeTask.paused,
+          }
+        : taskResp,
+    );
+    setStats(statsResp);
+    setIntents(intentsResp);
+    setFindings(findingsResp);
+    // coverage 独立且在没有资产库时可能 503——单独拉，失败不影响其它面板。
+    api
+      .taskCoverage(taskId)
+      .then(setCoverage)
+      .catch(() => {
+        // 没有资产库时 coverage 可能 503——下一轮轮询会重试，这里不打断其它面板。
+      });
+  }, [taskId]);
+
+  // 首次加载：把 scope / tokens / goals / constraints 一起拉齐。
   React.useEffect(() => {
-    let cancelled = false;
-    let loading = false;
-
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const [taskResp, statsResp, intentsResp, findingsResp] = await Promise.all([
-          api.task(taskId),
-          api.stats(taskId),
-          api.intents(taskId),
-          api.findings(taskId),
-        ]);
-        if (cancelled) return;
-        const activeTask = statsResp.active_task;
-        setTask(
-          activeTask
-            ? {
-                ...taskResp,
-                in_flight: activeTask.in_flight,
-                goals_total: activeTask.goals_total,
-                goals_met: activeTask.goals_met,
-                engine_mode: statsResp.engine_mode ?? activeTask.engine_mode,
-                paused: activeTask.paused,
-              }
-            : taskResp,
-        );
-        setStats(statsResp);
-        setIntents(intentsResp);
-        setFindings(findingsResp);
-        // coverage is independent + may 503 when no asset store — fetch separately so
-        // its failure never blocks the others.
-        api
-          .taskCoverage(taskId)
-          .then((c) => {
-            if (!cancelled) setCoverage(c);
-          })
-          .catch(() => {
-            // A transient coverage failure is retried by the next poll.
-          });
-      } catch {
-        // transient errors are ignored; the next poll will retry
-      } finally {
-        loading = false;
-      }
-    };
-
     void load();
     void loadScope();
     void loadTokens();
     void loadGoals();
     void loadConstraints();
-    const timer = setInterval(() => {
-      void load();
-      void loadTokens();
-      void loadGoals();
-      void loadConstraints();
-    }, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [taskId, loadScope, loadTokens, loadGoals, loadConstraints]);
+  }, [load, loadScope, loadTokens, loadGoals, loadConstraints]);
+
+  // 3s 刷新：任务本体、token、目标、约束一起更新。
+  usePolling(
+    async () => {
+      await Promise.all([load(), loadTokens(), loadGoals(), loadConstraints()]);
+    },
+    { intervalMs: 3000, enabled: Boolean(taskId) },
+  );
 
   const running = intents.filter((i) => i.state === "running");
   const open = intents.filter((i) => i.state === "open");

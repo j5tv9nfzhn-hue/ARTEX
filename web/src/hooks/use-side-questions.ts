@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { usePolling } from "@/hooks/use-polling";
 import { sseUrl } from "@/lib/api";
 import { isBtwCommand, type SideExchange, type SideHistory, sideAPI } from "@/lib/side-questions";
 
@@ -119,12 +120,8 @@ export function useSideQuestions(parent: string | null) {
     };
   }, [parent]);
 
-  useEffect(() => {
-    if (!open || !parent) return;
-    void load();
-    const timer = setInterval(() => void load(), 2000);
-    return () => clearInterval(timer);
-  }, [open, parent, load]);
+  // 抽屉打开时 2s 刷新一次；关闭即停表。usePolling 负责在途去重与可见性暂停。
+  usePolling(load, { intervalMs: 2000, enabled: open && !!parent });
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reconnect after a clear attempt invalidates older callbacks.
   useEffect(() => {

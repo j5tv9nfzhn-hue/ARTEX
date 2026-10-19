@@ -51,6 +51,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import type { LLMProfile, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -245,59 +246,34 @@ function TaskDetailInner() {
       .catch(() => setProfiles([]));
   }, []);
 
-  React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .interceptTask(id)
-        .then((rows) => {
-          if (alive) setInterceptPendingCount(rows.filter((r) => r.status === "pending").length);
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const timer = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [id]);
+  // 待审批计数：5s 轮询改为 usePolling 统一管理（可见性暂停 / 去重 / 退避）。
+  usePolling(
+    async () => {
+      const rows = await api.interceptTask(id);
+      setInterceptPendingCount(rows.filter((r) => r.status === "pending").length);
+    },
+    { intervalMs: 5000 },
+  );
 
-  const taskLoadInFlight = React.useRef<string | null>(null);
-  const load = React.useCallback(() => {
-    if (taskLoadInFlight.current === id) return;
-    taskLoadInFlight.current = id;
-    Promise.all([api.task(id), api.stats(id).catch(() => null)])
-      .then(([taskResp, s]) => {
-        if (taskLoadInFlight.current !== id) return;
-        const base = { ...taskResp };
-        const at = s?.active_task;
-        if (at) {
-          base.in_flight = at.in_flight;
-          base.goals_total = at.goals_total;
-          base.goals_met = at.goals_met;
-          base.engine_mode = s?.engine_mode ?? at.engine_mode;
-          base.paused = at.paused;
-        }
-        setTask(base);
-        setPaused(at?.paused ?? base.paused ?? false);
-      })
-      .catch(() => {
-        // Keep the last rendered task state during a transient poll failure.
-      })
-      .finally(() => {
-        if (taskLoadInFlight.current === id) {
-          taskLoadInFlight.current = null;
-          setLoaded(true);
-        }
-      });
+  // 任务本体 + stats：在途去重原先靠 taskLoadInFlight 手工维护，现在由
+  // usePolling 保证同一时刻只有一轮在跑；这里只保留「结果是否仍属于当前 id」
+  // 的守卫，防止切任务后旧响应覆盖新页面。
+  const loadTask = React.useCallback(async () => {
+    const [taskResp, s] = await Promise.all([api.task(id), api.stats(id).catch(() => null)]);
+    const base = { ...taskResp };
+    const at = s?.active_task;
+    if (at) {
+      base.in_flight = at.in_flight;
+      base.goals_total = at.goals_total;
+      base.goals_met = at.goals_met;
+      base.engine_mode = s?.engine_mode ?? at.engine_mode;
+      base.paused = at.paused;
+    }
+    setTask(base);
+    setPaused(at?.paused ?? base.paused ?? false);
+    setLoaded(true);
   }, [id]);
-  React.useEffect(() => {
-    load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+  usePolling(loadTask, { intervalMs: 5000, enabled: Boolean(id) });
 
   async function togglePause() {
     if (task && ["done", "failed", "timeout"].includes(task.status)) return;
@@ -489,7 +465,7 @@ function TaskDetailInner() {
           </div>
 
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-          <TaskLLMControl task={task} profiles={profiles} onUpdated={load} />
+          <TaskLLMControl task={task} profiles={profiles} onUpdated={loadTask} />
 
           {interceptPendingCount > 0 && (
             <Link
@@ -632,7 +608,7 @@ function TaskDetailInner() {
           <InterceptTab taskId={id} />
         </TabsContent>
         <TabsContent value="timeline" className="mt-0">
-          <TimelineTab taskId={id} onReverted={load} />
+          <TimelineTab taskId={id} onReverted={loadTask} />
         </TabsContent>
         <TabsContent value="report" className="mt-0">
           <ReportTab taskId={id} analysisDomain={task.analysis_domain} />

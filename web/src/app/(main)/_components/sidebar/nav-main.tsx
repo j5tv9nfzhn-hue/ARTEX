@@ -30,6 +30,7 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import { toggleSidebarGroupCollapsed, useSidebarPrefs } from "@/lib/sidebar-prefs";
 import { cn } from "@/lib/utils";
@@ -275,23 +276,14 @@ function NavItem({ item, isItemActive, isSubItemActive, isSubmenuOpen }: NavItem
 // count badge when there are unresolved approval requests.
 function InterceptPendingBadge() {
   const [count, setCount] = React.useState(0);
-  React.useEffect(() => {
-    let live = true;
-    async function poll() {
-      try {
-        const list = await api.interceptPending();
-        if (live) setCount(list.length);
-      } catch {
-        /* ignore */
-      }
-    }
-    void poll();
-    const t = setInterval(poll, 5000);
-    return () => {
-      live = false;
-      clearInterval(t);
-    };
-  }, []);
+  // 5s 刷新保持原频率；可见性暂停、在途去重与失败退避由 usePolling 统一处理。
+  usePolling(
+    async () => {
+      const list = await api.interceptPending();
+      setCount(list.length);
+    },
+    { intervalMs: 5000 },
+  );
   if (count === 0) return null;
   return (
     <SidebarMenuBadge className="flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-none text-white shadow-sm ring-1 ring-amber-400/40">

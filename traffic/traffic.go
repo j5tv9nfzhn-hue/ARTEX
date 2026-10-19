@@ -93,6 +93,10 @@ const (
 	// blobPreview is how much of a spilled body stays inline so readers can tell
 	// what it is (JSON shape, SQL dump header, ZIP magic) without fetching it.
 	blobPreview = 8 * 1024
+	// trafficOverflowConcurrency bounds how many queue-full recordings may hold a
+	// full flow deep-copy at once. 8 is enough to keep the writer busy under a
+	// burst; beyond that we would only be trading memory for the same wmu.
+	trafficOverflowConcurrency = 8
 	// maxIndexBody caps a single body's contribution to the full-text index. Text
 	// is indexed in full below this; binary never reaches the index at all.
 	maxIndexBody = 512 * 1024
@@ -153,6 +157,12 @@ type Traffic struct {
 	recWG    sync.WaitGroup
 	recCh    chan *mproxy.Flow
 	flushReq chan struct{}
+	// overflow bounds how many flow deep-copies may be held by the queue-full
+	// path at once. Without it, a sustained capture rate above the writer's
+	// throughput spawns unbounded goroutines each holding a full request+response
+	// body — the dominant memory peak under load. When the budget is exhausted we
+	// degrade to metadata-only recording instead of growing without bound.
+	overflow chan struct{}
 	// incrementalVacuum reports whether the index can return freed pages to the
 	// filesystem on its own. False on a database created before this was the
 	// default: PRAGMA incremental_vacuum is a silent no-op there, so deletions
@@ -210,6 +220,7 @@ func Open(dir, addr string) (*Traffic, error) {
 		closed:   make(chan struct{}),
 		recCh:    make(chan *mproxy.Flow, 256),
 		flushReq: make(chan struct{}, 1),
+		overflow: make(chan struct{}, trafficOverflowConcurrency),
 	}
 	if err := t.initIndex(); err != nil {
 		db.Close()
@@ -526,12 +537,30 @@ func (s *sink) Response(f *mproxy.Flow) {
 	s.t.recWG.Add(1)
 	select {
 	case s.t.recCh <- snap:
+		// 入队成功：由 batchFlusher 在 flush 时统一 Add(-len(batch)) 抵消计数。
+		return
 	default:
-		go func() {
-			defer s.t.recWG.Done()
-			s.t.record(snap)
-		}()
 	}
+
+	// 队列已满。原实现在这里无界 spawn goroutine，每个都持有 cloneFlowForRecord
+	// 的完整深拷贝（请求+响应体）。高并发抓包时队列持续打满，goroutine 数量与
+	// body 副本随并发线性增长——这是内存峰值的主要来源，且 GC 压力会反过来拖慢
+	// 代理吞吐。
+	//
+	// 改为：用有界信号量限制"溢出路径上同时持有的深拷贝数量"。抢到名额就同步
+	// 落盘（record 内部 wmu 串行化，与 batchFlusher 安全并发）；抢不到说明写盘
+	// 已经跟不上抓包速度，此时**降级为只记元数据**——丢掉 body 保留下游可见的
+	// 请求行/状态码/长度。宁可少存一份正文，也不让 OOM 把整个服务带走。
+	if !s.t.tryAcquireOverflow() {
+		s.t.recordMetaOnly(f)
+		s.t.recWG.Done()
+		return
+	}
+	defer func() {
+		s.t.releaseOverflow()
+		s.t.recWG.Done()
+	}()
+	s.t.record(snap)
 }
 
 // RequestError fires when a request through an established MITM tunnel fails. If
@@ -608,6 +637,62 @@ func (t *Traffic) RecordDirect(method, rawURL, proto string, reqHeader http.Head
 // above maxInlineBody spill to the content-addressed blob store.
 func (t *Traffic) record(f *mproxy.Flow) {
 	_ = t.recordBatch([]*mproxy.Flow{f})
+}
+
+// tryAcquireOverflow takes one slot of the queue-full recording budget without
+// blocking. Returns false when the budget is exhausted, which is the signal to
+// degrade to metadata-only recording rather than hold another body copy.
+func (t *Traffic) tryAcquireOverflow() bool {
+	if t.overflow == nil {
+		return false
+	}
+	select {
+	case t.overflow <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *Traffic) releaseOverflow() {
+	if t.overflow == nil {
+		return
+	}
+	select {
+	case <-t.overflow:
+	default:
+	}
+}
+
+// recordMetaOnly writes an exchange row without request/response bodies. It is
+// the degradation path when the writer cannot keep up with the capture rate:
+// the operator still sees that the request happened (host, method, path, status,
+// lengths) instead of losing the record entirely, and memory stays bounded.
+func (t *Traffic) recordMetaOnly(f *mproxy.Flow) {
+	if t.db == nil || f == nil || f.Request == nil || f.Request.URL == nil {
+		return
+	}
+	now := time.Now().Unix()
+	n := t.seq.Add(1)
+	id := fmt.Sprintf("%d-%04d", now, n%10000)
+	reqLen, respLen, status := len(f.Request.Body), 0, 0
+	if f.Response != nil {
+		respLen, status = len(f.Response.Body), f.Response.StatusCode
+	}
+	t.wmu.Lock()
+	defer t.wmu.Unlock()
+	tx, err := t.db.Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once committed
+	if _, err := tx.Exec("INSERT OR REPLACE INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path) VALUES(?,?,?,?,?,?,?,'',?,?,'')",
+		id, now, f.Request.URL.Hostname(), f.Request.Method,
+		db.TemplatePath(f.Request.URL.EscapedPath()), f.Request.URL.String(),
+		status, reqLen, respLen); err != nil {
+		return
+	}
+	_ = tx.Commit()
 }
 
 type preparedExchange struct {

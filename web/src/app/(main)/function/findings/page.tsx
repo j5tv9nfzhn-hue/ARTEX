@@ -42,6 +42,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
 import { SEVERITIES, severityFilterChipClass, severityTextClass } from "@/lib/severity";
@@ -538,29 +539,36 @@ export default function FindingsPage() {
     void loadAssetTree();
   }, [activeRetestFingerprint, loadAssetTree, preferencesHydrated, view]);
 
-  // 只轮询当前视图:平铺视图刷当前页,分组视图刷组头与每个已展开的组(其分页彼此独立)。
-  // 资产视图只查一次(见下面的 return),它的左树是导航结构,没必要每 5 秒重算。
-  // 等偏好水合后再发首个请求,否则会先按默认视图/筛选白拉一次。
+  // 刷新当前视图：平铺视图刷当前页；分组视图刷组头与每个已展开的组（其分页
+  // 彼此独立）。资产视图只走一次性刷新——它的左树是导航结构，没必要每 5 秒重算。
+  const refreshCurrentView = React.useCallback(() => {
+    if (view === "flat" || view === "asset") {
+      if (!flatStateRef.current.loading) void loadFlat();
+      return;
+    }
+    void refreshGroups();
+    for (const key of expandedGroupsRef.current) {
+      if (!visibleGroupKeysRef.current.has(key)) continue;
+      const state = groupFindingsRef.current[key];
+      if (state?.loaded && !state.loading) void loadGroup(key, state.page, state.pageSize);
+    }
+  }, [view, loadFlat, loadGroup, refreshGroups]);
+
+  // 条件变化（视图/筛选/复测结束）立即刷新一次。等偏好水合后再发首个请求，
+  // 否则会先按默认视图/筛选白拉一次。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeRetestFingerprint 变化需要立刻重取，不等下一轮轮询。
   React.useEffect(() => {
     if (!preferencesHydrated) return;
-    void activeRetestFingerprint; // 包括不定时轮询的资产视图，也在复测结束后刷新处置状态。
-    const refresh = () => {
-      if (view === "flat" || view === "asset") {
-        if (!flatStateRef.current.loading) void loadFlat();
-        return;
-      }
-      void refreshGroups();
-      for (const key of expandedGroupsRef.current) {
-        if (!visibleGroupKeysRef.current.has(key)) continue;
-        const state = groupFindingsRef.current[key];
-        if (state?.loaded && !state.loading) void loadGroup(key, state.page, state.pageSize);
-      }
-    };
-    refresh();
-    if (view === "asset") return;
-    const timer = setInterval(refresh, 5000);
-    return () => clearInterval(timer);
-  }, [activeRetestFingerprint, loadFlat, loadGroup, preferencesHydrated, refreshGroups, view]);
+    void activeRetestFingerprint;
+    refreshCurrentView();
+  }, [activeRetestFingerprint, preferencesHydrated, refreshCurrentView]);
+
+  // 周期刷新：非资产视图 5s 一次（由 usePolling 负责首刷去重与可见性暂停）。
+  usePolling(refreshCurrentView, {
+    intervalMs: 5000,
+    enabled: preferencesHydrated && view !== "asset",
+    refreshOnVisible: true,
+  });
 
   React.useEffect(() => {
     const lastPage = Math.max(1, Math.ceil(groupTotal / pageSize));
@@ -574,29 +582,16 @@ export default function FindingsPage() {
   }, [flat.loaded, flat.total, flatPage, flatPageSize]);
 
   // Whole-table aggregates (stat cards + vuln-class options) — independent of the
-  // current page, so they stay exact.
-  React.useEffect(() => {
-    let alive = true;
-    const load = () => {
-      api
-        .findingStats()
-        .then((s) => {
-          if (alive) {
-            setStats(s);
-            setStatsLoaded(true);
-          }
-        })
-        .catch(() => {
-          // Keep the previous aggregate snapshot until the next poll.
-        });
-    };
-    load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+  // current page, so they stay exact. 保留 5s 刷新；失败时保留上一份快照，
+  // 退避由 usePolling 负责。
+  usePolling(
+    async () => {
+      const s = await api.findingStats();
+      setStats(s);
+      setStatsLoaded(true);
+    },
+    { intervalMs: 5000 },
+  );
 
   React.useEffect(() => {
     if (!statsLoaded) return;

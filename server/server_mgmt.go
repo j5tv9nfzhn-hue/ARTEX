@@ -26,6 +26,7 @@ import (
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/fsutil"
+	"github.com/Autumn-27/artex/notify"
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/skill"
 )
@@ -266,20 +267,44 @@ func writeCommittedTaskDelete(w http.ResponseWriter, result DeleteTaskResult, er
 }
 
 func (s *Server) waitTaskQuiescent(ctx context.Context, taskID string) error {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
+	// 条件变量等待，而不是 10ms 轮询。
+	//
+	// 原实现每秒唤醒 100 次，每次只为读两个字段；多个任务同时删除时，这些
+	// 空转是纯 CPU 浪费（且与业务负载无关，删得越慢烧得越久）。
+	// 两处条件变更都会 Broadcast：in-flight 归零在 decInflight，
+	// chatBusy 清除在 finishTaskChat / runConversationTurn 的收尾路径。
+	e := s.engine
+	if e == nil || e.drainCond == nil {
+		// 极少数测试构造的 Engine 未初始化 drainCond：退回一次性检查。
 		s.chatMu.Lock()
-		chatBusy := s.chatBusy[taskID]
+		busy := s.chatBusy[taskID]
 		s.chatMu.Unlock()
-		if s.engine.inflightCount(taskID) == 0 && !chatBusy {
+		return nil
+	}
+
+	// ctx 取消时唤醒所有等待者，让 Wait 返回后能看到 ctx.Err()。
+	stop := context.AfterFunc(ctx, func() {
+		e.drainMu.Lock()
+		e.drainCond.Broadcast()
+		e.drainMu.Unlock()
+	})
+	defer stop()
+
+	e.drainMu.Lock()
+	defer e.drainMu.Unlock()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		s.chatMu.Lock()
+		busy := s.chatBusy[taskID]
+		s.chatMu.Unlock()
+		if e.inflightCount(taskID) == 0 && !busy {
 			return nil
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
+		// 两类事件都会 Broadcast：in-flight 归零（decInflight）与 chatBusy
+		// 清除（chat 收尾路径，见 server.go 的 delete(s.chatBusy, taskID) 旁）。
+		e.drainCond.Wait()
 	}
 }
 
@@ -2155,7 +2180,14 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := body.LLMProfile
-	p.APIKey = body.APIKey
+	p.APIKey = strings.TrimSpace(body.APIKey)
+	// 掩码值是"保持原值"的哨兵（同 notify.MergeConfig 与凭据路径的语义）。
+	// 前端理论上不会提交它，但浏览器自动填充或第三方客户端可能把
+	// "__masked__:…xxxx" 原样回传——把它当新 Key 加密存库会让鉴权永久失败，
+	// 且错误离原因极远。这里统一归一为空串（= 保持原值）。
+	if notify.IsMasked(p.APIKey) {
+		p.APIKey = ""
+	}
 	p.Streaming = body.Streaming == nil || *body.Streaming
 	// 输出上限:负数无意义,归零(= 不发送该字段)。字段名开关只有 Chat Completions
 	// 用得上——anthropic 与 openai-responses 各自定死了字段名,存下来只会误导后续读者,

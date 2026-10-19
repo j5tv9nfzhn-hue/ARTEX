@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import * as React from "react";
 
@@ -121,6 +121,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { usePolling } from "@/hooks/use-polling";
 import { ApiError, api } from "@/lib/api";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
 import { severityTextClass } from "@/lib/severity";
@@ -476,19 +477,19 @@ export default function TasksPage() {
   // re-render the whole page for nothing. Bail out when it matches.
   const lastRef = React.useRef<string>("");
 
-  const load = React.useCallback(() => {
-    api
-      .tasks()
-      .then((r) => {
-        const next = r.tasks.map((t) => (t.id === r.active ? { ...t, active: true } : t));
-        const sig = JSON.stringify(next);
-        if (sig === lastRef.current) return;
-        lastRef.current = sig;
-        setTasks(next);
-      })
-      .catch(() => {
-        // Polling is best-effort; the next interval retries automatically.
-      });
+  // 返回 Promise：usePolling 靠它判定「本轮是否结束」与「是否失败」。
+  // 内部仍吞掉异常——轮询失败不该在页面上弹错，退避由 hook 负责。
+  const load = React.useCallback(async () => {
+    try {
+      const r = await api.tasks();
+      const next = r.tasks.map((t) => (t.id === r.active ? { ...t, active: true } : t));
+      const sig = JSON.stringify(next);
+      if (sig === lastRef.current) return;
+      lastRef.current = sig;
+      setTasks(next);
+    } catch {
+      // 下一轮由 usePolling 按退避重试。
+    }
   }, []);
 
   const loadCategories = React.useCallback(() => {
@@ -503,17 +504,17 @@ export default function TasksPage() {
       });
   }, []);
 
+  // 分类是低频数据（只在用户增删分类时变化），单独拉一次，不进轮询。
   React.useEffect(() => {
-    load();
     loadCategories();
-    const i = setInterval(load, POLL_MS);
-    return () => clearInterval(i);
-  }, [load, loadCategories]);
+  }, [loadCategories]);
+
+  usePolling(() => load(), { intervalMs: POLL_MS });
 
   const refreshCategoriesAndTasks = React.useCallback(() => {
     lastRef.current = "";
     loadCategories();
-    load();
+    void load();
   }, [load, loadCategories]);
 
   const applyTaskCategoryMove = React.useCallback(
@@ -557,7 +558,7 @@ export default function TasksPage() {
         } else {
           toast.success(deleteSummary(t, result));
         }
-        load();
+        void load();
       } catch (e) {
         toast.error(t("toast.deleteFailed", { msg: (e as Error).message }));
         throw e;
@@ -583,7 +584,7 @@ export default function TasksPage() {
       } finally {
         // 无论成败都刷新:失败多半是状态已变化,重新拉取才能让按钮回到正确形态。
         lastRef.current = "";
-        load();
+        void load();
       }
     },
     [load, t],
@@ -595,7 +596,7 @@ export default function TasksPage() {
         await api.renameTask(task.id, name);
         toast.success(t("toast.renamed", { id: task.id }));
         lastRef.current = "";
-        load();
+        void load();
       } catch (error) {
         toast.error(t("toast.renameFailed", { msg: (error as Error).message }));
         throw error;
@@ -611,7 +612,7 @@ export default function TasksPage() {
         await api.pinTask(task.id, !pinned);
         toast.success(pinned ? t("toast.unpinned", { id: task.id }) : t("toast.pinned", { id: task.id }));
         lastRef.current = "";
-        load();
+        void load();
       } catch (error) {
         toast.error(t("toast.pinFailed", { pinned: pinned ? "yes" : "no", msg: (error as Error).message }));
         throw error;
@@ -627,7 +628,7 @@ export default function TasksPage() {
         toast.success(t("toast.archiveQueued", { id: task.id }));
         setActiveTab("archived");
         lastRef.current = "";
-        load();
+        void load();
       } catch (error) {
         toast.error(t("toast.archiveFailed", { msg: (error as Error).message }));
         throw error;
@@ -695,7 +696,7 @@ export default function TasksPage() {
           t("batch.deleteFailed", { count: failed.length, items, truncated: failed.length > 3 ? "yes" : "no" }),
         );
       }
-      load();
+      void load();
     },
     [load, t],
   );
@@ -730,7 +731,7 @@ export default function TasksPage() {
     setSelectedIds(new Set());
     setActiveTab("archived");
     lastRef.current = "";
-    load();
+    void load();
   }, [archivableTaskIDs, load, t]);
 
   const controlSelectedTasks = React.useCallback(
@@ -765,7 +766,7 @@ export default function TasksPage() {
           );
         }
         lastRef.current = "";
-        load();
+        void load();
       } catch (error) {
         toast.error(t("batch.controlBatchFailed", { action, msg: (error as Error).message }));
       } finally {

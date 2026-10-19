@@ -30,6 +30,7 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import type { LLMCredential, LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -89,11 +90,9 @@ function PoolSheet({
   const [busy, setBusy] = React.useState(false);
 
   // 冷却倒计时是后端算出的剩余秒数——抽屉开着且有配置不正常时才定时拉，让它走起来。
-  React.useEffect(() => {
-    if (!open || !pool?.enabled || !pool.chain.some((m) => m.state !== "ok")) return;
-    const t = setInterval(() => void onReload(), 10_000);
-    return () => clearInterval(t);
-  }, [open, pool, onReload]);
+  // 条件不满足时 usePolling 直接停表，语义与原 effect 的提前 return 一致。
+  const poolNeedsTick = open && !!pool?.enabled && !!pool.chain.some((m) => m.state !== "ok");
+  usePolling(() => onReload(), { intervalMs: 10_000, enabled: poolNeedsTick });
 
   async function toggle(patch: { llm_pool_enabled?: boolean; llm_pool_bind_fallback?: boolean }) {
     if (busy) return;
@@ -426,7 +425,9 @@ function ProfileSheet({
         model: model.trim(),
         base_url: baseUrl.trim(),
         proxy: proxy.trim(),
-        api_key: apiKey,
+        // trim 后再提交：粘贴 Key 时常带首尾空白/换行，原样入库会让鉴权静默失败，
+        // 且下次打开时 hint 显示的是空白字符，看起来像"Key 错位"。
+        api_key: apiKey.trim(),
         rate_per_second: Number(rps) || 0,
         rate_per_minute: Number(rpm) || 0,
         context_window_k: Number(cw) || 0,
@@ -652,6 +653,13 @@ function ProfileSheet({
               <Label htmlFor="p-api-key">API Key</Label>
               <Input
                 id="p-api-key"
+                // 阻止浏览器密码管理器把已保存的登录密码自动填进来：type="password"
+                // 的输入框默认会被自动填充，而填充值会被 save() 当成新 Key 提交，
+                // 造成「下次打开出现重复内容」「Key 写到错误的配置」。autoComplete="off"
+                // 在 Chrome 上不被尊重，new-password 才是有效值；name 再带上 profile id
+                // 让不同配置的输入框不被浏览器当作同一个字段。
+                name={`llm-profile-key-${profile?.id ?? "new"}`}
+                autoComplete="new-password"
                 type="password"
                 placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
                 value={apiKey}
@@ -895,6 +903,9 @@ function CredentialSheet({
             <Label htmlFor="c-key">API Key</Label>
             <Input
               id="c-key"
+              // 同 profile 表单：阻止密码管理器自动填充，见上处注释。
+              name={`llm-credential-key-${cred?.id ?? "new"}`}
+              autoComplete="new-password"
               type="password"
               placeholder={
                 cred?.api_key_hint ? t("profile.apiKey.placeholderSet", { hint: cred.api_key_hint }) : "sk-…"
