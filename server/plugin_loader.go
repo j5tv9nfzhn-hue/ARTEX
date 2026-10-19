@@ -275,7 +275,10 @@ func (rt *pluginRuntime) start(ctx context.Context) error {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
+	// 不用 exec.CommandContext 绑定 cctx：cctx 只约束下面的握手，
+	// 一旦 start 返回 cancel 就会连同子进程一起杀掉（后续 CallTool 直接 EOF）。
+	// 进程生命周期由 stop()/Disable 显式管理。
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = rt.root
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
