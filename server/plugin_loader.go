@@ -87,6 +87,7 @@ type pluginRuntime struct {
 
 // pluginResp 是子进程单行响应（result/error 二选一）。
 type pluginResp struct {
+	ID     int64           `json:"id"`
 	Result json.RawMessage `json:"result"`
 	Error  *struct {
 		Code    int    `json:"code"`
@@ -359,19 +360,15 @@ func (rt *pluginRuntime) call(ctx context.Context, method string, params any) (j
 	}
 	done := make(chan readResult, 1)
 	go func() {
-		var resp pluginResp
 		// 顺序读：应答与请求 id 匹配才回传；不匹配（插件乱序）直接丢弃。
+		// 每轮重新声明 resp，避免上一行的 Error 指针/Result 残留到下一行。
 		for {
+			var resp pluginResp
 			if err := dec.Decode(&resp); err != nil {
 				done <- readResult{err: err}
 				return
 			}
-			var probe struct {
-				ID int64 `json:"id"`
-			}
-			b, _ := json.Marshal(resp)
-			_ = json.Unmarshal(b, &probe)
-			if probe.ID == id {
+			if resp.ID == id {
 				done <- readResult{resp: resp}
 				return
 			}
