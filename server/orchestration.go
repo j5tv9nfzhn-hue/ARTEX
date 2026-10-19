@@ -714,7 +714,7 @@ func (s *Server) reseedMainAgentPrompt() {
 // 找回。settings flag 守卫 → 只做一次。全新库无需处理(SeedPromptIfEmpty 已 seed 最新默认)。与
 // reseedGoalsPrompt 完全同构。
 func (s *Server) reseedPlannerPrompt() {
-	const flag = "planner_prompt_compact_realistic_v4"
+	const flag = "planner_prompt_compact_realistic_v5"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -741,7 +741,7 @@ func (s *Server) reseedPlannerPrompt() {
 // reseedWorkerPrompt 把 worker 提示词刷成【当前代码默认】——包含原生 Go 渗透工具集、3-Strike 止损纪律、
 // 以及第一轮主动触发 Skill / tactical_kb / MCP 扩展工具规约。bump flag 至 v6 让存量旧库再刷一次。
 func (s *Server) reseedWorkerPrompt() {
-	const flag = "worker_prompt_compact_v6"
+	const flag = "worker_prompt_compact_v7"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -768,7 +768,7 @@ func (s *Server) reseedWorkerPrompt() {
 // reseedPentestAndAutoPrompts 把 pentest 与 auto 提示词刷成【当前代码默认】（含第一轮主动触发
 // Skill / tactical_kb / MCP 扩展工具规约），让存量旧库自动升级。
 func (s *Server) reseedPentestAndAutoPrompts() {
-	const flag = "pentest_auto_prompt_skill_mcp_v2"
+	const flag = "pentest_auto_prompt_skill_mcp_v3"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}

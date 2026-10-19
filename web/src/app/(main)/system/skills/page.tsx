@@ -58,6 +58,10 @@ const BUILTIN_SKILL_NAMES = new Set([
   "human-verification",
   "ai-coding-sandbox-tactics",
   "wasm-cloud-saas-tactics",
+  "rea-mcp",
+  "wpe64-mcp",
+  "mitmproxy-traffic",
+  "ai-gateway-logic",
 ]);
 
 const REPORT_TACTIC_SKILL_NAMES = new Set(["ai-coding-sandbox-tactics", "wasm-cloud-saas-tactics"]);

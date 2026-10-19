@@ -11,7 +11,7 @@ import (
 // (CI artifacts, build.sh ARTEX_PACKAGE=0, or self-updated binaries) always
 // materialize the default skills into the runtime skills/ directory when missing.
 //
-//go:embed api-recon playwright-cli scopesentry-mcp web-vuln-tactics reverse-engineering exploit-kb-patterns expert-triage-pivot human-verification ai-coding-sandbox-tactics wasm-cloud-saas-tactics rea-mcp wpe64-mcp mitmproxy-traffic
+//go:embed api-recon playwright-cli scopesentry-mcp web-vuln-tactics reverse-engineering exploit-kb-patterns expert-triage-pivot human-verification ai-coding-sandbox-tactics wasm-cloud-saas-tactics rea-mcp wpe64-mcp mitmproxy-traffic ai-gateway-logic
 var Bundled embed.FS
 
 // EnsureBundled idempotently writes embedded built-in skill files into dstDir.

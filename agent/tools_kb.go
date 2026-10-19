@@ -25,6 +25,210 @@ type vulnPatternCard struct {
 	NativeTools []string `json:"recommended_native_tools"`
 }
 
+// logicInvariant 是一条可验证的业务不变量。它不是攻击步骤，而是"该系统
+// 在正常运行时必须成立的断言"——Agent 把它转成待验证假设写入探索图，
+// 违反时给出可观测证据，而不是凭直觉尝试越权。
+type logicInvariant struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Assertion   string   `json:"assertion"`
+	ViolationBy []string `json:"observable_violation_signals,omitempty"`
+	VerifyWith  []string `json:"minimal_verification_sequence,omitempty"`
+	NativeTools []string `json:"recommended_native_tools,omitempty"`
+	SafetyNote  string   `json:"safety_note,omitempty"`
+}
+
+// logicProfile 是一类业务系统的"必须成立"集合。
+type logicProfile struct {
+	Target  string           `json:"target"`
+	Aliases []string         `json:"aliases"`
+	Finger  []string         `json:"fingerprints"`
+	Rules   []logicInvariant `json:"invariants"`
+}
+
+// builtinLogicProfiles 按目标业务类型组织不变量。当前只有 AI 网关一类；
+// 新增类型时追加 profile 即可，检索逻辑不变。
+var builtinLogicProfiles = []logicProfile{
+	{
+		Target:  "ai_gateway",
+		Aliases: []string{"ai_gateway", "ai-gateway", "llm_gateway", "中转站", "聚合网关", "newapi", "oneapi", "litellm", "sub2api", "one-hub"},
+		Finger: []string{
+			"/api/status 返回 version/start_time/system_name",
+			"/api/setup 存在且含 root_init 字段（该字段具误导性，不代表已初始化）",
+			"/v1/models 与 /pricing 或 /api/pricing 同时存在",
+			"前端 React SPA + /static/js/index.<hash>.js",
+			"/ui/ 或 /sso/key/generate 或 /key/list（LiteLLM）",
+			"响应含 quota / remain_quota / used_quota / token_name",
+		},
+		Rules: []logicInvariant{
+			{
+				ID:        "INV-01",
+				Title:     "结算与鉴权解耦",
+				Assertion: "请求准入时快照用户/配额上下文；结算阶段不得依赖『API Key 仍然存在』。",
+				ViolationBy: []string{
+					"日志出现 API_KEY_NOT_FOUND / record_usage_failed / quota_not_found，且该请求已正常返回内容",
+					"流式请求进行中删除 Key 后，请求完整返回但账单无记录",
+				},
+				VerifyWith: []string{
+					"http_sequence(overlap=true)：发起流式长响应请求",
+					"delay_ms 取实测响应耗时的 50%~80%，在该窗口内发送删除该 Key 的请求",
+					"等待首请求完成，比对响应完整性 + 账单新增",
+				},
+				NativeTools: []string{"http_sequence(overlap=true)", "http_request"},
+				SafetyNote:  "仅在自有账号执行；删除 Key 会中断后续请求，先确认可重建。",
+			},
+			{
+				ID:        "INV-02",
+				Title:     "定价缺失必须 fail-closed",
+				Assertion: "计费路径遇到『该模型无定价配置』时必须拒绝请求或挂账告警，不得零成本放行。",
+				ViolationBy: []string{
+					"日志出现 pricing_missing_record_zero_cost / price_not_found 且请求成功、账单为 0",
+				},
+				VerifyWith: []string{
+					"请求 /v1/models 列出但 /pricing 未覆盖的模型",
+					"比对请求前后账单条目",
+				},
+				NativeTools: []string{"http_request"},
+				SafetyNote:  "需区分『运营未配置』与『配置了但被绕过』；前者是配置问题，不得写成漏洞。",
+			},
+			{
+				ID:        "INV-03",
+				Title:     "计费数值必须溢出安全",
+				Assertion: "所有参与计费的用户可控数值（n / max_tokens / audio duration / 图片数量）必须有上界，且参与乘法前做溢出检查。",
+				ViolationBy: []string{
+					"超大 max_tokens 或 n 导致余额增加（负扣费翻转）",
+					"账单出现负数金额",
+					"余额超过累计充值总额",
+				},
+				VerifyWith: []string{
+					"在自有账号上用极小余额，提交边界值（n=2^31-1、max_tokens 极大值）",
+					"观察余额与账单变化",
+				},
+				NativeTools: []string{"http_fuzz", "http_request"},
+				SafetyNote:  "禁止在真实付费账户执行；返回 400/422 即视为已防护。",
+			},
+			{
+				ID:        "INV-04",
+				Title:     "余额唯一事实源是数据库",
+				Assertion: "余额以 DB 为唯一真值；缓存只能读穿透或写失效，不得整体回写快照。",
+				ViolationBy: []string{
+					"并发扣费后余额回弹",
+					"调用 PUT /api/user/self 类接口（只改昵称等无关字段）后余额恢复旧值",
+				},
+				VerifyWith: []string{
+					"记录当前余额",
+					"http_sequence 并发发起 N 个消耗请求",
+					"全部完成后调用一次『更新用户资料』接口",
+					"再次读取余额，比对『初始 - 实际消耗』",
+				},
+				NativeTools: []string{"http_sequence", "http_request"},
+				SafetyNote:  "并发数控制在个位数，避免对目标造成压力。",
+			},
+			{
+				ID:        "INV-05",
+				Title:     "负余额/负费用是非法状态",
+				Assertion: "余额不得小于 0（或不得低于配置的透支下限）；任何账单金额不得为负。",
+				ViolationBy: []string{
+					"余额为负",
+					"账单条目金额为负",
+				},
+				VerifyWith: []string{
+					"所有涉及数值的用例执行后统一检查该后置条件",
+				},
+			},
+			{
+				ID:        "INV-06",
+				Title:     "Key 状态变更即时生效",
+				Assertion: "删除/禁用 Key 后鉴权缓存必须在有界时间（建议 ≤1s）内失效；在途请求语义需明确定义。",
+				ViolationBy: []string{
+					"删除 Key 后 5s 仍可用该 Key 成功请求",
+					"请求成功但未计费（与 INV-01 交叉）",
+				},
+				VerifyWith: []string{
+					"删除 Key → 立即用旧 Key 请求 → 记录结果",
+					"等待 5s 再请求一次",
+				},
+				NativeTools: []string{"http_request"},
+				SafetyNote:  "仅在自有账号执行。",
+			},
+			{
+				ID:        "INV-07",
+				Title:     "租户归属必须强制 scoped",
+				Assertion: "所有带 user_id / team_id / org_id / key_id 的查询必须强制限定为鉴权主体的可访问范围，不得信任客户端传入的 ID。",
+				ViolationBy: []string{
+					"低权 Key 可读取他人消费记录",
+					"低权 Key 可列出他人 Key",
+					"return_full_object=true 返回完整 Key 对象",
+				},
+				VerifyWith: []string{
+					"用 A 租户低权 Key 请求带 B 租户 ID 的查询接口",
+				},
+				NativeTools: []string{"http_request", "http_sequence(mode=\"bola\")"},
+				SafetyNote:  "只在自有双租户测试环境执行；返回 403/404/空即视为已防护。",
+			},
+			{
+				ID:        "INV-08",
+				Title:     "支付回调必须完整验签",
+				Assertion: "回调验签必须满足：签名密钥非空、算法正确、订单状态前置校验（pending→paid）、金额与订单一致、幂等。",
+				ViolationBy: []string{
+					"签名密钥为空时验签通过",
+					"重复回调导致重复充值",
+					"回调金额可篡改",
+				},
+				VerifyWith: []string{
+					"检查配置中签名密钥是否为空",
+					"用错误签名提交回调 → 应拒绝",
+					"用正确签名重复提交同一事件 → 应幂等",
+				},
+				NativeTools: []string{"http_request"},
+				SafetyNote:  "禁止在真实支付渠道测试；只做静态配置审计 + 自有测试商户号。",
+			},
+			{
+				ID:        "INV-09",
+				Title:     "本地信任不得来自客户端 Header",
+				Assertion: "判断请求是否来自本地必须基于 socket peer 地址，不得信任 Host / X-Forwarded-For / X-Real-IP。",
+				ViolationBy: []string{
+					"带 Host: localhost 的未鉴权请求被放行",
+				},
+				VerifyWith: []string{
+					"向目标发送带 Host: localhost 的未鉴权请求",
+				},
+				NativeTools: []string{"http_request"},
+				SafetyNote:  "只读探测；若被放行立即停止，不进一步索取数据。",
+			},
+			{
+				ID:        "INV-10",
+				Title:     "管理面必须做角色层级校验",
+				Assertion: "管理 API 必须比较操作者与被操作者的角色层级；敏感字段（access_token / secret / password_hash）永不回显。",
+				ViolationBy: []string{
+					"普通管理员可操作同级或上级账号",
+					"响应含明文 access_token / secret",
+				},
+				VerifyWith: []string{
+					"用普通管理员访问用户列表/重置密码/提权接口",
+					"检查响应是否含敏感字段",
+				},
+				NativeTools: []string{"http_request"},
+				SafetyNote:  "只读验证；不实际执行提权写操作。",
+			},
+			{
+				ID:        "INV-11",
+				Title:     "促销与注册滥用防护",
+				Assertion: "免费额度、邀请返利、优惠券兑换需有设备/IP/支付前置、单账号上限、关联图检测。",
+				ViolationBy: []string{
+					"同一设备/IP 可重复领取",
+					"奖励无上限",
+				},
+				VerifyWith: []string{
+					"仅在自有环境构造 2~3 个测试账号验证上限是否生效",
+				},
+				NativeTools: []string{"http_request"},
+				SafetyNote:  "禁止批量注册真实服务；2~3 个测试账号即可判定。",
+			},
+		},
+	},
+}
+
 var builtinVulnPatternCards = []vulnPatternCard{
 	{
 		Category: "bola_idor",
@@ -171,10 +375,11 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 			"- past_assets：跨历史任务检索已探明的目标资产、端口、技术栈指纹与历史 API 端点；\n"+
 			"- case_skills：专项检索 AI 自主沉淀的历史任务复盘技能（case-web-* / case-re-* / merged-*），结构化返回已验证路径、漏洞/复测/逆向证据与 3-Strike 止损经验；\n"+
 			"- skill_search：按关键词全文检索本地与内置专家技能包（SKILL.md）的章节切片，无需整篇加载即可获取关键步骤；\n"+
-			"- vuln_patterns：按漏洞分类（bola_idor / auth_mfa / jwt_oauth / graphql_api / ssrf_cloud / race_toctou / js_reverse / sqli_injection_triage）获取本地静态经验卡片（不构成在线全球知识库或结论证明）、止损建议与推荐原生工具。",
+			"- vuln_patterns：按漏洞分类（bola_idor / auth_mfa / jwt_oauth / graphql_api / ssrf_cloud / race_toctou / js_reverse / sqli_injection_triage）获取本地静态经验卡片（不构成在线全球知识库或结论证明）、止损建议与推荐原生工具；\n"+
+			"- logic_invariants：按业务系统类型（当前支持 ai_gateway：NewAPI/OneAPI/LiteLLM/sub2api 等 LLM 聚合中转站）返回『该系统必须成立的业务不变量』清单，每条含断言、违反时的可观测信号、最小验证序列与安全约束。用于登录后计费/余额/租户/支付等无表面漏洞的业务逻辑审计。",
 		obj(map[string]any{
-			"mode":     str("必填：检索模式，可选 past_findings | past_assets | case_skills | skill_search | vuln_patterns"),
-			"query":    str("可选：检索关键词（域名、端点路径、技术栈如 fastapi/supabase/graphql、漏洞词如 mfa/jwt/bola/ssrf、逆向样本或函数名）"),
+			"mode":     str("必填：检索模式，可选 past_findings | past_assets | case_skills | skill_search | vuln_patterns | logic_invariants"),
+			"query":    str("可选：检索关键词（域名、端点路径、技术栈如 fastapi/supabase/graphql、漏洞词如 mfa/jwt/bola/ssrf、逆向样本或函数名；logic_invariants 模式下为目标类型如 ai_gateway 或别名 newapi/litellm）"),
 			"category": str("可选：vuln_patterns 模式下指定分类（bola_idor | auth_mfa | jwt_oauth | graphql_api | ssrf_cloud | race_toctou | js_reverse | sqli_injection_triage），留空返回全部分类概览"),
 			"limit":    intp("可选：最大返回条数（默认 8，上限 25）"),
 		}, "mode"),
@@ -342,8 +547,11 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 					"patterns":    matched,
 				})
 
+			case "logic_invariants":
+				return searchLogicInvariants(q, limit)
+
 			default:
-				return actool.Errorf(fmt.Sprintf("未知 mode %q，可选值: past_findings | past_assets | case_skills | skill_search | vuln_patterns", a.Mode)), nil
+				return actool.Errorf(fmt.Sprintf("未知 mode %q，可选值: past_findings | past_assets | case_skills | skill_search | vuln_patterns | logic_invariants", a.Mode)), nil
 			}
 		},
 	)
@@ -371,6 +579,108 @@ func readSkillReferencesText(skillDir string) string {
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// searchLogicInvariants 按业务系统类型返回"必须成立"的业务不变量清单。
+// 与 vuln_patterns 的区别：vuln_patterns 是"怎么打"，这里是"什么必须为真"——
+// Agent 应把每条不变量转成待验证假设，用 VerifyWith 的最小序列取证，
+// 而不是凭直觉批量试越权。
+//
+// query 为空时返回全部 profile 的概览（只列 target 与不变量标题），
+// 避免一次把几十条断言灌进上下文。
+func searchLogicInvariants(query string, limit int) (actool.Result, error) {
+	ql := strings.ToLower(strings.TrimSpace(query))
+
+	if ql == "" {
+		overview := make([]map[string]any, 0, len(builtinLogicProfiles))
+		for _, p := range builtinLogicProfiles {
+			titles := make([]string, 0, len(p.Rules))
+			for _, r := range p.Rules {
+				titles = append(titles, r.ID+" "+r.Title)
+			}
+			overview = append(overview, map[string]any{
+				"target":          p.Target,
+				"aliases":         p.Aliases,
+				"invariant_count": len(p.Rules),
+				"invariants":      titles,
+			})
+		}
+		return jsonResult(map[string]any{
+			"mode":     "logic_invariants",
+			"query":    "",
+			"count":    len(overview),
+			"profiles": overview,
+			"note":     "指定 query 为目标类型（如 ai_gateway）以获取完整不变量（断言/可观测信号/最小验证序列）",
+			"claims":   "must_hold_assertions_not_attack_steps",
+		})
+	}
+
+	matchedProfiles := make([]logicProfile, 0, 1)
+	for _, p := range builtinLogicProfiles {
+		hit := strings.Contains(strings.ToLower(p.Target), ql)
+		if !hit {
+			for _, a := range p.Aliases {
+				if strings.Contains(strings.ToLower(a), ql) || strings.Contains(ql, strings.ToLower(a)) {
+					hit = true
+					break
+				}
+			}
+		}
+		if !hit {
+			// 指纹文本也参与匹配：Agent 常直接拿观测到的路径当 query。
+			for _, f := range p.Finger {
+				if strings.Contains(strings.ToLower(f), ql) {
+					hit = true
+					break
+				}
+			}
+		}
+		if hit {
+			matchedProfiles = append(matchedProfiles, p)
+		}
+	}
+
+	if len(matchedProfiles) == 0 {
+		known := make([]string, 0, len(builtinLogicProfiles))
+		for _, p := range builtinLogicProfiles {
+			known = append(known, p.Target)
+		}
+		return jsonResult(map[string]any{
+			"mode":  "logic_invariants",
+			"query": query,
+			"count": 0,
+			"known": known,
+			"note":  "未匹配到已知业务类型；可先不带 query 查看概览，或用指纹路径（如 /v1/models）再试",
+		})
+	}
+
+	type profileOut struct {
+		Target string           `json:"target"`
+		Finger []string         `json:"fingerprints"`
+		Rules  []logicInvariant `json:"invariants"`
+	}
+	out := make([]profileOut, 0, len(matchedProfiles))
+	total := 0
+	for _, p := range matchedProfiles {
+		rules := p.Rules
+		total += len(rules)
+		if len(rules) > limit {
+			rules = rules[:limit]
+		}
+		out = append(out, profileOut{Target: p.Target, Finger: p.Finger, Rules: rules})
+	}
+
+	return jsonResult(map[string]any{
+		"mode":        "logic_invariants",
+		"query":       query,
+		"count":       len(out),
+		"match_count": total,
+		"truncated":   total > limit,
+		"source":      "bundled_static_assertions",
+		"claims":      "must_hold_assertions_not_attack_steps",
+		"discipline":  "违反需给出最小复现与账单/状态前后快照；仅观测到一次异常不足以下结论；未配置与配置被绕过必须区分",
+		"profiles":    out,
+	})
 }
 
 func searchDistilledCaseSkills(query string, limit int) (actool.Result, error) {

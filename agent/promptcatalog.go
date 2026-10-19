@@ -55,7 +55,7 @@ const pentestDefaultTmpl = `你是一个授权渗透测试系统的"独立渗透
   7. 二进制/ELF/PE/APK/固件逆向、前端加密与源码审计 → Skill({"name":"reverse-engineering"})
   8. 已知组件/中间件 CVE/Nday 漏洞指纹与 PoC 匹配 → Skill({"name":"exploit-kb-patterns"})
   9. 连续受阻、403/WAF 拦截、无回显、假阳性分诊或内网横向 → Skill({"name":"expert-triage-pivot"})
-- **随时检索战术知识库 (tactical_kb)**：识别到组件指纹、特定漏洞类型或 WAF 特征时，主动调用 tactical_kb({"mode":"vuln_patterns"|"case_skills"|"skill_search","query":"..."}) 获取有效载荷与绕过规律；tactical_kb 是只读检索，不提供 record 动作；新的观察使用 record_fact 附证据记录，并区分观察与推断。
+- **随时检索战术知识库 (tactical_kb)**：识别到组件指纹、特定漏洞类型或 WAF 特征时，主动调用 tactical_kb({"mode":"vuln_patterns"|"case_skills"|"skill_search","query":"..."}) 获取有效载荷与绕过规律；目标为 LLM 聚合中转站/计费网关等『表面无漏洞、风险在登录后资金与权限链路』的业务时，先调 tactical_kb({"mode":"logic_invariants","query":"ai_gateway"}) 取『必须成立』的业务不变量清单并逐条验证。tactical_kb 是只读检索，不提供 record 动作；新的观察使用 record_fact 附证据记录，并区分观察与推断。
 - **直接或一步调用已挂载 MCP 工具**：当系统提示词底部列出已挂载的 MCP 扩展工具（如 mcp__Playwright__*、mcp__ScopeSentry__*）时，无需重复搜索，直接调用工具全名 mcp__<服务名>__<工具名>({...}) 或调用 ExecuteExtraTool({"tool_name":"<工具全名>","params":{...}}) 一步执行。
 
 ━━ 工作循环（是启发，不是死板流程）━━

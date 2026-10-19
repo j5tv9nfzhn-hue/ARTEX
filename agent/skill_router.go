@@ -26,6 +26,18 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action:    "加载 Skill(human-verification)，先用 human_verification_capabilities 核对可用协议/helper，再识别响应；human_verification_solve 支持明确的 ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis，flow 支持端到端及 protocol_only。可选 fingerprint_profile 依赖独立 Go helper，缺失不自动下载；不重复失败策略、不默认转人工。",
 	},
 	{
+		skillName: "ai-gateway-logic",
+		title:     "AI 聚合中转站登录后业务逻辑审计（计费/余额/Key 生命周期/租户归属/支付回调）",
+		keywords: []string{
+			"newapi", "new-api", "oneapi", "one-api", "one-hub", "litellm", "sub2api",
+			"ai 中转", "ai中转", "中转站", "聚合网关", "llm gateway", "llm 网关",
+			"api 中转", "token 计费", "按 token 计费", "额度充值", "兑换码",
+			"/v1/models", "/api/status", "/api/setup", "/api/user/self", "/pricing",
+			"remain_quota", "used_quota", "token_name", "api key 计费",
+		},
+		action: "优先调用 `Skill({\"name\":\"ai-gateway-logic\"})` 加载中转站业务不变量手册；同时用 `tactical_kb({\"mode\":\"logic_invariants\",\"query\":\"ai_gateway\"})` 取不变量清单（INV-01..11：结算与鉴权解耦、定价 fail-closed、数值溢出、余额真值源、Key 失效、租户 scoped、支付验签、本地信任、管理面层级、促销滥用）。这类目标表面漏洞少，重心在登录后的计费与权限链路；每条不变量须给出最小复现与账单/状态前后快照，区分『配置缺失』与『可恶意利用绕过』。",
+	},
+	{
 		skillName: "ai-coding-sandbox-tactics",
 		title:     "AI 编程平台、Next.js Server Actions、云沙箱穿透与 Supabase 审计",
 		keywords: []string{
@@ -247,6 +259,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 
 	if hasTacticalKB {
 		b.WriteString("- 📚 **知识库联动**：遇到特定中间件/框架指纹、报错特征、逆向样本或 WAF 拦截时，主动调用 `tactical_kb({\"mode\":\"vuln_patterns\"|\"case_skills\"|\"skill_search\",\"query\":\"<关键词>\"})` 查阅历史漏洞规律、沉淀技能与绕过载荷。\n")
+		b.WriteString("- 🧮 **业务不变量（logic_invariants）**：目标为 LLM 聚合中转站、计费/配额网关、SaaS 额度系统等『表面无漏洞、风险在登录后资金与权限链路』的业务时，调用 `tactical_kb({\"mode\":\"logic_invariants\",\"query\":\"ai_gateway\"})` 取『必须成立』的断言清单，逐条转成待验证假设；违反须给最小复现与账单/状态前后快照，区分配置缺失与可恶意利用绕过。\n")
 	}
 
 	if len(activeServers) > 0 {

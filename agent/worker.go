@@ -272,7 +272,7 @@ const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 - **端口连通、协议 Banner 与 DNS/子域枚举 → net_probe / dns_probe**：TCP/TLS 端口扫描、证书 SANs 提取与原始 Socket 载荷交互调 net_probe；跨平台 DNS 全记录查询(A/AAAA/CNAME/TXT/MX/NS/PTR)与带泛解析过滤的子域枚举调 dns_probe。
 - **专家技能包 (Skill)、战术知识库 (tactical_kb) 与外部 MCP 主动触发（第一轮必查）**：
   1. **动手前先调 Skill**：本轮领到意图后，若涉及 Web 漏洞利用 (web-vuln-tactics)、REST/GraphQL/Swagger 接口枚举 (api-recon)、AI 编程沙箱/Next.js/Supabase 渗透 (ai-coding-sandbox-tactics)、WASM/WebSocket/云存储/SaaS 计费与额度绕过 (wasm-cloud-saas-tactics)、SPA 前端渲染/登录态/DOM XSS (playwright-cli)、ScopeSentry 外网测绘与资产同步 (scopesentry-mcp，调用后自动解锁 ScopeSentry MCP)、二进制/APK/固件/JS 逆向与源码审计 (reverse-engineering)、CVE/Nday 组件指纹与 PoC 匹配 (exploit-kb-patterns) 或连续受阻/403/WAF 分诊转向 (expert-triage-pivot)，**必须在第一轮优先调用 Skill({"name":"<技能名>"}) 加载标准化专家 SOP（多文件技能包会自动一并加载 references/* 防踩坑与攻击链手册）**！
-  2. **跨任务记忆召回 (tactical_kb)**：动手前或遇阻时，调 tactical_kb 检索跨任务已确认漏洞 (past_findings)、历史案例技能 (case_skills)、历史资产 (past_assets)、高危模式 (vuln_patterns) 或技能全文 (skill_search)。
+  2. **跨任务记忆召回 (tactical_kb)**：动手前或遇阻时，调 tactical_kb 检索跨任务已确认漏洞 (past_findings)、历史案例技能 (case_skills)、历史资产 (past_assets)、高危模式 (vuln_patterns)、技能全文 (skill_search)，或目标业务类型的『必须成立』不变量清单 (logic_invariants，当前支持 ai_gateway：NewAPI/OneAPI/LiteLLM/sub2api 等 LLM 聚合中转站的计费/余额/Key/租户/支付逻辑)。
   3. **直接或一步调用 MCP 扩展工具**：若系统提示词底部列出了已挂载的 MCP 工具（如 mcp__Playwright__*、mcp__ScopeSentry__*），无需繁琐搜索，直接调用工具全名 mcp__<服务名>__<工具名>({...}) 或调用 ExecuteExtraTool({"tool_name":"<工具全名>","params":{...}}) 一步执行！
 - **Bash 仅作兜底**：仅在确需调用外部二进制工具（如 sqlmap、nmap、nuclei 等）或目标系统交互命令时使用 Bash。
 
@@ -295,7 +295,7 @@ func workerTrafficBlock(recording bool) string {
 // dir, never /tmp. Guaranteed present regardless of how the DB body is edited.
 func artifactSpec(dir string) string {
 	return "\n\n**中间产物输出规约**：脚本、payload、抓到的响应体、临时数据等一切中间产物，**一律写到本任务工作目录 " + dir + "**（相对路径即写在这里，也可用该绝对路径）——**不要写 /tmp、不要用其它绝对路径**。\n" +
-		"**专家知识库与止损督导规约**：规划或执行前可调 `tactical_kb`（检索跨任务历史漏洞 `past_findings`、历史案例技能 `case_skills`、历史资产 `past_assets`、高危模式 `vuln_patterns`、技能包检索 `skill_search`）及 `Skill` 工具；发现 Worker 在强类型校验（HTTP 422）或静态错误（固定 500/403）上重复打转时，立即用 `steer_work` 或 `kill_work` 止损转向。"
+		"**专家知识库与止损督导规约**：规划或执行前可调 `tactical_kb`（检索跨任务历史漏洞 `past_findings`、历史案例技能 `case_skills`、历史资产 `past_assets`、高危模式 `vuln_patterns`、技能包检索 `skill_search`、业务不变量 `logic_invariants`）及 `Skill` 工具；发现 Worker 在强类型校验（HTTP 422）或静态错误（固定 500/403）上重复打转时，立即用 `steer_work` 或 `kill_work` 止损转向。"
 }
 
 // workerArtifactSpec is the worker's 段 [C]: its per-intent run dir is pre-created
