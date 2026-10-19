@@ -3351,7 +3351,27 @@
     "importReportSubmitting": "正在深度提炼技能包…",
     "importReportNeedInput": "请至少选择一份报告文件（.md / .txt / .json）或粘贴报告内容",
     "importReportSuccessApplied": "已提炼并安装技能包：{skill}（提取 {pitfalls} 项踩坑陷阱、{findings} 项成果，共写入 {files} 个文件）",
-    "importReportSuccessPending": "已生成技能包待审提议：{skill}（提取 {pitfalls} 项踩坑陷阱、{findings} 项成果）"
+    "importReportSuccessPending": "已生成技能包待审提议：{skill}（提取 {pitfalls} 项踩坑陷阱、{findings} 项成果）",
+    "bucketAll": "全部",
+    "bucketCustom": "自建",
+    "bucketCustomHint": "手动新建或上传的技能",
+    "bucketKnowledge": "知识库",
+    "bucketKnowledgeHint": "随版本发布的内置战法",
+    "bucketMemory": "记忆库",
+    "bucketMemoryHint": "任务结束后沉淀的复盘",
+    "emptyFiltered": "当前分区下没有匹配的技能",
+    "modifiedBadge": "与内置版本不一致",
+    "originBuiltinBadge": "内置战术",
+    "pendingProposalBadge": "{count} 条待审提议",
+    "restoreBtn": "同步为内置版本",
+    "restoreConfirm": "同步",
+    "restoreDesc": "将用当前内置版本覆盖该技能中随版本发布的文件；你额外添加的文件会保留。此操作不可撤销。",
+    "restoreDone": "已同步 {count} 个文件",
+    "restoreFailed": "恢复失败：{msg}",
+    "restoreTitle": "将「{name}」同步为内置版本？",
+    "restoring": "恢复中…",
+    "searchSkillsPlaceholder": "搜索名称或描述…",
+    "userSkillBadge": "自建技能"
   },
   "sortableHead": {
     "active": "{label}当前{direction, select, asc {正序} other {倒序}}，点击切换排序方向",
@@ -4590,6 +4610,10 @@
     "logout": "退出登录"
   },
   "workspace": {
+    "backup": "备份",
+    "backupDone": "已下载备份 “{name}”",
+    "backupFailed": "备份失败：{msg}",
+    "backupFirst": "删除前先下载 ZIP 备份",
     "binary": "二进制文件，不支持在线预览/编辑。",
     "cancel": "取消",
     "colActions": "操作",
@@ -4601,8 +4625,15 @@
     "createFailed": "创建失败：{msg}",
     "crumbRoot": "工作空间",
     "delete": "删除",
+    "deleteContents": "仅清空内容",
+    "deleteContentsIntro": "选「仅清空内容」只删除其中的文件与子目录，保留目录本身。",
+    "deleteDirIntro": "将永久删除目录 “{name}” 及其下 {files} 个文件，共 {size}。",
     "deleteFailed": "删除失败：{msg}",
+    "deleteFileIntro": "将永久删除文件 “{name}”（{size}）。",
+    "deleteTitle": "删除确认",
+    "deleteWhole": "删除整个目录",
     "deleted": "已删除",
+    "deleting": "删除中…",
     "dirty": "未保存的修改",
     "download": "下载",
     "downloadFailed": "下载失败：{msg}",
@@ -4610,6 +4641,7 @@
     "empty": "空目录",
     "folderCreated": "已创建目录",
     "folderNamePlaceholder": "文件夹名称",
+    "freedSpace": "已删除，释放 {size}",
     "loading": "加载中…",
     "newFolder": "新建文件夹",
     "openFileFailed": "打开文件失败：{msg}",
@@ -4619,6 +4651,8 @@
     "saveFailed": "保存失败：{msg}",
     "saved": "已保存",
     "saving": "保存中…",
+    "sizePartial": "部分内容未统计完（超时或无权限），实际占用可能更大",
+    "summary": "{files} 个文件 · {dirs} 个目录",
     "synced": "已同步",
     "tooLarge": "文件过大，不支持在线预览/编辑。",
     "upload": "上传",
@@ -4882,5 +4916,12 @@
       "execute_failed": "执行请求失败",
       "audit_read_failed": "读取审计失败"
     }
+  },
+  "notifyUi": {
+    "mute": "关闭提示音",
+    "unmute": "开启提示音",
+    "expand": "展开通知",
+    "collapse": "收起通知",
+    "more": "还有 {count} 条"
   }
 }

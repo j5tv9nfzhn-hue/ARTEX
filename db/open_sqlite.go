@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -186,6 +187,12 @@ func openSQLite(dsn string) (*DB, error) {
 	}
 	defer conn.Close()
 
+	// 新库的回收契约必须在建表之前落定：auto_vacuum 只有在文件还没有任何表时
+	// 才能直接写进头部，建过表再改就必须走一次 VACUUM（见 convertSQLiteAutoVacuum）。
+	if err := prepareSQLiteAutoVacuum(context.Background(), conn); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
 	if err := applySQLiteSchema(context.Background(), conn); err != nil {
 		sqlDB.Close()
 		return nil, err
@@ -195,6 +202,13 @@ func openSQLite(dsn string) (*DB, error) {
 	if err := applySQLiteColumnAdds(context.Background(), conn); err != nil {
 		sqlDB.Close()
 		return nil, err
+	}
+	// 老库的一次性转换：历史文件是 auto_vacuum=NONE，删除过的页永远留在文件里
+	// （实测有安装 91.5% 的页停在这里）。这一步把它整体重写一次并永久改为
+	// incremental，此后每次删除都能自我回收。失败不阻断启动——库仍然可用，
+	// 只是这轮没有转换，下次启动会重试。
+	if err := convertSQLiteAutoVacuum(context.Background(), conn); err != nil {
+		log.Printf("[db] 主库增量回收转换失败（不影响启动）：%v", err)
 	}
 	if err := d.seedBuiltins(); err != nil {
 		sqlDB.Close()

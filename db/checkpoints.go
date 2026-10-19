@@ -129,6 +129,9 @@ DELETE FROM checkpoints WHERE scope=$1 AND seq <= (
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	// 上面的 DELETE 只把旧快照的页放回 freelist。不主动回收的话，库文件会永远
+	// 停在这条检查点时间线的历史峰值上（见 db/reclaim.go 的实测数据）。
+	d.ReclaimFreePages()
 	c, err := d.GetCheckpoint(ctx, id)
 	if err != nil {
 		return nil, err

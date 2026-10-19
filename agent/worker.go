@@ -470,7 +470,19 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	base := append(tsx.WorkerTools(), w.extraTools...)
 	// 保留原生 Go 的 Glob 与 Grep 给 worker，并用 WrapCrossPlatformBash 装饰 Bash 工具
 	// （提供进程内 Coreutils 原语、外部安全二进制直调及跨 Worker 全局进程信号量保护）。
-	defTools := WrapCrossPlatformBash(defaultToolsExcept("MultiEdit"), runDir, proxyEnv(w.proxyAddr, w.proxyCACert))
+	// P3（见 agent/tool_steering.go）：裁掉 SDK 自带的逃生舱工具。
+	//   - LS：与保留的 Glob 重复；Sleep：agent 不该靠 sleep 等结果；
+	//   - Write/Edit：web 渗透 worker 习惯用它们落 .py 脚本绕开专用工具，这是
+	//     「专用工具被通用工具吞掉」的主要来源（http_request 49.4% vs
+	//     http_sequence 1.0%）。软逆 worker 需要 Write 落分析产物
+	//     （softwareREArtifactSpec），故对 RE 保留。
+	// 只裁这几个 SDK 工具，领域工具（http_sequence / http_fuzz / web_recon 等）
+	// 一个不动——病根是通用工具吞掉专用工具，不是工具太多。
+	trimSDK := []string{"MultiEdit", "LS", "Sleep"}
+	if !softwareRE(ts) {
+		trimSDK = append(trimSDK, "Write", "Edit")
+	}
+	defTools := WrapCrossPlatformBash(defaultToolsExcept(trimSDK...), runDir, proxyEnv(w.proxyAddr, w.proxyCACert))
 	base = append(base, defTools...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts), IntentID: intent.ID})
 	isRE := softwareRE(ts)

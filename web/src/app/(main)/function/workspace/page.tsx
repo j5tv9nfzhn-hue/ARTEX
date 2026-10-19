@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import {
+  ArchiveIcon,
   DownloadIcon,
   FileIcon,
   FolderIcon,
@@ -11,6 +12,7 @@ import {
   RefreshCwIcon,
   SaveIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   UploadIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -60,6 +62,15 @@ export default function WorkspacePage() {
   const [mkdirOpen, setMkdirOpen] = React.useState(false);
   const [mkdirName, setMkdirName] = React.useState("");
   const uploadRef = React.useRef<HTMLInputElement>(null);
+  // 当前目录的合计占用。之前的界面只在表格里列单条，看不出「这一层到底多大」。
+  const [summary, setSummary] = React.useState({ size: 0, files: 0, dirs: 0, partial: false });
+  // 删除确认：把「删什么、占多大、要不要先备份」摊开写清楚，存储敏感的用户才敢
+  // 动手；目录额外给一条「仅清空内容」的保底选项。
+  const [pending, setPending] = React.useState<{
+    entry: WorkspaceEntry;
+    backupFirst: boolean;
+    busy: boolean;
+  } | null>(null);
 
   const load = React.useCallback(
     (p: string) => {
@@ -69,6 +80,12 @@ export default function WorkspacePage() {
         .then((r) => {
           setEntries(r.entries);
           setPath(r.path);
+          setSummary({
+            size: r.total_size ?? 0,
+            files: r.total_files ?? 0,
+            dirs: r.total_dirs ?? 0,
+            partial: r.total_partial ?? false,
+          });
         })
         .catch((e) => toast.error(t("readDirFailed", { msg: (e as Error).message })))
         .finally(() => setLoading(false));
@@ -114,16 +131,32 @@ export default function WorkspacePage() {
       });
   };
 
-  const del = (e: WorkspaceEntry) => {
-    if (!window.confirm(t("confirmDelete", { kind: e.dir ? "dir" : "file", name: e.name }))) return;
-    api
-      .workspaceDelete(e.path)
-      .then(() => {
-        toast.success(t("deleted"));
-        load(path);
-      })
-      .catch((err) => toast.error(t("deleteFailed", { msg: (err as Error).message })));
+  const askDelete = (e: WorkspaceEntry) =>
+    setPending({ entry: e, backupFirst: false, busy: false });
+
+  // contents=true 走「仅清空内容」，false 走整条删除。
+  const runDelete = async (contents: boolean) => {
+    if (!pending) return;
+    const { entry, backupFirst } = pending;
+    setPending({ ...pending, busy: true });
+    try {
+      // 备份先于删除：ZIP 是流式下载，等它开始传输再删，顺序不会颠倒。
+      if (backupFirst) await api.workspaceBackup(entry.path);
+      const r = await api.workspaceDelete(entry.path, contents);
+      toast.success(t("freedSpace", { size: fmtSize(r.freed ?? entry.size) }));
+      setPending(null);
+      load(path);
+    } catch (err) {
+      toast.error(t("deleteFailed", { msg: (err as Error).message }));
+      setPending((cur) => (cur ? { ...cur, busy: false } : cur));
+    }
   };
+
+  const doBackup = (e: WorkspaceEntry) =>
+    api
+      .workspaceBackup(e.path)
+      .then(() => toast.success(t("backupDone", { name: e.name })))
+      .catch((err) => toast.error(t("backupFailed", { msg: (err as Error).message })));
 
   const doUpload = (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -190,6 +223,16 @@ export default function WorkspacePage() {
         </div>
       </div>
 
+      {/* 当前目录合计：一眼看出这层占了多少、多少个文件。 */}
+      <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <span className="text-foreground font-mono text-sm">
+          {summary.partial ? "≥ " : ""}
+          {fmtSize(summary.size)}
+        </span>
+        <span>·</span>
+        <span>{t("summary", { files: summary.files, dirs: summary.dirs })}</span>
+      </div>
+
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -230,12 +273,27 @@ export default function WorkspacePage() {
                       <span className="truncate font-mono text-sm">{e.name}</span>
                     </button>
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-right font-mono text-xs">
-                    {e.dir ? "—" : fmtSize(e.size)}
+                  <TableCell
+                    className="text-muted-foreground text-right font-mono text-xs"
+                    title={e.size_partial ? t("sizePartial") : undefined}
+                  >
+                    {/* 目录显示子树累计占用；没统计完的加「≥」，不假装精确。 */}
+                    {e.size_partial ? "≥ " : ""}
+                    {fmtSize(e.size)}
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs">{fmtTime(e.mtime)}</TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
+                      {/* 目录也能备份：整棵子树打成 ZIP，删之前先留一份。 */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        title={t("backup")}
+                        onClick={() => doBackup(e)}
+                      >
+                        <ArchiveIcon className="size-3.5" />
+                      </Button>
                       {!e.dir && (
                         <Button
                           variant="ghost"
@@ -256,7 +314,7 @@ export default function WorkspacePage() {
                         size="icon"
                         className="text-destructive size-7"
                         title={t("delete")}
-                        onClick={() => del(e)}
+                        onClick={() => askDelete(e)}
                       >
                         <Trash2Icon className="size-3.5" />
                       </Button>
@@ -318,6 +376,63 @@ export default function WorkspacePage() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* 删除确认：类型、大小、文件数、是否先备份，全部摊开。 */}
+      <Dialog open={pending !== null} onOpenChange={(o) => !o && !pending?.busy && setPending(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <TriangleAlertIcon className="text-destructive size-4" />
+              {t("deleteTitle")}
+            </DialogTitle>
+          </DialogHeader>
+          {pending && (
+            <div className="flex flex-col gap-3 text-sm">
+              <p className="break-all">
+                {pending.entry.dir
+                  ? t("deleteDirIntro", {
+                      name: pending.entry.name,
+                      files: pending.entry.files ?? 0,
+                      size: fmtSize(pending.entry.size),
+                    })
+                  : t("deleteFileIntro", {
+                      name: pending.entry.name,
+                      size: fmtSize(pending.entry.size),
+                    })}
+              </p>
+              {pending.entry.dir && <p className="text-muted-foreground text-xs">{t("deleteContentsIntro")}</p>}
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={pending.backupFirst}
+                  onChange={(ev) => setPending({ ...pending, backupFirst: ev.target.checked })}
+                  className="size-3.5"
+                />
+                {t("backupFirst")}
+              </label>
+            </div>
+          )}
+          <DialogFooter className="flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setPending(null)} disabled={pending?.busy}>
+              {t("cancel")}
+            </Button>
+            {pending?.entry.dir ? (
+              <>
+                <Button variant="outline" onClick={() => runDelete(true)} disabled={pending.busy}>
+                  {t("deleteContents")}
+                </Button>
+                <Button variant="destructive" onClick={() => runDelete(false)} disabled={pending.busy}>
+                  {pending.busy ? t("deleting") : t("deleteWhole")}
+                </Button>
+              </>
+            ) : (
+              <Button variant="destructive" onClick={() => runDelete(false)} disabled={pending?.busy}>
+                {pending?.busy ? t("deleting") : t("delete")}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 新建文件夹。 */}
       <Dialog open={mkdirOpen} onOpenChange={setMkdirOpen}>

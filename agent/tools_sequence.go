@@ -39,7 +39,7 @@ type bolaIdentitySpec struct {
 func (t *ToolSet) httpSequenceTool() actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name:        "http_sequence",
-		Description: "原生多步有状态会话链、流量重放改包(Repeater)、BOLA/IDOR 多身份越权矩阵、并发条件竞争(Race Condition)、时间盲注基线验证与双响应差分对比工具（彻底替代 Python requests.Session / threading.Barrier / time.sleep / difflib 及 Burp Repeater/Autorize 脚本）。支持 6 种模式：chain（自动维护 CookieJar 会话，按序执行多步请求，支持 regex:/json: 提取变量并通过 {{var}} 引用）、replay（直接读取已有 exchange_id 的原始请求并按需覆盖 method/url/path/query/headers/cookie/body 后重放并对比原始响应）、bola（对指定 exchange_id 或请求自动使用多组身份 Cookie/Token 及未授权态重放，检测水平/垂直越权）、race（使用内存同步屏障 Gate 在同一微秒齐射 N 个并发请求，测双花/重放）、timing（先测多组基准 RTT 再测延时载荷 RTT）、diff（对比两个 exchange_id 或两段响应的差分与相似度）。",
+		Description: "多步有状态会话链、重放改包、BOLA/IDOR 越权矩阵、并发竞态、时间盲注与响应差分（彻底替代 Python requests.Session / threading.Barrier / time.sleep / difflib 与 Burp Repeater/Autorize 脚本）。**只要同一流程需要发两个以上请求就用本工具，不要用 http_request 循环、也不要写 Python 脚本**。支持 6 种模式：chain（自动维护 CookieJar 会话，按序执行多步请求，支持 regex:/json: 提取变量并通过 {{var}} 引用）、replay（直接读取已有 exchange_id 的原始请求并按需覆盖 method/url/path/query/headers/cookie/body 后重放并对比原始响应）、bola（对指定 exchange_id 或请求自动使用多组身份 Cookie/Token 及未授权态重放，检测水平/垂直越权）、race（使用内存同步屏障 Gate 在同一微秒齐射 N 个并发请求，测双花/重放）、timing（先测多组基准 RTT 再测延时载荷 RTT）、diff（对比两个 exchange_id 或两段响应的差分与相似度）。",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -86,6 +86,7 @@ func (t *ToolSet) httpSequenceTool() actool.CoreTool {
 		ReadOnly:    noStoreRo,
 		Permissions: allowAllPerm,
 		Run: func(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
+			t.steer.markTool("http_sequence")
 			var a struct {
 				Mode            string             `json:"mode"`
 				Steps           []sequenceStepSpec `json:"steps"`

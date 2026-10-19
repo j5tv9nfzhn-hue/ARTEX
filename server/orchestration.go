@@ -550,6 +550,7 @@ func (s *Server) seedOrchestrationTools() {
 		_ = s.m.PG().SeedTool(t.Name(), t.Description(), schema, autoAgents)
 	}
 	s.refreshBuiltinToolSchemas()
+	s.refreshOverlapToolDescriptions()
 	s.seedAutoDefaultBindings()
 	s.seedPlannerDefaultBindings()
 	s.seedPlannerListAssetsBinding()
@@ -628,6 +629,37 @@ func (s *Server) refreshBuiltinToolSchemas() {
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
 	log.Print(logT("[tools] 已将 orchestration/platform 工具 schema 刷新为代码默认值（一次性）"))
+}
+
+// refreshOverlapToolDescriptions propagates the P2 description rewrite of the four
+// overlapping HTTP tools ONCE. SeedTool is first-insert-only, so without this an
+// existing DB keeps the old descriptions — the whole point of the rewrite is what the
+// model reads, so it must reach old databases too.
+//
+// 用独立开关而不是 bump refreshBuiltinToolSchemas 的 v7：那条路径会把**全部**
+// orchestration/platform 工具的描述刷回代码默认值，从而抹掉运维手改的描述；这里
+// 只碰这 4 个 key，且只改描述与 schema，保留绑定与 enabled 开关。
+func (s *Server) refreshOverlapToolDescriptions() {
+	const flag = "tool_desc_refresh_v1_overlap_steering"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	overlap := map[string]bool{
+		"http_request":  true,
+		"http_sequence": true,
+		"http_fuzz":     true,
+		"web_recon":     true,
+	}
+	for _, sd := range agent.BuiltinToolSeeds() {
+		if !overlap[sd.Key] {
+			continue
+		}
+		schema, _ := json.Marshal(sd.Schema)
+		if err := s.m.pg.RefreshToolDefaults(sd.Key, sd.Desc, schema); err != nil {
+			log.Printf("[tools] refresh %s desc failed: %v", sd.Key, err)
+		}
+	}
+	_ = s.m.pg.SetSetting(flag, "true")
 }
 
 // unbindGoalMetDefault removes goal_met's default "planner" binding ONCE (guarded by

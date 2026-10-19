@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 	"github.com/tidwall/gjson"
 )
@@ -55,7 +56,31 @@ func WrapCrossPlatformBash(tools []actool.CoreTool, workDir string, extraEnv []s
 	return out
 }
 
+// Call 在原行为之上追加一条「逃生通道转向」：一旦模型在 Bash 里写/跑 Python 脚本，
+// 就在同一次工具结果里点名可替代的原生工具。回归证据：某安装 http_request 占全部
+// 调用的 49.4%，而写脚本正是绕开专用工具的主要路径（见 agent/tool_steering.go）。
 func (b *crossPlatformBashTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
+	res, err := b.call(ctx, in, tc)
+	if err != nil {
+		return res, err
+	}
+	if note := pythonScriptSteer(bashCommandOf(in)); note != "" {
+		// 追加一个 text block；保留既有 text/非 text block、IsError 与 Extra。
+		res.Content = append(append([]llm.ContentBlock(nil), res.Content...), llm.TextBlock(note))
+	}
+	return res, nil
+}
+
+// bashCommandOf 取回模型写的原始命令。
+func bashCommandOf(in json.RawMessage) string {
+	var p struct {
+		Command string `json:"command"`
+	}
+	_ = json.Unmarshal(in, &p)
+	return p.Command
+}
+
+func (b *crossPlatformBashTool) call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(in, &payload); err != nil {
 		return b.CoreTool.Call(ctx, in, tc)

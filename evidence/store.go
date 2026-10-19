@@ -232,6 +232,11 @@ func (s *Store) Record(ctx context.Context, in db.RecordFindingInput, refs []db.
 		out, err = db.RecordFindingTx(ctx, tx, in, prepared)
 		return err
 	})
+	// 应用内通知：只在事务**提交成功**之后发一条，回滚不留通知。db 包不认识
+	// server，回调由 server 启动时接上（server/ui_notify.go 的 installUINotifyHooks）。
+	if err == nil && out != nil {
+		db.EmitFindingInserted(out.FindingID, in.TaskID, in.Name, in.VulnClass, in.Severity, in.Summary)
+	}
 	return
 }
 

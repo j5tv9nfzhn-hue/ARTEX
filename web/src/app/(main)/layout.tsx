@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import * as React from "react";
 
 import { AppSidebar } from "@/app/(main)/_components/sidebar/app-sidebar";
+import { UINotifier } from "@/components/ui-notifier";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { auth } from "@/lib/auth";
 import { getClientCookie } from "@/lib/cookie.client";
@@ -81,6 +82,10 @@ export default function Layout({ children }: Readonly<{ children: ReactNode }>) 
       >
         <MainContent>{children}</MainContent>
       </SidebarInset>
+      {/* 全局应用内通知：挂在 SidebarProvider 内、MainContent 外。
+          MainContent 对任务详情页是 full-bleed 直接返回 children，只有挂在这一层
+          才能保证「任何页面（含子页面）都收得到」。 */}
+      <UINotifier />
     </SidebarProvider>
   );
 }

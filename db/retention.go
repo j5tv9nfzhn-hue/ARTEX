@@ -424,6 +424,9 @@ func (d *DB) ExecuteRetention(ctx context.Context, token string) (*RetentionExec
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	// 删除只把页还回 freelist；把腾出的页真正交回文件系统。这是最佳努力：
+	// 失败只记日志，绝不能因为它回滚已经提交的删除。
+	d.ReclaimFreePages()
 	result.Committed = true
 	return result, nil
 }

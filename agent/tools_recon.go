@@ -24,7 +24,7 @@ import (
 func (t *ToolSet) webReconTool() actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name:        "web_recon",
-		Description: "原生前端、API 规范与站点侦察工具（100% 原生替代 api-recon 中的 harvest_static.py / spider_mpa.py / extract_route_map.py / build_perm_tree.py 及 GraphQL/OpenAPI/SourceMap/指纹探测脚本，零 Python 子进程）。支持 8 种模式：spa_harvest（拉取入口 HTML、递归解析 Webpack/Vite chunk manifest、受控并发下载全量 JS chunk 并提取 api_static.txt / paths_other.txt / routes.txt / chunkmap.txt）、mpa_spider（同源多页 BFS 爬虫，产出 pages.txt / forms.json / inline_apis.txt）、route_map（扫描 JS 提取前端路由表 route_map.json）、perm_tree（扫描 JS 逆向 userRouteAuth 权限树并更新 config.json stubs）、graphql（自动探测 GraphQL 端点并执行 __schema 内省查询与批量/别名支持检测，提取 Query/Mutation 列表）、openapi（自动探测并解析 Swagger/OpenAPI v2/v3 JSON，提取全量接口与参数）、sourcemap（解析 .js.map 文件或 URL，还原打包前的原始前端源码文件到 outdir/sources/）、fingerprint（探测站点技术栈、框架、Shiro/Spring/ThinkPHP 等特征、WAF 类型与安全响应头）。",
+		Description: "前端、API 规范与站点侦察（100% 原生替代 api-recon 中的 harvest_static.py / spider_mpa.py / extract_route_map.py / build_perm_tree.py 及 GraphQL/OpenAPI/SourceMap/指纹探测脚本）。**枚举前端路由、JS 内接口、GraphQL/OpenAPI 时用本工具，不要用 Bash 跑 Python 侦察脚本**。支持 8 种模式：spa_harvest（拉取入口 HTML、递归解析 Webpack/Vite chunk manifest、受控并发下载全量 JS chunk 并提取 api_static.txt / paths_other.txt / routes.txt / chunkmap.txt）、mpa_spider（同源多页 BFS 爬虫，产出 pages.txt / forms.json / inline_apis.txt）、route_map（扫描 JS 提取前端路由表 route_map.json）、perm_tree（扫描 JS 逆向 userRouteAuth 权限树并更新 config.json stubs）、graphql（自动探测 GraphQL 端点并执行 __schema 内省查询与批量/别名支持检测，提取 Query/Mutation 列表）、openapi（自动探测并解析 Swagger/OpenAPI v2/v3 JSON，提取全量接口与参数）、sourcemap（解析 .js.map 文件或 URL，还原打包前的原始前端源码文件到 outdir/sources/）、fingerprint（探测站点技术栈、框架、Shiro/Spring/ThinkPHP 等特征、WAF 类型与安全响应头）。",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -48,6 +48,7 @@ func (t *ToolSet) webReconTool() actool.CoreTool {
 		ReadOnly:    noStoreRo,
 		Permissions: allowAllPerm,
 		Run: func(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
+			t.steer.markTool("web_recon")
 			var a struct {
 				Mode       string `json:"mode"`
 				URL        string `json:"url"`

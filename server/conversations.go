@@ -602,6 +602,15 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 	// Only the first turn executes a historical retest. Follow-up conversation
 	// turns may explain the sealed result; the result tool refuses to overwrite it.
 	finishStatus, finishReason := "failed", convRetestFailedToStart
+	// 应用内通知：AI 回复回合结束。runConversationTurn 是聊天、复测、触发器
+	// 三类会话共用的唯一收敛点，挂在这里既不会漏（所有入口都经过）也不会重
+	// （一个回合只 defer 一次）。finishStatus 在返回前已定型，defer 读到的就是
+	// 最终结果。
+	defer func() {
+		if c != nil {
+			emitChatMilestone(c.ID, c.Title, finishStatus, finishReason)
+		}
+	}()
 	// 时间线检查点（批次 6 / #29–#35）：回合结束点。回滚到它 = 丢弃此后的一切
 	// （可见时间线与 LLM 上下文同步回退）。注册在清理 defer 之后 → 先于清理执行，
 	// 此时本回合全部活动行（含错误行）都已落库。

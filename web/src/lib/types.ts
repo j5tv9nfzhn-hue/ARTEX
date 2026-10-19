@@ -343,12 +343,24 @@ export interface WorkspaceEntry {
   name: string;
   path: string; // workspace-relative, forward slashes
   dir: boolean;
+  /** 目录为整棵子树的累计字节数；文件为自身大小。 */
   size: number;
   mtime: number; // unix millis
+  /** 目录子树里的文件数（文件自身为 1）。 */
+  files?: number;
+  /** 目录子树里的子目录数。 */
+  dirs?: number;
+  /** true 表示 size 没统计完（超时或个别条目读不到），界面显示「≥」。 */
+  size_partial?: boolean;
 }
 export interface WorkspaceListing {
   path: string;
   entries: WorkspaceEntry[];
+  /** 当前目录的合计大小 / 文件数 / 子目录数。 */
+  total_size?: number;
+  total_files?: number;
+  total_dirs?: number;
+  total_partial?: boolean;
 }
 export interface WorkspaceFile {
   path: string;
@@ -1322,6 +1334,13 @@ export interface SkillItem {
   tasks: number; // 加载过它的任务数（chat 会话不计入）
   usage_agents: string[]; // 加载过它的 agent key
   last_used?: string;
+  // 来源（后端判定，见 server/skill_origin.go）。builtin=随版本发布的内置战法；
+  // distilled/merged/report=任务结束后沉淀的复盘；user=自建或上传。
+  // 可选：旧后端没有这个字段时前端按命名前缀兜底。
+  origin?: "builtin" | "distilled" | "merged" | "report" | "user";
+  report_derived?: boolean; // 内置，但由外部报告提炼
+  out_of_sync?: boolean; // 与当前内置版本不一致（本地改过或版本落后）
+  pending_proposals?: number; // 待审阅提议数（治理信号）
 }
 
 // SkillCall 是一次 Skill() 调用（单个 skill 的最近调用列表）。

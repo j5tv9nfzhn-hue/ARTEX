@@ -23,7 +23,7 @@ func (t *ToolSet) httpRequestTool() actool.CoreTool {
 func (t *ToolSet) httpRequestToolWithVerification(flow *verificationHTTPOptions) actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name:        "http_request",
-		Description: "原生 HTTP/HTTPS 请求工具（优先替代 curl / Python requests 脚本）。支持任意 HTTP 方法、自定义 Header(含 Host 头覆盖)、Cookie、URL/表单参数、原始 Body 或 Base64 二进制 Body、multipart/form-data 文件上传、重定向跳转轨迹追踪及响应体正则提取。默认自动写入平台流量库并返回 exchange_id 供漏洞报告绑定证据，彻底避免 PowerShell/Bash 引号转义与 & 截断问题。",
+		Description: "单发 HTTP/HTTPS 请求（替代 curl / Python requests）。**仅用于单次、无状态的一发请求**：一次探测、一个 payload、一次验证。需要多个请求才能完成同一流程（登录→带 Cookie 再请求、CSRF token 回填、多身份对比、并发竞态）请直接用 http_sequence；参数/目录/ID 枚举用 http_fuzz；前端与接口枚举用 web_recon；编解码与 JWT 用 codec_crypto；结构化取数用 extract_data；端口与服务指纹用 net_probe。不要用本工具循环，也不要为此写 Python 脚本。支持任意 HTTP 方法、自定义 Header(含 Host 头覆盖)、Cookie、URL/表单参数、原始 Body 或 Base64 二进制 Body、multipart 上传、重定向轨迹追踪与响应体正则提取；默认自动写入平台流量库并返回 exchange_id 供漏洞报告绑定证据。",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -98,6 +98,19 @@ func (t *ToolSet) httpRequestToolWithVerification(flow *verificationHTTPOptions)
 			method := strings.ToUpper(strings.TrimSpace(a.Method))
 			if method == "" {
 				method = "GET"
+			}
+			// 决策点反馈：同一 host 的连续请求在这里当场转向 http_sequence。
+			// 见 agent/tool_steering.go——原规则埋在 14k 字符提示词中段，
+			// 而工具结果紧贴模型的下一次决策，这里才拦得住。
+			// 人机验证流（flow != nil）本身就要对同一地址做有界重复请求，不参与转向，
+			// 否则会把验证挑战的正常重试误判成「该用 http_sequence」。
+			var steerNote string
+			if flow == nil {
+				blockHTTP, note := t.steer.noteHTTPRequest(method, parsedURL)
+				if blockHTTP {
+					return actool.Errorf(note), nil
+				}
+				steerNote = note
 			}
 			timeoutDur := 15 * time.Second
 			if a.TimeoutMs > 0 {
@@ -344,6 +357,10 @@ func (t *ToolSet) httpRequestToolWithVerification(flow *verificationHTTPOptions)
 			}
 			if len(extracted) > 0 {
 				out["extracted"] = extracted
+			}
+			if steerNote != "" {
+				// 与结果同批返回：模型读结果的同时就读到「下次该换哪个工具」。
+				out["tool_steering"] = steerNote
 			}
 			b, _ := json.MarshalIndent(out, "", "  ")
 			if tc != nil {

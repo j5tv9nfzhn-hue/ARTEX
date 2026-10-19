@@ -252,6 +252,15 @@ func (s *Server) onIntentSettled(t *Task, intentID int64, state string) {
 	}
 	s.captureTaskCheckpoint(t, db.CheckpointReasonIntentSettled,
 		fmt.Sprintf("意图 #%d 结束：%s", intentID, label), false)
+	// 应用内通知：#N 子代理的结局。过程态（open/running/paused/deleted）在
+	// emitSubagentMilestone 里被过滤掉，只留 done/blocked/exhausted/stopped。
+	if t != nil {
+		title := t.Name
+		if title == "" {
+			title = t.Description
+		}
+		emitSubagentMilestone(t.ID, title, intentID, state)
+	}
 }
 
 // --- compaction linkage (#27/#28/#37) ---

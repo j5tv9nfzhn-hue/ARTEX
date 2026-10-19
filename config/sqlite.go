@@ -81,10 +81,12 @@ func SQLitePathSource() string {
 //   - journal_mode(WAL) lets readers proceed while a write is in flight.
 //     SQLite's default rollback journal serialises all access behind one
 //     writer, which would stall the server's concurrent readers.
+//
 //   - busy_timeout makes a contended write wait instead of failing immediately
 //     with SQLITE_BUSY, which the runtime does not retry. The budget is
 //     SQLiteBusyTimeout; caller-side deadlines around writes must exceed it or
 //     a queued write turns into a spurious context timeout.
+//
 //   - synchronous(NORMAL) drops the per-commit fsync in WAL mode. Durability
 //     still covers an application crash (the WAL survives through the OS
 //     cache); only an OS crash or power loss can lose the last commits. The
@@ -92,8 +94,15 @@ func SQLitePathSource() string {
 //     on the WAL file) from hundreds of milliseconds into an append — and a
 //     shorter lock-hold is what keeps the single write lock available to
 //     everyone else.
+//
 //   - foreign_keys(ON) restores referential integrity; SQLite ignores declared
 //     REFERENCES unless this is set.
+//
+//   - auto_vacuum(incremental) 让删除腾出的页可以还给文件系统。它与上面几条
+//     不同：在**已经有表**的库上它是静默空操作，只有建库前设置、或随后执行一次
+//     VACUUM 才会写进文件头。老库的一次性转换在 db/reclaim.go 的
+//     convertSQLiteAutoVacuum，持续回收由 db.DB.ReclaimFreePages 完成；写进 DSN
+//     是为了让任何新文件（包括测试与工具直接打开的）从诞生起就带上这层契约。
 //
 // WAL is a persistent database property, so setting it per connection is
 // harmless and keeps a freshly created file correct.
@@ -136,6 +145,7 @@ func SQLiteDSNFor(path string) string {
 		"&_pragma=journal_mode(WAL)" +
 		"&_pragma=synchronous(NORMAL)" +
 		"&_pragma=foreign_keys(ON)" +
+		"&_pragma=auto_vacuum(incremental)" +
 		"&_texttotime=1" +
 		"&_time_format=" + sqliteTimeFormat +
 		"&_txlock=immediate"

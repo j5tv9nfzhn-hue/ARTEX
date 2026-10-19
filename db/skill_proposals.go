@@ -253,6 +253,33 @@ func (d *DB) CountSkillProposals(ctx context.Context) (map[string]int, error) {
 	return counts, rows.Err()
 }
 
+// SkillProposalPendingBySkill 返回"每个技能还有多少条待审提议"。
+//
+// 这是治理侧最便宜的一个信号：某个技能被反复提议修改，通常说明它在实战里持续
+// 暴露缺口（或写法有歧义），比"总待审数"更有指向性——后者只能告诉你"有活要干"，
+// 前者告诉你"哪一条技能在拖后腿"。
+func (d *DB) SkillProposalPendingBySkill(ctx context.Context) (map[string]int, error) {
+	if err := d.ensureSkillProposalTable(); err != nil {
+		return nil, err
+	}
+	rows, err := d.QueryContext(ctx,
+		`SELECT skill, COUNT(*) FROM skill_proposals WHERE status=$1 GROUP BY skill`, SkillProposalPending)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var name string
+		var n int
+		if err := rows.Scan(&name, &n); err != nil {
+			return nil, err
+		}
+		out[name] = n
+	}
+	return out, rows.Err()
+}
+
 // GetSkillProposal 按 id 取单条提议。
 func (d *DB) GetSkillProposal(ctx context.Context, id string) (*SkillProposal, error) {
 	if err := d.ensureSkillProposalTable(); err != nil {

@@ -4208,19 +4208,52 @@ const WS_TREE: Record<string, { name: string; dir: boolean; size: number; conten
 
 const wsClean = (p: string) => p.replace(/^\/+|\/+$/g, "");
 
+// 目录在 mock 树里只记自身 size（与真实文件系统一致：目录项本身近似 0）。
+// 展示用的递归占用在这里按子树累加，与后端 wsList 的语义保持一致，否则 demo
+// 模式下目录会显示成 0 B。
+function wsMockUsage(path: string): { size: number; files: number; dirs: number } {
+  let size = 0;
+  let files = 0;
+  let dirs = 0;
+  for (const it of WS_TREE[path] ?? []) {
+    if (it.dir) {
+      const sub = wsMockUsage(wsClean(`${path}/${it.name}`));
+      size += sub.size;
+      files += sub.files;
+      dirs += 1 + sub.dirs;
+    } else {
+      size += it.size;
+      files += 1;
+    }
+  }
+  return { size, files, dirs };
+}
+
 export function workspaceList(path: string) {
   const key = wsClean(path);
   const items = WS_TREE[key] ?? [];
   const now = Date.parse("2026-08-09T03:00:00Z");
-  return {
-    path: key,
-    entries: items.map((it, i) => ({
+  const entries = items.map((it, i) => {
+    const u = it.dir
+      ? wsMockUsage(wsClean(key ? `${key}/${it.name}` : it.name))
+      : { size: it.size, files: 1, dirs: 0 };
+    return {
       name: it.name,
       path: key ? `${key}/${it.name}` : it.name,
       dir: it.dir,
-      size: it.size,
+      size: u.size,
       mtime: now - i * 3_600_000,
-    })),
+      files: u.files,
+      dirs: u.dirs,
+    };
+  });
+  return {
+    path: key,
+    entries,
+    total_size: entries.reduce((n, e) => n + e.size, 0),
+    total_files: entries.reduce((n, e) => n + e.files, 0),
+    total_dirs: entries.reduce((n, e) => n + (e.dir ? 1 + e.dirs : 0), 0),
+    total_partial: false,
   };
 }
 

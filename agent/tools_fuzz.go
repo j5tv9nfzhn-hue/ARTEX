@@ -21,7 +21,7 @@ import (
 func (t *ToolSet) httpFuzzTool() actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name:        "http_fuzz",
-		Description: "原生受控并发 HTTP Fuzz/目录扫描/参数枚举/IDOR 遍历工具（严禁再用 Python ThreadPoolExecutor/asyncio 写并发发包脚本）。在 url_template、headers 或 body_template 中使用 {{FUZZ}} 占位符，支持 payloads 数组、本地字典文件 wordlist_file 或数字序列 range_spec（如 '1-200' 或 '000-999'）。内置自动软 404 基线校准（auto_calibrate）及按需流量入库（404 噪声不写库，仅命中的异常响应自动写入流量库并返回 exchange_id）。",
+		Description: "受控并发 HTTP Fuzz/目录扫描/参数枚举/IDOR 遍历（严禁用 Python ThreadPoolExecutor/asyncio 写并发发包脚本，也不要用 http_request 循环代替）。在 url_template、headers 或 body_template 中使用 {{FUZZ}} 占位符，支持 payloads 数组、本地字典文件 wordlist_file 或数字序列 range_spec（如 '1-200' 或 '000-999'）。内置自动软 404 基线校准（auto_calibrate）及按需流量入库（404 噪声不写库，仅命中的异常响应自动写入流量库并返回 exchange_id）。",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -52,6 +52,7 @@ func (t *ToolSet) httpFuzzTool() actool.CoreTool {
 		ReadOnly:    noStoreRo,
 		Permissions: allowAllPerm,
 		Run: func(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
+			t.steer.markTool("http_fuzz")
 			var a struct {
 				URLTemplate   string            `json:"url_template"`
 				URL           string            `json:"url"`

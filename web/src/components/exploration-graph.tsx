@@ -718,14 +718,31 @@ function ExplorationGraphInner({ nodes, edges, emptyHint }: { nodes: TaskNode[];
   const hint = emptyHint ?? t("emptyHint");
   // ReactFlow 的画布级颜色随解析主题联动(见顶部色板注释)。
   const mode = usePreferencesStore((s) => s.resolvedThemeMode);
+  // MiniMap 的 nodeColor 每次渲染都换新函数会让整张小地图跟着重算；节点上百时
+  // 每次缩放/拖动都要多付一次。按主题缓存住即可（本文件有 "use no memo"，
+  // React Compiler 不会替我们做这件事）。
+  const minimapNodeColor = React.useCallback(
+    (node: RFNode) => {
+      const data = node.data as ExploreNodeData | undefined;
+      const k = data?.node ? viewKind(data.node) : "intent";
+      return pick(kindColor[k] ?? kindColor.intent, mode);
+    },
+    [mode],
+  );
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<ExploreRFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<RFEdge>([]);
   const [selected, setSelected] = React.useState<TaskNode | null>(null);
   // 增量新增节点 id:驱动卡片淡入、最新节点一次性光晕、相邻边短暂增亮;窗口后清空。
   // 首屏(prevIds 为空)不算增量,避免整图齐闪;只有后续刷新带来的新节点才有进场动画。
-  const [freshIds, setFreshIds] = React.useState<ReadonlySet<string>>(() => new Set<string>());
+  // 增量窗口只用来给「新到的节点」打一次进场/光晕标记，它**不是**渲染输入，所以
+  // 放 ref 而不是 state。原实现把它塞进 effect 依赖：写入窗口 → effect 重跑 →
+  // 整图重新布局；1.5s 后清空窗口 → effect 再跑一次。等于每来一个新节点都白算
+  // 两遍全图，这是刷新/切页卡顿的来源之一。
+  const freshWindowRef = React.useRef<ReadonlySet<string>>(new Set<string>());
   const prevIdsRef = React.useRef<ReadonlySet<string>>(new Set<string>());
   const freshTimer = React.useRef<number | undefined>(undefined);
+  // 上一次真正应用到画布上的结构 + 主题：用来跳过「输入没变」的空转重排。
+  const appliedRef = React.useRef<{ viewNodes: TaskNode[]; viewEdges: Edge[]; mode: string } | null>(null);
   React.useEffect(() => () => window.clearTimeout(freshTimer.current), []);
   // Full node index (incl. folded members) so the digest drawer can resolve
   // covered members even though they are not rendered on the canvas.
@@ -735,6 +752,18 @@ function ExplorationGraphInner({ nodes, edges, emptyHint }: { nodes: TaskNode[];
   const isEmpty = viewNodes.length === 0;
 
   React.useEffect(() => {
+    // 输入没变（同一份 nodes/edges 引用 + 同一主题）就整段跳过：这一轮唯一会发生
+    // 的事是把 rfNodes/rfEdges 全部换成新对象，React Flow 会因此把每个节点与每条
+    // 边重新渲染一遍。没有这个闸门，主题刷新、翻译对象变化都会触发一次全量重排。
+    if (
+      appliedRef.current &&
+      appliedRef.current.viewNodes === viewNodes &&
+      appliedRef.current.viewEdges === viewEdges &&
+      appliedRef.current.mode === mode
+    ) {
+      return;
+    }
+    appliedRef.current = { viewNodes, viewEdges, mode };
     setSelected((cur) => (cur ? (nodesById.get(cur.id) ?? cur) : cur));
     const liveTargets = new Set(
       viewNodes.filter((n) => !n.inherited && n.type === "intent" && n.state === "running").map((n) => n.id),
@@ -747,9 +776,9 @@ function ExplorationGraphInner({ nodes, edges, emptyHint }: { nodes: TaskNode[];
     if (prevIds.size > 0) {
       for (const n of viewNodes) if (!prevIds.has(n.id)) fresh.add(n.id);
     }
-    // 窗口内累计:freshIds 是本轮之前的窗口残留,和本轮新识别的一起生效
+    // 窗口内累计:freshWindowRef 是本轮之前的窗口残留,和本轮新识别的一起生效
     // (prevIds 每轮刷新,新节点只在出现的当轮被识别,不能只靠本轮 fresh)。
-    const freshWindow = new Set<string>([...freshIds, ...fresh]);
+    const freshWindow = new Set<string>([...freshWindowRef.current, ...fresh]);
     // 按 ts(ISO 字符串可直接比较)找最新节点,只给窗口内最新的那个打光晕。
     let latestId: string | null = null;
     let latestTs = "";
@@ -759,7 +788,11 @@ function ExplorationGraphInner({ nodes, edges, emptyHint }: { nodes: TaskNode[];
         latestId = n.id;
       }
     }
-    setRfNodes((prev) => {
+    // 全量重建交给 transition：切页/新节点到达时先让「Tab 切过去、新节点进场」
+    // 这一帧落屏，再把整图的 React Flow 更新放到并发渲染里分片完成，避免主线程
+    // 被一个长任务占住（用户看到的就是切换标签页时 0.x 秒的卡顿）。
+    React.startTransition(() => {
+      setRfNodes((prev) => {
       const prevPos = new Map(prev.map((p) => [p.id, p.position]));
       return viewNodes.map((n) => ({
         id: n.id,
@@ -795,14 +828,15 @@ function ExplorationGraphInner({ nodes, edges, emptyHint }: { nodes: TaskNode[];
           markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
         } satisfies RFEdge;
       }),
-    );
+      );
+    });
     // 进场窗口:识别到增量节点时把窗口(累计集合)写入 state(窗口期间相邻边保持增亮),
     // 1.5s 后清空 —— 卡片类名/光晕随 data 更新卸载,边恢复常规压制。
     if (fresh.size > 0) {
-      setFreshIds(freshWindow);
+      freshWindowRef.current = freshWindow;
       window.clearTimeout(freshTimer.current);
       freshTimer.current = window.setTimeout(() => {
-        setFreshIds((cur) => (cur.size ? new Set<string>() : cur));
+        freshWindowRef.current = new Set<string>();
         setRfNodes((prev) =>
           prev.some((p) => p.data.enter || p.data.latest)
             ? prev.map((p) =>
@@ -812,7 +846,7 @@ function ExplorationGraphInner({ nodes, edges, emptyHint }: { nodes: TaskNode[];
         );
       }, 1500);
     }
-  }, [viewNodes, viewEdges, nodesById, setRfNodes, setRfEdges, t, mode, freshIds]);
+  }, [viewNodes, viewEdges, nodesById, setRfNodes, setRfEdges, t, mode]);
 
   return (
     <>
@@ -846,11 +880,7 @@ function ExplorationGraphInner({ nodes, edges, emptyHint }: { nodes: TaskNode[];
           zoomable
           className="!bg-card !rounded-lg !border !shadow-sm"
           maskColor={pick(canvasColor.minimapMask, mode)}
-          nodeColor={(node) => {
-            const data = node.data as ExploreNodeData | undefined;
-            const k = data?.node ? viewKind(data.node) : "intent";
-            return pick(kindColor[k] ?? kindColor.intent, mode);
-          }}
+          nodeColor={minimapNodeColor}
           nodeStrokeWidth={0}
           nodeBorderRadius={4}
         />

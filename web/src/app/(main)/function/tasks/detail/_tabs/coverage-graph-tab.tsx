@@ -19,6 +19,32 @@ import { cn } from "@/lib/utils";
 const FOLD_LIMIT = 20;
 const FOLD_STEP = 20;
 
+// 覆盖图数据缓存（键 = 任务 + 覆盖度开关）。标签页切换会卸载/重挂本组件，而
+// G6 建图 + d3-force 布局是同步长任务；缓存让「切回来」直接拿到数据出图，
+// 不必先渲染一次空画布、再等一次请求回来重建。
+type CoverageSnapshot = { nodes: CoverageGraphNode[]; edges: CoverageGraphEdge[] };
+const COVERAGE_CACHE_MAX = 3;
+const coverageCache = new Map<string, CoverageSnapshot>();
+
+function coverageCacheKey(taskId: string, coverageEnabled: boolean) {
+  return `${taskId}:${coverageEnabled ? "on" : "off"}`;
+}
+
+function readCoverageCache(key: string): CoverageSnapshot | undefined {
+  return coverageCache.get(key);
+}
+
+// 只留最近 3 份：资产节点带 label/url 等文本，留太多白吃内存。
+function writeCoverageCache(key: string, snap: CoverageSnapshot) {
+  coverageCache.delete(key);
+  coverageCache.set(key, snap);
+  while (coverageCache.size > COVERAGE_CACHE_MAX) {
+    const oldest = coverageCache.keys().next().value;
+    if (oldest === undefined) break;
+    coverageCache.delete(oldest);
+  }
+}
+
 type Kind = CoverageGraphNode["kind"];
 
 // 节点类型标签不在此处硬编码，包含画布标签在内，
@@ -460,14 +486,16 @@ function FoldSheet({
 
 // ---------------------------------------------------------------------------
 function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; coverageEnabled?: boolean }) {
+  const cacheKey = coverageCacheKey(taskId, coverageEnabled);
   const [data, setData] = React.useState<{
     nodes: CoverageGraphNode[];
     edges: CoverageGraphEdge[];
-  } | null>(null);
+  } | null>(() => readCoverageCache(cacheKey) ?? null);
   const [expanded, setExpanded] = React.useState<Map<string, number>>(new Map());
   const [selectedAsset, setSelectedAsset] = React.useState<CoverageGraphNode | null>(null);
   const [selectedFoldId, setSelectedFoldId] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(true);
+  // 命中缓存时不必先闪一次「加载中」：数据已经在手上了。
+  const [loading, setLoading] = React.useState(() => !readCoverageCache(cacheKey));
 
   const t = useTranslations("taskDetail.coverageGraph");
   const kindLabel = React.useCallback((k: Kind) => t(`kind.${k}`), [t]);
@@ -493,7 +521,9 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
         // 资产覆盖度功能关闭(B1)：仍出图(范围内资产/company 关联依旧可见)，但抹平
         // tested 状态——不显示测试进度、不做已测高亮。
         const nodes = coverageEnabled ? (g.nodes ?? []) : (g.nodes ?? []).map((n) => ({ ...n, tested: false }));
-        setData({ nodes, edges: g.edges ?? [] });
+        const edges = g.edges ?? [];
+        writeCoverageCache(coverageCacheKey(taskId, coverageEnabled), { nodes, edges });
+        setData({ nodes, edges });
       })
       .catch(() => {
         /* 保留上一次数据 */
@@ -524,13 +554,25 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   );
 
   // 维护 gDataRef + renderMapRef（供事件与图数据应用读取）。
-  gDataRef.current = {
-    nodes: toG6Nodes(renderNodes, kindLabel, moreLabel),
-    edges: renderEdges.map((e) => ({ source: e.src, target: e.dst })),
-  };
-  const rmap = new Map<string, RenderNode>();
-  for (const rn of renderNodes) rmap.set(rn.key, rn);
-  renderMapRef.current = rmap;
+  //
+  // 这段原先是**裸写在渲染体里**的：开一次抽屉、切一次 loading、选中一个节点，
+  // 都会把全部可见节点重新跑一遍 toG6Nodes —— 其中 graphLabel 对每个 endpoint
+  // 还要 new URL()。资产上千时，这些"和本次渲染无关"的全量计算就是卡顿主因。
+  // 现在只依赖「可见集合 + 翻译」，其余渲染直接读缓存结果。
+  const g6 = React.useMemo(
+    () => ({
+      nodes: toG6Nodes(renderNodes, kindLabel, moreLabel),
+      edges: renderEdges.map((e) => ({ source: e.src, target: e.dst })),
+      map: (() => {
+        const m = new Map<string, RenderNode>();
+        for (const rn of renderNodes) m.set(rn.key, rn);
+        return m;
+      })(),
+    }),
+    [renderNodes, renderEdges, kindLabel, moreLabel],
+  );
+  gDataRef.current = { nodes: g6.nodes, edges: g6.edges };
+  renderMapRef.current = g6.map;
 
   const applyData = React.useCallback(() => {
     const graph = graphRef.current;
@@ -550,6 +592,13 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
     let graph: G6Graph | null = null;
     void (async () => {
       const { Graph } = await import("@antv/g6");
+      // import() 命中缓存时只是一个微任务，new Graph + 首次 d3-force 布局会紧接着
+      // 在同一个任务里跑完，把「切到本标签页」的首帧直接吃掉。等一帧再建图：
+      // 先让页面画出来，再开始这段重活。
+      await new Promise<void>((resolve) => {
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => resolve());
+        else setTimeout(resolve, 0);
+      });
       if (destroyed || !containerRef.current) return;
       graph = new Graph({
         container: containerRef.current,
@@ -644,9 +693,17 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
     if (selectedFoldId != null && !selectedFold) setSelectedFoldId(null);
   }, [selectedFoldId, selectedFold]);
 
-  const total = data?.nodes.length ?? 0;
-  const tested = data?.nodes.filter((n) => n.in_scope && n.tested).length ?? 0;
-  const inScope = data?.nodes.filter((n) => n.in_scope).length ?? 0;
+  const { total, tested, inScope } = React.useMemo(() => {
+    if (!data) return { total: 0, tested: 0, inScope: 0 };
+    let t2 = 0;
+    let s = 0;
+    for (const n of data.nodes) {
+      if (!n.in_scope) continue;
+      s += 1;
+      if (n.tested) t2 += 1;
+    }
+    return { total: data.nodes.length, tested: t2, inScope: s };
+  }, [data]);
 
   return (
     <div className="relative h-full w-full">

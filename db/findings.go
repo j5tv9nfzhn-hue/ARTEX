@@ -76,6 +76,23 @@ func ValidSeverity(s string) bool {
 	return false
 }
 
+// OnFindingInserted 是可选的进程内回调：findings 行提交成功后触发。
+//
+// 存在的理由：应用内通知（server/ui_notify.go）需要「漏洞落库」这个时刻，而 db
+// 包不能反向依赖 server。用包级回调把它解耦——db 只管插入，server 启动时把回调
+// 接上（installUINotifyHooks）。nil 时行为与旧版完全一致（单测多为 nil）。
+// 参数是插入所需的原始业务字段，回调方不得回写任何东西。
+var OnFindingInserted func(id, taskID int64, name, vulnclass, severity, summary string)
+
+// EmitFindingInserted 触发 OnFindingInserted（nil 安全）。
+// 生产路径有两条：db.AddFinding（直接插入）与 evidence.Store.Record（事务插入后
+// 已提交），两条都收敛到这里，保证「漏洞落库 → 应用内通知」不漏。
+func EmitFindingInserted(id, taskID int64, name, vulnclass, severity, summary string) {
+	if OnFindingInserted != nil {
+		OnFindingInserted(id, taskID, name, vulnclass, severity, summary)
+	}
+}
+
 // AddFinding inserts a finding into the standalone findings table. taskID and
 // nodeID may be 0 (stored as NULL). name may be "" (frontend falls back to
 // vulnclass). Returns the new finding id.
@@ -97,6 +114,13 @@ func (d *DB) AddFinding(taskID, nodeID int64, vulnclass, name, severity, summary
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
 		tid, nid, vulnclass, name, severity, summary, evidence, worker, string(aidsJSON),
 	).Scan(&id)
+	// 应用内通知：漏洞是这个系统里最需要「立刻被看见」的事实，而 AddFinding 是
+	// 唯一的生产入口（Agent 工具、人工补录、复测都走这里），因此把回调钉在插入
+	// 成功之后——任何调用方都无法绕过。回调本身不落库、不阻塞：server 侧只是
+	// 往内存 ring 里塞一条事件（见 server/ui_notify.go）。
+	if err == nil {
+		EmitFindingInserted(id, taskID, name, vulnclass, severity, summary)
+	}
 	return id, err
 }
 

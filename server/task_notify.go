@@ -48,6 +48,12 @@ func (m *Manager) emitTaskStatusEvent(id int64, status, reason string) {
 	}
 	// finding_id=0：任务事件没有漏洞关联（列是非空 BIGINT，0 是合法占位）。
 	m.recordNotificationEvent(notify.EventTaskStatusChanged, 0, id, snap)
+	// 应用内浮层与出站推送是两条链路：这里只往内存 ring 里塞一条，不写库。
+	// paused 不进浮层——暂停是过程态且常由排队/预算触发，弹窗会把人喊来看一个
+	// 并没有出事的任务；真正的终态（done/failed/timeout）才值得打断。
+	if status != "paused" {
+		emitTaskMilestone(id, snap.TaskTitle, status, reason)
+	}
 }
 
 // recordNotificationEvent 把事件写入 notification_events 的唯一出口。

@@ -97,11 +97,14 @@ const (
 	errMgmtToolDiscoverFail = "发现工具失败： " // 后拼接 err.Error()。
 	// Skill 上传。
 	errMgmtSkillNameInvalid = "技能名称无效"
-	errMgmtSkillNoFile      = "没有上传文件（表单字段 file）或超出了大小限制"
-	errMgmtSkillNoMDInZip   = "在压缩文件中未找到 SKILL.md"
-	errMgmtSkillReadMDFail  = "无法读取 SKILL.md： " // 后拼接 err.Error()。
-	errMgmtSkillNamePre     = "技能名称不正确（取自 SKILL.md 的 name 字段）: "
-	errMgmtSkillNamePost    = " (最多 64 个字符，必须以字母开头，只能包含小写字母、数字、连字符或韩文等非 ASCII 字母，不能使用空格、点或路径分隔符)"
+	// errMgmtSkillNotBuiltin 只在"恢复出厂"接口出现：沉淀技能和自建技能没有出厂
+	// 内容可恢复，误调是在按名字猜来源，提示语要直接说清这一点。
+	errMgmtSkillNotBuiltin = "该技能不是内置技能，没有可恢复的出厂内容"
+	errMgmtSkillNoFile     = "没有上传文件（表单字段 file）或超出了大小限制"
+	errMgmtSkillNoMDInZip  = "在压缩文件中未找到 SKILL.md"
+	errMgmtSkillReadMDFail = "无法读取 SKILL.md： " // 后拼接 err.Error()。
+	errMgmtSkillNamePre    = "技能名称不正确（取自 SKILL.md 的 name 字段）: "
+	errMgmtSkillNamePost   = " (最多 64 个字符，必须以字母开头，只能包含小写字母、数字、连字符或韩文等非 ASCII 字母，不能使用空格、点或路径分隔符)"
 	// “已存在”是与 web system/skills/page.tsx 的 includes("已存在") 耦合的标记。
 	// 用于进入覆盖确认流程，修改服务端前缀时必须同步前端判断。
 	errMgmtSkillExistsPre    = "技能已存在: "
@@ -1182,6 +1185,13 @@ type skillFileNode struct {
 	Tasks    int        `json:"tasks"`
 	Agents   []string   `json:"usage_agents"`
 	LastUsed *time.Time `json:"last_used,omitempty"`
+
+	// 来源与治理信号（server/skill_origin.go）。此前前端靠硬编码名单+前缀猜测，
+	// 新增一个内置技能就要改前端；现在由后端判定，前端只展示。
+	Origin        string `json:"origin"`                      // builtin|distilled|merged|report|user
+	ReportDerived bool   `json:"report_derived,omitempty"`    // 内置，但由外部报告提炼
+	OutOfSync     bool   `json:"out_of_sync,omitempty"`       // 与当前内置版本不一致（本地改过或版本落后）
+	PendingProps  int    `json:"pending_proposals,omitempty"` // 待审阅提议数
 }
 
 func (s *Server) fsListSkills(w http.ResponseWriter, r *http.Request) {
@@ -1212,6 +1222,20 @@ func (s *Server) fsListSkills(w http.ResponseWriter, r *http.Request) {
 			statBySkill[st.Skill] = st
 		}
 	}
+	// 治理信号：每个技能还有多少条待审提议。读失败只降级为空，不影响列表本身。
+	pendingBySkill := map[string]int{}
+	if s.m.pg != nil {
+		if bySkill, perr := s.m.pg.SkillProposalPendingBySkill(r.Context()); perr == nil {
+			pendingBySkill = bySkill
+		} else {
+			log.Printf("[skills] 读取待审提议统计失败: %v", perr)
+		}
+	}
+	// 分检索的第一层：把"只看记忆库""搜某个关键词"这类请求在数据层就收敛，
+	// 而不是把全部技能包（含 references/*）先传一遍再让前端筛。
+	originFilter := parseOriginFilter(r.URL.Query().Get("origin"))
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	originCounts := map[string]int{}
 	nodes := []skillFileNode{}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -1232,9 +1256,48 @@ func (s *Server) fsListSkills(w http.ResponseWriter, r *http.Request) {
 		if node.Files == nil {
 			node.Files = []string{}
 		}
+		node.Origin = classifySkillOrigin(dirName)
+		node.ReportDerived = builtinSkillFromReport[dirName]
+		node.PendingProps = pendingBySkill[dirName]
+		if node.Origin == SkillOriginBuiltin {
+			node.OutOfSync = skillOutOfSync(s.skillDir, dirName)
+		}
+		// counts 统计的是"过滤前"的全量，前端分区标签要显示稳定的总数。
+		originCounts[node.Origin]++
+		if len(originFilter) > 0 && !originFilter[node.Origin] {
+			continue
+		}
+		if query != "" &&
+			!strings.Contains(strings.ToLower(dirName), query) &&
+			!strings.Contains(strings.ToLower(node.Description), query) {
+			continue
+		}
 		nodes = append(nodes, node)
 	}
-	writeJSON(w, 200, map[string]any{"skills": nodes})
+	writeJSON(w, 200, map[string]any{"skills": nodes, "counts": originCounts})
+}
+
+// fsRestoreBuiltinSkill 把一个内置技能同步为当前二进制里的内置版本。
+//
+// "分来源"不能只指出"这个内置技能和内置版本不一致"却不给收口的动作。只覆盖 embed
+// 里存在的文件，运维额外加的文件保留——恢复的语义是"回到内置版本"，不是"清空目录"。
+func (s *Server) fsRestoreBuiltinSkill(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !validSkillName(name) || strings.ContainsAny(name, "/\\") {
+		writeErr(w, 400, errMgmtSkillNameInvalid)
+		return
+	}
+	if !builtinSkillDirs[name] {
+		writeErr(w, 400, errMgmtSkillNotBuiltin)
+		return
+	}
+	n, err := restoreBuiltinSkill(name, filepath.Join(s.skillDir, name))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	log.Printf("[skills] 已恢复内置技能 %s 出厂内容（%d 个文件）", name, n)
+	writeJSON(w, 200, map[string]any{"ok": true, "files": n, "origin": SkillOriginBuiltin, "out_of_sync": false})
 }
 
 // fsSkillUsage returns one skill's recent invocations, newest first (detail panel).

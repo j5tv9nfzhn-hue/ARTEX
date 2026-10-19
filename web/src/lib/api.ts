@@ -538,7 +538,12 @@ export const api = {
   workspaceWrite: (path: string, content: string) =>
     post<{ ok: boolean; path: string }>(`/workspace/write`, { path, content }),
   workspaceMkdir: (path: string) => post<{ ok: boolean; path: string }>(`/workspace/mkdir`, { path }),
-  workspaceDelete: (path: string) => del<{ ok: boolean }>(`/workspace/delete?path=${encodeURIComponent(path)}`),
+  // contents=true：只清空目录内容，保留目录本身（agent 按目录名定位路径，整目录删掉
+  // 会让它下次写入失败）。返回 freed 是删除前统计到的字节数，用于回显释放量。
+  workspaceDelete: (path: string, contents = false) =>
+    del<{ ok: boolean; freed?: number }>(
+      `/workspace/delete?path=${encodeURIComponent(path)}${contents ? "&contents=1" : ""}`,
+    ),
   workspaceUpload: async (dir: string, files: File[]) => {
     if (MOCK) return { uploaded: files.length };
     const fd = new FormData();
@@ -551,6 +556,29 @@ export const api = {
     });
     if (!r.ok) throw new Error(`上传失败： ${r.status}`);
     return r.json() as Promise<{ uploaded: number }>;
+  },
+  // 备份：后端把文件或整棵目录打成 ZIP 流式返回，不落临时文件。
+  workspaceBackup: async (path: string) => {
+    let blob: Blob;
+    if (MOCK) {
+      blob = new Blob([`(demo) ${path} 的备份包示例。`], { type: "application/zip" });
+    } else {
+      const token = getToken();
+      const r = await fetch(`/api/workspace/backup?path=${encodeURIComponent(path)}`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!r.ok) throw new Error(`备份失败： ${r.status}`);
+      blob = await r.blob();
+    }
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const name = path.split("/").pop() || "workspace";
+    a.href = objUrl;
+    a.download = `${name}-backup.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objUrl);
   },
   workspaceDownload: async (path: string) => {
     let blob: Blob;
@@ -1260,7 +1288,16 @@ export const api = {
     }>("/sync/scopesentry/sync", body),
 
   // ---- skills (文件系统) ----
-  skills: () => get<{ skills: SkillItem[] }>("/skills").then((r) => arr(r.skills)),
+  skills: (params?: { origin?: string; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.origin) qs.set("origin", params.origin);
+    if (params?.q) qs.set("q", params.q);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<{ skills: SkillItem[] }>(`/skills${suffix}`).then((r) => arr(r.skills));
+  },
+  // 内置技能恢复出厂：只覆盖随版本发布的文件，本地额外添加的文件保留。
+  restoreSkill: (name: string) =>
+    post<{ ok: boolean; files: number }>(`/skills/${encodeURIComponent(name)}/restore`, {}),
   createSkill: (s: {
     name: string;
     description: string;

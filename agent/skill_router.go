@@ -16,18 +16,25 @@ type tacticalRouteRule struct {
 	title     string
 	keywords  []string
 	action    string
+	// nativeTools 是该场景下应优先使用的**原生**工具（非 Skill、非 MCP）。
+	// 此前路由只认 Skill 与 MCP：意图一旦没命中任何 Skill，提示里就一句都没提到
+	// http_sequence / http_fuzz 这些内置能力，它们连被考虑的机会都没有——实测
+	// http_request 占全部调用 49.4%，而 http_sequence 仅 1.0%、web_recon 0.4%。
+	nativeTools []string
 }
 
 var builtinTacticalRoutes = []tacticalRouteRule{
 	{
-		skillName: "human-verification",
-		title:     "人机验证、挑战识别与有界免费 PoW 求解",
-		keywords:  []string{"captcha", "turnstile", "cloudflare", "人机验证", "验证码", "黄色云", "橙色云", "altcha", "anubis", "pbkdf2", "proof of work"},
-		action:    "加载 Skill(human-verification)，先用 human_verification_capabilities 核对可用协议/helper，再识别响应；human_verification_solve 支持明确的 ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis，flow 支持端到端及 protocol_only。可选 fingerprint_profile 依赖独立 Go helper，缺失不自动下载；不重复失败策略、不默认转人工。",
+		skillName:   "human-verification",
+		nativeTools: []string{"http_request"},
+		title:       "人机验证、挑战识别与有界免费 PoW 求解",
+		keywords:    []string{"captcha", "turnstile", "cloudflare", "人机验证", "验证码", "黄色云", "橙色云", "altcha", "anubis", "pbkdf2", "proof of work"},
+		action:      "加载 Skill(human-verification)，先用 human_verification_capabilities 核对可用协议/helper，再识别响应；human_verification_solve 支持明确的 ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis，flow 支持端到端及 protocol_only。可选 fingerprint_profile 依赖独立 Go helper，缺失不自动下载；不重复失败策略、不默认转人工。",
 	},
 	{
-		skillName: "ai-gateway-logic",
-		title:     "AI 聚合中转站登录后业务逻辑审计（计费/余额/Key 生命周期/租户归属/支付回调）",
+		skillName:   "ai-gateway-logic",
+		nativeTools: []string{"http_sequence", "http_request"},
+		title:       "AI 聚合中转站登录后业务逻辑审计（计费/余额/Key 生命周期/租户归属/支付回调）",
 		keywords: []string{
 			"newapi", "new-api", "oneapi", "one-api", "one-hub", "litellm", "sub2api",
 			"ai 中转", "ai中转", "中转站", "聚合网关", "llm gateway", "llm 网关",
@@ -38,8 +45,9 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"ai-gateway-logic\"})` 加载中转站业务不变量手册；同时用 `tactical_kb({\"mode\":\"logic_invariants\",\"query\":\"ai_gateway\"})` 取不变量清单（INV-01..11：结算与鉴权解耦、定价 fail-closed、数值溢出、余额真值源、Key 失效、租户 scoped、支付验签、本地信任、管理面层级、促销滥用）。这类目标表面漏洞少，重心在登录后的计费与权限链路；每条不变量须给出最小复现与账单/状态前后快照，区分『配置缺失』与『可恶意利用绕过』。",
 	},
 	{
-		skillName: "ai-coding-sandbox-tactics",
-		title:     "AI 编程平台、Next.js Server Actions、云沙箱穿透与 Supabase 审计",
+		skillName:   "ai-coding-sandbox-tactics",
+		nativeTools: []string{"http_sequence", "web_recon"},
+		title:       "AI 编程平台、Next.js Server Actions、云沙箱穿透与 Supabase 审计",
 		keywords: []string{
 			"sandbox", "沙箱", "next.js", "nextjs", "server action", "next-action", "_next/static",
 			"supabase", "anon key", "service_role", "rls", "e2b", "vercel", "在线编程", "ai 编程",
@@ -48,8 +56,9 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"ai-coding-sandbox-tactics\"})` 加载 AI 编程平台与沙箱穿透实战包（自动附带 `references/pitfalls-and-bypasses.md` 单行 Base64 防截断绕过与 `references/attack-chains-and-pocs.md` 攻击推导链）。",
 	},
 	{
-		skillName: "wasm-cloud-saas-tactics",
-		title:     "WebAssembly (Go WASM) 逆向、WebSocket 越权、预签名云存储与 AI SaaS 计费绕过",
+		skillName:   "wasm-cloud-saas-tactics",
+		nativeTools: []string{"web_recon", "codec_crypto"},
+		title:       "WebAssembly (Go WASM) 逆向、WebSocket 越权、预签名云存储与 AI SaaS 计费绕过",
 		keywords: []string{
 			"wasm", "webassembly", "wasm_exec", "go wasm", "websocket", "ws://", "wss://",
 			"presigned", "预签名", "oss", "s3", "cos", "r2", "bucket", "积分", "配额",
@@ -58,8 +67,9 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"wasm-cloud-saas-tactics\"})` 加载 Go WASM 内存钩子取密钥、WebSocket 帧级越权、预签名 Bucket 列举与客户端积分拦截实战包（自动附带 `references/*` 防踩坑与 PoC 手册）。",
 	},
 	{
-		skillName: "api-recon",
-		title:     "REST/GraphQL API 枚举与未授权测试",
+		skillName:   "api-recon",
+		nativeTools: []string{"web_recon", "http_fuzz", "http_request"},
+		title:       "REST/GraphQL API 枚举与未授权测试",
 		keywords: []string{
 			"api", "swagger", "openapi", "graphql", "actuator", "wsdl", "wadl",
 			"接口", "端点", "endpoint", "rest", "v1/", "v2/", "jwt", "bola", "idor",
@@ -67,9 +77,10 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"api-recon\"})` 加载 API 侦察 SOP，并配合 `web_recon` / `http_fuzz` / `http_request` 探测文档端点与越权参数。",
 	},
 	{
-		skillName: "playwright-cli",
-		mcpServer: "Playwright",
-		title:     "SPA 前端动态渲染、登录态交互与 DOM/XSS 验证",
+		skillName:   "playwright-cli",
+		nativeTools: []string{"http_request"},
+		mcpServer:   "Playwright",
+		title:       "SPA 前端动态渲染、登录态交互与 DOM/XSS 验证",
 		keywords: []string{
 			"spa", "vue", "react", "angular", "dom", "xss", "前端渲染", "单页应用",
 			"浏览器", "playwright", "登录态", "验证码", "滑块", "弹窗", "截图", "headless",
@@ -107,8 +118,9 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"wpe64-mcp\"})` 加载封包实验手册；启用 wpe64 MCP 后调用 `mcp__wpe64__*` 抓取/编辑/重放，与 mitmproxy 流量记录按五元组+时间对齐取证。",
 	},
 	{
-		skillName: "mitmproxy-traffic",
-		title:     "mitmproxy 流量录制、解密取证与精确重放",
+		skillName:   "mitmproxy-traffic",
+		nativeTools: []string{"http_sequence", "http_request"},
+		title:       "mitmproxy 流量录制、解密取证与精确重放",
 		keywords: []string{
 			"mitmproxy", "流量记录", "流量取证", "流量回放", "https 解密",
 			"http 代理", "har", "抓包分析",
@@ -116,8 +128,9 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"mitmproxy-traffic\"})` 加载记录代理工作流（任务 -proxy 端口落库）；非 HTTP/自定义协议切换 Skill(wpe64-mcp) 帧层联合作战。",
 	},
 	{
-		skillName: "web-vuln-tactics",
-		title:     "Web 核心漏洞深度利用 (SQLi/SSRF/RCE/SSTI/XXE/上传/越权)",
+		skillName:   "web-vuln-tactics",
+		nativeTools: []string{"http_sequence", "http_fuzz", "http_request"},
+		title:       "Web 核心漏洞深度利用 (SQLi/SSRF/RCE/SSTI/XXE/上传/越权)",
 		keywords: []string{
 			"sql", "sqli", "注入", "ssrf", "rce", "命令执行", "ssti", "模板注入",
 			"xxe", "上传", "upload", "lfi", "文件包含", "反序列化", "越权", "绕过", "waf",
@@ -125,8 +138,9 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"web-vuln-tactics\"})` 获取 Web 漏洞验证与 WAF 绕过决策树，并用 `tactical_kb({\"mode\":\"vuln_patterns\",\"query\":\"...\"})` 检索载荷与复现模板。",
 	},
 	{
-		skillName: "reverse-engineering",
-		title:     "二进制/固件/APK/前端加密逆向与静态源码审计",
+		skillName:   "reverse-engineering",
+		nativeTools: []string{"binary_inspect", "codec_crypto"},
+		title:       "二进制/固件/APK/前端加密逆向与静态源码审计",
 		keywords: []string{
 			"逆向", "reverse", "elf", "pe", "apk", "固件", "firmware", "反编译",
 			"ghidra", "radare2", "objdump", "加壳", "脱壳", "签名算法", "webpack", "混淆", "源码审计", "代码审计",
@@ -134,8 +148,9 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"reverse-engineering\"})` 加载只读静态分析 SOP（动态执行须另行授权），并结合 `Grep` / `Glob` / `codec_crypto` / `tactical_kb` 定位关键校验与加解密逻辑。",
 	},
 	{
-		skillName: "exploit-kb-patterns",
-		title:     "Nday/CVE 漏洞快速画像与 PoC 载荷库检索",
+		skillName:   "exploit-kb-patterns",
+		nativeTools: []string{"http_sequence", "http_fuzz"},
+		title:       "Nday/CVE 漏洞快速画像与 PoC 载荷库检索",
 		keywords: []string{
 			"cve-", "cve", "nday", "1day", "poc", "exp", "shiro", "fastjson",
 			"spring", "struts", "log4j", "thinkphp", "weblogic", "oa", "中间件", "组件版本",
@@ -143,8 +158,9 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"exploit-kb-patterns\"})` 与 `tactical_kb({\"mode\":\"vuln_patterns\",\"query\":\"<组件名或CVE>\"})` 检索已知漏洞指纹与 PoC 链。",
 	},
 	{
-		skillName: "expert-triage-pivot",
-		title:     "受阻研判、WAF/403 突破、假阳性证伪与内网横向",
+		skillName:   "expert-triage-pivot",
+		nativeTools: []string{"http_sequence", "http_fuzz", "web_recon"},
+		title:       "受阻研判、WAF/403 突破、假阳性证伪与内网横向",
 		keywords: []string{
 			"受阻", "失败", "超时", "403", "404", "拦截", "无回显", "盲注",
 			"旁路", "横向", "跳板", "提权", "权限提升", "pivot", "复盘", "卡住",
@@ -186,7 +202,16 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 			break
 		}
 	}
-	if !hasSkillTool && !hasTacticalKB && !hasMCP {
+	// 原生工具路由不依赖 Skill/tactical_kb/MCP 任一存在，因此不能在这里一并返回：
+	// 正是「没有 Skill 命中 ⇒ 整个路由块消失」的行为，让内置专用工具彻底隐形。
+	mounted := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		if t != nil {
+			mounted[t.Name()] = true
+		}
+	}
+	nativeBlock := renderNativeToolRouting(tools)
+	if !hasSkillTool && !hasTacticalKB && !hasMCP && nativeBlock == "" {
 		return ""
 	}
 
@@ -251,7 +276,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 			if i >= 4 {
 				break // 最多展示前 4 条最相关路由（含沉淀复盘技能与内置专家技能），保持精炼高信噪比
 			}
-			fmt.Fprintf(&b, "- 🎯 **%s** (`%s`)：%s\n", m.title, m.skillName, m.action)
+			fmt.Fprintf(&b, "- 🎯 **%s** (`%s`)：%s%s\n", m.title, m.skillName, m.action, nativeToolBadges(m.nativeTools, mounted))
 		}
 	} else if hasSkillTool {
 		b.WriteString("- 💡 **技能库先行**：当前已挂载 `Skill` 工具，具体技能以可见清单为准。遇到具体渗透/逆向/侦察子方向时，**请先调用 `Skill({\"name\":\"<技能名>\"})` 加载专家 SOP（含配套 `references/*` 防踩坑与 PoC 手册）**，切忌盲目硬猜。\n")
@@ -277,6 +302,9 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		}
 		sort.Strings(gsrvs)
 		fmt.Fprintf(&b, "- 🔐 **技能关联 MCP 待解锁**：检测到技能门控 MCP 服务 `[%s]`，调用对应关联 `Skill` 后即可自动解锁并直接调用其工具。\n", strings.Join(gsrvs, ", "))
+	}
+	if nativeBlock != "" {
+		b.WriteString(nativeBlock)
 	}
 	b.WriteString("</tactical_skill_mcp_routing>")
 	return b.String()

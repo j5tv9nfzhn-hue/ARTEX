@@ -261,6 +261,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	// AI 自我进化沉淀：任务终态/删除时把可复用的路径、证据与失败模式整理成技能。
 	// 钩子按调用时的设置决定「只生成提议」还是「直接落盘」，无需重启。
 	s.installSkillCuratorHooks()
+	// 应用内通知：把「漏洞落库」这条（唯一发生在 db 包的）业务时刻接上内存事件流。
+	// 其余三个收敛点（任务终态 / 子代理结算 / AI 回复结束）都在 server 包内直接发。
+	s.installUINotifyHooks()
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
 	// 之后每次保存策略再推一次（saveLLMRetryPolicy）。
 	s.applyRetryPolicy()
@@ -821,6 +824,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/history", s.getLogsHistory)
 	mux.HandleFunc("GET /api/logs/stream", s.streamLogs)
+	// 应用内通知（右下角浮层 + 顶部横幅）：不落库，只做本浏览器会话内的事件流。
+	// 与 /api/notifications 的出站推送管理接口是两回事（后者在 registerSideRoutes）。
+	mux.HandleFunc("GET /api/notifications/stream", s.streamUINotifications)
+	mux.HandleFunc("GET /api/notifications/recent", s.listUINotifications)
 
 	// 页面一键更新。走的是默认的 JWT 鉴权（auth.go 只放行 /api/auth/* 和
 	// /api/health），所以这几个改动程序自身的接口天然需要登录。
@@ -871,6 +878,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/workspace/write", s.wsWrite)
 	mux.HandleFunc("POST /api/workspace/mkdir", s.wsMkdir)
 	mux.HandleFunc("DELETE /api/workspace/delete", s.wsDelete)
+	mux.HandleFunc("GET /api/workspace/backup", s.wsBackup)
 	mux.HandleFunc("GET /api/workspace/download", s.wsDownload)
 	mux.HandleFunc("POST /api/workspace/upload", s.wsUpload)
 	mux.HandleFunc("GET /api/tasks/{id}/scope", s.taskScopeList)
@@ -1079,6 +1087,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/skills/{name}/export", s.fsExportSkillZip)                        // 导出完整技能包为 .zip
 	mux.HandleFunc("GET /api/system/verification-capabilities", s.sysVerificationCapabilities) // 人机验证协议与可选指纹 helper 就绪快照
 	mux.HandleFunc("GET /api/skills/{name}/usage", s.fsSkillUsage)                             // 单个 skill 的最近调用
+	mux.HandleFunc("POST /api/skills/{name}/restore", s.fsRestoreBuiltinSkill)                 // 内置技能同步为当前内置版本（分来源配套的治理动作）
 	mux.HandleFunc("PUT /api/skills/{name}/meta", s.fsUpdateSkillMeta)
 	mux.HandleFunc("POST /api/skills/{name}/dirs", s.fsCreateDir)
 	mux.HandleFunc("GET /api/skills/{name}/files", s.fsListFiles)

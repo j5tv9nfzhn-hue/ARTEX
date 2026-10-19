@@ -47,7 +47,16 @@ import { ApiError, api } from "@/lib/api";
 import type { Agent, MCPServer, MissingSkill, SkillCall, SkillItem, SkillProposal } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const BUILTIN_SKILL_NAMES = new Set([
+// ── 技能来源（与 server/skill_origin.go 对齐） ─────────────────────────────
+// 技能天然分两类：随版本发布的内置战法（知识库），以及任务结束后沉淀的复盘（记忆库）。
+// 二者差的不是能力——加载、可见性、计量完全一致——而是生命周期：内置随版本走、
+// 会在升级时被替换（故需要"是否被本地改过"与"恢复出厂"），沉淀按部署累积、
+// 需要淘汰与晋升。来源由后端判定，前端只负责分组与展示。
+type SkillOrigin = "builtin" | "distilled" | "merged" | "report" | "user";
+type SkillBucket = "all" | "knowledge" | "memory" | "custom";
+
+// 旧后端未返回 origin 时的兜底，判定规则与后端完全一致（内置优先，再看前缀）。
+const LEGACY_BUILTIN_SKILL_NAMES = new Set([
   "api-recon",
   "playwright-cli",
   "scopesentry-mcp",
@@ -64,7 +73,31 @@ const BUILTIN_SKILL_NAMES = new Set([
   "ai-gateway-logic",
 ]);
 
-const REPORT_TACTIC_SKILL_NAMES = new Set(["ai-coding-sandbox-tactics", "wasm-cloud-saas-tactics"]);
+function originOf(s: SkillItem): SkillOrigin {
+  if (s.origin) return s.origin;
+  if (LEGACY_BUILTIN_SKILL_NAMES.has(s.name)) return "builtin";
+  if (s.name.startsWith("case-")) return "distilled";
+  if (s.name.startsWith("merged-")) return "merged";
+  if (s.name.startsWith("report-")) return "report";
+  return "user";
+}
+
+function bucketOf(origin: SkillOrigin): Exclude<SkillBucket, "all"> {
+  if (origin === "builtin") return "knowledge";
+  if (origin === "user") return "custom";
+  return "memory";
+}
+
+// 分区定义。顺序即总览卡片顺序与"全部"视图里的分组顺序：先知识、再记忆、后自建。
+const SKILL_BUCKETS: Exclude<SkillBucket, "all">[] = ["knowledge", "memory", "custom"];
+
+// 分组顺序：知识库 → 记忆库 → 自建。后端按目录名返回，不排序的话三类会交错，
+// 分组头就会反复出现。
+const BUCKET_ORDER: Record<Exclude<SkillBucket, "all">, number> = {
+  knowledge: 0,
+  memory: 1,
+  custom: 2,
+};
 
 function fmtTime(ts: string | undefined, never: string) {
   if (!ts) return never;
@@ -172,14 +205,27 @@ function SkillsOverview({
   pendingProposalsCount,
   onSelect,
   onOpenProposals,
+  onBucket,
 }: {
   skills: SkillItem[];
   missing: MissingSkill[];
   pendingProposalsCount: number;
   onSelect: (name: string) => void;
   onOpenProposals: () => void;
+  onBucket: (b: Exclude<SkillBucket, "all">) => void;
 }) {
   const t = useTranslations("skillsPage");
+  // 三类来源的文案（静态 key，见 SkillsPage 里同名说明）。
+  const bucketLabels: Record<Exclude<SkillBucket, "all">, string> = {
+    knowledge: t("bucketKnowledge"),
+    memory: t("bucketMemory"),
+    custom: t("bucketCustom"),
+  };
+  const bucketHints: Record<Exclude<SkillBucket, "all">, string> = {
+    knowledge: t("bucketKnowledgeHint"),
+    memory: t("bucketMemoryHint"),
+    custom: t("bucketCustomHint"),
+  };
   const agg = React.useMemo(() => {
     const totalCalls = skills.reduce((n, s) => n + s.calls, 0);
     const used = skills.filter((s) => s.calls > 0);
@@ -242,6 +288,25 @@ function SkillsOverview({
           </Button>
         </div>
       )}
+
+      {/* 三类来源：知识库（内置战术）/ 记忆库（任务沉淀）/ 自建。点卡片即按类过滤。 */}
+      <div className="grid grid-cols-3 gap-3">
+        {SKILL_BUCKETS.map((key) => {
+          const n = skills.filter((s) => bucketOf(originOf(s)) === key).length;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onBucket(key)}
+              className="rounded-lg border p-3 text-left transition-colors hover:bg-muted"
+            >
+              <p className="font-semibold text-2xl tabular-nums">{n}</p>
+              <p className="font-medium text-xs">{bucketLabels[key]}</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{bucketHints[key]}</p>
+            </button>
+          );
+        })}
+      </div>
 
       {/* 指标卡 */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -351,6 +416,13 @@ export default function SkillsPage() {
   const [selected, setSelected] = React.useState<Selected | null>(null);
   const [visibility, setVisibility] = React.useState<Record<string, string[]>>({});
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  // 分区与检索。列表是几十条量级，过滤放在前端即可；服务端同时支持
+  // GET /api/skills?origin=&q= 供脚本与大数据量场景精准收敛。
+  const [bucket, setBucket] = React.useState<SkillBucket>("all");
+  const [query, setQuery] = React.useState("");
+  // 内置技能同步为当前内置版本（本地改过、或升级后落后，两种情况的动作相同）
+  const [restoreOpen, setRestoreOpen] = React.useState(false);
+  const [restoring, setRestoring] = React.useState(false);
 
   // file editor
   const [fileContent, setFileContent] = React.useState("");
@@ -862,6 +934,22 @@ export default function SkillsPage() {
     setCheckedProposalIds((cur) => (on ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter((x) => x !== id)));
   }
 
+  // 恢复出厂：只用内置版本覆盖随版本发布的文件，运维额外加的文件保留。
+  async function handleRestoreBuiltin() {
+    if (!selectedSkill) return;
+    setRestoring(true);
+    try {
+      const res = await api.restoreSkill(selectedSkill.name);
+      toast.success(t("restoreDone", { count: res.files }));
+      setRestoreOpen(false);
+      load();
+    } catch (err) {
+      toast.error(t("restoreFailed", { msg: err instanceof ApiError ? err.message : String(err) }));
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   async function handleBatchReview(decision: "approve" | "reject") {
     const pendingSelected = proposals
       .filter((p) => checkedProposalIds.includes(p.id) && p.status === "pending")
@@ -1184,6 +1272,37 @@ export default function SkillsPage() {
   const selectedSkill = selected ? (skills.find((s) => s.name === selected.skill) ?? null) : null;
   const pendingProposalsCount = proposalCounts.pending ?? 0;
 
+  // 分区文案。用逐条静态 t() 而不是 t(变量)：与仓库其余页面一致，也不会在启用
+  // next-intl 的类型化 messages 后因为动态 key 报类型错。
+  const bucketLabels: Record<SkillBucket, string> = {
+    all: t("bucketAll"),
+    knowledge: t("bucketKnowledge"),
+    memory: t("bucketMemory"),
+    custom: t("bucketCustom"),
+  };
+
+  // 三类来源的计数（知识库 / 记忆库 / 自建），供左侧分区条与总览卡片共用。
+  const bucketTotals = React.useMemo(() => {
+    const totals: Record<Exclude<SkillBucket, "all">, number> = { knowledge: 0, memory: 0, custom: 0 };
+    for (const s of skills) totals[bucketOf(originOf(s))] += 1;
+    return totals;
+  }, [skills]);
+
+  // 当前分区 + 检索词下的可见技能。空查询时保持后端返回顺序（目录名序）。
+  const visibleSkills = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = skills.filter((s) => {
+      if (bucket !== "all" && bucketOf(originOf(s)) !== bucket) return false;
+      if (!q) return true;
+      return s.name.toLowerCase().includes(q) || (s.description ?? "").toLowerCase().includes(q);
+    });
+    if (bucket === "all") {
+      // filter() 返回新数组，这里排序安全；组内保持后端顺序。
+      list.sort((a, b) => BUCKET_ORDER[bucketOf(originOf(a))] - BUCKET_ORDER[bucketOf(originOf(b))]);
+    }
+    return list;
+  }, [skills, bucket, query]);
+
   return (
     <div data-content-padding="false" className="flex flex-1 flex-col overflow-hidden">
       <div className="flex items-center gap-3 border-b px-4 py-2.5 lg:px-6">
@@ -1293,17 +1412,66 @@ export default function SkillsPage() {
               {t("importReportBtn")}
             </Button>
           </div>
+          {/* 分区（知识库 / 记忆库 / 自建）+ 检索。来源由后端判定，这里只做筛选。 */}
+          <div className="space-y-1.5 border-b px-2 py-2">
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("searchSkillsPlaceholder")}
+              className="h-7 text-xs"
+            />
+            <div className="grid grid-cols-4 gap-1">
+              {(["all", ...SKILL_BUCKETS] as SkillBucket[]).map((key) => {
+                const n = key === "all" ? skills.length : bucketTotals[key];
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setBucket(key)}
+                    title={bucketLabels[key]}
+                    className={cn(
+                      "truncate rounded px-1 py-1 text-[11px] transition-colors",
+                      bucket === key
+                        ? "bg-primary font-medium text-primary-foreground"
+                        : "text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    {bucketLabels[key]}
+                    <span className="ml-1 tabular-nums opacity-70">{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           {/* Radix viewport wraps children in a display:table div that grows with
               content — force it to block so long names truncate instead of
               widening the rows past the sidebar. */}
           <ScrollArea className="[&>[data-slot=scroll-area-viewport]>div]:!block flex-1">
             <div className="p-1">
-              {skills.map((s) => {
+              {visibleSkills.map((s, idx) => {
                 const isOpen = expanded.has(s.name);
+                // "全部"视图里按来源分组，分组头只在类别切换时出现一次。
+                const prev = idx > 0 ? visibleSkills[idx - 1] : null;
+                const groupKey = bucketOf(originOf(s));
+                const showGroup = bucket === "all" && (!prev || bucketOf(originOf(prev)) !== groupKey);
+                const groupLabel = bucketLabels[groupKey];
                 const tree = buildTree(s.files);
                 const isSkillSelected = selected?.skill === s.name && selected.path === null;
                 return (
                   <div key={s.name}>
+                    {showGroup && (
+                      <div
+                        className={cn(
+                          "mb-1 flex items-center gap-1 px-2 text-[11px] text-muted-foreground",
+                          idx > 0 && "mt-2",
+                        )}
+                      >
+                        <span className="font-medium">{groupLabel}</span>
+                        <span className="tabular-nums opacity-70">
+                          {visibleSkills.filter((x) => bucketOf(originOf(x)) === groupKey).length}
+                        </span>
+                      </div>
+                    )}
                     {/* skill 根节点 */}
                     <div
                       role="treeitem"
@@ -1416,6 +1584,9 @@ export default function SkillsPage() {
               {skills.length === 0 && (
                 <EmptyState compact illustration="terminal" className="p-3" title={t("emptySidebar")} />
               )}
+              {skills.length > 0 && visibleSkills.length === 0 && (
+                <p className="px-2 py-3 text-center text-muted-foreground text-xs">{t("emptyFiltered")}</p>
+              )}
             </div>
           </ScrollArea>
         </div>
@@ -1432,6 +1603,7 @@ export default function SkillsPage() {
                 loadProposals("all");
                 setProposalsOpen(true);
               }}
+              onBucket={(b) => setBucket(b)}
             />
           )}
 
@@ -1464,27 +1636,60 @@ export default function SkillsPage() {
                   <p className="mt-1 text-muted-foreground text-sm">{selectedSkill.description}</p>
                 )}
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {BUILTIN_SKILL_NAMES.has(selectedSkill.name) && (
+                  {originOf(selectedSkill) === "builtin" && (
                     <Badge variant="secondary" className="font-normal text-xs">
-                      Built-in
+                      {t("originBuiltinBadge")}
                     </Badge>
                   )}
-                  {(selectedSkill.name.startsWith("report-") || REPORT_TACTIC_SKILL_NAMES.has(selectedSkill.name)) && (
+                  {originOf(selectedSkill) === "builtin" && selectedSkill.report_derived && (
                     <Badge variant="outline" className="border-primary/40 font-normal text-primary text-xs">
                       {t("reportDistilledBadge")}
                     </Badge>
                   )}
-                  {selectedSkill.name.startsWith("case-") && (
+                  {originOf(selectedSkill) === "distilled" && (
                     <Badge variant="outline" className="border-primary/40 font-normal text-primary text-xs">
                       {t("distilledCaseBadge")}
                     </Badge>
                   )}
-                  {selectedSkill.name.startsWith("merged-") && (
+                  {originOf(selectedSkill) === "merged" && (
                     <Badge
                       variant="outline"
                       className="border-emerald-500/40 font-normal text-emerald-600 text-xs dark:text-emerald-400"
                     >
                       {t("mergedCaseBadge")}
+                    </Badge>
+                  )}
+                  {originOf(selectedSkill) === "report" && (
+                    <Badge variant="outline" className="border-primary/40 font-normal text-primary text-xs">
+                      {t("reportDistilledBadge")}
+                    </Badge>
+                  )}
+                  {originOf(selectedSkill) === "user" && (
+                    <Badge variant="outline" className="font-normal text-xs">
+                      {t("userSkillBadge")}
+                    </Badge>
+                  )}
+                  {selectedSkill.out_of_sync && (
+                    <>
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/40 font-normal text-amber-600 text-xs dark:text-amber-400"
+                      >
+                        {t("modifiedBadge")}
+                      </Badge>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 border-amber-500/40 px-2 text-xs text-amber-600 dark:text-amber-400"
+                        onClick={() => setRestoreOpen(true)}
+                      >
+                        {t("restoreBtn")}
+                      </Button>
+                    </>
+                  )}
+                  {(selectedSkill.pending_proposals ?? 0) > 0 && (
+                    <Badge variant="outline" className="font-normal text-xs">
+                      {t("pendingProposalBadge", { count: selectedSkill.pending_proposals ?? 0 })}
                     </Badge>
                   )}
                   {selectedSkill.mcps?.map((m) => (
@@ -1674,6 +1879,33 @@ export default function SkillsPage() {
               }}
             >
               {renameBusy ? t("renaming") : t("renameConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── 内置技能恢复出厂 ── */}
+      <AlertDialog
+        open={restoreOpen}
+        onOpenChange={(o) => {
+          if (!o && !restoring) setRestoreOpen(false);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("restoreTitle", { name: selectedSkill?.name ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("restoreDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoring}>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={restoring}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleRestoreBuiltin();
+              }}
+            >
+              {restoring ? t("restoring") : t("restoreConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

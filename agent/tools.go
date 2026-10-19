@@ -61,6 +61,9 @@ type ToolSet struct {
 	proxyAddr         string // recording MITM or egress proxy URL for built-in HTTP tools
 	proxyCACert       string // recording MITM CA cert path for built-in HTTP tools
 	workDir           string // per-run working directory for built-in file/wordlist tools
+	// steer 记录本 run 内的工具选择分布，让通用工具在决策点把活转给专用工具，
+	// 见 agent/tool_steering.go（实测 http_request 占 49.4%、http_sequence 仅 1.0%）。
+	steer toolChoiceSteering
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
 	// zero value (all existing ToolSet constructions) means ENABLED — matching the
 	// DB default (true). When true: graphOverviewData drops the coverage block, the

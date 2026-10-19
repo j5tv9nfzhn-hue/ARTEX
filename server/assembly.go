@@ -636,8 +636,18 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 		out := tools[:0:0]
 		for _, t := range tools {
 			row, known := byKey[t.Name()]
-			if !known { // MCP/skill/host tool: no row → untouched
-				out = append(out, t)
+			if !known { // SDK/meta tool: no tools row → visibility & defaults untouched
+				// 但仍必须计量。此前这里直接 append 原样放行，导致 Bash / Write /
+				// Read / Edit / Skill / ExecuteExtraTool 这些**真正在干活**的工具
+				// 完全没有 tool_usage 记录：某安装 20,521 次调用里只有 50 个 key，
+				// 脚本与文件读写全被计成 0，「模型到底靠什么在干活」这个问题
+				// 从数据上无法回答，优化也就无从下手。
+				// MCP 工具已在上面按服务逐个 meterTool 过，这里跳过以免重复计数。
+				if strings.HasPrefix(t.Name(), "mcp__") {
+					out = append(out, t)
+					continue
+				}
+				out = append(out, meterTool(t, pg, t.Name(), agentKey, runInfo))
 				continue
 			}
 			if !row.Enabled || !contains(row.Agents, agentKey) {
