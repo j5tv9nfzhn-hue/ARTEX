@@ -262,13 +262,21 @@ WHERE conversation_id=$1 AND kind='result' AND reverted_at IS NULL`, convID).Sca
 	return total, err
 }
 
-// ConvActivityList returns a conversation's steps after sinceID (exclusive) with
-// the summary-only column set (detail is lazy-loaded via ConvActivityDetail).
+// bodyCol 只把「消息正文」类活动的 detail 带出来。
+//
+// summary 是 firstLine(200)，仅够列表预览；而 detail 是完整正文。工具类活动的
+// detail 可能是整段命令输出/文件内容（几十到几百 KB），必须保持懒加载；
+// 但 user / text / result 的 detail 就是用户真正要看的那句话——只给 summary
+// 会让时间线把每条消息截成「第一行 + 200 字」，在界面上看起来像内容丢了。
+const bodyCol = `CASE WHEN COALESCE(kind,'') IN ('user','text','result') THEN COALESCE(detail,'') ELSE '' END`
+
+// ConvActivityList returns a conversation's steps after sinceID (exclusive).
+// 消息正文随行返回（见 bodyCol），工具详情仍由 ConvActivityDetail 懒加载。
 func (d *DB) ConvActivityList(convID, sinceID int64, limit int) ([]Activity, int64, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	const cols = `id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens`
+	const cols = `id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, ` + bodyCol
 	rows, err := d.Query(`SELECT `+cols+`
 FROM conversation_activities WHERE conversation_id=$1 AND id>$2 AND reverted_at IS NULL ORDER BY id LIMIT $3`, convID, sinceID, limit)
 	if err != nil {
@@ -280,7 +288,7 @@ FROM conversation_activities WHERE conversation_id=$1 AND id>$2 AND reverted_at 
 	for rows.Next() {
 		var a Activity
 		if err := rows.Scan(&a.ID, &a.Worker, &a.Kind, &a.Tool, &a.ToolUseID, &a.IsError, &a.Summary, &a.CreatedAt,
-			&a.InputTokens, &a.OutputTokens, &a.CacheReadTokens, &a.CacheWriteTokens); err != nil {
+			&a.InputTokens, &a.OutputTokens, &a.CacheReadTokens, &a.CacheWriteTokens, &a.Detail); err != nil {
 			return nil, sinceID, err
 		}
 		if a.ID > cursor {
@@ -300,7 +308,7 @@ func (d *DB) ConvActivityPage(convID, before int64, limit int) ([]Activity, bool
 	if limit <= 0 {
 		limit = 200
 	}
-	const cols = `id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens`
+	const cols = `id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, ` + bodyCol
 	// fetch one extra row to detect whether older history remains before this window.
 	rows, err := d.Query(`SELECT `+cols+`
 FROM conversation_activities
@@ -314,7 +322,7 @@ ORDER BY id DESC LIMIT $3`, convID, before, limit+1)
 	for rows.Next() {
 		var a Activity
 		if err := rows.Scan(&a.ID, &a.Worker, &a.Kind, &a.Tool, &a.ToolUseID, &a.IsError, &a.Summary, &a.CreatedAt,
-			&a.InputTokens, &a.OutputTokens, &a.CacheReadTokens, &a.CacheWriteTokens); err != nil {
+			&a.InputTokens, &a.OutputTokens, &a.CacheReadTokens, &a.CacheWriteTokens, &a.Detail); err != nil {
 			return nil, false, err
 		}
 		desc = append(desc, a)

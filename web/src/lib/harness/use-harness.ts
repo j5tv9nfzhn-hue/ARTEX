@@ -121,6 +121,10 @@ export function useHarness(initialConversationId?: number) {
   const [transport, setTransport] = React.useState<"idle" | "sse" | "poll">("idle");
   // 会话 token 预算上限/模式：服务端有默认值，用户零配置也有刹车。
   const [budget, setBudget] = React.useState<{ limit: number; mode: string } | null>(null);
+  // draft 把「被撤回的那条消息」送回输入框。回滚接口只隐藏行、不返回正文，
+  // 而控制台的既有语义是「撤回后正文回到输入框供修改重发」——harness 少了这一步，
+  // 用户看到的就是「消息发出去然后凭空消失」。
+  const [draft, setDraft] = React.useState<{ text: string; nonce: number } | null>(null);
 
   const cursorRef = React.useRef(0);
   const activeRef = React.useRef<number | null>(null);
@@ -478,11 +482,24 @@ export function useHarness(initialConversationId?: number) {
     async (seq: number) => {
       const id = activeId;
       if (!id) return;
-      await api.rollbackConversationMessage(id, seq);
-      toast.success(`已回滚到 #${seq}`);
-      await openConversation(id);
+      // 先记住这条用户消息的正文：回滚会把它从时间线隐藏，正文必须还回去，
+      // 否则用户看到的就是「我刚发的话没了，而且没留下任何东西」。
+      const target = items.find((it) => it.seq === seq && it.type === "user");
+      const body = target && target.type === "user" ? target.text : "";
+      try {
+        const res = await api.rollbackConversationMessage(id, seq);
+        if (body) setDraft({ text: body, nonce: Date.now() });
+        toast.success(body ? `已撤回 ${res.hidden} 条步骤，原消息已放回输入框` : `已撤回 ${res.hidden} 条步骤`);
+        await openConversation(id);
+      } catch (e) {
+        // 回滚失败（例如「当前会话有一轮正在运行」）此前是未处理的 rejection：
+        // 界面上什么都不发生，只有控制台报错。必须让用户看见。
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        toast.error(msg);
+      }
     },
-    [activeId, openConversation],
+    [activeId, items, openConversation],
   );
 
   const addComment = React.useCallback((c: HarnessComment) => {
@@ -542,6 +559,7 @@ export function useHarness(initialConversationId?: number) {
     stop,
     decide,
     rollback,
+    draft,
     addComment,
     removeComment,
     loadWorkspace,

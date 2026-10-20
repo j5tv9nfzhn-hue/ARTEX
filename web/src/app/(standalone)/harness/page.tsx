@@ -235,9 +235,15 @@ function Workspace() {
               disabled={!lastUserSeq || h.running}
               onClick={() => {
                 if (!lastUserSeq) return;
-                if (window.confirm(`回滚到 #${lastUserSeq} 之前？此后产生的消息将被撤销。`)) {
-                  void h.rollback(lastUserSeq);
-                }
+                // 这个按钮撤掉的是「你最后说的那句话」本身，不是它之后的一轮。
+                // 旧文案（"回滚到 #2602 之前"）既没说是哪条，也没说要连它一起撤，
+                // 用户点完只会看到自己的消息凭空消失。
+                const ok = window.confirm(
+                  "撤回你最后发送的那条消息及其之后的所有步骤？\n\n" +
+                    "· 消息与步骤会从时间线移除（数据保留，可审计）\n" +
+                    "· 那条消息的原文会放回输入框，方便修改后重发",
+                );
+                if (ok) void h.rollback(lastUserSeq);
               }}
             >
               <Undo2Icon className="size-3" /> 回滚
@@ -274,6 +280,7 @@ function Workspace() {
           comments={h.comments}
           onRemoveComment={h.removeComment}
           tokens={h.tokens}
+          draft={h.draft}
         />
       </section>
 

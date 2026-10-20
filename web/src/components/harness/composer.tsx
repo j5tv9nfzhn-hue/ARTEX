@@ -32,6 +32,8 @@ export interface ComposerProps {
   onRemoveComment: (index: number) => void;
   /** 本会话累计 token（来自 result 活动）。 */
   tokens?: number;
+  /** 撤回后要放回输入框的正文；nonce 变化即一次新的回填。 */
+  draft?: { text: string; nonce: number } | null;
 }
 
 export function Composer({
@@ -45,6 +47,7 @@ export function Composer({
   comments,
   onRemoveComment,
   tokens,
+  draft,
 }: ComposerProps) {
   const [text, setText] = React.useState("");
   // 待发送的图片：粘贴进来先挂在这里（候选），发送时随消息一起上传。
@@ -54,6 +57,17 @@ export function Composer({
   // 同一 tick 内连按两次 Enter 时 sending 还没变成 true，用它兜住重复提交。
   const busyRef = React.useRef(false);
   const ref = React.useRef<HTMLTextAreaElement | null>(null);
+
+  // 撤回一条消息后，正文要回到输入框供修改重发（与控制台一致）。
+  // 依赖 nonce 而不是 text：同一条消息连撤两次也要能重新填一次。
+  const draftNonce = draft?.nonce ?? 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只认 nonce，text 变化不该触发重填。
+  React.useEffect(() => {
+    if (!draft || !draftNonce) return;
+    setText(draft.text);
+    setLocalError(null);
+    requestAnimationFrame(() => ref.current?.focus());
+  }, [draftNonce]);
 
   // 粘贴图片：截图/复制的图直接进候选，不必先存文件再选。
   // 只接管 file+image/* 的粘贴，纯文本一行都不碰。
