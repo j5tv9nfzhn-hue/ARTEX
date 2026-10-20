@@ -407,7 +407,7 @@ func doVisionRequest(ctx context.Context, cfg Config, url string, headers http.H
 }
 
 // extractVisionText 按格式取正文。三种响应结构的取值路径完全不同，统一在这里。
-func extractVisionText(format string, raw []byte) (string, error) {
+func extractVisionText(format llm.Format, raw []byte) (string, error) {
 	switch format {
 	case llm.FormatOpenAI:
 		var r struct {
