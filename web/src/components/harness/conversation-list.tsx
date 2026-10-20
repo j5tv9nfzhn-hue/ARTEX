@@ -7,7 +7,7 @@
 
 import * as React from "react";
 
-import { FolderOpenIcon, PlusIcon } from "lucide-react";
+import { FolderOpenIcon, PencilIcon, PinIcon, PlusIcon, Trash2Icon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { Agent, Conversation } from "@/lib/types";
@@ -33,6 +33,10 @@ export interface ConversationListProps {
   workspace: string;
   onSelect: (id: number) => void;
   onCreate: () => void;
+  /** 第二个参数是被重命名的会话 id —— 左栏可以改任意一条，不只是当前会话。 */
+  onRename: (title: string, id?: number) => Promise<void>;
+  onTogglePin: (id: number) => void;
+  onDelete: (id: number) => void;
 }
 
 export function ConversationList({
@@ -43,7 +47,33 @@ export function ConversationList({
   workspace,
   onSelect,
   onCreate,
+  onRename,
+  onTogglePin,
+  onDelete,
 }: ConversationListProps) {
+  // 行内重命名 / 二次确认删除：都不用 window.confirm —— 嵌入式 iframe
+  // （sandbox 无 allow-modals）里它会被静默吞掉，用户点了会以为没反应。
+  const [editingId, setEditingId] = React.useState<number | null>(null);
+  const [titleDraft, setTitleDraft] = React.useState("");
+  const [confirmId, setConfirmId] = React.useState<number | null>(null);
+  const renameRef = React.useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    if (editingId !== null) renameRef.current?.focus();
+  }, [editingId]);
+
+  const startRename = (c: Conversation) => {
+    setEditingId(c.id);
+    setTitleDraft(c.title || "");
+    setConfirmId(null);
+  };
+  const commitRename = async () => {
+    const id = editingId;
+    const next = titleDraft.trim();
+    setEditingId(null);
+    if (!id || !next) return;
+    await onRename(next, id);
+  };
   const groups = React.useMemo<Group[]>(() => {
     const running = conversations.filter((c) => c.running);
     const idle = conversations.filter((c) => !c.running);
@@ -99,29 +129,103 @@ export function ConversationList({
               const agent = agents.get(c.agent_key);
               const on = c.id === activeId;
               return (
-                <button
+                <div
                   key={c.id}
-                  type="button"
-                  onClick={() => onSelect(c.id)}
                   className={cn(
-                    "mb-0.5 block w-full rounded-md border px-2 py-1.5 text-left transition-colors",
+                    "group relative mb-0.5 rounded-md border transition-colors",
                     on
                       ? "border-border bg-background shadow-[inset_2px_0_0_var(--primary)]"
                       : "border-transparent hover:bg-accent/60",
                   )}
                 >
-                  <span className="block truncate font-medium text-[12.5px]">{c.title || "未命名会话"}</span>
-                  <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
-                    <span className="rounded-sm bg-muted px-1 font-mono">{agent?.name ?? c.agent_key}</span>
-                    {on && hasPending ? (
-                      <span className="inline-flex items-center gap-1 text-[var(--hx-warn)]">
-                        <span className="size-1 rounded-full bg-[var(--hx-warn)]" /> 待审批
+                  {editingId === c.id ? (
+                    <input
+                      ref={renameRef}
+                      value={titleDraft}
+                      onChange={(e) => setTitleDraft(e.target.value)}
+                      onBlur={() => void commitRename()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void commitRename();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setEditingId(null);
+                        }
+                      }}
+                      className="w-full rounded-md bg-transparent px-2 py-1.5 text-[12.5px] outline-none"
+                    />
+                  ) : (
+                    <button type="button" onClick={() => onSelect(c.id)} className="block w-full px-2 py-1.5 text-left">
+                      <span className="flex items-center gap-1">
+                        {c.pinned ? <PinIcon className="size-2.5 shrink-0 rotate-45 text-muted-foreground" /> : null}
+                        <span className="min-w-0 flex-1 truncate font-medium text-[12.5px]">
+                          {c.title || "未命名会话"}
+                        </span>
                       </span>
-                    ) : (
-                      <span>{relTime(c.updated_at)}</span>
-                    )}
-                  </span>
-                </button>
+                      <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
+                        <span className="rounded-sm bg-muted px-1 font-mono">{agent?.name ?? c.agent_key}</span>
+                        {on && hasPending ? (
+                          <span className="inline-flex items-center gap-1 text-[var(--hx-warn)]">
+                            <span className="size-1 rounded-full bg-[var(--hx-warn)]" /> 待审批
+                          </span>
+                        ) : (
+                          <span>{relTime(c.updated_at)}</span>
+                        )}
+                      </span>
+                    </button>
+                  )}
+
+                  {editingId === c.id ? null : confirmId === c.id ? (
+                    <div className="absolute top-1 right-1 flex items-center gap-1 rounded-sm bg-background/95 pl-1">
+                      <span className="text-[10px] text-[var(--hx-error)]">删除？</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmId(null);
+                          onDelete(c.id);
+                        }}
+                        className="rounded-sm bg-[var(--hx-error)] px-1 text-[10px] text-white"
+                      >
+                        是
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmId(null)}
+                        className="px-1 text-[10px] text-muted-foreground hover:text-foreground"
+                      >
+                        否
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                      <button
+                        type="button"
+                        title={c.pinned ? "取消置顶" : "置顶"}
+                        onClick={() => onTogglePin(c.id)}
+                        className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                        <PinIcon className={cn("size-3", c.pinned && "rotate-45")} />
+                      </button>
+                      <button
+                        type="button"
+                        title="重命名"
+                        onClick={() => startRename(c)}
+                        className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                        <PencilIcon className="size-3" />
+                      </button>
+                      <button
+                        type="button"
+                        title="删除"
+                        onClick={() => setConfirmId(c.id)}
+                        className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-[var(--hx-error)]"
+                      >
+                        <Trash2Icon className="size-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

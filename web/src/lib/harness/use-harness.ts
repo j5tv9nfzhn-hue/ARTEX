@@ -16,7 +16,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { api, sseUrl } from "@/lib/api";
-import type { Activity, Agent, Conversation, InterceptPending, WorkspaceEntry } from "@/lib/types";
+import type { Activity, Agent, Conversation, InterceptPending, LLMProfile, WorkspaceEntry } from "@/lib/types";
 
 import { patchPath } from "./diff";
 import {
@@ -125,6 +125,8 @@ export function useHarness(initialConversationId?: number) {
   // 而控制台的既有语义是「撤回后正文回到输入框供修改重发」——harness 少了这一步，
   // 用户看到的就是「消息发出去然后凭空消失」。
   const [draft, setDraft] = React.useState<{ text: string; nonce: number } | null>(null);
+  // 可切换的 LLM 配置（/model 用）。空列表就是没有可选项，UI 会隐藏下拉。
+  const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
 
   const cursorRef = React.useRef(0);
   const activeRef = React.useRef<number | null>(null);
@@ -224,6 +226,21 @@ export function useHarness(initialConversationId?: number) {
     },
     [pullMessages, refreshPending],
   );
+
+  React.useEffect(() => {
+    let alive = true;
+    void api
+      .llmProfiles()
+      .then((rows) => {
+        if (alive) setProfiles(rows);
+      })
+      .catch(() => {
+        if (alive) setProfiles([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 首次加载：agents + 会话列表 → 选中 ?conv= 或最近一条。
   React.useEffect(() => {
@@ -384,6 +401,18 @@ export function useHarness(initialConversationId?: number) {
       }
 
       let message = text;
+      // 权限档过去只是输入框下方的一行提示，后端完全不知道——"显示"与"行为"
+      // 不一致。现在把它作为本轮的执行约束写进消息开头：用户在气泡里看得见，
+      // agent 也真的读得到。edit 是常态，不加噪音。
+      if (perm === "plan") {
+        message = message
+          ? `【只读模式】本轮只做分析与计划，不要修改文件、不要执行有副作用的命令；需要写操作时先说明方案。\n\n${message}`
+          : "【只读模式】本轮只做分析与计划，不要修改文件、不要执行有副作用的命令；需要写操作时先说明方案。";
+      } else if (perm === "auto") {
+        message = message
+          ? `【自动模式】在既定范围内自主执行，只有高危或越权操作才暂停询问。\n\n${message}`
+          : "【自动模式】在既定范围内自主执行，只有高危或越权操作才暂停询问。";
+      }
       if (comments.length) {
         const lines = comments.map((c) => `- \`${c.path}:${c.line}\` ${c.text}`).join("\n");
         const block = `针对以下改动行：\n${lines}`;
@@ -424,7 +453,7 @@ export function useHarness(initialConversationId?: number) {
         setSending(false);
       }
     },
-    [activeId, createConversation, comments, pullMessages, reloadList, sending],
+    [activeId, createConversation, comments, perm, pullMessages, reloadList, sending],
   );
 
   const stop = React.useCallback(async () => {
@@ -462,6 +491,81 @@ export function useHarness(initialConversationId?: number) {
       toast.error(msg);
     }
   }, [createConversation, openConversation]);
+
+  const renameConversation = React.useCallback(async (id: number | null, title: string) => {
+    const next = title.trim();
+    if (!id || !next) return;
+    try {
+      await api.renameConversation(id, next);
+      setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title: next } : c)));
+      toast.success("会话已重命名");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error(msg);
+    }
+  }, []);
+
+  const togglePin = React.useCallback(
+    async (id: number) => {
+      const target = conversations.find((c) => c.id === id);
+      if (!target) return;
+      const pinned = !target.pinned;
+      try {
+        await api.pinConversation(id, pinned);
+        setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, pinned } : c)));
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [conversations],
+  );
+
+  const removeConversation = React.useCallback(
+    async (id: number) => {
+      try {
+        await api.deleteConversation(id);
+        const rest = conversations.filter((c) => c.id !== id);
+        setConversations(rest);
+        if (activeId === id) {
+          const next = rest[0];
+          if (next) await openConversation(next.id);
+          else {
+            setActiveId(null);
+            setItems([]);
+            cursorRef.current = 0;
+            seenSeqs.current = new Set();
+            activitiesRef.current = [];
+          }
+        }
+        toast.success("会话已删除");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        toast.error(msg);
+      }
+    },
+    [activeId, conversations, openConversation],
+  );
+
+  const setProfile = React.useCallback(
+    async (profileId: number | null) => {
+      const id = activeId;
+      if (!id) return;
+      try {
+        await api.updateConversationProfile(id, profileId);
+        setConversations((prev) =>
+          prev.map((c) => (c.id === id ? { ...c, llm_profile_id: profileId ?? undefined } : c)),
+        );
+        toast.success("模型已切换，下一轮生效");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        toast.error(msg);
+      }
+    },
+    [activeId],
+  );
 
   const loadWorkspace = React.useCallback(async (path = "") => {
     try {
@@ -552,7 +656,12 @@ export function useHarness(initialConversationId?: number) {
     workspace,
     transport,
     budget,
+    profiles,
     setPerm,
+    renameConversation,
+    togglePin,
+    removeConversation,
+    setProfile,
     openConversation,
     newConversation,
     send,

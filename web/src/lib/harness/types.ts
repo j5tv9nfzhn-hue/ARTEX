@@ -179,9 +179,69 @@ export function buildPlan(activities: Activity[]): PlanStep[] {
     if (title) latest.set(key, title);
   }
 
-  return order.map((key, i) => ({
-    id: key,
-    title: latest.get(key) || key,
-    status: i === order.length - 1 ? "active" : "done",
+  // ① 任务模式：intent 折叠。
+  if (order.length) {
+    return order.map((key, i) => ({
+      id: key,
+      title: latest.get(key) || key,
+      status: i === order.length - 1 ? "active" : "done",
+    }));
+  }
+
+  // ② 会话模式：TodoWrite 待办清单（chat agent 只有这个，没有 intent）。
+  const todos = latestTodos(activities);
+  if (!todos) return [];
+  return todos.map((t, i) => ({
+    id: `todo-${i}`,
+    title: t.content,
+    status: t.status === "completed" ? "done" : t.status === "in_progress" ? "active" : "todo",
   }));
+}
+
+interface TodoRow {
+  content: string;
+  status: string;
+}
+
+/**
+ * parseTodos 解析 TodoWrite 的入参。
+ *
+ * 正常情况 detail 就是完整入参 JSON；被截断的老记录只有 summary
+ * （形如 `TodoWrite {"todos":[...`），所以两个来源都试。解析不出来就返回 null ——
+ * 宁可面板空着，也不能凭空造出一步不存在的计划。
+ */
+function parseTodos(raw: string | undefined): TodoRow[] | null {
+  if (!raw) return null;
+  const text = raw.trim();
+  const brace = text.indexOf("{");
+  const candidates = brace > 0 ? [text, text.slice(brace)] : [text];
+  for (const candidate of candidates) {
+    try {
+      const obj = JSON.parse(candidate) as { todos?: unknown };
+      if (!Array.isArray(obj.todos)) continue;
+      const rows: TodoRow[] = [];
+      for (const item of obj.todos) {
+        if (!item || typeof item !== "object") continue;
+        const rec = item as Record<string, unknown>;
+        const content = typeof rec.content === "string" ? rec.content : typeof rec.title === "string" ? rec.title : "";
+        if (!content.trim()) continue;
+        rows.push({ content: content.trim(), status: typeof rec.status === "string" ? rec.status : "pending" });
+      }
+      if (rows.length) return rows;
+    } catch {
+      // 截断的 JSON：换下一个候选继续试。
+    }
+  }
+  return null;
+}
+
+/** latestTodos 取最近一次 TodoWrite —— 它代表 agent 当前的完整清单。 */
+function latestTodos(activities: Activity[]): TodoRow[] | null {
+  for (let i = activities.length - 1; i >= 0; i -= 1) {
+    const a = activities[i];
+    if (a.kind !== "tool_use" || a.tool !== "TodoWrite") continue;
+    const rows = parseTodos(a.detail) ?? parseTodos(a.summary);
+    if (rows) return rows;
+  }
+  return null;
 }

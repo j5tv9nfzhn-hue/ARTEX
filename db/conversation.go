@@ -268,7 +268,9 @@ WHERE conversation_id=$1 AND kind='result' AND reverted_at IS NULL`, convID).Sca
 // detail 可能是整段命令输出/文件内容（几十到几百 KB），必须保持懒加载；
 // 但 user / text / result 的 detail 就是用户真正要看的那句话——只给 summary
 // 会让时间线把每条消息截成「第一行 + 200 字」，在界面上看起来像内容丢了。
-const bodyCol = `CASE WHEN COALESCE(kind,'') IN ('user','text','result') THEN COALESCE(detail,'') ELSE '' END`
+const bodyCol = `CASE WHEN COALESCE(kind,'') IN ('user','text','result')
+	OR (COALESCE(kind,'')='tool_use' AND COALESCE(tool,'')='TodoWrite')
+	THEN COALESCE(detail,'') ELSE '' END`
 
 // ConvActivityList returns a conversation's steps after sinceID (exclusive).
 // 消息正文随行返回（见 bodyCol），工具详情仍由 ConvActivityDetail 懒加载。

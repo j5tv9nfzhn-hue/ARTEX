@@ -2,22 +2,25 @@
 
 // 输入区：草稿 + 待发送的逐行评论 chip + 权限档位。
 //
-// Enter 发送、Shift+Enter 换行、⌘/Ctrl+Enter 在等待审批时直接允许。
-// 「计划/编辑/自动」目前是本地的行为提示，真正的策略门控仍在后端 intercept 层；
-// 这里不伪造权限，只在 UI 上标注当前意图。
+// Enter 发送、Shift+Enter 换行、输入 / 打开命令、⌘K 搜索会话。
+// 「计划/编辑/自动」不是装饰：选中后由 use-harness 把对应约束写进这条消息的
+// 开头（用户在气泡里看得见），真正的门控仍由后端 intercept 层负责。
 
 import * as React from "react";
 
 import { ArrowUpIcon, SquareIcon } from "lucide-react";
 
+import { CommandMenu } from "@/components/harness/command-menu";
 import { Button } from "@/components/ui/button";
+import type { HarnessCommand } from "@/lib/harness/commands";
+import { matchCommands, slashToken } from "@/lib/harness/commands";
 import type { HarnessComment, PermissionMode } from "@/lib/harness/types";
 import { cn } from "@/lib/utils";
 
 const PERM: Array<{ key: PermissionMode; label: string; hint: string }> = [
-  { key: "plan", label: "计划", hint: "只读 + 计划，任何写入都会先问你" },
-  { key: "edit", label: "编辑", hint: "工作区内可写；越界与提权操作需审批" },
-  { key: "auto", label: "自动", hint: "自动执行，仅高危操作暂停" },
+  { key: "plan", label: "计划", hint: "只读：这条消息开头会写明「只读模式」，agent 先给方案不动手" },
+  { key: "edit", label: "编辑", hint: "常态：按后端拦截策略执行，越界与提权操作仍会先问你" },
+  { key: "auto", label: "自动", hint: "自动：消息开头写明「自动模式」，仅高危/越权操作暂停" },
 ];
 
 export interface ComposerProps {
@@ -34,6 +37,8 @@ export interface ComposerProps {
   tokens?: number;
   /** 撤回后要放回输入框的正文；nonce 变化即一次新的回填。 */
   draft?: { text: string; nonce: number } | null;
+  /** 斜杠命令的执行出口（/new /stop /model …）；缺省时只补全不执行。 */
+  onCommand?: (id: string) => void;
 }
 
 export function Composer({
@@ -48,6 +53,7 @@ export function Composer({
   onRemoveComment,
   tokens,
   draft,
+  onCommand,
 }: ComposerProps) {
   const [text, setText] = React.useState("");
   // 待发送的图片：粘贴进来先挂在这里（候选），发送时随消息一起上传。
@@ -57,6 +63,26 @@ export function Composer({
   // 同一 tick 内连按两次 Enter 时 sending 还没变成 true，用它兜住重复提交。
   const busyRef = React.useRef(false);
   const ref = React.useRef<HTMLTextAreaElement | null>(null);
+  // 斜杠命令浮层：caret 参与判断，因为 "/" 只有在词首才算命令。
+  const [caret, setCaret] = React.useState(0);
+  const [menuIndex, setMenuIndex] = React.useState(0);
+  const [menuDismissed, setMenuDismissed] = React.useState(false);
+  const slash = menuDismissed ? null : slashToken(text, caret);
+  const menuItems = React.useMemo(() => (slash ? matchCommands(slash.query).slice(0, 8) : []), [slash]);
+  const menuActive = Math.min(menuIndex, Math.max(menuItems.length - 1, 0));
+
+  const pickCommand = (cmd: HarnessCommand) => {
+    const token = slashToken(text, caret);
+    if (token) {
+      // 把 "/xxx" 连同后面的空格一起摘掉，再执行命令。
+      const after = text.slice(caret);
+      setText(`${text.slice(0, token.start)}${after}`.replace(/^\s+/, ""));
+    }
+    setMenuDismissed(false);
+    setMenuIndex(0);
+    onCommand?.(cmd.id);
+    requestAnimationFrame(() => ref.current?.focus());
+  };
 
   // 撤回一条消息后，正文要回到输入框供修改重发（与控制台一致）。
   // 依赖 nonce 而不是 text：同一条消息连撤两次也要能重新填一次。
@@ -176,15 +202,49 @@ export function Composer({
       <div
         onPaste={onPaste}
         className={cn(
-          "rounded-xl border bg-card transition-colors focus-within:border-primary",
+          "relative rounded-xl border bg-card transition-colors focus-within:border-primary",
           blocked && "border-[var(--hx-warn)]",
         )}
       >
+        {menuItems.length ? (
+          <CommandMenu commands={menuItems} active={menuActive} onActiveChange={setMenuIndex} onPick={pickCommand} />
+        ) : null}
         <textarea
           ref={ref}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setCaret(e.target.selectionStart ?? e.target.value.length);
+            setMenuIndex(0);
+            setMenuDismissed(false);
+          }}
+          onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+          onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onKeyDown={(e) => {
+            // 斜杠菜单展开时，方向键/Enter/Tab/Esc 先归菜单，不落到发送逻辑。
+            if (menuItems.length && !e.nativeEvent.isComposing) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setMenuIndex((i) => (i + 1) % menuItems.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setMenuIndex((i) => (i - 1 + menuItems.length) % menuItems.length);
+                return;
+              }
+              if (e.key === "Tab" || e.key === "Enter") {
+                e.preventDefault();
+                const cmd = menuItems[menuActive];
+                if (cmd) pickCommand(cmd);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setMenuDismissed(true);
+                return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void submit();
@@ -240,6 +300,7 @@ export function Composer({
       {localError ? <p className="mt-1.5 text-[10.5px] text-destructive">发送失败：{localError}</p> : null}
       <p className="mt-1.5 text-[10.5px] text-muted-foreground">
         {blocked ? "等待审批：时间线里的审批卡处理完才能继续。" : hint}
+        <span className="ml-2 opacity-70">输入 / 看命令 · ⌘K 搜索会话</span>
       </p>
     </div>
   );

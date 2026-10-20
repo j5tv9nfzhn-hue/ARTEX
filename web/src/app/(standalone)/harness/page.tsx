@@ -13,13 +13,25 @@ import * as React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
-import { ArrowLeftIcon, LinkIcon, Loader2Icon, TerminalIcon, Undo2Icon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  CommandIcon,
+  LinkIcon,
+  Loader2Icon,
+  PanelRightIcon,
+  TerminalIcon,
+  Undo2Icon,
+} from "lucide-react";
+import { toast } from "sonner";
 
+import { CommandPalette } from "@/components/harness/command-menu";
 import { Composer } from "@/components/harness/composer";
 import { ConversationList } from "@/components/harness/conversation-list";
-import { ReviewRail } from "@/components/harness/review-rail";
+import { type RailTab, ReviewRail } from "@/components/harness/review-rail";
 import { Timeline } from "@/components/harness/timeline";
 import { Button } from "@/components/ui/button";
+import { HARNESS_COMMANDS } from "@/lib/harness/commands";
+import type { PermissionMode } from "@/lib/harness/types";
 import { useHarness } from "@/lib/harness/use-harness";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +53,16 @@ function Workspace() {
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const [deciding, setDeciding] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
+  // ⌘K 命令面板 / 窄屏右栏抽屉 / 右栏页签受控 / 页头重命名输入
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [railOpen, setRailOpen] = React.useState(false);
+  const [railTab, setRailTab] = React.useState<RailTab>("changes");
+  const [renaming, setRenaming] = React.useState<string | null>(null);
+  const renameRef = React.useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    if (renaming !== null) renameRef.current?.focus();
+  }, [renaming]);
 
   // 时间线贴着底部：新项到达时只在用户本来就靠底时自动跟随，否则不抢滚动。
   const _lastKey = h.items.length ? h.items[h.items.length - 1].id : "";
@@ -89,6 +111,108 @@ function Workspace() {
     }
   };
 
+  const openRail = (tab: RailTab) => {
+    setRailTab(tab);
+    setRailOpen(true);
+  };
+
+  const cyclePerm = () => {
+    const order: PermissionMode[] = ["plan", "edit", "auto"];
+    const next = order[(order.indexOf(h.perm) + 1) % order.length];
+    h.setPerm(next);
+    toast.info(`权限档：${next === "plan" ? "只读" : next === "edit" ? "编辑" : "自动"}`);
+  };
+
+  const statusText = [
+    h.running ? "运行中" : "空闲",
+    `传输 ${h.transport === "sse" ? "SSE 实时" : h.transport === "poll" ? "轮询兜底" : "连接中"}`,
+    h.activeConversation ? `agent ${h.activeConversation.agent_key}` : "",
+    h.budget ? `预算 ${h.tokens}/${h.budget.limit}` : `tokens ${h.tokens}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  /**
+   * 斜杠命令与 ⌘K 面板的统一执行入口。
+   * 每个分支都必须有可见结果：要么真的做了，要么明确告诉你为什么没做。
+   */
+  const runCommand = (id: string) => {
+    switch (id) {
+      case "new":
+        void h.newConversation();
+        break;
+      case "stop":
+        if (!h.running) {
+          toast.info("当前没有运行中的回合");
+          break;
+        }
+        void h.stop();
+        break;
+      case "rename":
+        setRenaming(h.activeConversation?.title ?? "");
+        break;
+      case "model":
+        toast.info(h.profiles.length ? "在页头的模型下拉里切换（下一轮生效）" : "没有可切换的模型配置");
+        break;
+      case "perm":
+        cyclePerm();
+        break;
+      case "changes":
+        openRail("changes");
+        break;
+      case "plan":
+        openRail("plan");
+        break;
+      case "files":
+        openRail("files");
+        break;
+      case "rollback":
+        if (!lastUserSeq) {
+          toast.info("没有可撤回的消息");
+          break;
+        }
+        void h.rollback(lastUserSeq);
+        break;
+      case "copy":
+        void copyLink();
+        break;
+      case "status":
+        toast.message("会话状态", { description: statusText });
+        break;
+      case "help":
+        setPaletteOpen(true);
+        break;
+      default:
+        break;
+    }
+  };
+
+  // 全局快捷键：⌘K 面板、Esc 停止本轮（面板打开时 Esc 先关面板）。
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      if (e.key === "Escape") {
+        // composer 关掉斜杠菜单时已经 preventDefault；别把它当成「停止本轮」。
+        if (e.defaultPrevented) return;
+        if (paletteOpen) {
+          e.preventDefault();
+          setPaletteOpen(false);
+          return;
+        }
+        if (h.running) {
+          e.preventDefault();
+          void h.stop();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [paletteOpen, h.running, h.stop]);
+
   if (h.loading) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -114,6 +238,9 @@ function Workspace() {
           workspace={h.workspace}
           onSelect={(id) => void h.openConversation(id)}
           onCreate={() => void h.newConversation()}
+          onRename={(next, id) => h.renameConversation(id ?? h.activeId, next)}
+          onTogglePin={(id) => void h.togglePin(id)}
+          onDelete={(id) => void h.removeConversation(id)}
         />
       </div>
 
@@ -139,7 +266,37 @@ function Workspace() {
             ))}
             <option value="new">＋ 新建会话</option>
           </select>
-          <span className="hidden max-w-[42%] truncate font-medium text-[13px] md:inline">{title}</span>
+          {renaming !== null ? (
+            <input
+              ref={renameRef}
+              value={renaming}
+              onChange={(e) => setRenaming(e.target.value)}
+              onBlur={() => {
+                const next = renaming.trim();
+                setRenaming(null);
+                if (next && next !== title) void h.renameConversation(h.activeId, next);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setRenaming(null);
+                }
+              }}
+              className="hidden h-7 w-[42%] min-w-0 rounded-sm border bg-background px-1.5 text-[13px] outline-none md:block"
+            />
+          ) : (
+            <button
+              type="button"
+              title="点击重命名"
+              onClick={() => setRenaming(h.activeConversation?.title ?? "")}
+              className="hidden max-w-[42%] truncate font-medium text-[13px] hover:underline md:inline"
+            >
+              {title}
+            </button>
+          )}
           {agent ? (
             <span className="hidden shrink-0 rounded-sm border px-1.5 font-mono text-[10px] text-muted-foreground sm:inline">
               {agent.key}
@@ -218,6 +375,40 @@ function Workspace() {
             })()}
 
           <div className="ml-auto flex items-center gap-1">
+            {h.profiles.length ? (
+              <select
+                aria-label="切换模型"
+                title="本会话使用的 LLM 配置（下一轮生效）"
+                value={h.activeConversation?.llm_profile_id ?? ""}
+                onChange={(e) => void h.setProfile(e.target.value ? Number(e.target.value) : null)}
+                className="hidden h-7 max-w-[160px] rounded-sm border bg-transparent px-1 text-[11px] lg:block"
+              >
+                <option value="">默认模型</option>
+                {h.profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name || `配置 #${p.id}`}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="hidden h-7 gap-1 px-2 text-[11.5px] sm:inline-flex"
+              onClick={() => setPaletteOpen(true)}
+              title="⌘K / Ctrl+K"
+            >
+              <CommandIcon className="size-3" /> 搜索
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-[11.5px] xl:hidden"
+              onClick={() => setRailOpen(true)}
+              title="展开右侧面板"
+            >
+              <PanelRightIcon className="size-3" />
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -281,12 +472,53 @@ function Workspace() {
           onRemoveComment={h.removeComment}
           tokens={h.tokens}
           draft={h.draft}
+          onCommand={runCommand}
         />
       </section>
 
       <div className="hidden min-h-0 xl:flex">
-        <ReviewRail changes={h.changes} plan={h.plan} entries={h.entries} onLoadWorkspace={h.loadWorkspace} />
+        <ReviewRail
+          changes={h.changes}
+          plan={h.plan}
+          entries={h.entries}
+          onLoadWorkspace={h.loadWorkspace}
+          tab={railTab}
+          onTabChange={setRailTab}
+        />
       </div>
+
+      {/* 窄屏（<1280）右栏原本直接消失，计划/变更/文件三个面板都够不着。
+          现在用抽屉：点页头按钮或 /plan /changes /files 打开。 */}
+      {railOpen ? (
+        <div className="fixed inset-0 z-40 flex justify-end xl:hidden">
+          <button
+            type="button"
+            aria-label="关闭右侧面板"
+            onClick={() => setRailOpen(false)}
+            className="absolute inset-0 cursor-default bg-black/30"
+          />
+          <div className="relative h-full bg-card shadow-xl">
+            <ReviewRail
+              changes={h.changes}
+              plan={h.plan}
+              entries={h.entries}
+              onLoadWorkspace={h.loadWorkspace}
+              tab={railTab}
+              onTabChange={setRailTab}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        commands={HARNESS_COMMANDS}
+        conversations={h.conversations}
+        activeId={h.activeId}
+        onPickCommand={(cmd) => runCommand(cmd.id)}
+        onPickConversation={(id) => void h.openConversation(id)}
+      />
     </div>
   );
 }

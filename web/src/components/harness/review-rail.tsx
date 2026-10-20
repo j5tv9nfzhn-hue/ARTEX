@@ -32,10 +32,15 @@ export interface ReviewRailProps {
   plan: PlanStep[];
   entries: WorkspaceEntry[];
   onLoadWorkspace: (path: string) => Promise<void>;
+  /** 受控页签：页头/命令（/plan /files /changes）要能直接切到某一段。 */
+  tab?: RailTab;
+  onTabChange?: (tab: RailTab) => void;
 }
 
-export function ReviewRail({ changes, plan, entries, onLoadWorkspace }: ReviewRailProps) {
-  const [tab, setTab] = React.useState<RailTab>("changes");
+export function ReviewRail({ changes, plan, entries, onLoadWorkspace, tab: tabProp, onTabChange }: ReviewRailProps) {
+  const [innerTab, setInnerTab] = React.useState<RailTab>("changes");
+  const tab = tabProp ?? innerTab;
+  const setTab = onTabChange ?? setInnerTab;
   const [open, setOpen] = React.useState<Record<string, boolean>>({});
 
   const done = plan.filter((p) => p.status === "done").length;
@@ -151,7 +156,9 @@ export function ReviewRail({ changes, plan, entries, onLoadWorkspace }: ReviewRa
             <p className="px-2 py-10 text-center text-[11.5px] text-muted-foreground leading-5">
               当前会话还没有计划。
               <br />
-              agent 产出 intent 后会在这里跟踪。
+              agent 调用 TodoWrite 维护待办后，
+              <br />
+              清单会实时出现在这里。
             </p>
           )
         ) : null}
