@@ -346,16 +346,44 @@ export function useHarness(initialConversationId?: number) {
     }
   }, []);
 
+  // createConversation 建会话并设为激活。没有可用 Agent 时**抛错**，绝不返回空值让
+  // 调用方去猜——那正是消息被静默丢掉的根源。
+  const createConversation = React.useCallback(async (): Promise<number> => {
+    const agent = agents.find((a) => a.key === "auto") ?? agents[0];
+    if (!agent) throw new Error("没有可用的智能体：请先在控制台启用一个 Agent");
+    const conv = await api.createConversation(agent.key, "");
+    setConversations((prev) => [conv, ...prev]);
+    setActiveId(conv.id);
+    return conv.id;
+  }, [agents]);
+
   const send = React.useCallback(
     async (raw: string, files?: File[]) => {
-      const id = activeId;
       const text = raw.trim();
-      if (!id || !text || sending) return;
+      const hasFiles = Boolean(files?.length);
+      // 所有前置失败都必须抛错。此前这里是 `if (!id || !text || sending) return;`，
+      // 而输入框在等待之前就被清空——表现就是「发出去了但什么都没发生」。
+      // 三种会命中静默短路的情形：库里没有任何会话（首次打开）、只贴图没写字、
+      // 上一条还在发送中。
+      if (!text && !hasFiles) throw new Error("消息为空：请输入内容或粘贴图片");
+      if (sending) throw new Error("上一条消息还在发送中，请稍候再发");
+
+      // 没有激活会话时先自动建一个再发，而不是把这条消息丢掉。
+      let id = activeId;
+      if (!id) {
+        id = await createConversation();
+        // 新会话没有历史：游标与去重集合必须归零，否则增量拉取会漏掉这一轮。
+        cursorRef.current = 0;
+        seenSeqs.current = new Set();
+        activitiesRef.current = [];
+        setItems([]);
+      }
 
       let message = text;
       if (comments.length) {
         const lines = comments.map((c) => `- \`${c.path}:${c.line}\` ${c.text}`).join("\n");
-        message = `${text}\n\n针对以下改动行：\n${lines}`;
+        const block = `针对以下改动行：\n${lines}`;
+        message = text ? `${text}\n\n${block}` : block;
       }
 
       const optimistic: HarnessItem = {
@@ -376,16 +404,23 @@ export function useHarness(initialConversationId?: number) {
         const up = files && files.length ? await api.chatUpload("session", `conv-${id}`, files) : null;
         await api.sendConversationMessage(id, message, up?.attachments);
         setRunning(true);
-        await pullMessages(id, cursorRef.current);
+        const page = await pullMessages(id, cursorRef.current);
+        // 兜底：增量游标一旦与 SSE 竞态错位，这一轮就可能整段不回显。只要增量里
+        // 连一条 user 都没有，就做一次全量重拉——已发出的消息不允许在时间线里缺席。
+        if (!page.items.some((a) => a.kind === "user")) {
+          await pullMessages(id, 0);
+        }
         void reloadList();
       } catch (e) {
+        // 撤回乐观气泡：这条没有落库，留着会变成一条永远等不到回复的幽灵消息。
+        setItems((prev) => prev.filter((it) => it.id !== optimistic.id));
         setError(e instanceof Error ? e.message : String(e));
         throw e;
       } finally {
         setSending(false);
       }
     },
-    [activeId, comments, pullMessages, reloadList, sending],
+    [activeId, createConversation, comments, pullMessages, reloadList, sending],
   );
 
   const stop = React.useCallback(async () => {
@@ -412,15 +447,17 @@ export function useHarness(initialConversationId?: number) {
   );
 
   const newConversation = React.useCallback(async () => {
-    const agent = agents.find((a) => a.key === "auto") ?? agents[0];
-    if (!agent) {
-      toast.error("没有可用的智能体，请先在控制台启用");
-      return;
+    // 这里此前没有 try/catch：调用方是 `void h.newConversation()`，一旦建会话失败，
+    // 异常变成未处理的 promise rejection，界面上就是「点了没反应」。
+    try {
+      const id = await createConversation();
+      await openConversation(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error(msg);
     }
-    const conv = await api.createConversation(agent.key, "");
-    setConversations((prev) => [conv, ...prev]);
-    await openConversation(conv.id);
-  }, [agents, openConversation]);
+  }, [createConversation, openConversation]);
 
   const loadWorkspace = React.useCallback(async (path = "") => {
     try {

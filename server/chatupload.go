@@ -135,6 +135,26 @@ func uniqueUploadPath(dir, name string) string {
 	}
 }
 
+// attachmentSummary 为「只有附件、没有文字」的消息生成一条可读摘要。
+// 会话时间线只读 summary（detail 是懒加载的），summary 为空 = 消息在界面里消失。
+func attachmentSummary(atts []chatAttachment) string {
+	if len(atts) == 0 {
+		return ""
+	}
+	names := make([]string, 0, 3)
+	for i, a := range atts {
+		if i == 3 {
+			break
+		}
+		names = append(names, a.Name)
+	}
+	more := ""
+	if len(atts) > 3 {
+		more = fmt.Sprintf(" 等 %d 个", len(atts))
+	}
+	return fmt.Sprintf("（发送了附件：%s%s）", strings.Join(names, "、"), more)
+}
+
 // composeAgentMessage appends an attachment manifest to the user's message so the agent
 // knows which files were uploaded and where to Read them. baseDir is the agent's working
 // dir (its CWD); we emit ABSOLUTE paths (baseDir + relative) so the agent can Read/Bash

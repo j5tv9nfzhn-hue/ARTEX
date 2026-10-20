@@ -49,6 +49,10 @@ export function Composer({
   const [text, setText] = React.useState("");
   // 待发送的图片：粘贴进来先挂在这里（候选），发送时随消息一起上传。
   const [files, setFiles] = React.useState<File[]>([]);
+  // 发送失败的原因就地显示，不依赖父级 ErrorBar（它在页面顶部，容易被忽略）。
+  const [localError, setLocalError] = React.useState<string | null>(null);
+  // 同一 tick 内连按两次 Enter 时 sending 还没变成 true，用它兜住重复提交。
+  const busyRef = React.useRef(false);
   const ref = React.useRef<HTMLTextAreaElement | null>(null);
 
   // 粘贴图片：截图/复制的图直接进候选，不必先存文件再选。
@@ -86,15 +90,23 @@ export function Composer({
 
   const submit = async () => {
     const value = text.trim();
-    if (!value || sending || blocked) return;
     const pending = files;
-    setText("");
-    setFiles([]);
+    // 允许「只贴图不写字」：图片本身就是内容。
+    if ((!value && pending.length === 0) || sending || blocked || busyRef.current) return;
+    busyRef.current = true;
+    setLocalError(null);
     try {
       await onSend(value, pending.length ? pending : undefined);
-    } catch {
-      setText(value); // 失败回填，避免用户重打
-      setFiles(pending); // 图片也一并回填
+      // 确认送达后才清空。此前是「先清空再发」：一旦下游静默短路，用户看到的就是
+      // 消息凭空消失，而且连一个字都拿不回来。
+      setText("");
+      setFiles([]);
+    } catch (e) {
+      setText(value);
+      setFiles(pending);
+      setLocalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      busyRef.current = false;
     }
   };
 
@@ -202,7 +214,7 @@ export function Composer({
             <Button
               size="sm"
               onClick={() => void submit()}
-              disabled={sending || blocked || !text.trim()}
+              disabled={sending || blocked || (!text.trim() && files.length === 0)}
               className="h-7 gap-1"
             >
               <ArrowUpIcon className="size-3" /> 发送
@@ -211,6 +223,7 @@ export function Composer({
         </div>
       </div>
 
+      {localError ? <p className="mt-1.5 text-[10.5px] text-destructive">发送失败：{localError}</p> : null}
       <p className="mt-1.5 text-[10.5px] text-muted-foreground">
         {blocked ? "等待审批：时间线里的审批卡处理完才能继续。" : hint}
       </p>

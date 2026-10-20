@@ -489,6 +489,11 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 	// so the transcript lazy-loads Detail to show the message untruncated).
 	ua := userActivityWithAttachments(c.AgentKey, msg, req.Attachments)
 	ua.Summary = firstLine(msg, 200)
+	if ua.Summary == "" && len(req.Attachments) > 0 {
+		// 纯附件消息（只贴图/只传文件不写字）。会话时间线与列表都只读 summary，
+		// 留空会让这条消息在前端「看起来根本没发出去」。给一条可读的占位摘要。
+		ua.Summary = attachmentSummary(req.Attachments)
+	}
 	if ua.Detail == "" {
 		ua.Detail = msg
 	}
