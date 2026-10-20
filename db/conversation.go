@@ -50,28 +50,38 @@ GROUP BY c.id`)
 // Conversation is one ChatGPT-style chat thread bound to an agent key. It lives
 // independent of the pentest exploration graph — see schema_sqlite.sql §I.
 type Conversation struct {
-	ID           int64      `json:"id"`
-	AgentKey     string     `json:"agent_key"`
-	Title        string     `json:"title"`
-	LLMProfileID *int64     `json:"llm_profile_id,omitempty"`
-	Pinned       bool       `json:"pinned"`
-	PinnedAt     *time.Time `json:"pinned_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID           int64  `json:"id"`
+	AgentKey     string `json:"agent_key"`
+	Title        string `json:"title"`
+	LLMProfileID *int64 `json:"llm_profile_id,omitempty"`
+	// Mode 是 Harness 能力域（general/dev/office/pentest），策略见 agent/domain.go。
+	Mode string `json:"mode"`
+	// WorkspaceRoot 是会话工作根；空串表示沿用既有数据目录。
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
+	// WorkspaceKind 目前只有 data（沿用数据目录）与 project（用户选择的目录）。
+	WorkspaceKind string     `json:"workspace_kind,omitempty"`
+	Pinned        bool       `json:"pinned"`
+	PinnedAt      *time.Time `json:"pinned_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // ConversationPatch updates only the fields whose pointers are non-nil.
 type ConversationPatch struct {
 	Title  *string
 	Pinned *bool
+	// Mode / WorkspaceRoot 只在指针非空时更新；nil = 保持原值。
+	Mode          *string
+	WorkspaceRoot *string
+	WorkspaceKind *string
 }
 
-const convCols = `id, agent_key, title, llm_profile_id, pinned_at, created_at, updated_at`
+const convCols = `id, agent_key, title, llm_profile_id, mode, workspace_root, workspace_kind, pinned_at, created_at, updated_at`
 
 func scanConv(row interface{ Scan(...any) error }) (Conversation, error) {
 	var c Conversation
 	var pinnedAt sql.NullTime
-	err := row.Scan(&c.ID, &c.AgentKey, &c.Title, &c.LLMProfileID, &pinnedAt, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &c.AgentKey, &c.Title, &c.LLMProfileID, &c.Mode, &c.WorkspaceRoot, &c.WorkspaceKind, &pinnedAt, &c.CreatedAt, &c.UpdatedAt)
 	if pinnedAt.Valid {
 		c.Pinned = true
 		c.PinnedAt = &pinnedAt.Time
@@ -177,13 +187,19 @@ func (d *DB) GetConversation(id int64) (*Conversation, error) {
 func (d *DB) UpdateConversation(id int64, patch ConversationPatch) (*Conversation, error) {
 	c, err := scanConv(d.QueryRow(`UPDATE conversations SET
 	title = CASE WHEN $2 THEN $3 ELSE title END,
+	mode = CASE WHEN $5 THEN $6 ELSE mode END,
+	workspace_root = CASE WHEN $7 THEN $8 ELSE workspace_root END,
+	workspace_kind = CASE WHEN $9 THEN $10 ELSE workspace_kind END,
 	pinned_at = CASE
 		WHEN $4 IS NULL THEN pinned_at
 		WHEN $4 THEN COALESCE(pinned_at, now())
 		ELSE NULL
 	END
 WHERE id=$1
-RETURNING `+convCols, id, patch.Title != nil, patch.Title, patch.Pinned))
+RETURNING `+convCols, id, patch.Title != nil, patch.Title, patch.Pinned,
+		patch.Mode != nil, patch.Mode,
+		patch.WorkspaceRoot != nil, patch.WorkspaceRoot,
+		patch.WorkspaceKind != nil, patch.WorkspaceKind))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

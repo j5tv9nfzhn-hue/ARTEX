@@ -3,6 +3,18 @@
 > 目标：把 Harness 从「只能做逆向/渗透」的工作台，升级成「渗透/逆向 + 软件开发 + 办公 + 通用工作」的统一工作台。
 > 硬约束：**不损坏现有渗透与逆向链路**；不新增第二套审批入口；能力变化必须在 UI 可见。
 
+## 〇、决策记录（2026-10-20 已定）
+
+| 决策 | 结论 |
+|---|---|
+| 首个域 | **dev 优先** |
+| 工作根 | **按域区分**：渗透/逆向沿用既有设置（数据目录/任务工作区，不动）；通用/开发/办公在会话开始时**弹出目录选择器**（与 Claude Code / Codex 的 cwd 一致），不做"预登记允许根" |
+| 危险命令 | **按域区分**：渗透沿用现状；正常使用走审批 |
+| git 写操作 | **按域区分**：渗透沿用现状；正常使用走审批 |
+
+这条"按域分策略"已经代码化：`agent/domain.go` 的 `ModePolicy` 是唯一真值源，
+`TestPentestPolicyInherits` 把"渗透链路不得新增闸门"写成了断言。
+
 ---
 
 ## 一、现状盘点（都是代码事实，不是设想）
@@ -56,7 +68,7 @@
   - SQLite：`db/schema_sqlite.sql` + `db/open_sqlite.go` 迁移表；PG：`db/commands.go`
   - 默认 `general` = 今天的行为，老会话零变化
 - `db/conversation.go`：读写新列
-- `GET/PATCH /api/conversations/{id}`：改 mode / workspace_root（校验：必须在"允许根"清单内）
+- `GET/PATCH /api/conversations/{id}`：改 mode / workspace_root（校验：mode 走白名单；`workspace_root` 必须是存在且可访问的目录，落库为绝对路径）
 - `GET /api/conversations/{id}/changes`：先返回空实现 + 明确 `unsupported`，让前端不再靠扫时间线
 
 **前端**
@@ -138,7 +150,6 @@
 | conversations | `mode` | P0 | `general` | 域 |
 | conversations | `workspace_root` | P0 | `''` | 会话工作根（空=沿用数据目录） |
 | conversations | `workspace_kind` | P0 | `data` | data/project |
-| settings | `workspace_allowed_roots` | P0 | `[]` | 允许登记的项目根（安全边界） |
 | 新表 `projects` | id/name/root/created_at | P1 | — | 项目登记 |
 | 新表 `run_tasks` | id/conversation_id/cmd/status/exit/output | P2 | — | 构建/测试运行记录 |
 | 新表 `artifacts` | id/conversation_id/kind/path/meta | P3 | — | 产物清单 |
@@ -149,7 +160,7 @@
 
 1. **渗透链路冻结**：`agent/mainagent.go`、`agent/planner.go`、`agent/tools*.go`、`agent/promptcatalog.go`、`server/orchestration.go` 的渗透部分不改；只在"路由"处新增分支。
 2. **审批唯一入口**：写文件/执行命令/越界操作，全部复用现有 permission 与 proposal 机制，不新开第二个审批面。
-3. **拒绝必须可见**：越界根、未登记项目、危险命令，一律回明确理由 + 建议，不做静默失败。
+3. **拒绝必须可见**：目录不存在/不可访问、危险命令、git 写操作被拒，一律回明确理由 + 建议，不做静默失败。
 4. **迁移只加列**：不删列、不改语义；每次升级后老库直接可用。
 5. **每期独立可回退**：一个阶段一个 commit，revert 不影响其他阶段。
 

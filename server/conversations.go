@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -171,21 +174,75 @@ func (s *Server) pgUpdateConversation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// llm_profile_id 用 RawMessage 而不是 *int64：这里必须区分「没传」和「显式传 null」。
+	// 旧实现两者同为 nil，于是只改 mode 的一次 PATCH 会把会话的模型绑定清掉。
 	var req struct {
-		LLMProfileID *int64 `json:"llm_profile_id"` // null clears the override
+		LLMProfileID  json.RawMessage `json:"llm_profile_id"`
+		Mode          *string         `json:"mode"`
+		WorkspaceRoot *string         `json:"workspace_root"`
 	}
 	if !decodeConversationRequest(w, r, &req) {
 		return
 	}
-	if req.LLMProfileID != nil {
-		if _, ok := s.loadProfileConfig(*req.LLMProfileID); !ok {
+	setProfile := len(bytes.TrimSpace(req.LLMProfileID)) > 0
+	var profileID *int64
+	if setProfile && !bytes.Equal(bytes.TrimSpace(req.LLMProfileID), []byte("null")) {
+		var id int64
+		if err := json.Unmarshal(req.LLMProfileID, &id); err != nil {
+			writeErr(w, 400, "llm_profile_id 必须是数字或 null")
+			return
+		}
+		if _, ok := s.loadProfileConfig(id); !ok {
 			writeErr(w, 400, convErrLLMProfile)
 			return
 		}
+		profileID = &id
 	}
-	if err := pg.UpdateConversationProfile(c.ID, req.LLMProfileID); err != nil {
-		writeErr(w, 500, err.Error())
-		return
+
+	// 能力域：只接受白名单值。未知值直接拒绝，不回落到 general —— 否则前端切错了
+	// 也看不出来，会话会静默降级成「通用」。
+	if req.Mode != nil {
+		m := strings.ToLower(strings.TrimSpace(*req.Mode))
+		if !agent.ModeValid(m) {
+			writeErr(w, 400, "未知的能力域: "+m+"（可选: general | dev | office | pentest）")
+			return
+		}
+		req.Mode = &m
+	}
+
+	// 工作根：空串 = 回到「沿用数据目录」；非空必须是存在且可访问的目录，落库为绝对路径。
+	// 这里不做「预登记允许根」限制 —— 与 Claude Code / Codex 一致，目录由用户在会话开始时选。
+	patch := db.ConversationPatch{Mode: req.Mode}
+	if req.WorkspaceRoot != nil {
+		root := strings.TrimSpace(*req.WorkspaceRoot)
+		kind := "data"
+		if root != "" {
+			abs, err := filepath.Abs(root)
+			if err != nil {
+				writeErr(w, 400, "无法解析工作根路径: "+err.Error())
+				return
+			}
+			st, err := os.Stat(abs)
+			if err != nil || !st.IsDir() {
+				writeErr(w, 400, "工作根必须是存在且可访问的目录: "+abs)
+				return
+			}
+			root, kind = abs, "project"
+		}
+		patch.WorkspaceRoot = &root
+		patch.WorkspaceKind = &kind
+	}
+	if patch.Mode != nil || patch.WorkspaceRoot != nil {
+		if _, err := pg.UpdateConversation(c.ID, patch); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if setProfile {
+		if err := pg.UpdateConversationProfile(c.ID, profileID); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
