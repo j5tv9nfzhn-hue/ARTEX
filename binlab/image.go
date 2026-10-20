@@ -383,10 +383,28 @@ func (img *Image) parseELF() error {
 		img.Sections = append(img.Sections, sec)
 	}
 
-	// ELF import names carry version suffixes but not their owning library,
-	// so symbols are reported as one synthetic group and libraries as a note.
+	// debug/elf returns each imported symbol with its owning library, so the
+	// grouping mirrors the PE path instead of collapsing everything together.
 	if syms, err := f.ImportedSymbols(); err == nil && len(syms) > 0 {
-		img.Imports = append(img.Imports, Import{Library: "(dynamic)", Symbols: syms})
+		byLib := make(map[string][]string, 16)
+		var order []string
+		for _, s := range syms {
+			lib := s.Library
+			if lib == "" {
+				lib = "(dynamic)"
+			}
+			if _, seen := byLib[lib]; !seen {
+				order = append(order, lib)
+			}
+			name := s.Name
+			if s.Version != "" {
+				name += "@" + s.Version
+			}
+			byLib[lib] = append(byLib[lib], name)
+		}
+		for _, lib := range order {
+			img.Imports = append(img.Imports, Import{Library: lib, Symbols: byLib[lib]})
+		}
 	}
 	if libs, err := f.ImportedLibraries(); err == nil && len(libs) > 0 {
 		img.Notes = append(img.Notes, "needed: "+strings.Join(libs, ", "))

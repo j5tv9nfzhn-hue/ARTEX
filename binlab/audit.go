@@ -279,7 +279,7 @@ func (img *Image) Analyze() *Audit {
 func knownPackerSection(secs []Section) (string, bool) {
 	for _, s := range secs {
 		if family, ok := packerSections[strings.ToUpper(strings.TrimSpace(s.Name))]; ok {
-			return family + " (" + s.Name + ")"
+			return family + " (" + s.Name + ")", true
 		}
 	}
 	return "", false
