@@ -303,3 +303,51 @@ MCP 服务器自身扫描（PortSwigger mcp-server-scanner 思路）· 出网与
 1. **首批顺序**：先渗透 6 条，还是渗透/逆向各 3 条并行？
 2. **依赖形态**：允许在本机直跑（npx/pip/二进制），还是优先容器（更安全但要 Docker）？
 3. **界面位置**：在 `/system/mcp` 就地加"预设"分区，还是新开独立路由（保持控制台页面不动）？
+
+## 九、落实记录（2026-10-20，第一批已落地）
+
+方向调整（用户决定）：**不包装社区 MCP，改为自己用 Go 写简化核心版**；同时对一切"仿官方"
+的服务器一律重命名，避免雷同。理由与本文档原有判断一致：分发成本（单二进制）、
+供应链风险（41% 无认证 / 43% 的 CVE 是 shell 注入）、以及输入输出要能进我们的证据链。
+
+### 9.1 新增包 `mcpbuiltin/`（纯 Go，无子进程、无外部运行时）
+
+| 服务器 | 域 | 工具 | 说明 |
+| --- | --- | --- | --- |
+| `artex-recon` | 渗透 | 4 | `dns_recon`（含子域爆破）、`port_probe`（TCP connect + banner）、`tls_inspect`（证书链/协议/套件）、`tech_hints`（框架/WAF 指纹） |
+| `artex-webscan` | 渗透 | 6 | `http_send`（原始请求复现）、`http_fuzz`（FUZZ 模板 + 基线比对 + 正则提取）、`dir_probe`（路径枚举）、`param_probe`（反射/差异）、`jwt_inspect`（解析 + 弱密钥）、`sqli_probe`（报错/布尔/时间三态） |
+| `artex-binscan` | 逆向 | 5 | `file_identify`（魔数/哈希/熵）、`pe_info`（节表/导入/熵）、`strings_scan`（ASCII+UTF-16+偏移）、`entropy_scan`（加壳线索）、`ioc_extract`（URL/域名/IP/邮箱/哈希/路径） |
+
+### 9.2 接入方式（零改动复用既有链路）
+
+`mcp_servers` 表上有 `CHECK (transport IN ('stdio','http','sse'))`，改约束需要重建表
+（含外键与触发器），对已有用户数据的库不合算。因此约定：
+
+- `transport='stdio'`、`command='artex-builtin'`、`args=["<server>"]`；
+- `connectMCP` 在 stdio 分支先识别这个组合，直接返回进程内客户端，**不 exec 任何东西**；
+- 工具命名仍是 `mcp__<server>__<tool>`，所以工具缓存、agent 绑定、`deferred` 解锁、
+  计量与审计全部照旧，没有任何特殊分支；
+- 未注册的名字明确报错，不返回空工具集。
+
+### 9.3 默认值与失败可见
+
+- 三个服务器一律 `enabled=false` 播种，工具清单在未启用时也能在 `/system/mcp` 预览
+  （缓存由 `mcpbuiltin.All()` 直接生成，避免"代码改了、预览清单没改"）。
+- 修正了一类会静默改变行为的默认值 bug：`clamp(v, lo, hi)` 把"没传"（0）夹成下限，
+  导致默认并发=1、默认截断=200 字节。新增 `defInt(v, def, lo, hi)` 统一处理"未传用默认值"。
+
+### 9.4 验证（不是"有接口"，是跑通）
+
+- `go build ./...` / `go vet ./mcpbuiltin ./server ./db` 通过；
+- `go test ./mcpbuiltin`：目录枚举、路径枚举命中、模糊测试基线比对、JWT 弱密钥命中、
+  字符串/IOC/哈希、PE 自解析（Windows）；
+- `go test ./server -run TestBuiltinMCP`：`connectMCP` 真能取到 `mcp__artex-webscan__*`，
+  未知名字报错；
+- 冷启动一份库副本：`mcp_servers` 新增 3 行（`artex-builtin`），
+  `mcp_tools_cache` 预置 4/6/5 条，启动日志无错误。
+
+### 9.5 尚未做（下一批）
+
+按同一套模式继续：调试类（x64dbg/Frida 需要外部引擎，只做"桥"）、移动/.NET
+（JADX/ILSpy 走外部 CLI）、流量（pcap 解析）、Web 的 CORS/开放重定向/反序列化探测、
+二进制分诊的 YARA-lite 与 capa-lite。UI 侧仍是"可选启用"，没有做预设分区。

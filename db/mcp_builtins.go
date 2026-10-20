@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/Autumn-27/artex/mcpbuiltin"
 )
 
 // builtinMCPStaticTools 定义内置 MCP 服务器（ScopeSentry 与 browser）的标准工具集。
@@ -129,14 +131,27 @@ func (d *DB) seedBuiltinMCPServersAndTools() error {
 	}
 
 	// 2. 为 ScopeSentry 与 browser 预置初始工具缓存（仅当该 server 的 mcp_tools_cache 为空时写入）。
-	builtinCatalogs := []struct {
+	type catalog struct {
 		serverName string
 		tools      []MCPTool
-	}{
+	}
+	builtinCatalogs := []catalog{
 		{serverName: "ScopeSentry", tools: builtinScopeSentryTools},
 		{serverName: "browser", tools: builtinBrowserMCPTools},
 		{serverName: "rea", tools: builtinReaMCPTools},
 		{serverName: "wpe64", tools: builtinWPE64MCPTools},
+	}
+	// Go 内置服务器（mcpbuiltin）：工具清单直接从代码定义生成，避免「代码改了、
+	// 缓存里的预览清单没改」的两处手抄漂移。启用后实时发现会覆盖本缓存。
+	for _, srv := range mcpbuiltin.All() {
+		tools := make([]MCPTool, 0, len(srv.Tools))
+		for _, t := range srv.Tools {
+			tools = append(tools, MCPTool{
+				Name:        "mcp__" + srv.Name + "__" + t.Name,
+				Description: t.Description,
+			})
+		}
+		builtinCatalogs = append(builtinCatalogs, catalog{serverName: srv.Name, tools: tools})
 	}
 
 	for _, item := range builtinCatalogs {

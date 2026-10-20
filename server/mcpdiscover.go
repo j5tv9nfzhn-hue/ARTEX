@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/mcpbuiltin"
 	"github.com/Autumn-27/artex/mcphttp"
 	"github.com/Autumn-27/norma/mcp"
 	actool "github.com/Autumn-27/norma/tool"
@@ -47,6 +48,12 @@ func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
 	}
 	switch m.Transport {
 	case "stdio":
+		// 内置 Go 服务器：command 是标记值 artex-builtin，工具由本进程提供，
+		// 不 exec 任何东西、不依赖 Node/Python。名字必须在内置注册表里，
+		// 否则明确报错（避免"看起来连上了、其实没有工具"）。
+		if mcpbuiltin.IsBuiltin(m.Name) && (m.Command == mcpbuiltin.Command || m.Command == "") {
+			return &builtinMCPClient{name: m.Name}, nil
+		}
 		if m.Command == "" {
 			return nil, errors.New(errMCPStdioNoCommand)
 		}
@@ -63,6 +70,12 @@ func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
 			return nil, errors.New(errMCPSSENoURL)
 		}
 		return mcphttp.NewSSE(ctx, m.Name, m.URL, env, m.Insecure)
+	case "builtin":
+		// 进程内服务器（mcpbuiltin）：不出网、不启子进程、无外部运行时依赖。
+		if !mcpbuiltin.IsBuiltin(m.Name) {
+			return nil, fmt.Errorf("未知的内置 MCP 服务器：%q", m.Name)
+		}
+		return &builtinMCPClient{name: m.Name}, nil
 	default:
 		return nil, fmt.Errorf(trMsg(errMCPUnknownTransportFmt), m.Transport)
 	}

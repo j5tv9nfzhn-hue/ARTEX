@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/Autumn-27/artex/config"
+	"github.com/Autumn-27/artex/mcpbuiltin"
 
 	_ "modernc.org/sqlite"
 )
@@ -149,6 +150,17 @@ INSERT INTO mcp_servers(name, transport, command, args, env, enabled)
 VALUES ('wpe64', 'stdio', NULL, '[]', '{}', false)
 ON CONFLICT (name) DO NOTHING`); err != nil {
 		return fmt.Errorf("seed wpe64 mcp: %w", err)
+	}
+	// Seed Go 内置 MCP 服务器（mcpbuiltin）：transport=builtin 表示由本进程实现，
+	// 不启子进程、不依赖 Node/Python/容器。默认禁用——启用即用，无需安装任何东西。
+	for _, name := range mcpbuiltin.Names() {
+		args := fmt.Sprintf(`["%s"]`, name)
+		if _, err := d.Exec(`
+INSERT INTO mcp_servers(name, transport, command, args, env, enabled)
+VALUES ($1, 'stdio', $2, $3, '{}', false)
+ON CONFLICT (name) DO NOTHING`, name, mcpbuiltin.Command, args); err != nil {
+			return fmt.Errorf("seed builtin mcp %s: %w", name, err)
+		}
 	}
 	// NOTE: the placeholder ScopeSentry data-source MCP (empty URL + empty X-API-Key,
 	// disabled) is seeded directly in schema_sqlite.sql §F so a raw `psql < schema_sqlite.sql` init
