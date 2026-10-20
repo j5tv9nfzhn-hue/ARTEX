@@ -16,10 +16,10 @@ import { useSearchParams } from "next/navigation";
 import {
   ArrowLeftIcon,
   CommandIcon,
+  LayoutPanelLeftIcon,
   LinkIcon,
   Loader2Icon,
   PanelRightIcon,
-  TerminalIcon,
   Undo2Icon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -246,7 +246,7 @@ function Workspace() {
 
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
-          <TerminalIcon className="hidden size-3.5 shrink-0 text-muted-foreground md:block" />
+          <LayoutPanelLeftIcon className="hidden size-3.5 shrink-0 text-muted-foreground md:block" />
           {/* 窄屏没有左栏（会话列表 md 以上才显示），用原生下拉补一个会话切换入口。 */}
           <select
             aria-label="切换会话"
