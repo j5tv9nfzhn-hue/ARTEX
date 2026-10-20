@@ -51,7 +51,7 @@ func (t *ToolSet) binaryLabTool() actool.CoreTool {
 			case "":
 				return actool.Errorf("mode is required: info|audit|crypto"), nil
 			default:
-				return actool.Errorf("unsupported mode %q; implemented in this build: info, audit, crypto", a.Mode), nil
+				return actool.Errorf("unsupported mode " + a.Mode + "; implemented in this build: info, audit, crypto"), nil
 			}
 			if err := ctx.Err(); err != nil {
 				return actool.Errorf(err.Error()), nil
