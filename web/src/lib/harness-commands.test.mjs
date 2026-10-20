@@ -1,8 +1,7 @@
+import { fuzzyScore, HARNESS_COMMANDS, matchCommands, slashToken } from "./harness/commands.ts";
+import { buildPlan } from "./harness/types.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import { HARNESS_COMMANDS, fuzzyScore, matchCommands, slashToken } from "./harness/commands.ts";
-import { buildPlan } from "./harness/types.ts";
 
 test("slashToken 只认词首的斜杠", () => {
   assert.deepEqual(slashToken("/new", 4), { start: 0, query: "new" });
