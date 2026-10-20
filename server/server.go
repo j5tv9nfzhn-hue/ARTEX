@@ -999,6 +999,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/delete/batch", s.pgDeleteConversationsBatch)
 	mux.HandleFunc("PATCH /api/conversations/{id}", s.pgRenameConversation)
 	mux.HandleFunc("PATCH /api/conversations/{id}/profile", s.pgUpdateConversation)
+	// Harness 工作根：目录选择器 + 变更/回滚（见 server/conv_workspace.go）。
+	mux.HandleFunc("GET /api/fs/list", s.pgFsList)
+	mux.HandleFunc("GET /api/conversations/{id}/changes", s.pgConvChanges)
+	mux.HandleFunc("POST /api/conversations/{id}/changes/revert", s.pgConvRevertChange)
 	mux.HandleFunc("DELETE /api/conversations/{id}", s.pgDeleteConversation)
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.pgConversationMessages)
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.pgSendConversationMessage)

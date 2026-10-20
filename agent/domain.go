@@ -125,6 +125,24 @@ func ModePolicies() []ModePolicy {
 	return out
 }
 
+// ModeSystemSpec 返回某个域追加到系统提示的行为约定。
+// 空串 = 不追加：渗透/逆向与通用域保持原有提示，不做任何行为改变。
+func ModeSystemSpec(mode, workRoot string) string {
+	switch NormalizeMode(mode) {
+	case ModeDev:
+		return "**当前能力域：软件开发。** 工作根是 " + workRoot + "（即命令的 CWD，相对路径基于它）。\n" +
+			"- 改之前先读：用 Read/Grep 确认调用点、命名与既有风格，不要凭记忆整文件重写。\n" +
+			"- 改动小步聚焦：一次改一个可验证的点，改完立刻跑构建/测试确认，再继续下一步。\n" +
+			"- 未经明确要求，不要执行 git commit/reset/checkout，也不要删除或覆盖用户未提及的文件。\n" +
+			"- 汇报时说明：改了哪些文件、为什么改、用什么命令验证过。"
+	case ModeOffice:
+		return "**当前能力域：办公文档。** 工作根是 " + workRoot + "。\n" +
+			"- 产出文件统一写到工作根下的 artifacts/ 目录，文件名带日期与主题。\n" +
+			"- 回答里给出产出文件路径 + 一句话摘要；不要只把内容贴在对话里。"
+	}
+	return ""
+}
+
 // UsesDataDir 报告某个域是否沿用既有目录设置（渗透/逆向）。
 func UsesDataDir(mode string) bool {
 	p, ok := ModePolicyFor(mode)

@@ -776,7 +776,10 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 	}
 	// On a manual stop ctx is cancelled; Chat already emits a clean "已手动停止"
 	// step, so skip the raw-error entry — only surface genuine failures.
-	if _, err := ca.Chat(ctx, c.AgentKey, sessionID, msg, maxTurns, maxDuration, webSearch, emit); err != nil {
+	// 会话级覆盖：能力域 + 工作根（用户在选择器里挑的项目目录）。
+	// 两者都按「本次运行」传入，不改缓存中的 agent 字段，避免并发会话互相污染。
+	run := agent.ChatRun{Mode: c.Mode, WorkDir: c.WorkspaceRoot}
+	if _, err := ca.ChatRun(ctx, run, c.AgentKey, sessionID, msg, maxTurns, maxDuration, webSearch, emit); err != nil {
 		finishReason = err.Error()
 		// 预算越线是「预期内的停止」，不是故障：写结构化终止记录而不是原始错误。
 		if ledger.Exhausted() {
