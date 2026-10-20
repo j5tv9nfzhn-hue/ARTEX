@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"runtime/debug"
 	"strconv"
@@ -146,7 +145,7 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 	if name != "Skill" && !innerAcceptsRawInput(g.CoreTool) && len(schema) > 0 {
 		if verr := actool.ValidateInput(schema, in); verr != nil {
 			metrics.ObserveToolError(name, metrics.StageValidate)
-			return actool.Errorf(fmt.Sprintf("参数校验未通过（stage=tool_validate，工具 %s）：%v。请核对工具参数说明后重新调用。", name, verr)), nil
+			return actool.Errorf(inputErrorHint(name, schema, in, verr)), nil
 		}
 	}
 	callCtx := ctx
@@ -264,6 +263,16 @@ func normalizeToolInput(toolName string, in json.RawMessage, schema map[string]a
 				delete(obj, alt)
 				changed = true
 			}
+		}
+	}
+
+	// 2b. mode 型工具漏传 mode 时，按已给出的判别字段反推唯一 mode（steps→chain 等）。
+	//     只在唯一可判定时生效，并写日志——不做语义猜测，也不替模型选它没表达的模式。
+	if inferred, ok := inferModeField(toolName, obj); ok {
+		if b, err := json.Marshal(inferred); err == nil {
+			obj["mode"] = b
+			changed = true
+			log.Printf("[tools] %s 未传 mode，已按入参反推 mode=%s", toolName, inferred)
 		}
 	}
 

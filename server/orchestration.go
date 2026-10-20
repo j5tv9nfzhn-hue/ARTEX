@@ -551,6 +551,9 @@ func (s *Server) seedOrchestrationTools() {
 	}
 	s.refreshBuiltinToolSchemas()
 	s.refreshOverlapToolDescriptions()
+	// 内容寻址的工具目录同步：老库里「运维没改过」的工具说明自动对齐到代码默认值。
+	// 取代「一次性 flag + 白名单」——后者刷过一次就再也拿不到新版说明，是三端行为漂移的来源。
+	s.syncToolCatalog()
 	s.seedAutoDefaultBindings()
 	s.seedPlannerDefaultBindings()
 	s.seedPlannerListAssetsBinding()

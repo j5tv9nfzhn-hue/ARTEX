@@ -98,8 +98,12 @@ func (t *ToolSet) dnsProbeTool() actool.CoreTool {
 				var words []string
 				words = append(words, a.Subdomains...)
 				if wf := strings.TrimSpace(a.WordlistFile); wf != "" {
-					raw, err := os.ReadFile(t.resolveLocalPath(wf))
+					resolved := t.resolveLocalPath(wf)
+					raw, err := os.ReadFile(resolved)
 					if err != nil {
+						if os.IsNotExist(err) {
+							return actool.Errorf(t.localPathError("读取 wordlist_file", wf, resolved)), nil
+						}
 						return actool.Errorf("读取 wordlist_file 失败: " + err.Error()), nil
 					}
 					for _, line := range strings.Split(string(raw), "\n") {

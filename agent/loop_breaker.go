@@ -62,14 +62,15 @@ func (lb *loopBreaker) before(ctx context.Context, name string, in json.RawMessa
 	select {
 	case s.gate <- struct{}{}:
 	case <-ctx.Done():
-		res := actool.Errorf("等待同目标执行槽位已取消：" + ctx.Err().Error())
+		res := actool.Errorf("等待同目标执行槽位已取消：" + ctx.Err().Error() +
+			"。同一目标同一时刻只允许一次调用，本次在排队期间等待超时（通常是 run 时间预算耗尽，或同目标并发请求太多）。请减少同目标并发、改为顺序执行，或合并成一次 http_fuzz/http_sequence 批量调用。目标标识：" + key)
 		return noop, &res
 	}
 	var once sync.Once
 	release := func() { once.Do(func() { <-s.gate }) }
 	if err := ctx.Err(); err != nil {
 		release()
-		res := actool.Errorf("同目标调用已取消：" + err.Error())
+		res := actool.Errorf("同目标调用已取消：" + err.Error() + "。本次未执行外部调用。目标标识：" + key)
 		return noop, &res
 	}
 	lb.mu.Lock()

@@ -69,6 +69,9 @@ func (t *ToolSet) extractDataTool() actool.CoreTool {
 				if mode == "archive_list" {
 					items, err := listArchiveEntries(fullPath, maxMatches)
 					if err != nil {
+						if os.IsNotExist(err) {
+							return actool.Errorf(t.localPathError("读取压缩包", fp, fullPath)), nil
+						}
 						return actool.Errorf("读取压缩包失败: " + err.Error()), nil
 					}
 					b, _ := json.MarshalIndent(map[string]any{
@@ -114,9 +117,13 @@ func (t *ToolSet) extractDataTool() actool.CoreTool {
 				content = extractHTTPBodyText(respRaw)
 				sourceLabel = "exchange:" + exID
 			case strings.TrimSpace(a.FilePath) != "":
-				fp := t.resolveLocalPath(strings.TrimSpace(a.FilePath))
+				given := strings.TrimSpace(a.FilePath)
+				fp := t.resolveLocalPath(given)
 				raw, err := os.ReadFile(fp)
 				if err != nil {
+					if os.IsNotExist(err) {
+						return actool.Errorf(t.localPathError("读取文件", given, fp)), nil
+					}
 					return actool.Errorf("读取文件失败: " + err.Error()), nil
 				}
 				content = string(raw)
@@ -167,7 +174,10 @@ func (t *ToolSet) extractDataTool() actool.CoreTool {
 				}
 				re, err := regexp.Compile(expr)
 				if err != nil {
-					return actool.Errorf("正则表达式编译失败: " + err.Error()), nil
+					if hint := re2RepeatHint(expr); hint != "" {
+						return actool.Errorf(hint), nil
+					}
+					return actool.Errorf("正则表达式编译失败（Go RE2 语法）: " + err.Error() + "。请检查括号/转义/量词，或改用 mode=json_path 等结构化提取。"), nil
 				}
 				names := re.SubexpNames()
 				all := re.FindAllStringSubmatch(content, maxMatches)

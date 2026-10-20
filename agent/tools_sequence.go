@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,11 +30,62 @@ type sequenceStepSpec struct {
 	ExpectStatus    int               `json:"expect_status"`
 }
 
+// stringList 是「一组字符串」的宽容解码：接受 ["Cookie"]、单个 "Cookie"，
+// 也接受 {"Cookie": true} 这种对象键形式。
+//
+// 模型对 strip_headers 这类「名称列表」几乎必然会写出三种形态之一，而 Go 的
+// []string 只认第一种——线上真实报错就是
+// `cannot unmarshal object into Go struct field bolaIdentitySpec.identities.strip_headers
+// of type []string`。与其让模型重试猜格式，不如在边界把三种写法都收下：
+// 语义完全相同，都是「这些名字要剥掉」。
+type stringList []string
+
+func (s *stringList) UnmarshalJSON(b []byte) error {
+	trimmed := bytes.TrimSpace(b)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*s = nil
+		return nil
+	}
+	switch trimmed[0] {
+	case '[':
+		var arr []string
+		if err := json.Unmarshal(trimmed, &arr); err != nil {
+			return err
+		}
+		*s = arr
+		return nil
+	case '"':
+		var one string
+		if err := json.Unmarshal(trimmed, &one); err != nil {
+			return err
+		}
+		if strings.TrimSpace(one) == "" {
+			*s = nil
+			return nil
+		}
+		*s = stringList{one}
+		return nil
+	case '{':
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(trimmed, &m); err != nil {
+			return err
+		}
+		out := make([]string, 0, len(m))
+		for k := range m {
+			out = append(out, k)
+		}
+		sort.Strings(out)
+		*s = out
+		return nil
+	}
+	return fmt.Errorf("strip_headers 需要字符串数组（如 [\"Cookie\",\"Authorization\"]），收到 %s", string(trimmed))
+}
+
 type bolaIdentitySpec struct {
 	Name         string            `json:"name"`
 	Cookie       string            `json:"cookie"`
 	Headers      map[string]string `json:"headers"`
-	StripHeaders []string          `json:"strip_headers"`
+	StripHeaders stringList        `json:"strip_headers"`
 }
 
 func (t *ToolSet) httpSequenceTool() actool.CoreTool {
@@ -65,7 +117,15 @@ func (t *ToolSet) httpSequenceTool() actool.CoreTool {
 				"identities": map[string]any{
 					"type":        "array",
 					"description": "mode=bola 时的测试身份数组，每项支持 {name: 'userB/anon', cookie: '...', headers: {'Authorization': '...'}, strip_headers: ['Cookie', 'Authorization']}；不传时默认测试剥离认证头(unauthenticated)",
-					"items":       map[string]any{"type": "object"},
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"name":          map[string]any{"type": "string", "description": "身份标签，如 userA / userB / anon，用于在结果矩阵里区分"},
+							"cookie":        map[string]any{"type": "string", "description": "该身份使用的 Cookie 原始字符串（与 headers 可同时给）"},
+							"headers":       map[string]any{"type": "object", "description": "该身份的额外请求头，如 {'Authorization': 'Bearer ...'}"},
+							"strip_headers": map[string]any{"type": "array", "description": "在该身份下发前要剥掉的请求头名称列表，如 ['Cookie','Authorization']（写对象键形式也接受）", "items": map[string]any{"type": "string"}},
+						},
+					},
 				},
 				"url":           map[string]any{"type": "string", "description": "mode=race / timing / bola(未传 base_exchange_id 时) 的目标 URL"},
 				"method":        map[string]any{"type": "string", "description": "mode=race / timing / bola 的 HTTP 方法"},
@@ -99,7 +159,7 @@ func (t *ToolSet) httpSequenceTool() actool.CoreTool {
 				OverrideHeaders map[string]string  `json:"override_headers"`
 				OverrideCookie  string             `json:"override_cookie"`
 				OverrideBody    *string            `json:"override_body"`
-				StripHeaders    []string           `json:"strip_headers"`
+				StripHeaders    stringList         `json:"strip_headers"`
 				Identities      []bolaIdentitySpec `json:"identities"`
 				URL             string             `json:"url"`
 				Method          string             `json:"method"`
@@ -144,7 +204,7 @@ func (t *ToolSet) httpSequenceTool() actool.CoreTool {
 				if exID == "" {
 					return actool.Errorf("mode=replay 时 base_exchange_id 为必填参数"), nil
 				}
-				res, err := t.runExchangeReplay(ctx, exID, a.OverrideMethod, a.OverrideURL, a.OverridePath, a.OverrideQuery, a.OverrideHeaders, a.OverrideCookie, a.OverrideBody, a.StripHeaders, timeoutDur)
+				res, err := t.runExchangeReplay(ctx, exID, a.OverrideMethod, a.OverrideURL, a.OverridePath, a.OverrideQuery, a.OverrideHeaders, a.OverrideCookie, a.OverrideBody, []string(a.StripHeaders), timeoutDur)
 				if err != nil {
 					return actool.Errorf("replay 执行失败: " + err.Error()), nil
 				}
@@ -461,7 +521,7 @@ func (t *ToolSet) runBOLAMatrix(
 		identities = []bolaIdentitySpec{
 			{
 				Name:         "unauthenticated",
-				StripHeaders: []string{"Authorization", "Cookie", "X-Auth-Token", "X-Access-Token", "Token"},
+				StripHeaders: stringList{"Authorization", "Cookie", "X-Auth-Token", "X-Access-Token", "Token"},
 			},
 		}
 	}
