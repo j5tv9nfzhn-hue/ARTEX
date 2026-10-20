@@ -270,7 +270,10 @@ func (c Config) endpoint(f Format) string {
 		}
 		return base + "/responses"
 	default:
+		// 与 agent.ConfigFrom 同一条规则：先剥完整端点，再剥多余的 /v1。
+		// 少剥这一步，"https://gw/v1" 会变成 "https://gw/v1/v1/messages"。
 		base = strings.TrimRight(strings.TrimSuffix(base, "/v1/messages"), "/")
+		base = strings.TrimRight(strings.TrimSuffix(base, "/v1"), "/")
 		if base == "" {
 			base = envOr("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
 		}

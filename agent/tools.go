@@ -62,7 +62,8 @@ type ToolSet struct {
 	proxyCACert       string // recording MITM CA cert path for built-in HTTP tools
 	workDir           string // per-run working directory for built-in file/wordlist tools
 	// steer 记录本 run 内的工具选择分布，让通用工具在决策点把活转给专用工具，
-	// 见 agent/tool_steering.go（实测 http_request 占 49.4%、http_sequence 仅 1.0%）。
+	// 见 agent/tool_steering.go（实测 http_request 占 49.2%、http_sequence 仅 1.0%；
+	// 第二版按连击形态分级：软提示 3、强指令 6、有预算的硬拦截 10）。
 	steer toolChoiceSteering
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
 	// zero value (all existing ToolSet constructions) means ENABLED — matching the

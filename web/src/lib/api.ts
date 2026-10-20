@@ -1070,7 +1070,17 @@ export const api = {
     session_header_key = "", // 非空=测试请求也带该自定义会话头（值为一次性 session id）
   ) =>
     // 独立轻量探测固定非流式（不发送 stream）；reply = 模型实际回复(已截断);一个字都不回的配置后端直接判失败
-    post<{ ok: boolean; error?: string; latency_ms?: number; model?: string; reply?: string }>("/llm/test", {
+    post<{
+      ok: boolean;
+      error?: string;
+      latency_ms?: number;
+      model?: string;
+      reply?: string;
+      // 这次实际用的是谁的 Key（form / 全局配置 / 配置 #N / 凭据 #N）与尾号。
+      // 失败时用它区分「Key 错」与「根本没读到 Key」。
+      key_source?: string;
+      key_hint?: string;
+    }>("/llm/test", {
       provider,
       model,
       base_url,
@@ -1150,6 +1160,11 @@ export const api = {
   deleteConversation: (id: number) => del<{ deleted: number }>(`/conversations/${id}`),
   deleteConversations: (ids: number[]) =>
     post<{ items: { id: number; ok: boolean; error?: string }[] }>("/conversations/delete/batch", { ids }),
+  // 会话 token 预算：服务端下发的上限/模式 + 已用量/档位。控制台聊天与 Harness 共用。
+  conversationBudget: (id: number) =>
+    get<{ limit: number; used: number; remaining: number; mode: string; tier: string; exhausted: boolean }>(
+      `/conversations/${id}/budget`,
+    ),
   // Incremental tail: steps after `since` (id ASC) — live poll + post-send fetch.
   conversationMessages: (id: number, since = 0) =>
     get<{ items: Activity[]; cursor: number; running: boolean }>(`/conversations/${id}/messages?since=${since}`).then(

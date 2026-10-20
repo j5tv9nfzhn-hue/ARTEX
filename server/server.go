@@ -810,6 +810,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.reRoutes(mux)
 	s.retentionRoutes(mux)
+	s.storageRoutes(mux)
 	s.registerSideRoutes(mux)
 
 	// Auth routes — exempt from JWT check (handled in requireAuth)
@@ -1006,6 +1007,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/conversations/{id}/checkpoints", s.pgListConversationCheckpoints)                // 检查点:列出会话时间线检查点
 	mux.HandleFunc("POST /api/conversations/{id}/checkpoints/{cid}/revert", s.pgRevertConversationCheckpoint) // 检查点:回滚会话时间线
 	mux.HandleFunc("POST /api/conversations/{id}/messages/{seq}/rollback", s.pgRollbackConversationMessage)   // 时间线:回滚到某条消息之前(气泡箭头)
+	mux.HandleFunc("GET /api/conversations/{id}/events", s.streamConversation)                                // 实时:会话活动 SSE(harness 时间线)
+	mux.HandleFunc("GET /api/conversations/{id}/budget", s.convBudgetInfo)                                    // 成本:会话 token 预算与已用量
 
 	mux.HandleFunc("GET /api/agents", s.pgListAgents)
 	mux.HandleFunc("POST /api/agents", s.pgCreateAgent)
@@ -1620,30 +1623,27 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	// API Key 解析优先级：表单输入 > 指定 profile 存的 key > 全局配置的 key。
-	// 已存 profile 的 key 不回传浏览器，所以测试已存配置时表单为空，需从 DB 取。
-	// 会话头名同理：表单未带时用已存 profile 的值兜底。
-	apiKey := strings.TrimSpace(req.APIKey)
-	sessionHeaderKey := strings.TrimSpace(req.SessionHeaderKey)
-	if req.ProfileID != nil && (apiKey == "" || sessionHeaderKey == "") {
-		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
-			if apiKey == "" {
-				apiKey = p.APIKey
-			}
-			if sessionHeaderKey == "" {
-				sessionHeaderKey = p.SessionHeaderKey
-			}
-		}
-	}
-	if apiKey == "" {
-		s.cfgMu.Lock()
-		apiKey = s.llmCfg.APIKey
-		s.cfgMu.Unlock()
-	}
-	if apiKey == "" {
-		writeJSON(w, 200, map[string]any{"ok": false, "error": trMsg(errLLMTestNoAPIKey)})
+	// API Key 解析：表单输入 > 指定配置（含其绑定的凭据）> 全局配置。
+	// 关键差别是失败不再静默降级——指定了配置却读不出来就直接说明原因，
+	// 绝不能拿另一把 Key 去替它发请求：那会让供应商的 401 指向错误的对象，
+	// 用户看到的「Key 错误」实际是「根本没读到这把 Key」。
+	src, keyErr := s.resolveLLMKey(req.APIKey, req.ProfileID)
+	if keyErr != nil {
+		writeJSON(w, 200, map[string]any{"ok": false, "error": keyErr.Error()})
 		return
 	}
+	apiKey := src.Key
+	// 会话头名只是个头「名字」，不含密钥；取不到顶多少一个头，可以静默降级。
+	sessionHeaderKey := strings.TrimSpace(req.SessionHeaderKey)
+	if req.ProfileID != nil && sessionHeaderKey == "" && s.m != nil && s.m.pg != nil {
+		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
+			sessionHeaderKey = p.SessionHeaderKey
+		}
+	}
+	// 测试失败时，用户最先要回答的问题是「你用的到底是谁的 Key」。日志里留一行，
+	// 只记来源与尾号，不记明文。
+	log.Printf("[llm-test] Key 来源=%s 尾号=%s → %s / %s @ %s", src.Source, src.Hint, req.Provider, req.Model, req.BaseURL)
+
 	// 重试参数【不】带进连接测试：测试看的是「这个端点通不通」，重试节奏是跑起来
 	// 之后的事；独立探测本身就是单发不重试，总时限 10s（llmtest.DefaultTimeout）。
 	res, err := llmtest.Probe(r.Context(), llmtest.Config{
@@ -1657,12 +1657,15 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 		SessionHeaderKey: sessionHeaderKey,
 	})
 	if err != nil {
-		writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, 200, map[string]any{
+			"ok": false, "error": err.Error(), "key_source": src.Source, "key_hint": src.Hint,
+		})
 		return
 	}
 	// 回传模型实际回复，让"测试通过"有据可查：看得见它确实说了话，而不只是 HTTP 200。
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "latency_ms": res.Latency.Milliseconds(), "model": res.Model, "reply": truncateReply(res.Reply),
+		"key_source": src.Source, "key_hint": src.Hint,
 	})
 }
 
@@ -4115,6 +4118,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			// taskDir = agent 的工作目录(CWD),与 chatUpload 落盘、ensureRunDir 一致。
 			taskDir := filepath.Join(s.m.dir, "tasks", t.ID)
 			agentMsg := composeAgentMessage(agentMessage, req.Attachments, taskDir)
+			// 视觉桥：同一个 SDK 限制，任务主 Agent 侧同样需要先转写再喂给模型。
+			agentMsg = s.visionMessageForTask(ctx, t, req.Attachments, taskDir, agentMsg, emit)
 			s.engine.TraceChatTurn(t, mainSeg, "chat.turn.start", "")
 			s.engine.BeginLLMCall(t.ID)
 			_, err := ma.Chat(ctx, maTaskID, mainSeg, s.m.Assets(), t.Store, t.Goal, agentMsg, emit, t.Notify, resume, t.NotifyGoal, t.NotifyHint)

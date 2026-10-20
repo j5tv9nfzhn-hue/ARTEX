@@ -292,6 +292,23 @@ function InterceptPendingBadge() {
   );
 }
 
+/**
+ * 独立页入口（newTab 条目）：默认交给浏览器开新标签 —— 目标页没有控制台外壳，
+ * 用户在新标签里得到的是一个干净的前端。
+ *
+ * 唯一的坑是嵌入式 iframe：预览沙箱是 `sandbox="allow-scripts"`，没有 allow-popups，
+ * 浏览器会静默忽略 target="_blank"，表现就是「点了没反应」。检测到自己不在顶层窗口时
+ * 改成整页跳转，至少把用户带离控制台；页面本身仍是独立布局，观感一致。
+ */
+function openStandalone(url: string) {
+  return (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    if (typeof window === "undefined" || window.self === window.top) return;
+    e.preventDefault();
+    window.location.assign(url);
+  };
+}
+
 function NavLinkItem({ item, isActive, showIconFallback }: NavLinkItemProps) {
   const t = useTranslations("nav");
   const title = t(`item.${item.id}`);
@@ -302,7 +319,8 @@ function NavLinkItem({ item, isActive, showIconFallback }: NavLinkItemProps) {
           prefetch={false}
           href={item.url}
           target={item.newTab ? "_blank" : undefined}
-          rel={item.newTab ? "noreferrer" : undefined}
+          rel={item.newTab ? "noopener noreferrer" : undefined}
+          onClick={item.newTab ? openStandalone(item.url) : undefined}
         >
           <NavLinkIcon item={item} title={title} showFallback={showIconFallback} />
           <span>{title}</span>

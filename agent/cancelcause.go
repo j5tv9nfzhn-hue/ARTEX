@@ -64,6 +64,9 @@ var (
 	AbortChatTurnFinished = cause("chat_turn_finished", "本轮对话已正常结束并释放 context",
 		"本轮对话已正常结束，服务端正在释放该轮 context 资源。这不是运行中断；若它出现在中断消息中，说明取消与收场事件发生了竞态")
 
+	AbortChatBudgetExhausted = cause("chat_budget_exhausted", "会话 Token 预算已用尽",
+		"本条会话累计 token 用量达到预算上限（settings.default_conversation_token_budget），本轮在用量上报后被主动终止；已完成步骤与检查点保留，提高预算后可继续")
+
 	// Process-level and per-run hard backstop.
 	AbortShutdown = cause("shutdown", "后端进程正在关闭",
 		"后端进程收到 SIGINT 或 SIGTERM，正在重启、更新或关闭。所有运行中的 Agent 会被取消；重启后残留的 running 意图会重置为 open 并重新执行")

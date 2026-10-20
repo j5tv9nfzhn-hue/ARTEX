@@ -514,7 +514,12 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 	// conv-<id>/), matching chatUpload's landing dir and agent/chat.go's sessionWorkDir
 	// — busyKey == convBusyKey(c.ID) == "conv-<id>" == that session id.
 	baseDir := filepath.Join(s.m.dir, "sessions", busyKey)
-	s.runConversation(c, composeAgentMessage(agentMessage, req.Attachments, baseDir), busyKey, conversationAttribution{}, msg)
+	atts := req.Attachments
+	s.runConversationWith(c, func(runCtx context.Context) string {
+		// 视觉桥：SDK 的消息模型不含 image 块，图片必须先转写成文本再交给 agent。
+		// 转写在 run ctx 内完成，失败会写一条错误活动（可见，不静默）。
+		return s.visionMessageForConversation(runCtx, c, atts, baseDir, composeAgentMessage(agentMessage, atts, baseDir))
+	}, busyKey, conversationAttribution{}, msg)
 	writeJSON(w, 202, map[string]any{"status": "accepted"})
 }
 
@@ -545,6 +550,14 @@ func (a conversationAttribution) decorate(ctx context.Context) context.Context {
 // busyKey clears when the run ends (best-effort in-flight marker).
 // attr 为任务外会话(复测/触发)提供 LLM 归因；人工聊天传零值。
 func (s *Server) runConversation(c *db.Conversation, msg, busyKey string, attr conversationAttribution, userMessage ...string) {
+	s.runConversationWith(c, func(context.Context) string { return msg }, busyKey, attr, userMessage...)
+}
+
+// runConversationWith 与 runConversation 等价，只是把「最终发给 agent 的消息」
+// 推迟到后台 goroutine 里再合成。视觉桥要读图并额外发一次多模态请求（秒级），
+// 放在 HTTP 处理路径上会拖慢 202 响应；放到 run ctx 里算，既能并行，也能被
+// 「停止本轮」取消。
+func (s *Server) runConversationWith(c *db.Conversation, compose func(context.Context) string, busyKey string, attr conversationAttribution, userMessage ...string) {
 	ctx, cancel := s.conversationRunContext(c.ID, busyKey)
 	ctx = attr.decorate(ctx)
 	// Only the human-message handler supplies this field, before adding the
@@ -552,7 +565,7 @@ func (s *Server) runConversation(c *db.Conversation, msg, busyKey string, attr c
 	if len(userMessage) == 1 {
 		ctx = intercept.WithReviewContext(ctx, "", intercept.ReviewBackground{Source: intercept.BackgroundUserMessage, Text: userMessage[0]})
 	}
-	go s.runConversationTurn(ctx, cancel, c, msg, busyKey)
+	go s.runConversationTurn(ctx, cancel, c, compose(ctx), busyKey)
 }
 
 // runConversationSync runs ONE agent turn on a conversation and BLOCKS until the
@@ -666,17 +679,48 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 	if a, err := pg.GetAgentByKey(c.AgentKey); err == nil && a != nil {
 		webSearch = a.WebSearch
 	}
+	// 会话级 Token 预算（控制台聊天与 Harness 共用这条路径）。
+	// 默认值来自系统设置，用户不配置也有刹车；mode=warn 只显示不拦截。
+	budgetLimit := int64(s.m.DefaultConvTokenBudget())
+	// 与任务级预算的边界：带 task 归因的 run（触发器 / 复测 / reporter）由
+	// server/engine.go checkTokenBudget 负责。这里不再挂第二道闸——否则同一笔消耗
+	// 会被两个口径不同的预算各判一次，出问题时没人说得清是谁停的。
+	if llmrec.TaskIDFrom(ctx) != "" {
+		budgetLimit = 0
+	}
+	var budgetBase int64
+	if n, err := pg.ConvTokenTotal(c.ID); err == nil {
+		budgetBase = n
+	}
+	ledger := agent.NewConvLedger(c.ID, budgetLimit, s.m.ConvBudgetMode(), budgetBase)
+	ledger.SetStop(func() { cancel(agent.AbortChatBudgetExhausted) })
+	ctx = agent.WithConvLedger(ctx, ledger)
+	// 预降级：本轮开始前已接近上限（tight）→ 先关掉最贵的能力，把预算留给收尾。
+	webSearchOff := false
+	if ledger.Tier() == "tight" {
+		// 降级必须可见：关掉联网搜索这件事会写一条系统记录，不做静默能力削除。
+		webSearchOff = webSearch
+		webSearch = false
+	}
 	sessionID := s.convBusyKey(c.ID) // "conv-<id>" transcript session
 	emit := func(rec db.Activity) {
 		if _, err := pg.AppendConvActivity(c.ID, rec); err != nil {
 			log.Printf("[conv %d] append activity failed: %v", c.ID, err)
 		}
 	}
+	if webSearchOff {
+		emit(db.Activity{Worker: "system", Kind: "text",
+			Summary: "会话预算已用到 85% 以上：本轮关闭联网搜索，优先把已有证据收尾（不是故障，可在系统配置调整预算）"})
+	}
 	// On a manual stop ctx is cancelled; Chat already emits a clean "已手动停止"
 	// step, so skip the raw-error entry — only surface genuine failures.
 	if _, err := ca.Chat(ctx, c.AgentKey, sessionID, msg, maxTurns, maxDuration, webSearch, emit); err != nil {
 		finishReason = err.Error()
-		if ctx.Err() == nil {
+		// 预算越线是「预期内的停止」，不是故障：写结构化终止记录而不是原始错误。
+		if ledger.Exhausted() {
+			finishStatus, finishReason = "stopped", "budget_exhausted"
+			s.emitConvBudgetStop(pg, c.ID, ledger.Used(), budgetLimit)
+		} else if ctx.Err() == nil {
 			_, _ = pg.AppendConvActivity(c.ID, db.Activity{Worker: c.AgentKey, Kind: "text", IsError: true,
 				Summary: transcriptErrorSummary("", err.Error()), Detail: err.Error()})
 		}

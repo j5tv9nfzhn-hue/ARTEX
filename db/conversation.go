@@ -249,6 +249,19 @@ RETURNING id`, convID, utf8Clean(a.Worker), utf8Clean(a.Kind), utf8Clean(a.Tool)
 	return id, err
 }
 
+// ConvTokenTotal 返回一条会话累计的计量用量（input+output），口径与任务预算
+// （db.TaskTokenTotal）一致：只统计 kind='result' 的收尾行，缓存读/写不计入。
+//
+// 只取 result 行有两个原因：usage 行进的是**本轮累计值**，逐行相加会重复计数；
+// 而每次 run 结束时 capture 都会把最终 usage 挂在 result 行上（activityWithUsage）。
+func (d *DB) ConvTokenTotal(convID int64) (int64, error) {
+	var total int64
+	err := d.QueryRow(`SELECT COALESCE(SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)),0)
+FROM conversation_activities
+WHERE conversation_id=$1 AND kind='result' AND reverted_at IS NULL`, convID).Scan(&total)
+	return total, err
+}
+
 // ConvActivityList returns a conversation's steps after sinceID (exclusive) with
 // the summary-only column set (detail is lazy-loaded via ConvActivityDetail).
 func (d *DB) ConvActivityList(convID, sinceID int64, limit int) ([]Activity, int64, error) {

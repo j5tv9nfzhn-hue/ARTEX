@@ -398,11 +398,19 @@ function ProfileSheet({
         sessionHeaderKey.trim(),
       );
       // 回复内容一并展示：看得见模型确实说了话，才算和会话里跑通是一回事。
+      // Key 来源一并显示：测试失败时「Key 填错了」与「压根没读到 Key」是两回事，
+      // 少了这一行用户只看得到供应商那句 401，很容易去反复重填同一把正确的 Key。
+      const keyLine = r.key_source ? t("profile.toast.testKey", { source: r.key_source, hint: r.key_hint ?? "" }) : "";
       if (r.ok)
         toast.success(t("profile.toast.testOk", { latency: r.latency_ms ?? "?", model: r.model ?? model }), {
-          description: r.reply ? t("profile.toast.testReply", { reply: r.reply }) : undefined,
+          description:
+            [r.reply ? t("profile.toast.testReply", { reply: r.reply }) : "", keyLine].filter(Boolean).join(" · ") ||
+            undefined,
         });
-      else toast.error(t("profile.toast.testFailed", { error: r.error ?? t("profile.toast.unknown") }));
+      else
+        toast.error(t("profile.toast.testFailed", { error: r.error ?? t("profile.toast.unknown") }), {
+          description: keyLine || undefined,
+        });
     } catch (e) {
       toast.error(t("profile.toast.testError", { msg: (e as Error).message }));
     } finally {

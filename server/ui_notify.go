@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/intercept"
 )
 
 // 本文件是**应用内通知**（前端右下角浮层 + 顶部横幅）的唯一事件源。
@@ -24,11 +25,12 @@ import (
 // 两者共用同一批「人必须知道」的业务时刻（任务终态、子代理结算、漏洞落库），
 // 但互不依赖：出站推送失败不影响浮层，浮层订阅者掉线也不影响推送。
 //
-// 收敛点（四个，覆盖全部来源）：
+// 收敛点（五个，覆盖全部来源）：
 //  1. task_notify.go emitTaskStatusEvent     → 任务终态（done/failed/timeout）
 //  2. checkpoints.go onIntentSettled         → #N 子代理结算
 //  3. conversations.go runConversationTurn   → AI 回复回合结束
 //  4. db.OnFindingInserted 钩子              → 漏洞落库（带严重程度）
+//  5. intercept.OnApprovalPending 钩子       → 等待人工审批（不点就卡住任务）
 const (
 	uiNotifyRingCap   = 300 // ring 只用于断线补洞，不对外提供历史列表
 	uiNotifyReplayMax = 100 // 一次断线重连最多补发多少条
@@ -306,8 +308,45 @@ func emitFindingMilestone(findingID, taskID int64, name, vulnclass, severity, su
 	})
 }
 
-// installUINotifyHooks 把「漏洞落库」这个唯一在 db 包里发生的业务时刻接到
-// 应用内通知上。db 包不认识 server，所以用包级回调（见 db/findings.go）。
+// emitApprovalPendingMilestone 把「等待人工审批」送进应用内浮层。
+//
+// 这是唯一一个会真正把任务卡住、等人点一下的事件：审批不处理，worker 就一直
+// 停在等待里直到超时。出站推送（notification_events → IM/Webhook）早就有它，
+// 但应用内浮层此前没有入口——人在浏览器里反而看不到最该看的那条。
+// level 用 error：横幅 + 下行双音，与「任务失败」同级，因为它同样在等一个决定。
+func emitApprovalPendingMilestone(convID int64, taskID, toolName string, pendingID int64) {
+	title := "等待人工审批"
+	if n := uiTrim(toolName, 40); n != "" {
+		title += "：" + n
+	}
+	body := ""
+	if tid, err := strconv.ParseInt(taskID, 10, 64); err == nil && tid > 0 {
+		body = "任务 #" + strconv.FormatInt(tid, 10)
+	}
+	if convID > 0 {
+		c := "会话 #" + strconv.FormatInt(convID, 10)
+		if body != "" {
+			body += " · " + c
+		} else {
+			body = c
+		}
+	}
+	if body == "" {
+		body = "审批 #" + strconv.FormatInt(pendingID, 10)
+	}
+	uiNotifyHub.emit(UIEvent{
+		Kind:   "approval_pending",
+		Level:  "error",
+		TaskID: taskID,
+		Title:  title,
+		Body:   body,
+		Href:   "/system/intercept/approvals",
+	})
+}
+
+// installUINotifyHooks 把两个「发生在本包之外」的业务时刻接到应用内通知上：
+// 漏洞落库（db 包）与等待人工审批（intercept 包）。两个包都不认识 server，
+// 因此统一用包级回调（见 db/findings.go、intercept/intercept.go）。
 // 其余三个收敛点都是 server 自己的函数，直接调 emit 即可。
 func (s *Server) installUINotifyHooks() {
 	db.OnFindingInserted = func(id, taskID int64, name, vulnclass, severity, summary string) {
@@ -316,6 +355,10 @@ func (s *Server) installUINotifyHooks() {
 			title = s.m.taskTitleFor(taskID)
 		}
 		emitFindingMilestone(id, taskID, name, vulnclass, severity, summary, title)
+	}
+	// 审批挂起发生在 intercept 包（那里才拿得到 pending id），用回调接进浮层。
+	intercept.OnApprovalPending = func(convID int64, taskID, toolName string, pendingID int64) {
+		emitApprovalPendingMilestone(convID, taskID, toolName, pendingID)
 	}
 }
 

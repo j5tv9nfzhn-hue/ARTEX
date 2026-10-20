@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Autumn-27/artex/config"
@@ -416,10 +417,7 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 						"note":     "当前运行上下文未挂载全局数据库，请改用 mode=\"vuln_patterns\" 或 mode=\"skill_search\"",
 					})
 				}
-				rows, total, err := d.ListFindingsPage(db.FindingFilter{
-					Query: q,
-					Sort:  "severity",
-				}, 1, limit)
+				rows, total, err := searchPastFindingsMulti(d, q, limit)
 				if err != nil {
 					return actool.Errorf("检索历史漏洞失败: " + err.Error()), nil
 				}
@@ -473,6 +471,23 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 				if err != nil {
 					return actool.Errorf("检索历史资产失败: " + err.Error()), nil
 				}
+				// 多词 query（"example.com admin 登录"）在资产检索里是按整串字面量
+				// 匹配的——整串几乎必然 0 命中。0 命中时按词回退，取第一个有结果的词。
+				if len(rows) == 0 && strings.TrimSpace(q) != "" {
+					for _, term := range kbQueryTerms(q) {
+						if term == "" || strings.EqualFold(term, q) {
+							continue
+						}
+						more, e := t.as.Search(term, limit)
+						if e != nil {
+							continue
+						}
+						if len(more) > 0 {
+							rows = more
+							break
+						}
+					}
+				}
 				type assetBrief struct {
 					ID           int64    `json:"id"`
 					Type         string   `json:"type"`
@@ -518,18 +533,35 @@ func (t *ToolSet) tacticalKBTool() actool.CoreTool {
 			case "vuln_patterns":
 				cat := strings.ToLower(strings.TrimSpace(a.Category))
 				ql := strings.ToLower(q)
-				matched := []vulnPatternCard{}
+				terms := kbQueryTerms(ql)
+				// 打分而非整串字面量匹配：原来只拿 category/title/高产出向量/快探
+				// 拼一个 blob 做 strings.Contains(ql)，多词 query（"jwt 越权"）和
+				// 只在止损信号里出现的词（stop signals）永远检索不到。
+				type scoredCard struct {
+					card  vulnPatternCard
+					score int
+				}
+				scored := make([]scoredCard, 0, len(builtinVulnPatternCards))
 				for _, c := range builtinVulnPatternCards {
 					if cat != "" && c.Category != cat {
 						continue
 					}
+					score := 0
 					if ql != "" {
-						blob := strings.ToLower(c.Category + " " + c.Title + " " + strings.Join(c.HighYield, " ") + " " + strings.Join(c.FastProbes, " "))
-						if !strings.Contains(blob, ql) {
+						blob := strings.ToLower(c.Category + " " + c.Title + " " +
+							strings.Join(c.HighYield, " ") + " " + strings.Join(c.FastProbes, " ") + " " +
+							strings.Join(c.StopSignals, " ") + " " + strings.Join(c.NativeTools, " "))
+						score = kbMatchScore(blob, ql, terms)
+						if score == 0 {
 							continue
 						}
 					}
-					matched = append(matched, c)
+					scored = append(scored, scoredCard{card: c, score: score})
+				}
+				sort.SliceStable(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
+				matched := make([]vulnPatternCard, 0, len(scored))
+				for _, sc := range scored {
+					matched = append(matched, sc.card)
 				}
 				totalMatched := len(matched)
 				if len(matched) > limit {
@@ -695,6 +727,12 @@ func searchDistilledCaseSkills(query string, limit int) (actool.Result, error) {
 	}
 	var results []caseSkillCard
 	ql := strings.ToLower(strings.TrimSpace(query))
+	terms := kbQueryTerms(ql)
+	type scoredCase struct {
+		card  caseSkillCard
+		score int
+	}
+	var scoredCases []scoredCase
 	skillDir := config.SkillDir()
 	if reg, err := skill.LoadDir(skillDir); err == nil && reg != nil {
 		for _, s := range reg.List() {
@@ -712,8 +750,12 @@ func searchDistilledCaseSkills(query string, limit int) (actool.Result, error) {
 				body = body + "\n\n" + refText
 			}
 			combined := strings.ToLower(name + "\n" + s.Description + "\n" + body)
-			if ql != "" && !strings.Contains(combined, ql) {
-				continue
+			score := 0
+			if ql != "" {
+				score = kbMatchScore(combined, ql, terms)
+				if score == 0 {
+					continue
+				}
 			}
 			domain := "web_security"
 			if strings.HasPrefix(name, "case-re-") || strings.Contains(s.Description, "software_re") {
@@ -738,26 +780,37 @@ func searchDistilledCaseSkills(query string, limit int) (actool.Result, error) {
 			}
 			var matchedSec string
 			if ql != "" {
+				// 选「命中词最多」的那一段，而不是第一个字面量命中整串的段。
+				bestScore := 0
 				for _, sec := range strings.Split(body, "\n## ") {
-					if strings.Contains(strings.ToLower(sec), ql) {
+					if sc := kbMatchScore(strings.ToLower(sec), ql, terms); sc > bestScore {
+						bestScore = sc
 						matchedSec = clipUTF8(strings.TrimSpace("## "+sec), 500)
-						break
 					}
 				}
 			}
-			results = append(results, caseSkillCard{
-				Skill:             name,
-				Domain:            domain,
-				Description:       s.Description,
-				VerifiedPaths:     verified,
-				FindingsRetestsRE: clipUTF8(strings.Join(evidenceParts, "\n"), 600),
-				PitfallsAndStops:  pitfalls,
-				MatchedSection:    matchedSec,
+			scoredCases = append(scoredCases, scoredCase{
+				score: score,
+				card: caseSkillCard{
+					Skill:             name,
+					Domain:            domain,
+					Description:       s.Description,
+					VerifiedPaths:     verified,
+					FindingsRetestsRE: clipUTF8(strings.Join(evidenceParts, "\n"), 600),
+					PitfallsAndStops:  pitfalls,
+					MatchedSection:    matchedSec,
+				},
 			})
-			if len(results) >= limit {
-				break
-			}
 		}
+	}
+	// 先收全量再排序截断：原来按目录遍历顺序 break，等于「字典序前 N 个」，
+	// 与相关度和新旧都无关。
+	sort.SliceStable(scoredCases, func(i, j int) bool { return scoredCases[i].score > scoredCases[j].score })
+	for _, sc := range scoredCases {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, sc.card)
 	}
 	return jsonResult(map[string]any{
 		"mode":       "case_skills",
@@ -794,6 +847,12 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 	var results []skillSnippet
 	seen := map[string]bool{}
 	ql := strings.ToLower(strings.TrimSpace(query))
+	terms := kbQueryTerms(ql)
+	type scoredSnippet struct {
+		snip  skillSnippet
+		score int
+	}
+	var scored []scoredSnippet
 
 	collectFromContent := func(skillName, desc, body string) {
 		if seen[skillName] {
@@ -805,27 +864,32 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 			if len(sec) > 500 {
 				sec = clipUTF8(sec, 500) + "...(可调用 Skill 工具加载完整技能包及 references 手册)"
 			}
-			results = append(results, skillSnippet{
-				Skill:       skillName,
-				Description: desc,
-				Section:     sec,
+			scored = append(scored, scoredSnippet{
+				snip: skillSnippet{
+					Skill:       skillName,
+					Description: desc,
+					Section:     sec,
+				},
 			})
 			return
 		}
 		combined := strings.ToLower(skillName + "\n" + desc + "\n" + body)
-		if !strings.Contains(combined, ql) {
+		score := kbMatchScore(combined, ql, terms)
+		if score == 0 {
 			return
 		}
 		seen[skillName] = true
+		// 选命中词最多的章节，而不是第一个字面量命中整串的章节。
 		sections := strings.Split(body, "\n## ")
 		var bestSec string
+		bestScore := 0
 		for i, sec := range sections {
 			if i > 0 {
 				sec = "## " + sec
 			}
-			if strings.Contains(strings.ToLower(sec), ql) {
+			if sc := kbMatchScore(strings.ToLower(sec), ql, terms); sc > bestScore {
+				bestScore = sc
 				bestSec = strings.TrimSpace(sec)
-				break
 			}
 		}
 		if bestSec == "" {
@@ -834,10 +898,13 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 		if len(bestSec) > 900 {
 			bestSec = clipUTF8(bestSec, 900) + "...(truncated)"
 		}
-		results = append(results, skillSnippet{
-			Skill:       skillName,
-			Description: desc,
-			Section:     bestSec,
+		scored = append(scored, scoredSnippet{
+			score: score,
+			snip: skillSnippet{
+				Skill:       skillName,
+				Description: desc,
+				Section:     bestSec,
+			},
 		})
 	}
 
@@ -854,14 +921,12 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 				fullBody += "\n\n" + refText
 			}
 			collectFromContent(name, s.Description, fullBody)
-			if len(results) >= limit {
-				break
-			}
 		}
 	}
 
 	// 2. Fallback to embedded skills.Bundled if disk directory was not yet initialized
-	if len(results) < limit {
+	// 注意：结果改为末尾统一排序后，这里必须看 scored 而不是 results。
+	if len(scored) < limit {
 		_ = fs.WalkDir(skills.Bundled, ".", func(rel string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.EqualFold(filepath.Base(rel), "SKILL.md") {
 				return nil
@@ -887,6 +952,15 @@ func searchBundledAndDiskSkills(query string, limit int) (actool.Result, error) 
 			collectFromContent(dirName, desc, body)
 			return nil
 		})
+	}
+
+	// 全量收集后再按相关度排序截断（原实现是「目录序前 N 个」）。
+	sort.SliceStable(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
+	for _, sc := range scored {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, sc.snip)
 	}
 
 	return jsonResult(map[string]any{
@@ -916,4 +990,119 @@ func splitSkillFrontmatter(raw string) (desc string, body string) {
 		}
 	}
 	return desc, body
+}
+
+// ── 检索词切分与打分（知识库/记忆库三链路共用） ─────────────────────────
+//
+// 原实现的检索一律是「整串 strings.Contains」：
+//
+//	tactical_kb(mode="case_skills", query="newapi 余额 越权")
+//
+// 会把 "newapi 余额 越权" 当成一个连续子串去匹配，几乎必然 0 命中；命中率
+// 因此只取决于「用户/模型是否恰好只传了一个词」。结果是知识库看起来只有
+// 那么几张卡片可用，实际是检索把它们过滤掉了。
+//
+// 现在把 query 切成若干个原子词（空格/逗号/顿号/分号/竖线），整串仍保留为
+// phrase 以奖励精确短语命中；命中多个词的结果得分更高，排序也在打分之后。
+func kbQueryTerms(query string) []string {
+	std := strings.Map(func(r rune) rune {
+		switch r {
+		case '\t', '\n', '\r', ',', '\uFF0C', '\u3001', ';', '\uFF1B', '|', '\uFF5C', '\u3000':
+			return ' '
+		}
+		return r
+	}, strings.ToLower(strings.TrimSpace(query)))
+	if std == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range strings.Fields(std) {
+		if len([]rune(f)) < 2 || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+		if len(out) == 6 { // 上限：避免一句话被切成十几个词后到处乱命中
+			break
+		}
+	}
+	return out
+}
+
+// kbMatchScore 返回 haystack（已小写）对 query 的相关度：整串短语命中给高分，
+// 每个原子词按其长度加权。0 表示未命中。
+func kbMatchScore(haystack, phrase string, terms []string) int {
+	score := 0
+	if phrase != "" && strings.Contains(haystack, phrase) {
+		score += 6
+	}
+	for _, t := range terms {
+		if t == "" || !strings.Contains(haystack, t) {
+			continue
+		}
+		n := len([]rune(t))
+		switch {
+		case n >= 4:
+			score += 3
+		case n >= 2:
+			score += 2
+		default:
+			score++
+		}
+	}
+	return score
+}
+
+// searchPastFindingsMulti 让 past_findings 也支持多词检索。db 层的 Query 是
+// 单个 LIKE %q%，多词 query 会退化成 0 命中；这里按词分别检索（最多 4 个词），
+// 按「命中词数」合并去重后取前 limit 条。单词 query 走原路径，行为不变。
+func searchPastFindingsMulti(d *db.DB, q string, limit int) ([]*db.DBFinding, int, error) {
+	terms := kbQueryTerms(q)
+	if len(terms) <= 1 {
+		return d.ListFindingsPage(db.FindingFilter{Query: q, Sort: "severity"}, 1, limit)
+	}
+	type hitRow struct {
+		row  *db.DBFinding
+		hits int
+	}
+	seen := map[int64]*hitRow{}
+	var order []int64
+	total := 0
+	for i, term := range terms {
+		if i >= 4 {
+			break
+		}
+		rows, n, err := d.ListFindingsPage(db.FindingFilter{Query: term, Sort: "severity"}, 1, limit)
+		if err != nil {
+			return nil, 0, err
+		}
+		total += n
+		for _, r := range rows {
+			if r == nil {
+				continue
+			}
+			if h, ok := seen[r.ID]; ok {
+				h.hits++
+				continue
+			}
+			seen[r.ID] = &hitRow{row: r, hits: 1}
+			order = append(order, r.ID)
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		hi, hj := seen[order[i]], seen[order[j]]
+		if hi.hits != hj.hits {
+			return hi.hits > hj.hits
+		}
+		return hi.row.ID > hj.row.ID // 同分取较新
+	})
+	out := make([]*db.DBFinding, 0, len(order))
+	for _, id := range order {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, seen[id].row)
+	}
+	return out, total, nil
 }

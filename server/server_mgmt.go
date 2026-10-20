@@ -2445,20 +2445,19 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	// Resolve API key: form input > profile stored key.
-	apiKey := strings.TrimSpace(req.APIKey)
-	if apiKey == "" && req.ProfileID != nil {
-		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
-			apiKey = p.APIKey
-		}
-	}
-	if apiKey == "" {
-		writeJSON(w, 200, map[string]any{"ok": false, "error": trMsg(errMgmtNoAPIKey)})
+	// Key 解析与「测试连接」共用同一套规则（来源、掩码/空白校验、失败不降级）。
+	src, keyErr := s.resolveLLMKey(req.APIKey, req.ProfileID)
+	if keyErr != nil {
+		writeJSON(w, 200, map[string]any{"ok": false, "error": keyErr.Error()})
 		return
 	}
+	apiKey := src.Key
 
-	baseURL := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
-	provider := strings.TrimSpace(req.Provider)
+	// base_url 走运行时（agent.ConfigFrom）同一套归一化：anthropic 的 /v1 由
+	// 我们追加，用户填的 base 若已带 /v1 必须先剥掉，否则拼出 /v1/v1/models。
+	probe := agent.ConfigFrom(req.Provider, "", req.BaseURL, "", "")
+	provider := probe.Provider()
+	baseURL := probe.BaseURL
 
 	// Candidate endpoints to try in order. Some Anthropic-compatible providers
 	// (e.g. DeepSeek) implement /v1/messages under an /anthropic path but expose
@@ -2483,22 +2482,20 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	var candidates []candidate
 	switch provider {
 	case "openai", "openai-responses":
-		// Responses API shares the OpenAI model list at /v1/models; tolerate a full
-		// endpoint URL of either format.
+		// Responses API shares the OpenAI model list at /v1/models; baseURL 里
+		// 的 /v1 是 OpenAI 约定的一部分，原样保留。
 		if baseURL == "" {
 			baseURL = "https://api.openai.com/v1"
 		}
-		b := strings.TrimRight(strings.TrimSuffix(strings.TrimSuffix(baseURL, "/chat/completions"), "/responses"), "/")
-		candidates = append(candidates, candidate{b + "/models", bearerHdr()})
+		candidates = append(candidates, candidate{baseURL + "/models", bearerHdr()})
 	default: // anthropic
 		if baseURL == "" {
 			baseURL = "https://api.anthropic.com"
 		}
-		b := strings.TrimRight(strings.TrimSuffix(baseURL, "/v1/messages"), "/")
-		candidates = append(candidates, candidate{b + "/v1/models", anthropicHdr()})
+		candidates = append(candidates, candidate{baseURL + "/v1/models", anthropicHdr()})
 		// Fallback for Anthropic-compatible third parties whose model list lives on
 		// the OpenAI path: strip a trailing /anthropic and try the OpenAI endpoint.
-		if root := strings.TrimRight(strings.TrimSuffix(b, "/anthropic"), "/"); root != b {
+		if root := strings.TrimRight(strings.TrimSuffix(baseURL, "/anthropic"), "/"); root != baseURL {
 			candidates = append(candidates,
 				candidate{root + "/models", bearerHdr()},
 				candidate{root + "/v1/models", bearerHdr()},

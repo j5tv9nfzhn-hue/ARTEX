@@ -149,6 +149,23 @@ function LiveBadge() {
   );
 }
 
+// pastedImageFile 把剪贴板里的图片重新命名成一个稳定、可辨识的文件。
+// 浏览器给的名字通常是 image.png：同一轮连贴两张会依赖后端 -1/-2 去重，
+// 时间线里也看不出是哪次粘贴留下的。扩展名必须与真实 MIME 一致——
+// 后端按扩展名判输入模态（db/attachmentModality），错了会被闸门拦下。
+function pastedImageFile(f: File): File {
+  const fromType = (f.type || "").split("/")[1] || "png";
+  const ext = fromType === "jpeg" ? "jpg" : fromType;
+  const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+  const rand = Math.random().toString(36).slice(2, 6);
+  try {
+    return new File([f], `paste-${stamp}-${rand}.${ext}`, { type: f.type || "image/png" });
+  } catch {
+    // 极老浏览器不支持 File 构造器：退回原始 File，名字退化成 image.png 也能上传。
+    return f;
+  }
+}
+
 // Composer is the shared Two-Deck Composer Dock (Deck 1: 100%-width adaptive textarea;
 // Deck 2: Agent selector pill, attachment button, inline LLM profile selector, Todo popover, and Send/Stop action).
 function Composer({
@@ -188,6 +205,22 @@ function Composer({
   const t = useTranslations("chat");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const atts = attachments ?? [];
+  // 粘贴图片：截图/网页复制的图片直接进候选附件，不必先存成文件再点回形针。
+  // 只接管「file 且是 image/*」的粘贴；纯文本粘贴一行都不碰（不 preventDefault）。
+  function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    if (!onPickFiles || uploading) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.kind !== "file") continue;
+      const f = item.getAsFile();
+      if (f && f.type.startsWith("image/")) files.push(pastedImageFile(f));
+    }
+    if (files.length === 0) return;
+    e.preventDefault();
+    onPickFiles(files);
+  }
   // 发送按键由系统设置 localStorage 决定，默认 Enter 发送。
   const sendMode = useChatSendMode();
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -224,7 +257,8 @@ function Composer({
           </div>
         )}
         {/* Deck 1: Full-width adaptive textarea so placeholder is never truncated */}
-        <div className="flex min-w-0 flex-1">
+        {/* onPaste 挂在容器上：MentionTextarea 不必改 API，事件会从 textarea 冒泡上来。 */}
+        <div className="flex min-w-0 flex-1" onPaste={onPaste}>
           <MentionTextarea
             className="max-h-40 min-h-11 w-full min-w-0 flex-1 resize-none border-0 bg-transparent px-1.5 py-1 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             rows={1}
@@ -258,7 +292,7 @@ function Composer({
                   className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled || uploading}
-                  title={t("composer.uploadFile")}
+                  title={`${t("composer.uploadFile")} · ${t("composer.pasteHint")}`}
                 >
                   {uploading ? <Loader2Icon className="size-4 animate-spin" /> : <PaperclipIcon className="size-4" />}
                 </Button>
@@ -776,6 +810,27 @@ function ChatView({
     return { i: I, o: O, cr: CR, turns, any: I + O + CR > 0 };
   }, [messages]);
 
+  // 会话预算：上限/模式来自服务端（默认值即可用、无需用户配置）；已用量用本页已算好的
+  // tokenTotal 做实时值——轮内的 usage 行还没落成 result 行，服务端汇总会滞后一轮。
+  const [budget, setBudget] = React.useState<{ limit: number; mode: string } | null>(null);
+  React.useEffect(() => {
+    // 运行中不刷新：此时服务端的 used 还落后一轮，读到的上限也不会变；
+    // 等本轮结束（running→false）再取一次即可。running 是这条 effect 的触发器。
+    if (running) return;
+    let alive = true;
+    api
+      .conversationBudget(conv.id)
+      .then((b) => {
+        if (alive) setBudget({ limit: b.limit, mode: b.mode });
+      })
+      .catch(() => {
+        if (alive) setBudget(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [conv.id, running]);
+
   // pickFiles uploads into this conversation's session dir (sessions/conv-<id>/
   // uploads/) and queues the returned metadata to send with the next message.
   async function pickFiles(files: File[]) {
@@ -897,6 +952,41 @@ function ChatView({
               })}
             </span>
           )}
+          {budget &&
+            budget.limit > 0 &&
+            (() => {
+              const used = tokenTotal.i + tokenTotal.o;
+              // mode!=enforce 时只做统计展示：不能让「预算 400K」看起来像已经拦了。
+              const enforced = budget.mode === "enforce";
+              const tier = !enforced
+                ? "ok"
+                : used >= budget.limit
+                  ? "exhausted"
+                  : used * 100 >= budget.limit * 85
+                    ? "tight"
+                    : used * 100 >= budget.limit * 70
+                      ? "watch"
+                      : "ok";
+              const cls =
+                tier === "exhausted"
+                  ? "border-red-500/60 text-red-600 dark:text-red-400"
+                  : tier === "tight"
+                    ? "border-amber-500/60 text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground";
+              return (
+                <span
+                  title={
+                    enforced
+                      ? `本条会话累计 token 预算：已用 ${fmtTokens(used)} / 上限 ${fmtTokens(budget.limit)}。达到上限后本轮自动收尾（可在系统配置调整 default_conversation_token_budget）。`
+                      : `仅统计，不拦截：已用 ${fmtTokens(used)}（参考上限 ${fmtTokens(budget.limit)}）。在系统配置填写 default_conversation_token_budget 后才启用收尾。`
+                  }
+                  className={`rounded-md border bg-muted/60 px-2 py-0.5 text-[11px] tabular-nums ${cls}`}
+                >
+                  {tier === "exhausted" ? "预算用尽" : enforced ? "预算" : "用量"} {fmtTokens(used)}/
+                  {fmtTokens(budget.limit)}
+                </span>
+              );
+            })()}
         </div>
       </div>
 

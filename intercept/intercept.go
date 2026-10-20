@@ -683,6 +683,14 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 	}
 }
 
+// OnApprovalPending 是「等待人工审批」进入应用内通知（SSE 浮层）的挂钩，
+// server 启动时注册；为 nil 时静默跳过。
+//
+// 为什么用包级回调：server 已经 import intercept，让 intercept 反过来依赖
+// server 会构成循环依赖。回调必须是 best-effort——审批流程本身不能因为通知
+// 出问题而卡住或失败。
+var OnApprovalPending func(convID int64, taskID, toolName string, pendingID int64)
+
 // emitApprovalPending 写入一条 approval_pending 事件（独立事务，best-effort）。
 //
 // 绝不阻断审批等待本身：写事件失败只记日志——用户在审批页照常看得到这条
@@ -708,6 +716,11 @@ func (i *Interceptor) emitApprovalPending(convID int64, taskID, toolName string,
 	defer cancel()
 	if _, err := i.db.AddNotificationEvent(ctx, notify.EventApprovalPending, 0, snap); err != nil {
 		log.Printf("[notify] 写入审批事件失败 pending=%d（不影响审批流程）: %v", pendingID, err)
+	}
+	// 应用内浮层（SSE）与出站推送是两条独立链路：上面写库只让「人不在电脑前」
+	// 的通道收到，浏览器里的浮层要靠这个回调。同样 best-effort。
+	if OnApprovalPending != nil {
+		OnApprovalPending(convID, taskID, toolName, pendingID)
 	}
 }
 

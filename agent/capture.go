@@ -144,6 +144,9 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			if ev.Usage != nil {
 				u := *ev.Usage
 				lastUsage = &u
+				// 会话预算：每收到一条用量事件就地结算（事件是本轮累计值，账本内部取最大）。
+				// 没挂账本时是 nil 接收者调用，方法内已做保护 → no-op。
+				ConvLedgerFrom(ctx).Observe(u.InputTokens, u.OutputTokens)
 				rec(db.Activity{Kind: "usage",
 					InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens,
 					CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})

@@ -9,6 +9,7 @@ import {
   Database,
   FolderOpen,
   FolderSync,
+  HardDrive,
   LayoutDashboard,
   type LucideIcon,
   MessageSquare,
@@ -78,6 +79,10 @@ export const sidebarItems: NavGroup[] = [
     items: [
       { id: "dashboard", title: "仪表盘", url: "/dashboard", icon: LayoutDashboard },
       { id: "chat", title: "对话", url: "/chat", icon: MessageSquare },
+      // 独立前端：/harness 挂在 (standalone) 路由组，不套控制台外壳，所以用新标签打开。
+      // 嵌入式 iframe（预览沙箱 sandbox="allow-scripts"，无 allow-popups）里 target="_blank"
+      // 会被静默吞掉 → nav-main 检测到不在顶层窗口时退回整页跳转。
+      { id: "harness", title: "Harness 工作台", url: "/harness", icon: Terminal, badge: "new", newTab: true },
       { id: "tasks", title: "任务", url: "/function/tasks", icon: Target },
       { id: "findings", title: "发现", url: "/function/findings", icon: Bug },
       { id: "traffic", title: "流量", url: "/function/traffic", icon: Activity },
@@ -103,6 +108,7 @@ export const sidebarItems: NavGroup[] = [
       { id: "approvals", title: "审批记录", url: "/system/intercept/approvals", icon: ClipboardList },
       { id: "logs", title: "日志", url: "/system/logs", icon: ScrollText },
       { id: "retention", title: "数据保留", url: "/system/retention", icon: Database },
+      { id: "storage", title: "存储与清理", url: "/system/storage", icon: HardDrive },
       { id: "settings", title: "系统配置", url: "/system/settings", icon: Settings2 },
     ],
   },

@@ -1,0 +1,65 @@
+/* Harness 私有令牌。
+ *
+ * 单独成文件而不是塞进 globals.css：harness 是独立功能域，主题令牌只在本域内
+ * 生效，避免污染控制台的既有配色。基色全部用 oklch 与仓库一致；亮/暗两套
+ * 都从 --background/--card/--muted 派生，换主题预设时自动跟随。
+ */
+
+.harness-root {
+  --hx-ok: oklch(0.6 0.15 152);
+  --hx-warn: oklch(0.7 0.15 72);
+  --hx-error: oklch(0.58 0.19 25);
+  --hx-ok-soft: color-mix(in oklab, var(--hx-ok) 14%, transparent);
+  --hx-warn-soft: color-mix(in oklab, var(--hx-warn) 14%, transparent);
+  --hx-add-bg: color-mix(in oklab, var(--hx-ok) 13%, transparent);
+  --hx-del-bg: color-mix(in oklab, var(--hx-error) 12%, transparent);
+  --hx-add-bar: color-mix(in oklab, var(--hx-ok) 70%, transparent);
+  --hx-del-bar: color-mix(in oklab, var(--hx-error) 70%, transparent);
+  --hx-code-bg: color-mix(in oklab, var(--muted) 55%, var(--card));
+}
+
+.dark .harness-root {
+  --hx-ok: oklch(0.78 0.15 152);
+  --hx-warn: oklch(0.8 0.14 78);
+  --hx-error: oklch(0.7 0.17 22);
+  --hx-add-bg: color-mix(in oklab, var(--hx-ok) 16%, transparent);
+  --hx-del-bg: color-mix(in oklab, var(--hx-error) 16%, transparent);
+  --hx-code-bg: color-mix(in oklab, var(--background) 70%, var(--card));
+}
+
+/* 代码/终端字体：不用裸 monospace —— Windows 上回退到 SimSun，CJK 宽度会抖。 */
+.harness-root code,
+.harness-root pre,
+.harness-root .harness-code {
+  font-family:
+    "SF Mono", "JetBrains Mono", "Cascadia Mono", "Consolas", "PingFang SC", "Microsoft YaHei", ui-monospace, sans-serif;
+  font-variant-ligatures: none;
+}
+
+/* 细滚动条：5px，只在 harness 三栏内生效。 */
+.harness-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+}
+@supports not selector(::-webkit-scrollbar) {
+  .harness-scroll {
+    scrollbar-width: thin;
+  }
+}
+.harness-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.harness-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 18%, transparent);
+}
+.harness-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* diff 保列：源码不换行、不做软折行。 */
+.harness-diff {
+  font-variant-ligatures: none;
+  tab-size: 2;
+}

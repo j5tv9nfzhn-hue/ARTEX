@@ -221,8 +221,13 @@ func ConfigFrom(provider, model, baseURL, apiKey, proxy string) Config {
 		}
 	default:
 		c.Format = llm.FormatAnthropic
-		// provider appends "/v1/messages".
+		// provider appends "/v1/messages". 用户常把 "…/v1" 或完整端点一起粘进
+		// base_url：不剥掉已带的 /v1 就会拼成 /v1/v1/messages，中转站对它的答复
+		// 通常是 404 Invalid URL，个别回 401 —— 看起来像 Key 错了，实际一次都
+		// 没读到 Key。两步剥离对 "https://gw"、".../v1"、".../v1/messages" 三种
+		// 写法都幂等，且不影响 openai 那套「base 必须自带 /v1」的约定。
 		c.BaseURL = strings.TrimRight(strings.TrimSuffix(c.BaseURL, "/v1/messages"), "/")
+		c.BaseURL = strings.TrimRight(strings.TrimSuffix(c.BaseURL, "/v1"), "/")
 		if c.Model == "" {
 			c.Model = "claude-opus-4-8"
 		}
