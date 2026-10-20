@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Autumn-27/artex/skill"
+	skill "github.com/Autumn-27/artex/skills"
 )
 
 // 技能来源（provenance）。

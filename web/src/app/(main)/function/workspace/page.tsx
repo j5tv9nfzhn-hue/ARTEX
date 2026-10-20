@@ -131,8 +131,7 @@ export default function WorkspacePage() {
       });
   };
 
-  const askDelete = (e: WorkspaceEntry) =>
-    setPending({ entry: e, backupFirst: false, busy: false });
+  const askDelete = (e: WorkspaceEntry) => setPending({ entry: e, backupFirst: false, busy: false });
 
   // contents=true 走「仅清空内容」，false 走整条删除。
   const runDelete = async (contents: boolean) => {

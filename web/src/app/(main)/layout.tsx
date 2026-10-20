@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
 import * as React from "react";
 
 import { AppSidebar } from "@/app/(main)/_components/sidebar/app-sidebar";
-import { UINotifier } from "@/components/ui-notifier";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { UINotifier } from "@/components/ui-notifier";
 import { auth } from "@/lib/auth";
 import { getClientCookie } from "@/lib/cookie.client";
 import {

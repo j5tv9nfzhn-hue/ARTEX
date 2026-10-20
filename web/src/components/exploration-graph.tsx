@@ -793,41 +793,41 @@ function ExplorationGraphInner({ nodes, edges, emptyHint }: { nodes: TaskNode[];
     // 被一个长任务占住（用户看到的就是切换标签页时 0.x 秒的卡顿）。
     React.startTransition(() => {
       setRfNodes((prev) => {
-      const prevPos = new Map(prev.map((p) => [p.id, p.position]));
-      return viewNodes.map((n) => ({
-        id: n.id,
-        type: "explore" as const,
-        position: prevPos.get(n.id) ?? layout.get(n.id) ?? { x: 0, y: 0 },
-        data: { node: n, enter: freshWindow.has(n.id), latest: freshWindow.has(n.id) && n.id === latestId },
-        sourcePosition: Position.Right,
-        targetPosition: Position.Left,
-      }));
-    });
-    setRfEdges(
-      viewEdges.map((e, i) => {
-        const color = pick(relColor[e.rel] ?? canvasColor.edgeFallback, mode);
-        const animated = liveTargets.has(e.dst);
-        // proves 是链路终局判定,强一档:更粗(2.5)且压低后的不透明度下限更高(0.7);
-        // 派生/产出维持中等(2px);不活跃边沿用原有 dim(0.55)。新增节点的相邻边短暂增亮。
-        const strong = e.rel === "proves";
-        const freshEdge = freshWindow.has(e.src) || freshWindow.has(e.dst);
-        return {
-          id: `e${i}-${e.src}-${e.dst}`,
-          source: e.src,
-          target: e.dst,
-          label: relLabelKey[e.rel] ? t(relLabelKey[e.rel]) : e.rel,
-          type: "default",
-          animated,
-          labelShowBg: false,
-          labelStyle: { fontSize: 10, fontWeight: 600, fill: color },
-          style: {
-            stroke: color,
-            strokeWidth: strong ? 2.5 : 2,
-            strokeOpacity: edgeOpacity(strong, animated, freshEdge),
-          },
-          markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
-        } satisfies RFEdge;
-      }),
+        const prevPos = new Map(prev.map((p) => [p.id, p.position]));
+        return viewNodes.map((n) => ({
+          id: n.id,
+          type: "explore" as const,
+          position: prevPos.get(n.id) ?? layout.get(n.id) ?? { x: 0, y: 0 },
+          data: { node: n, enter: freshWindow.has(n.id), latest: freshWindow.has(n.id) && n.id === latestId },
+          sourcePosition: Position.Right,
+          targetPosition: Position.Left,
+        }));
+      });
+      setRfEdges(
+        viewEdges.map((e, i) => {
+          const color = pick(relColor[e.rel] ?? canvasColor.edgeFallback, mode);
+          const animated = liveTargets.has(e.dst);
+          // proves 是链路终局判定,强一档:更粗(2.5)且压低后的不透明度下限更高(0.7);
+          // 派生/产出维持中等(2px);不活跃边沿用原有 dim(0.55)。新增节点的相邻边短暂增亮。
+          const strong = e.rel === "proves";
+          const freshEdge = freshWindow.has(e.src) || freshWindow.has(e.dst);
+          return {
+            id: `e${i}-${e.src}-${e.dst}`,
+            source: e.src,
+            target: e.dst,
+            label: relLabelKey[e.rel] ? t(relLabelKey[e.rel]) : e.rel,
+            type: "default",
+            animated,
+            labelShowBg: false,
+            labelStyle: { fontSize: 10, fontWeight: 600, fill: color },
+            style: {
+              stroke: color,
+              strokeWidth: strong ? 2.5 : 2,
+              strokeOpacity: edgeOpacity(strong, animated, freshEdge),
+            },
+            markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
+          } satisfies RFEdge;
+        }),
       );
     });
     // 进场窗口:识别到增量节点时把窗口(累计集合)写入 state(窗口期间相邻边保持增亮),

@@ -4234,9 +4234,7 @@ export function workspaceList(path: string) {
   const items = WS_TREE[key] ?? [];
   const now = Date.parse("2026-08-09T03:00:00Z");
   const entries = items.map((it, i) => {
-    const u = it.dir
-      ? wsMockUsage(wsClean(key ? `${key}/${it.name}` : it.name))
-      : { size: it.size, files: 1, dirs: 0 };
+    const u = it.dir ? wsMockUsage(wsClean(key ? `${key}/${it.name}` : it.name)) : { size: it.size, files: 1, dirs: 0 };
     return {
       name: it.name,
       path: key ? `${key}/${it.name}` : it.name,

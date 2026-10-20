@@ -3,8 +3,9 @@
 import * as React from "react";
 
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+
 import { AlertTriangle, Bell, BellOff, CheckCircle2, Info, X, XCircle } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { sseUrl } from "@/lib/api";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
@@ -143,8 +144,7 @@ export function UINotifier() {
       seen.current.add(ev.id);
       setEvents((prev) => [ev, ...prev].slice(0, MAX_KEPT));
 
-      const severe =
-        ev.level === "error" || ev.severity === "critical" || ev.severity === "high";
+      const severe = ev.level === "error" || ev.severity === "critical" || ev.severity === "high";
       const kind = severe ? "error" : ev.level === "warn" ? "warn" : "success";
       // 只给「需要人工立刻知道」的事件发声：成功类不响，避免任务多开时噪音。
       if (soundRef.current && (severe || ev.level === "warn")) playTone(ctxRef, kind);
@@ -173,7 +173,9 @@ export function UINotifier() {
   React.useEffect(() => {
     const map = timers.current;
     return () => {
-      map.forEach((tm) => clearTimeout(tm));
+      map.forEach((tm) => {
+        clearTimeout(tm);
+      });
       map.clear();
     };
   }, []);
@@ -194,9 +196,7 @@ export function UINotifier() {
   const hidden = events.length - stack.length;
   // 横幅取「最新的一条必须打断的事件」，而不是最新一条：低危漏洞若干扰了
   // 最新位，早两秒的高危事件也仍然要挂在顶部。
-  const banner = events.find(
-    (e) => e.level === "error" || e.severity === "critical" || e.severity === "high",
-  );
+  const banner = events.find((e) => e.level === "error" || e.severity === "critical" || e.severity === "high");
 
   if (events.length === 0) return null;
 
@@ -235,18 +235,9 @@ export function UINotifier() {
   );
 }
 
-function Card({
-  event,
-  onGo,
-  onClose,
-}: {
-  event: NotifyEvent;
-  onGo: (ev: NotifyEvent) => void;
-  onClose: () => void;
-}) {
+function Card({ event, onGo, onClose }: { event: NotifyEvent; onGo: (ev: NotifyEvent) => void; onClose: () => void }) {
   const Icon = levelIcon(event.level);
-  const sev =
-    event.kind === "finding" && event.severity && isSeverity(event.severity) ? event.severity : null;
+  const sev = event.kind === "finding" && event.severity && isSeverity(event.severity) ? event.severity : null;
   return (
     <div
       role="status"
@@ -257,7 +248,11 @@ function Card({
         <Icon
           className={cn(
             "mt-0.5 size-4 shrink-0",
-            sev ? severityMeta(sev).text : event.level === "error" ? "text-red-600 dark:text-red-400" : "text-muted-foreground",
+            sev
+              ? severityMeta(sev).text
+              : event.level === "error"
+                ? "text-red-600 dark:text-red-400"
+                : "text-muted-foreground",
           )}
         />
         <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onGo(event)}>
@@ -279,16 +274,25 @@ function Card({
   );
 }
 
-function Banner({ event, onGo, onClose }: { event: NotifyEvent; onGo: (ev: NotifyEvent) => void; onClose: () => void }) {
+function Banner({
+  event,
+  onGo,
+  onClose,
+}: {
+  event: NotifyEvent;
+  onGo: (ev: NotifyEvent) => void;
+  onClose: () => void;
+}) {
   // 横幅只承接「必须打断」的事件：error 级或高危/严重漏洞。
-  const urgent =
-    event.level === "error" || event.severity === "critical" || event.severity === "high";
+  const urgent = event.level === "error" || event.severity === "critical" || event.severity === "high";
   if (!urgent) return null;
   const sev = event.kind === "finding" && event.severity && isSeverity(event.severity) ? event.severity : null;
   return (
     <div className="pointer-events-none fixed inset-x-0 top-0 z-[95] flex justify-center px-4 pt-2">
       <div className="pointer-events-auto flex w-full max-w-3xl items-center gap-3 rounded-lg border border-red-500/30 bg-red-600/10 px-3 py-2 text-sm shadow-sm backdrop-blur dark:border-red-400/30 dark:bg-red-400/10">
-        <span className={cn("size-2 shrink-0 rounded-full", sev ? severityMeta(sev).dot : "bg-red-600 dark:bg-red-400")} />
+        <span
+          className={cn("size-2 shrink-0 rounded-full", sev ? severityMeta(sev).dot : "bg-red-600 dark:bg-red-400")}
+        />
         <button type="button" onClick={() => onGo(event)} className="min-w-0 flex-1 truncate text-left font-medium">
           {event.title}
         </button>
