@@ -1200,7 +1200,7 @@ func (t *ToolSet) overviewSlice() actool.CoreTool {
 			data := t.graphOverviewData()
 			v, ok := data[key]
 			if !ok {
-				return actool.Errorf("未知的态势键 %q（可选键见注入块 overview_omitted.items[].key）", key), nil
+				return actool.Errorf(fmt.Sprintf("未知的态势键 %q（可选键见注入块 overview_omitted.items[].key）", key)), nil
 			}
 			items, isList := v.([]map[string]any)
 			if !isList {
