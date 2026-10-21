@@ -29,6 +29,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { ApprovalDetail } from "@/components/approval-records";
+import { LiveStreamMarkdown } from "@/components/live-markdown";
 import { Markdown } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1158,10 +1159,7 @@ export function Transcript({
       />
       {liveDelta?.kind === "thinking" && !!liveDelta.text && <LiveThinking text={liveDelta.text} />}
       {liveDelta?.kind === "text" && !!liveDelta.text && (
-        <div className="whitespace-pre-wrap break-words pl-3 text-sm">
-          {liveDelta.text}
-          <span className="ml-0.5 inline-block h-3.5 w-1 animate-pulse bg-primary align-text-bottom" />
-        </div>
+        <LiveStreamMarkdown text={liveDelta.text} className="min-w-0 break-words pl-3" />
       )}
       {liveDelta?.kind === "tool_use" && !!liveDelta.tool && (
         <div className="flex items-center gap-1.5 pl-3 text-muted-foreground text-xs">
