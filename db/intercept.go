@@ -265,6 +265,39 @@ func firstAudit(audits []*InterceptAudit) any {
 	return raw
 }
 
+// InterceptCallBrief is one prior-call line for the judge's minimal history pack.
+type InterceptCallBrief struct {
+	Tool   string
+	Status string
+	Reason string
+	At     string
+}
+
+// RecentInterceptCalls 返回某工具最近 limit 条审批记录(新→旧)的紧凑摘要。
+// 只取工具名/状态/一行理由/时间:判定模型要判断的是「是否在重复同一动作」,
+// 不需要参数与输出(那些也是注入面)。
+func (d *DB) RecentInterceptCalls(tool string, limit int) ([]InterceptCallBrief, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+	rows, err := d.Query(`SELECT tool_name, COALESCE(status,''), COALESCE(reason,''),
+		COALESCE(strftime('%H:%M:%S', created_at),'')
+		FROM intercept_pending WHERE tool_name=$1 ORDER BY id DESC LIMIT $2`, tool, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []InterceptCallBrief
+	for rows.Next() {
+		var c InterceptCallBrief
+		if err := rows.Scan(&c.Tool, &c.Status, &c.Reason, &c.At); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ListAllIntercepts returns up to limit intercept_pending rows (newest first)
 // joined with conversation and rule info.
 func (d *DB) ListAllIntercepts(limit int) ([]InterceptApprovalRow, error) {

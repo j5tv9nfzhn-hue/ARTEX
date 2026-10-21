@@ -221,6 +221,9 @@ func openSQLite(dsn string) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("seed builtins: %w", err)
 	}
+	// PRAGMA optimize 让查询规划器在启动时收集一次统计(长期运行的桌面库里表行数
+	// 变化很大,默认统计会过期)。失败不影响启动:它只是让后续查询慢一点。
+	_, _ = conn.ExecContext(context.Background(), "PRAGMA optimize")
 	return d, nil
 }
 

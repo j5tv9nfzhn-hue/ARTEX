@@ -41,6 +41,9 @@ func findingFilterFromQuery(q url.Values) db.FindingFilter {
 		Query:      q.Get("q"),
 		Sort:       q.Get("sort"),
 		AssetScope: strings.TrimSpace(q.Get("asset_scope")),
+		// validation=verified 只出已被独立复核的发现（报告/真值口径）；
+		// unverified 只出待复核线索；省略 = 不过滤（与旧客户端行为一致）。
+		Validation: normFilter(q.Get("validation")),
 	}
 }
 

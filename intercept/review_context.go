@@ -27,6 +27,19 @@ type ReviewInput struct {
 	Background *ReviewBackground `json:"background,omitempty"`
 	Tool       string            `json:"tool_name"`
 	Arguments  json.RawMessage   `json:"arguments"`
+	// Recent 是程序从审批历史里取的「最近几次同一工具的调用」摘要(工具名/状态/一行
+	// 理由)。它不是对话历史,也不含参数与输出:只够判断「是不是在连续重复同一动作」,
+	// 不给模型整段可注入的文本。空 = 没有历史。
+	Recent []ReviewRecentCall `json:"recent_same_tool,omitempty"`
+}
+
+// ReviewRecentCall is one structured line of prior-call history. 全部字段由程序从
+// intercept_pending 取,模型无法影响其内容。
+type ReviewRecentCall struct {
+	Tool   string `json:"tool"`
+	Status string `json:"status"`           // allowed / denied / timeout / pending
+	Reason string `json:"reason,omitempty"` // 一行理由,已截断
+	At     string `json:"at,omitempty"`     // 时间(HH:MM:SS)
 }
 
 type reviewContextKey struct{}
@@ -55,7 +68,7 @@ func BuildReviewInput(ctx context.Context, tool string, arguments json.RawMessag
 	if !json.Valid(arguments) {
 		return ReviewInput{}, fmt.Errorf("工具参数不是有效 JSON")
 	}
-	in := ReviewInput{Version: 4, Tool: tool, Arguments: append(json.RawMessage(nil), arguments...)}
+	in := ReviewInput{Version: 5, Tool: tool, Arguments: append(json.RawMessage(nil), arguments...)}
 	if env, ok := ctx.Value(reviewContextKey{}).(reviewEnvironment); ok {
 		in.WorkingDir = env.workingDir
 		background := env.background

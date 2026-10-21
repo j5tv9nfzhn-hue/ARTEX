@@ -440,6 +440,24 @@ func (i *Interceptor) SetJudgeConfig(c JudgeConfig) error {
 	return nil
 }
 
+// recentCalls 取「最近 N 次同一工具调用」的结构化摘要,作为判定模型的最小历史包。
+// 只给工具名/状态/一行理由:足以看出「这是不是连续第 N 次同一动作」,又不会把大段
+// 历史塞进每次判定(判定是高频路径,输入越大越慢越贵)。
+func (i *Interceptor) recentCalls(tool string) []ReviewRecentCall {
+	if i.db == nil || strings.TrimSpace(tool) == "" {
+		return nil
+	}
+	rows, err := i.db.RecentInterceptCalls(tool, 5)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	out := make([]ReviewRecentCall, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ReviewRecentCall{Tool: r.Tool, Status: r.Status, Reason: r.Reason, At: r.At})
+	}
+	return out
+}
+
 // Judge runs the LLM fallback judge for a tool call that matched no rule. It
 // returns (Decision, true) when the judge produced a terminal verdict, or
 // (Decision{}, false) when the fallback is disabled or not wired (caller then
@@ -480,6 +498,7 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 		// the configured model-failure strategy. A human must resolve the input.
 		out = Decision{Action: "ask", ModelFallback: true, Message: msgReviewContextIncomplete + contextErr.Error()}
 	} else {
+		input.Recent = i.recentCalls(tool)
 		modelInput, _ = json.Marshal(input)
 		out, err = rv(cctx, cfg.ProfileID, cfg.Prompt, input)
 	}

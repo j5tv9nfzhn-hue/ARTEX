@@ -25,6 +25,10 @@ func (s *Server) chatGuard() *guard.Guard {
 
 // 用户可见的判定模型错误由 intercept.Judge 包装为 msgModelApprovalFailed，
 // 显示在 Decision.Message，因此与 intercept 包的审批标签统一使用中文。
+// lowConfidenceAskThreshold 是「模型自己都说没把握」的下限:低于它的 allow 转人工。
+// 取 0.6 —— 明显高于随机,又不至于把正常的确定性判定(模型通常给 0.8+)也拖进人工队列。
+const lowConfidenceAskThreshold = 0.6
+
 const (
 	errNoJudgeModel          = "未配置可用的判定模型"
 	errJudgeModelUnavailable = "无法使用第 %d 号判定模型配置"
@@ -57,7 +61,14 @@ func (s *Server) wireInterceptReviewer() {
 		if v.Action == "" {
 			return intercept.Decision{ProfileID: profileID}, errors.New(errJudgeVerdictMalformed)
 		}
-		return intercept.Decision{Action: v.Action, Message: v.Reason, ProfileID: profileID}, nil
+		dec := intercept.Decision{Action: v.Action, Message: v.Reason, ProfileID: profileID, Confidence: v.Confidence}
+		// 低置信放行 → 转人工。判错的代价是真实破坏时,「模型没把握的允许」交给人
+		// 比赌一把更符合审批链原意;deny/ask 不降级(拒绝只是多一次人工复核,不是风险)。
+		if dec.Action == "allow" && v.Confidence > 0 && v.Confidence < lowConfidenceAskThreshold {
+			dec.Action = "ask"
+			dec.Message = "[低置信放行转人工] " + dec.Message
+		}
+		return dec, nil
 	})
 }
 

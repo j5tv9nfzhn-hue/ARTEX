@@ -597,6 +597,10 @@ type FindingStats struct {
 	Low         int                 `json:"low"`
 	VulnClasses []string            `json:"vulnclasses"`
 	Tasks       []FindingTaskOption `json:"tasks"` // 有漏洞的任务(供「按任务」下拉)
+	// 复核口径:verified 是走过独立复现/独立证据的发现,unverified 是仍算线索的。
+	// 两个数放在统计接口里,前端才能一眼看出「报了多少」与「确认了多少」的差。
+	Verified   int `json:"verified"`
+	Unverified int `json:"unverified"`
 }
 
 // FindingTaskOption is one entry in the 发现 page's 任务 filter: a task that has at
@@ -620,8 +624,11 @@ func (d *DB) FindingStats() (*FindingStats, error) {
 		COUNT(*) FILTER (WHERE severity = 'critical'),
 		COUNT(*) FILTER (WHERE severity = 'high'),
 		COUNT(*) FILTER (WHERE severity = 'medium'),
-		COUNT(*) FILTER (WHERE severity = 'low')
-		FROM findings`).Scan(&st.Total, &st.Pending, &st.Critical, &st.High, &st.Medium, &st.Low)
+		COUNT(*) FILTER (WHERE severity = 'low'),
+		COUNT(*) FILTER (WHERE validation = 'verified'),
+		COUNT(*) FILTER (WHERE COALESCE(validation,'') <> 'verified')
+		FROM findings`).Scan(&st.Total, &st.Pending, &st.Critical, &st.High, &st.Medium, &st.Low,
+		&st.Verified, &st.Unverified)
 	if err != nil {
 		return nil, err
 	}
