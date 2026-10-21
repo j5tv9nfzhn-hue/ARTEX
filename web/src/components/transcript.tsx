@@ -1077,10 +1077,39 @@ function ExecView({
   );
 }
 
+// LiveThinking 是「默认不展开、但单行实时滚动」的思考块：
+// 折叠时只显示最后一行（跟 ZCode 的做法一致——过程占一行，需要时再展开看全文）。
+function LiveThinking({ text }: { text: string }) {
+  const [open, setOpen] = React.useState(false);
+  const t = useTranslations("transcript");
+  const flat = text.replace(/\s+/g, " ").trim();
+  const tail = flat.length > 200 ? "…" + flat.slice(-200) : flat;
+  return (
+    <div className="pl-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left text-muted-foreground text-xs hover:text-foreground"
+      >
+        <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-violet-500" />
+        <span className="shrink-0 font-medium">{t("kind.thinking")}</span>
+        {!open && <span className="min-w-0 truncate opacity-70">{tail}</span>}
+        <span className="shrink-0 opacity-60">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-[11px] leading-relaxed">
+          {text}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 // Transcript renders a session's activity as a compact grouped execution replay.
 export function Transcript({
   activity,
   live,
+  liveDelta,
   taskId,
   chat,
   fetchDetail,
@@ -1089,6 +1118,8 @@ export function Transcript({
 }: {
   activity: Activity[];
   live?: boolean;
+  /** 尚未落库的实时增量（累计全文）：thinking / text / tool_use。 */
+  liveDelta?: { kind: string; text?: string; tool?: string };
   taskId?: string;
   chat?: boolean;
   fetchDetail?: (seq: number) => Promise<string>;
@@ -1125,7 +1156,21 @@ export function Transcript({
         focusedSeq={focusedSeq}
         rollback={rollback}
       />
-      {live && (
+      {liveDelta?.kind === "thinking" && !!liveDelta.text && <LiveThinking text={liveDelta.text} />}
+      {liveDelta?.kind === "text" && !!liveDelta.text && (
+        <div className="whitespace-pre-wrap break-words pl-3 text-sm">
+          {liveDelta.text}
+          <span className="ml-0.5 inline-block h-3.5 w-1 animate-pulse bg-primary align-text-bottom" />
+        </div>
+      )}
+      {liveDelta?.kind === "tool_use" && !!liveDelta.tool && (
+        <div className="flex items-center gap-1.5 pl-3 text-muted-foreground text-xs">
+          <span className="opacity-70">🔧</span>
+          <span className="font-mono">{liveDelta.tool}</span>
+          <span className="opacity-60">…</span>
+        </div>
+      )}
+      {live && !liveDelta && (
         <div className="flex items-center gap-2 pt-1.5 pl-3 text-muted-foreground text-xs">
           <span className="flex gap-1">
             <span className="size-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.3s]" />

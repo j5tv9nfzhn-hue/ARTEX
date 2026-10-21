@@ -1262,6 +1262,12 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	}
 	// per-work child context so the planner's kill_work can stop just this work.
 	workCtx, workCancel := context.WithCancelCause(ectx)
+	// 实时增量：thinking / text / tool_use 不落库，直接推给订阅了 SSE 的界面。
+	// 只在「流式接口」档位下挂：设置里关掉流式输出时连 UI 也保持一次性整块，
+	// 让开关真正作用于两条链路（HTTP 收包方式 + 界面呈现方式）。
+	if worker != nil && worker.Streaming() {
+		workCtx = agent.WithLiveDelta(workCtx, newLiveEmitter(e.bc, t.ID, name, intent.ID))
+	}
 	e.registerWorkFor(t.ID, intent.ID, workCancel)
 	// wrap the guard hooks so steer_work can inject a mid-run course-correction
 	// for THIS intent (drained before the worker's next tool call).

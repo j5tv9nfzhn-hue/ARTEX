@@ -3310,6 +3310,9 @@ func (s *Server) streamActivity(w http.ResponseWriter, r *http.Request) {
 	// overlap by skipping channel events whose id was already replayed.
 	ch, unsub := s.engine.Broadcaster().Subscribe(t.ID)
 	defer unsub()
+	// 实时增量（未落库）：思考/正文/工具调用一动就推，界面才有「正在想」的过程。
+	liveCh, liveUnsub := s.engine.Broadcaster().SubscribeLive(t.ID)
+	defer liveUnsub()
 
 	// Emit a standard SSE id: line so the browser echoes it as Last-Event-ID on
 	// auto-reconnect (see cursor precedence above).
@@ -3364,6 +3367,21 @@ func (s *Server) streamActivity(w http.ResponseWriter, r *http.Request) {
 			}
 			since = a.ID
 			sendSSE(a)
+		case f, ok := <-liveCh:
+			if !ok {
+				return
+			}
+			// 只推给对应意图的会话视图；整任务的视图（intentPtr=nil）全收。
+			if intentPtr != nil && f.IntentID != 0 && f.IntentID != *intentPtr {
+				continue
+			}
+			b, err := json.Marshal(f)
+			if err != nil {
+				continue
+			}
+			// 没有 id: 行：这类帧不进游标，断线重连不会被它污染。
+			fmt.Fprintf(w, "event: live\ndata: %s\n\n", b)
+			flusher.Flush()
 		case <-ping.C:
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()

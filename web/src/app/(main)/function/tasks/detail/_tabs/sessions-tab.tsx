@@ -684,6 +684,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const [llmResolutions, setLLMResolutions] = React.useState<TaskLLMResolutions | null>(null);
   // Pending intercept requests for this task — used to show warning icons on sessions.
   const [pendingIntercepts, setPendingIntercepts] = React.useState<InterceptApprovalRow[]>([]);
+  // 实时增量（未落库）：新的 activity 一到就清空，避免和已落库的行重复显示。
+  const [liveFrame, setLiveFrame] = React.useState<{
+    kind: string;
+    text?: string;
+    tool?: string;
+    worker?: string;
+    intent_id?: number;
+  } | null>(null);
 
   // Refs backing SSE/loading without re-render churn.
   const snapshotRef = React.useRef(0); // task-level snapshot cursor → SSE since=
@@ -980,6 +988,27 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         );
         esRef.current = es;
         es.onopen = () => setSseLive(true);
+        es.addEventListener("live", (ev) => {
+          try {
+            const d = JSON.parse((ev as MessageEvent).data) as {
+              kind?: string;
+              text?: string;
+              tool?: string;
+              worker?: string;
+              intent_id?: number;
+            };
+            if (!d.kind) return;
+            setLiveFrame({
+              kind: d.kind,
+              text: d.text,
+              tool: d.tool,
+              worker: d.worker,
+              intent_id: d.intent_id,
+            });
+          } catch {
+            // 忽略坏帧
+          }
+        });
         es.onerror = () => setSseLive(false); // EventSource auto-reconnects; DB compensates the gap
         es.onmessage = (e) => {
           let a: Activity;
@@ -988,6 +1017,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           } catch {
             return; // ignore malformed frame
           }
+          setLiveFrame(null); // 已落库的行到了，实时块让位
           if ((a.kind === "llm_switch" || a.kind === "llm_failover") && !llmToastSeqRef.current.has(a.seq)) {
             llmToastSeqRef.current.add(a.seq);
             const transition = a.metadata?.llm_transition;
@@ -1317,6 +1347,18 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const isPlanner = active.role === "planner";
   const isSystem = active.role === "system";
   const activeKey = keyForSession(active);
+  // 只把属于当前会话的增量交给 Transcript：
+  //   - worker 会话按 intent_id 对（后端 number / Session string，统一转字符串比）；
+  //   - 主会话没有 intent_id，按 lane 名 `chat` 对，否则会把 worker 的增量画到主会话里。
+  const liveIntentId = liveFrame?.intent_id != null ? String(liveFrame.intent_id) : "";
+  const liveBelongs = !liveFrame
+    ? false
+    : active.intent_id
+      ? liveIntentId === String(active.intent_id)
+      : liveFrame.worker === "chat";
+  const liveDeltaForActive = liveBelongs
+    ? { kind: liveFrame!.kind, text: liveFrame!.text, tool: liveFrame!.tool }
+    : undefined;
   const activeState = store[activeKey];
   // A main turn is serialized per task (chat lock), so "busy" is task-wide: while any
   // main segment is mid-turn the active composer is disabled. Clear it the moment the
@@ -2042,10 +2084,11 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                       {t("transcript.retry")}
                     </Button>
                   </div>
-                ) : activity.length ? (
+                ) : activity.length || liveDeltaForActive ? (
                   <Transcript
                     activity={activity}
                     live={active.live}
+                    liveDelta={liveDeltaForActive}
                     taskId={taskId}
                     chat={isMain}
                     focusedSeq={focusHistory.ready ? approvalFocus.state?.source?.seq : undefined}

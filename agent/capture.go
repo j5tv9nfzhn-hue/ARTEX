@@ -75,6 +75,9 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 		if text == "" {
 			return
 		}
+		// 先把这一小段原样推给界面（live 通道），再继续累积成整块记录。
+		// 界面靠它做「单行滚动」；落库仍是下面的 coalesce 口径。
+		emitLive(ctx, LiveDelta{Kind: kind, Text: text})
 		if tkind != "" && tkind != kind {
 			flush()
 		}
@@ -103,6 +106,8 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 				continue
 			}
 			flush()
+			// 工具调用一开始就告诉界面（它往往在思考结束后立刻出现，比 tool_result 早得多）。
+			emitLive(ctx, LiveDelta{Kind: "tool_use", Tool: ev.ToolUse.Name, ToolUseID: ev.ToolUse.ID})
 			toolNames[ev.ToolUse.ID] = ev.ToolUse.Name
 			awaiting[ev.ToolUse.ID] = ev.ToolUse.Name
 			in := string(ev.ToolUse.Input)

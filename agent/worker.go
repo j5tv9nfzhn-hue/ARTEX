@@ -124,6 +124,10 @@ func (w *Worker) SetNonStreaming(fn func() bool) { w.nonStreamingFn = fn }
 
 func (w *Worker) nonStreaming() bool { return w.nonStreamingFn != nil && w.nonStreamingFn() }
 
+// Streaming 报告本轮是否走流式(SSE)接口。界面实时通道与它同源：非流式档位下
+// 连 live 增量也不推，否则「开关开不开都一样」的老问题会从 HTTP 层转移到 UI 层。
+func (w *Worker) Streaming() bool { return !w.nonStreaming() }
+
 // SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
 // context-compression mechanism. nil/unset = off (built-in compaction). Read per
 // run so the settings toggle takes effect without rebuilding the agent.
