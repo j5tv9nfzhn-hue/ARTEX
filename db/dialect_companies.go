@@ -368,12 +368,6 @@ func artexJSONContainsAnyFunc(_ *sqlite.FunctionContext, args []driver.Value) (d
 // SQL 片段助手
 // ---------------------------------------------------------------------
 
-// companySQL 在 PostgreSQL 与 SQLite 的两条语句之间二选一。
-// PostgreSQL 侧永远是逐字保留下来的原句。
-func companySQL(pg, lite string) string {
-	return lite
-}
-
 // companyInetContains 表达 `<网段> >>= <地址>`。
 //
 //	PostgreSQL: net >>= $1::inet
@@ -534,18 +528,6 @@ func findingAssetRowsGoneCond(jsonExpr string) string {
 			  AND EXISTS (SELECT 1 FROM assets a WHERE a.id = e.value)
 		)`
 }
-
-// findingShareOfClause 表达 SELECT 末尾的 `FOR SHARE OF <表别名列表>`，
-// SQLite 侧返回空串（SQLite 没有行锁）。
-//
-// 与 db/dialect_locking.go 的 forShareClause 的区别只在于本项目这一处需要
-// 显式限定加锁范围（findings / tasks / exploration_nodes 三张表），而
-// forShareClause 不带 OF 参数、又不能改，所以这里补一个带 OF 的同族助手。
-//
-// 锁的用途是 AddFindingFollowUpIntent 里「确认来源 finding / 任务 / 节点三行
-// 在本事务提交前不被并发删除」。SQLite 的 WAL 写事务是库级独占写锁，粒度
-// 严格更粗，见 dialect_locking.go 文件头的论证。
-func findingShareOfClause(...string) string { return "" }
 
 // findingNodePayloadSetExpr 表达「把 payload.<jsonKey> 设成字符串 $1」。
 //

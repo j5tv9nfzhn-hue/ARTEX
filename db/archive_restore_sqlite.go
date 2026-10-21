@@ -31,11 +31,9 @@ import (
 // SQLite 侧没有任何等价物，PRAGMA 也拿不到列的默认值表达式去复现这条语义。
 // 于是只能在 Go 侧按「表定义顺序 + 缺列补 NULL」重建这条 INSERT。
 //
-// ── 为什么 PostgreSQL 分支保持原样 ──────────────────────────────────────────
+// 这里只有 SQLite 一条实现：PostgreSQL 时代的 json_populate_record(set) 路径已随
+// 迁移删除，本文件即唯一实现，读代码时不必再假设还有另一条分支。
 //
-// 本机没有可用的 PostgreSQL，所有 PG 分支都没有真机执行验证。PG 侧那段 SQL 是
-// 现存且已知的正确实现，没有理由用一份新写的、同样没验证过的 Go 代码去替换它。
-// 方言差异在这里的表现形式就是同一个函数里两个分支，与 companySQL 的惯例一致。
 
 // archiveColumn 是回写目标表的一列。
 type archiveColumn struct {
@@ -62,8 +60,7 @@ func isArchiveTimestampColumn(declared string) bool {
 // 能把表名作为绑定参数传进去，不必把表名拼进 SQL。表名虽然都来自
 // insertArchiveRows 的白名单，但保持"表名永远不进 SQL 字符串"这条性质成本为零。
 //
-// PostgreSQL 侧查 pg_attribute，与 PRAGMA 对齐到同一种"定义顺序"语义——这
-// 是 INSERT 列顺序必须正确的依据，不能用字母序。
+// 顺序取 cid（即表定义顺序），不是字母序：INSERT 的列顺序必须与表定义一致。
 func tableColumnNames(tx *sql.Tx, table string) ([]archiveColumn, error) {
 	query := `SELECT name, type FROM pragma_table_info($1) ORDER BY cid`
 

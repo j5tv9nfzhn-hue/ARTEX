@@ -43,36 +43,7 @@ import (
 // 附带的好处：把写锁提到读之前，顺带绕开了 SQLite 延迟事务的经典坑——
 // 「先 SELECT 拿到读锁、再写」升级锁失败时，SQLite 为了避免死锁会**直接**返回
 // SQLITE_BUSY 且不触发 busy handler 重试（全局解法是给 DSN 加 `_txlock=immediate`，
-// 见 dialect_mixed.go 里 sqlForUpdate 的注释与上报材料）。
-
-// forUpdateClause 返回 SELECT 末尾的行锁子句，SQLite 侧返回空串。
-//
-// 语义见文件头：skipLocked=true 用于「队列抢占」，调用点必须保证随后在同一事务里
-// 把这行改成占用态；skipLocked=false 用于「读出来再更新」的防竞态。
-// of 为空表示锁查询涉及的全部表（单表查询），非空时对应 PG 的 FOR UPDATE OF …，
-// 保持多表 JOIN 查询原有的加锁范围不变。
-//
-// 返回值自带前导空格，因此调用点写成 `...WHERE id=$1`+forUpdateClause(false) 即可，
-// 拼出来的 SQL 与原来逐字相同。
-func forUpdateClause(bool, ...string) string { return "" }
-
-// forShareClause 返回「共享锁」子句（FOR SHARE），SQLite 侧返回空串。
-//
-// 本项目用它锁住「只要不被并发删掉、不被并发改掉即可」的父行，例如旁路问答在写入
-// 自己的会话行之前先锁住真实的会话/任务/意图行（见 side_questions.go 的 lockSideParent）。
-// 对应的 PG 语义是「别人可以并发读，但写/删会等锁」；SQLite 的库级写锁严格强于它。
-func forShareClause() string {
-	return ""
-}
-
-// forKeyShareClause 返回 FOR KEY SHARE，SQLite 侧返回空串。
-//
-// 与 forShareClause 的区别只在 PG 侧：FOR SHARE 会挡住 UPDATE，FOR KEY SHARE 不挡，
-// 只在并发删除/改主键时等待。本项目用它锁住被外键引用的 llm_profiles 行——
-// 只要求它在本次事务提交前不被删掉即可（见 config.go 的 lockLLMProfileForReference）。
-func forKeyShareClause() string {
-	return ""
-}
+// 见 db/open_sqlite.go 与 config.SQLiteDSN）。
 
 // sqliteClaimUpdate 组装 SQLite 侧的「更新即领取」语句，用来替代
 // SELECT ... FOR UPDATE SKIP LOCKED + UPDATE 两步走：

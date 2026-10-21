@@ -162,33 +162,3 @@ func sqlInt64ArrayArg(ids []int64) any {
 	}
 	return "[" + strings.Join(parts, ",") + "]"
 }
-
-// sqlForUpdate 返回行锁子句，SQLite 侧为空串。
-//
-// 调用点的 FOR UPDATE 一律是「校验—写入」之间的防竞态，不是业务数据的一部分。
-// SQLite 没有行锁：一个写事务期间整个库文件被独占（DSN 的 _txlock=immediate），
-// 两次并发多表写入不会交错，这正是行锁要提供的保证，而且是更强的保证（粒度更粗）。
-// 追加行锁既没有可模拟的对象，也会把本来正确的语句变成 `near "FOR"`。
-func sqlForUpdate(...string) string { return "" }
-
-// sqlLockTableShareRowExclusive 返回 PostgreSQL 的表级排他锁语句，SQLite 侧为空串。
-//
-// SHARE ROW EXCLUSIVE 用来把「读一批资产归属 → 改归属」这段窗口对并发的
-// INSERT/UPDATE/DELETE 关掉。SQLite 的 WAL 写事务本来就是整库写锁，覆盖范围严格
-// 大于 SHARE ROW EXCLUSIVE，所以直接不发这条语句。
-func sqlLockTableShareRowExclusive(...string) string { return "" }
-
-// sqlSkipLocked 返回抢占队列时的跳过已锁行子句，SQLite 侧为空串。
-//
-// SQLite 的队列抢占不是「挑一行再改」，而是单条 UPDATE ... WHERE id IN (SELECT …
-// LIMIT n) RETURNING：领取和占用标记在同一条语句里原子完成，因此没有 SKIP LOCKED
-// 要表达的语义。详见 sqliteClaimUpdate。
-func sqlSkipLocked() string { return "" }
-
-// sqlNullableTimestampArg 返回「该参数可空、且是时间」的表达式。
-//
-// PostgreSQL 需要 `$n::timestamptz` 让 pgx 把参数类型定成 timestamptz，否则
-// COALESCE 的两个分支类型不一致会直接报错；SQLite 侧的裸 $n 就够了，调用点此时绑的
-// 是 Go 的 time.Time 或 nil，值类型本就确定，加一个 SQLite 不认识的 `::timestamptz`
-// 只会得到 unrecognized token ":"。
-func sqlNullableTimestampArg(arg string) string { return arg }

@@ -24,11 +24,11 @@ func lockSideParent(ctx context.Context, tx *sql.Tx, p sidequestion.Parent) erro
 	var id int64
 	var err error
 	if p.ConversationID > 0 {
-		err = tx.QueryRowContext(ctx, `SELECT id FROM conversations WHERE id=$1`+forShareClause(), p.ConversationID).Scan(&id)
+		err = tx.QueryRowContext(ctx, `SELECT id FROM conversations WHERE id=$1`, p.ConversationID).Scan(&id)
 	} else {
-		err = tx.QueryRowContext(ctx, `SELECT id FROM tasks WHERE id=$1 AND exploration_id=$2 AND deleted_at IS NULL AND archived_at IS NULL`+forShareClause(), p.TaskID, p.ExplorationID).Scan(&id)
+		err = tx.QueryRowContext(ctx, `SELECT id FROM tasks WHERE id=$1 AND exploration_id=$2 AND deleted_at IS NULL AND archived_at IS NULL`, p.TaskID, p.ExplorationID).Scan(&id)
 		if err == nil && p.IntentID > 0 {
-			err = tx.QueryRowContext(ctx, `SELECT id FROM exploration_nodes WHERE id=$1 AND exploration_id=$2 AND kind='intent' AND state<>'stopped'`+forShareClause(), p.IntentID, p.ExplorationID).Scan(&id)
+			err = tx.QueryRowContext(ctx, `SELECT id FROM exploration_nodes WHERE id=$1 AND exploration_id=$2 AND kind='intent' AND state<>'stopped'`, p.IntentID, p.ExplorationID).Scan(&id)
 		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -184,7 +184,7 @@ func (d *DB) StartSideRequest(ctx context.Context, s sidequestion.Snapshot, clie
 	// 插入 running 行」。SQLite 的单写者保证后到的事务读到的是前一个提交后的
 	// generation；即使真撞上，schema 上的 UNIQUE(session_key,generation,client_id)
 	// 与 idx_side_request_running 这条部分唯一索引仍会把重复行挡在库外。
-	if err = tx.QueryRowContext(ctx, `SELECT generation FROM side_question_sessions WHERE session_key=$1`+forUpdateClause(false), s.Parent.Key()).Scan(&generation); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT generation FROM side_question_sessions WHERE session_key=$1`, s.Parent.Key()).Scan(&generation); err != nil {
 		return nil, false, err
 	}
 	e, err := scanSide(tx.QueryRowContext(ctx, `SELECT `+sideCols+` FROM side_question_requests WHERE session_key=$1 AND generation=$2 AND client_id=$3`, s.Parent.Key(), generation, clientID))

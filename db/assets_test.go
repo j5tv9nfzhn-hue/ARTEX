@@ -885,21 +885,6 @@ func TestCalcCSegment(t *testing.T) {
 }
 
 // =====================================================================
-// marshalStringArray
-// =====================================================================
-
-func TestMarshalStringArray(t *testing.T) {
-	got := marshalStringArray([]string{"a", "b", "c"})
-	if got != `{"a","b","c"}` {
-		t.Errorf("unexpected: %q", got)
-	}
-	got2 := marshalStringArray(nil)
-	if got2 != "{}" {
-		t.Errorf("empty: %q", got2)
-	}
-}
-
-// =====================================================================
 // normalizeURL
 // =====================================================================
 

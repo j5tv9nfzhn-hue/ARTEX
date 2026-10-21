@@ -202,44 +202,6 @@ func parseURL(raw string) (domain string, port int, serviceName string) {
 	return
 }
 
-// marshalJSONBArray builds the PostgreSQL jsonb[] array literal. It stays
-// byte-identical because the PostgreSQL branch must not change; the SQLite side
-// goes through encodeJSONBArray in db/dialect_arrays.go, which emits a plain
-// JSON array instead.
-func marshalJSONBArray(items []map[string]any) (string, error) {
-	if len(items) == 0 {
-		return "{}", nil
-	}
-	parts := make([]string, len(items))
-	for i, m := range items {
-		b, err := json.Marshal(m)
-		if err != nil {
-			return "", err
-		}
-		// PostgreSQL array literal for jsonb[]: each element must be
-		// double-quoted with internal backslashes and double-quotes escaped.
-		s := strings.ReplaceAll(string(b), `\`, `\\`)
-		s = strings.ReplaceAll(s, `"`, `\"`)
-		parts[i] = `"` + s + `"`
-	}
-	return "{" + strings.Join(parts, ",") + "}", nil
-}
-
-// marshalStringArray builds the PostgreSQL text[] array literal. Call sites that
-// feed a real array column must use encodeTextArray (db/dialect_arrays.go), which
-// picks the right encoding per engine; this raw literal form stays for the
-// PostgreSQL branch and for the unit test that pins the literal format.
-func marshalStringArray(items []string) string {
-	if len(items) == 0 {
-		return "{}"
-	}
-	escaped := make([]string, len(items))
-	for i, s := range items {
-		escaped[i] = `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
-	}
-	return "{" + strings.Join(escaped, ",") + "}"
-}
-
 // marshalPortServices encodes assets.open_ports, whose elements are
 // {"port":N,"service":"..."} objects. The element shape is identical on both
 // engines; only the array wrapper differs (PostgreSQL array literal vs JSON

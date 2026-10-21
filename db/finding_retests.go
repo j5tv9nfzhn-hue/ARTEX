@@ -85,7 +85,7 @@ func scanRetest(row interface{ Scan(...any) error }) (*FindingRetest, error) {
 // and persists the first message. A finding row lock deduplicates simultaneous
 // clicks across clients; an existing active run is returned without dispatching.
 //
-// 行锁经 sqlForUpdate() 按引擎取：PG 保留 FOR UPDATE OF f；SQLite 没有行锁，
+// SQLite 没有行锁：写事务本身即库级独占，因此这里不加任何子句；
 // 返回空串。去重之所以仍然成立，是因为 SQLite 侧的 DSN 带了 _txlock=immediate
 // （见 config/engine.go）：事务从 BEGIN 就持有库级写锁，而不是等第一条写语句
 // 才升级，因此「锁行 → 查活动复测 → 插入」这一段没有交错窗口，也避免了
@@ -176,7 +176,7 @@ func retestSnapshotTx(ctx context.Context, tx *sql.Tx, findingID int64) (string,
 	//    读到的正是同一行；SELECT f.* 则是 to_jsonb(f) 的等价物（列增删自动跟随
 	//    schema），列名由 rows.Columns() 给出，见 db/rowjson.go。
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(NULLIF(f.name,''), NULLIF(f.vulnclass,''), '未分类'), f.*
-FROM findings f WHERE f.id=$1`+sqlForUpdate("f"), findingID)
+FROM findings f WHERE f.id=$1`, findingID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -364,7 +364,7 @@ func (d *DB) FinishFindingRetest(id int64, status, reason string) error {
 	defer tx.Rollback()
 	// Lock the finding before the retest, matching creation and cascading deletion.
 	var findingID int64
-	err = tx.QueryRow(`SELECT f.id FROM findings f WHERE f.id=(SELECT finding_id FROM finding_retests WHERE id=$1)`+sqlForUpdate("f"), id).Scan(&findingID)
+	err = tx.QueryRow(`SELECT f.id FROM findings f WHERE f.id=(SELECT finding_id FROM finding_retests WHERE id=$1)`, id).Scan(&findingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // Finding/retest already deleted.
 	}

@@ -139,14 +139,14 @@ func TrafficSnapshotID(snapshot TrafficEvidenceSnapshot) string {
 // LockTaskEvidenceTx serializes writes with archive queueing (which locks the
 // same task row). Once queued, its snapshot must not acquire new evidence.
 //
-// 行锁片段由 sqlForUpdate() 按引擎给出：PG 保留 FOR UPDATE；SQLite 没有行锁，
+// SQLite 没有行锁：整库写事务覆盖的范围严格大于 FOR UPDATE，因此这里不加任何子句。
 // 返回空串，整个写事务期间库文件被独占即可替代（见 dialect_mixed.go）。
 func LockTaskEvidenceTx(tx *sql.Tx, taskID int64) error {
 	if taskID == 0 {
 		return nil
 	}
 	var deleted sql.NullTime
-	if err := tx.QueryRow(`SELECT deleted_at FROM tasks WHERE id=$1`+sqlForUpdate(), taskID).Scan(&deleted); err != nil {
+	if err := tx.QueryRow(`SELECT deleted_at FROM tasks WHERE id=$1`, taskID).Scan(&deleted); err != nil {
 		return err
 	}
 	if deleted.Valid {
@@ -175,7 +175,7 @@ func LockFindingEvidenceTx(tx *sql.Tx, findingID int64, version *int64) error {
 		return err
 	}
 	var current int64
-	if err := tx.QueryRow(`SELECT evidence_version FROM findings WHERE id=$1`+sqlForUpdate(), findingID).Scan(&current); err != nil {
+	if err := tx.QueryRow(`SELECT evidence_version FROM findings WHERE id=$1`, findingID).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrFindingNotFound
 		}

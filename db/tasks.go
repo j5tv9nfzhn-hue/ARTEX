@@ -686,24 +686,13 @@ func (d *DB) DeleteTaskCascadePrepared(
 		return result, fmt.Errorf("任务含软件样本或分析证据，完整导出与清理策略尚未实现，已阻止删除")
 	}
 	var expID int64
-	if err := tx.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1`+sqlForUpdate(), id).Scan(&expID); err != nil {
+	if err := tx.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1`, id).Scan(&expID); err != nil {
 		if err == sql.ErrNoRows {
 			return result, nil // already gone
 		}
 		return result, err
 	}
 
-	// SHARE ROW EXCLUSIVE conflicts with every INSERT/UPDATE/DELETE on these
-	// tables and with another coordinated deletion. Taking both in one fixed order
-	// prevents phantoms (a distinct asset row for the same host) as well as new
-	// ownership/anchor references until the deletion transaction commits.
-	if deleteAssets || prepare != nil {
-		if lock := sqlLockTableShareRowExclusive("assets", "exploration_anchors"); lock != "" {
-			if _, err := tx.Exec(lock); err != nil {
-				return result, err
-			}
-		}
-	}
 	if prepare != nil {
 		hosts, err := hostsForTaskDeletion(tx, id, expID)
 		if err != nil {

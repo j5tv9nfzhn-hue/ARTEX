@@ -537,20 +537,7 @@ WHERE company_source = 'scope'`); err != nil {
 	}
 
 	// Domain-based attribution (root_domain exact match).
-	if _, err := tx.Exec(companySQL(`
-WITH matched AS (
-    SELECT DISTINCT ON (a.id) a.id AS asset_id, cs.company_id
-    FROM assets a
-    JOIN company_scope cs ON cs.kind = 'domain' AND a.root_domain = cs.domain
-    WHERE a.company_id IS NULL
-      AND a.type IN ('root_domain','subdomain','service','endpoint')
-      AND a.root_domain IS NOT NULL
-    ORDER BY a.id, length(cs.domain) DESC, cs.company_id
-)
-UPDATE assets AS a
-SET company_id = matched.company_id, company_source = 'scope'
-FROM matched
-WHERE a.id = matched.asset_id`, `
+	if _, err := tx.Exec(`
 WITH matched AS (
     SELECT asset_id, company_id FROM (
         SELECT a.id AS asset_id, cs.company_id,
@@ -567,32 +554,19 @@ WITH matched AS (
 UPDATE assets
 SET company_id = matched.company_id, company_source = 'scope'
 FROM matched
-WHERE assets.id = matched.asset_id`)); err != nil {
+WHERE assets.id = matched.asset_id`); err != nil {
 		return "", err
 	}
 
 	// IP/CIDR attribution for still-unowned assets.
-	if _, err := tx.Exec(companySQL(`
-WITH matched AS (
-    SELECT DISTINCT ON (a.id) a.id AS asset_id, cs.company_id
-    FROM assets a
-    JOIN company_scope cs ON cs.kind IN ('ip','cidr') AND cs.net >>= try_inet(a.ip)
-    WHERE a.company_id IS NULL
-      AND a.type IN ('ip','subdomain','service','endpoint')
-      AND a.ip IS NOT NULL
-    ORDER BY a.id, masklen(cs.net) DESC, cs.company_id
-)
-UPDATE assets AS a
-SET company_id = matched.company_id, company_source = 'scope'
-FROM matched
-WHERE a.id = matched.asset_id`, `
+	if _, err := tx.Exec(`
 WITH matched AS (
     SELECT asset_id, company_id FROM (
         SELECT a.id AS asset_id, cs.company_id,
                ROW_NUMBER() OVER (PARTITION BY a.id
-                                  ORDER BY `+companyInetMasklen("cs.net")+` DESC, cs.company_id) AS rn
+                                  ORDER BY ` + companyInetMasklen("cs.net") + ` DESC, cs.company_id) AS rn
         FROM assets a
-        JOIN company_scope cs ON cs.kind IN ('ip','cidr') AND `+companyInetContains("cs.net", companyTryInet("a.ip"))+`
+        JOIN company_scope cs ON cs.kind IN ('ip','cidr') AND ` + companyInetContains("cs.net", companyTryInet("a.ip")) + `
         WHERE a.company_id IS NULL
           AND a.type IN ('ip','subdomain','service','endpoint')
           AND a.ip IS NOT NULL
@@ -602,28 +576,12 @@ WITH matched AS (
 UPDATE assets
 SET company_id = matched.company_id, company_source = 'scope'
 FROM matched
-WHERE assets.id = matched.asset_id`)); err != nil {
+WHERE assets.id = matched.asset_id`); err != nil {
 		return "", err
 	}
 
 	// Exact normalized ICP attribution after domain/network precedence.
-	if _, err := tx.Exec(companySQL(`
-WITH matched AS (
-    SELECT DISTINCT ON (a.id) a.id AS asset_id, cs.company_id
-    FROM assets a
-    JOIN company_scope cs ON cs.kind = 'icp'
-      AND (
-        lower(regexp_replace(COALESCE(a.icp,''), '[[:space:]]+', '', 'g')) = cs.value
-        OR lower(regexp_replace(COALESCE(a.app_icp,''), '[[:space:]]+', '', 'g')) = cs.value
-      )
-	WHERE a.company_id IS NULL
-      AND (COALESCE(a.icp,'') <> '' OR COALESCE(a.app_icp,'') <> '')
-    ORDER BY a.id, cs.company_id
-)
-UPDATE assets AS a
-SET company_id = matched.company_id, company_source = 'scope'
-FROM matched
-WHERE a.id = matched.asset_id`, `
+	if _, err := tx.Exec(`
 WITH matched AS (
     SELECT asset_id, company_id FROM (
         SELECT a.id AS asset_id, cs.company_id,
@@ -631,8 +589,8 @@ WITH matched AS (
         FROM assets a
         JOIN company_scope cs ON cs.kind = 'icp'
           AND (
-            `+companyICPKey("a.icp")+` = cs.value
-            OR `+companyICPKey("a.app_icp")+` = cs.value
+            ` + companyICPKey("a.icp") + ` = cs.value
+            OR ` + companyICPKey("a.app_icp") + ` = cs.value
           )
         WHERE a.company_id IS NULL
           AND (COALESCE(a.icp,'') <> '' OR COALESCE(a.app_icp,'') <> '')
@@ -642,7 +600,7 @@ WITH matched AS (
 UPDATE assets
 SET company_id = matched.company_id, company_source = 'scope'
 FROM matched
-WHERE assets.id = matched.asset_id`)); err != nil {
+WHERE assets.id = matched.asset_id`); err != nil {
 		return "", err
 	}
 	return malformedIPAssetWarning(tx)

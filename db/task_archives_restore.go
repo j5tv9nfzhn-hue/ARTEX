@@ -44,7 +44,7 @@ func (d *DB) CompleteTaskArchive(
 	var state string
 	if err := tx.QueryRow(`SELECT archive.task_id,task.exploration_id,archive.state
 FROM task_archives archive JOIN tasks task ON task.id=archive.task_id
-WHERE archive.id=$1`+sqlForUpdate("archive", "task"), archiveID).Scan(&taskID, &expID, &state); err != nil {
+WHERE archive.id=$1`, archiveID).Scan(&taskID, &expID, &state); err != nil {
 		return err
 	}
 	if state != Archiving || taskID != snapshot.TaskID || expID != snapshot.ExplorationID {
@@ -59,16 +59,6 @@ WHERE relation.source_task_id=$1 LIMIT 1`, taskID).Scan(&dependent)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
-	}
-	// Prevent task/asset ownership from changing while exclusivity is rechecked.
-	// SQLite returns an empty string here: its write transaction already holds an
-	// exclusive lock on the whole database, which covers strictly more than
-	// SHARE ROW EXCLUSIVE would. An empty statement still has to be skipped --
-	// tx.Exec("") is a syntax error there.
-	if lock := sqlLockTableShareRowExclusive("assets", "exploration_anchors"); lock != "" {
-		if _, err := tx.Exec(lock); err != nil {
-			return err
-		}
 	}
 	if _, err := tx.Exec(`DELETE FROM intercept_pending WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(taskID, 10)); err != nil {
 		return err
@@ -200,7 +190,7 @@ func (d *DB) restoreTaskArchive(
 	var state string
 	if err := tx.QueryRow(`SELECT archive.task_id,task.exploration_id,archive.state
 FROM task_archives archive JOIN tasks task ON task.id=archive.task_id
-WHERE archive.id=$1`+sqlForUpdate("archive", "task"), archiveID).Scan(&taskID, &expID, &state); err != nil {
+WHERE archive.id=$1`, archiveID).Scan(&taskID, &expID, &state); err != nil {
 		return nil, err
 	}
 	if state != Restoring || taskID != snapshot.TaskID || expID != snapshot.ExplorationID {
@@ -734,7 +724,7 @@ func restoreTaskLLMProfiles(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 		createdAt, _ := row["created_at"].(string)
 		updatedAt, _ := row["updated_at"].(string)
 		if _, err := tx.Exec(`INSERT INTO task_llm_profiles(task_id,profile_id,position,status,last_error,exhausted_at,created_at,updated_at)
-	VALUES($1,$2,$3,$4,NULLIF($5,''),`+sqlNullableTimestampArg("$6")+`,`+sqlCoalesceNow("$7")+`,`+sqlCoalesceNow("$8")+`)
+	VALUES($1,$2,$3,$4,NULLIF($5,''),`+"$6"+`,`+sqlCoalesceNow("$7")+`,`+sqlCoalesceNow("$8")+`)
 	ON CONFLICT DO NOTHING`, taskID, profileID, position, status, lastError,
 			archiveTimeArg(exhaustedAt), archiveTimeArg(createdAt), archiveTimeArg(updatedAt)); err != nil {
 			return nil, err
@@ -827,7 +817,7 @@ func (d *DB) DeleteTaskArchiveStub(archiveID int64) error {
 	var state string
 	if err := tx.QueryRow(`SELECT archive.task_id,task.exploration_id,archive.state
 FROM task_archives archive JOIN tasks task ON task.id=archive.task_id
-WHERE archive.id=$1`+sqlForUpdate("archive", "task"), archiveID).Scan(&taskID, &expID, &state); err != nil {
+WHERE archive.id=$1`, archiveID).Scan(&taskID, &expID, &state); err != nil {
 		return err
 	}
 	if state != Deleting {

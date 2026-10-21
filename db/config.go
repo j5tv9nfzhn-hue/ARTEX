@@ -340,25 +340,25 @@ WHERE t.llm_profile_id=$1
        SELECT 1 FROM task_llm_profiles x
        WHERE x.task_id=t.id AND x.profile_id=$1
    )
-ORDER BY t.id`+sqlForUpdate("t"), id)
+ORDER BY t.id`, id)
 	if err != nil {
 		return false, err
 	}
 	lockedAgents, err := lockProfileReferenceRows(ctx, tx, `SELECT id FROM agents
 WHERE llm_profile_id=$1
-ORDER BY id`+sqlForUpdate(), id)
+ORDER BY id`, id)
 	if err != nil {
 		return false, err
 	}
 	lockedConversations, err := lockProfileReferenceRows(ctx, tx, `SELECT id FROM conversations
 WHERE llm_profile_id=$1
-ORDER BY id`+sqlForUpdate(), id)
+ORDER BY id`, id)
 	if err != nil {
 		return false, err
 	}
 
 	var isDefault bool
-	if err := tx.QueryRowContext(ctx, `SELECT is_default FROM llm_profiles WHERE id=$1`+forUpdateClause(false), id).Scan(&isDefault); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT is_default FROM llm_profiles WHERE id=$1`, id).Scan(&isDefault); err != nil {
 		if err == sql.ErrNoRows {
 			return false, ErrLLMProfileNotFound
 		}
@@ -704,7 +704,7 @@ func (d *DB) SetAgentLLMProfile(key string, id *int64) error {
 	// order here so a concurrent rebind cannot form a child/profile deadlock.
 	// 行锁子句按引擎取：PG 保留 FOR UPDATE，SQLite 返回空串（见 dialect_locking.go）。
 	var agentID int64
-	if err := tx.QueryRow(`SELECT id FROM agents WHERE key=$1`+forUpdateClause(false), key).Scan(&agentID); err != nil {
+	if err := tx.QueryRow(`SELECT id FROM agents WHERE key=$1`, key).Scan(&agentID); err != nil {
 		if err == sql.ErrNoRows {
 			// Preserve the previous UPDATE semantics: an unknown key is a no-op.
 			return tx.Commit()
@@ -735,7 +735,7 @@ func lockLLMProfileForReference(tx *sql.Tx, profileID *int64) error {
 		return nil
 	}
 	var lockedID int64
-	if err := tx.QueryRow(`SELECT id FROM llm_profiles WHERE id=$1`+forKeyShareClause(), *profileID).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(`SELECT id FROM llm_profiles WHERE id=$1`, *profileID).Scan(&lockedID); err != nil {
 		if err == sql.ErrNoRows {
 			return ErrLLMProfileNotFound
 		}
@@ -784,7 +784,7 @@ func (d *DB) ReplaceAgentLLMFallbacks(agentKey string, profileIDs []int64) error
 		agentID int64
 		headID  sql.NullInt64
 	)
-	if err := tx.QueryRow(`SELECT id, llm_profile_id FROM agents WHERE key=$1`+forUpdateClause(false), agentKey).
+	if err := tx.QueryRow(`SELECT id, llm_profile_id FROM agents WHERE key=$1`, agentKey).
 		Scan(&agentID, &headID); err != nil {
 		if err == sql.ErrNoRows {
 			return tx.Commit() // 未知 key = no-op，与 SetAgentLLMProfile 一致

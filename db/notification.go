@@ -531,7 +531,7 @@ func SetFindingStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string
 		assetIDs                           []byte
 	)
 	scanErr := tx.QueryRowContext(ctx, `SELECT vulnclass, name, severity, summary, task_id, asset_ids, status
-FROM findings WHERE id=$1`+forUpdateClause(false), id).
+FROM findings WHERE id=$1`, id).
 		Scan(&vulnclass, &name, &severity, &summary, &taskID, &assetIDs, &from)
 	if scanErr == sql.ErrNoRows {
 		return "", false, false, false, nil

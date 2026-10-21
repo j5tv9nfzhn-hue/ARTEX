@@ -434,7 +434,7 @@ func (s *ExplorationStore) SoftDeleteIntent(id int64, reason string) (string, er
 	// 行锁子句按引擎取：PG 保留 FOR UPDATE，SQLite 返回空串（见 dialect_locking.go）。
 	// 锁防的是「读到 running 之后被别人改掉状态」的窗口，SQLite 的写事务互斥已覆盖。
 	if err := tx.QueryRow(`SELECT state, payload FROM exploration_nodes
-		WHERE id=$1 AND exploration_id=$2 AND kind='intent'`+forUpdateClause(false), id, s.expID).Scan(&state, &rawPayload); err != nil {
+		WHERE id=$1 AND exploration_id=$2 AND kind='intent'`, id, s.expID).Scan(&state, &rawPayload); err != nil {
 		if err == sql.ErrNoRows {
 			return "", fmt.Errorf("intent not found")
 		}
@@ -480,7 +480,7 @@ func (s *ExplorationStore) CancelIntent(id int64) (IntentCleanup, error) {
 	// 锁定意图行确认存在(幂等:已删则 not found)。状态不校验——真删除对任何状态成立,
 	// running 的 worker 由调用方先停。
 	if err := tx.QueryRow(`SELECT 1 FROM exploration_nodes
-		WHERE id=$1 AND exploration_id=$2 AND kind='intent'`+forUpdateClause(false), id, s.expID).Scan(new(int)); err != nil {
+		WHERE id=$1 AND exploration_id=$2 AND kind='intent'`, id, s.expID).Scan(new(int)); err != nil {
 		if err == sql.ErrNoRows {
 			return out, fmt.Errorf("intent not found")
 		}
