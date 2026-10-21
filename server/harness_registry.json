@@ -1,0 +1,1174 @@
+{
+  "version": 2,
+  "generated_at": "2026-10-21",
+  "note": "2026 H1→H2 主流 Agent harness 的 MCP 接入面。A=官方文档已核，可自动写；B=社区来源，只读探测+需实机确认；C=无写入点（UI/服务端）。",
+  "counts": {
+    "total": 32,
+    "tierA": 14,
+    "tierB": 14,
+    "tierC": 4
+  },
+  "clients": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "vendor": "Anthropic",
+      "kind": "cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "claude"
+        ],
+        "paths": [
+          "~/.claude",
+          "~/.claude.json"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.claude.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "cli-only"
+        },
+        {
+          "scope": "project",
+          "path": ".mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": "type=http",
+        "headers": true
+      },
+      "restart": false,
+      "artex": "http",
+      "notes": "~/.claude.json 含登录态，只能走 claude mcp add。工具名 mcp__artex__<tool>。描述截断 2048、输出 25k token。",
+      "doc": "https://docs.anthropic.com/en/docs/claude-code/mcp"
+    },
+    {
+      "id": "codex",
+      "name": "Codex CLI / ChatGPT 桌面 / IDE 扩展",
+      "vendor": "OpenAI",
+      "kind": "cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "codex"
+        ],
+        "paths": [
+          "~/.codex"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.codex/config.toml",
+          "format": "toml",
+          "key": "[mcp_servers.<name>]",
+          "strategy": "file-append"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": false,
+        "auth": "bearer_token_env_var"
+      },
+      "restart": true,
+      "artex": "stdio",
+      "notes": "TOML；键是 mcp_servers（下划线），写错静默忽略。远程不支持自定义 header，只能 bearer_token_env_var。启动 10s / 工具 60s。",
+      "doc": "https://developers.openai.com/codex/mcp"
+    },
+    {
+      "id": "dsh",
+      "name": "DeepSeek Harness (dsh)",
+      "vendor": "DeepSeek",
+      "kind": "cli+web",
+      "src": "open",
+      "mcp": "plugin",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "dsh"
+        ],
+        "paths": [
+          "$DSH_HOME",
+          "~/.dsh"
+        ]
+      },
+      "config": [
+        {
+          "scope": "machine",
+          "path": "$DSH_HOME/cordis.patch.yml",
+          "format": "cordis-yaml",
+          "key": "- insert: [ {name: '@deepseek-ai/dsh-mcp-client', config: {...}} ]",
+          "strategy": "yaml-insert"
+        },
+        {
+          "scope": "profile",
+          "path": "$DSH_HOME/profiles/<profile>/cordis.patch.yml",
+          "format": "cordis-yaml",
+          "key": "同上（profile 级）",
+          "strategy": "yaml-insert"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": "transport=streamable-http",
+        "headers": true,
+        "var_syntax": "!!js `Bearer ${process.env.TOKEN}`"
+      },
+      "restart": true,
+      "artex": "http",
+      "notes": "没有 JSON/TOML 配置：MCP 是一行 Cordis 插件（@deepseek-ai/dsh-mcp-client），一台 server 一个实例。必须 serverName 唯一且 [A-Za-z0-9_-]{1,32}；同一 id 不能在机器级与 profile 级重复声明，否则组合加载失败。只桥 Tools，Resources/Prompts 不支持。工具名 mcp__<serverName>__<tool>。",
+      "doc": "https://dsh.pub/en/plugins/mcp-client/"
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "vendor": "Anysphere",
+      "kind": "ide",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "cursor",
+          "cursor-agent"
+        ],
+        "paths": [
+          "~/.cursor"
+        ],
+        "apps": [
+          "/Applications/Cursor.app",
+          "%LOCALAPPDATA%\\Programs\\cursor"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.cursor/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        },
+        {
+          "scope": "project",
+          "path": ".cursor/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": null,
+        "headers": true,
+        "var_syntax": "${env:NAME}"
+      },
+      "restart": false,
+      "artex": "http",
+      "notes": "远程条目不需要 type，有 url 即可。项目级文件易被提交进 git，默认只写用户级。工具数约 40（社区统计）。",
+      "doc": "https://cursor.com/docs/mcp"
+    },
+    {
+      "id": "vscode-copilot",
+      "name": "VS Code (Copilot agent mode)",
+      "vendor": "Microsoft",
+      "kind": "ide",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "code"
+        ],
+        "paths": [
+          "~/.vscode",
+          "%APPDATA%\\Code"
+        ]
+      },
+      "config": [
+        {
+          "scope": "workspace",
+          "path": ".vscode/mcp.json",
+          "format": "jsonc",
+          "key": "servers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": "type=http",
+        "headers": true,
+        "var_syntax": "${input:id}"
+      },
+      "restart": false,
+      "artex": "http",
+      "notes": "根键是 servers。受工作区信任影响。单请求工具上限 128。",
+      "doc": "https://code.visualstudio.com/docs/copilot/customization/mcp-servers"
+    },
+    {
+      "id": "copilot-cli",
+      "name": "GitHub Copilot CLI",
+      "vendor": "GitHub",
+      "kind": "cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "copilot"
+        ],
+        "paths": [
+          "~/.copilot"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.copilot/mcp-config.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        },
+        {
+          "scope": "project",
+          "path": ".mcp.json 或 .github/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": "type=remote|http|sse|stdio",
+        "headers": true,
+        "var_syntax": "${VAR}"
+      },
+      "restart": false,
+      "artex": "http",
+      "notes": "内置 GitHub MCP server。不读 .vscode/mcp.json（那是 VS Code 的）。单请求工具上限 128。组织 allowlist 可能拦截。",
+      "doc": "https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers"
+    },
+    {
+      "id": "antigravity",
+      "name": "Google Antigravity (IDE / agy CLI)",
+      "vendor": "Google",
+      "kind": "ide+cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "agy"
+        ],
+        "paths": [
+          "~/.gemini/config",
+          "~/.gemini/antigravity"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.gemini/config/mcp_config.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        },
+        {
+          "scope": "workspace",
+          "path": ".agents/mcp_config.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "serverUrl|url",
+        "headers": true,
+        "var_syntax": "${VAR}"
+      },
+      "restart": false,
+      "artex": "http",
+      "notes": "第 2 代起三面共用一份配置。老路径 ~/.gemini/antigravity/mcp_config.json 可能残留，两个都要扫。",
+      "doc": "https://antigravity.google/docs/mcp"
+    },
+    {
+      "id": "gemini-cli",
+      "name": "Gemini CLI（遗留，2026-06-18 对个人用户退役）",
+      "vendor": "Google",
+      "kind": "cli",
+      "src": "open",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "gemini"
+        ],
+        "paths": [
+          "~/.gemini/settings.json"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.gemini/settings.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "httpUrl",
+        "headers": true,
+        "sse_field": "url"
+      },
+      "restart": true,
+      "artex": "http",
+      "notes": "Streamable HTTP 必须 httpUrl；写成 url 会被当 SSE。gemini mcp add 默认项目级。企业/API key 用户仍可用。",
+      "doc": "https://geminicli.com/docs/tools/mcp-server/"
+    },
+    {
+      "id": "qwen-code",
+      "name": "Qwen Code",
+      "vendor": "Alibaba",
+      "kind": "cli",
+      "src": "open",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "qwen"
+        ],
+        "paths": [
+          "~/.qwen"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.qwen/settings.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "httpUrl",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "notes": "Gemini CLI 的 fork，schema 一致。qwen mcp add 默认写用户级。",
+      "doc": "https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/"
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "vendor": "SST",
+      "kind": "cli",
+      "src": "open",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "opencode"
+        ],
+        "paths": [
+          "~/.config/opencode"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.config/opencode/opencode.json",
+          "format": "jsonc",
+          "key": "mcp",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": "type=remote",
+        "headers": true,
+        "var_syntax": "{env:NAME}"
+      },
+      "restart": false,
+      "artex": "http",
+      "notes": "必须写 type: local|remote；remote 必须 oauth:false；本地命令是数组；环境变量键叫 environment。",
+      "doc": "https://opencode.ai/docs/mcp-servers/"
+    },
+    {
+      "id": "windsurf-devin",
+      "name": "Devin Desktop（原 Windsurf）",
+      "vendor": "Cognition",
+      "kind": "ide",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "paths": [
+          "~/.config/devin",
+          "~/.codeium/windsurf"
+        ],
+        "apps": [
+          "/Applications/Windsurf.app",
+          "%LOCALAPPDATA%\\Programs\\Windsurf"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.config/devin/mcp_config.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        },
+        {
+          "scope": "user",
+          "path": "~/.codeium/windsurf/mcp_config.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file",
+          "note": "遗留 Cascade，2026-09-08 移除"
+        }
+      ],
+      "remote": {
+        "field": "serverUrl",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "notes": "远程字段是 serverUrl。工具总数上限 100。两个路径按存在与否决定写哪个。",
+      "doc": "https://docs.windsurf.com/windsurf/cascade/mcp"
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "vendor": "Zed Industries",
+      "kind": "ide",
+      "src": "open",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "zed"
+        ],
+        "paths": [
+          "~/.config/zed"
+        ],
+        "apps": [
+          "/Applications/Zed.app"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.config/zed/settings.json",
+          "format": "jsonc",
+          "key": "context_servers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": false
+      },
+      "restart": true,
+      "artex": "stdio",
+      "notes": "键是 context_servers。远程 url 不支持自定义 header → 只能用 stdio 或 mcp-remote 桥。",
+      "doc": "https://zed.dev/docs/assistant/model-context-protocol"
+    },
+    {
+      "id": "goose",
+      "name": "Goose",
+      "vendor": "Block",
+      "kind": "cli",
+      "src": "open",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "bins": [
+          "goose"
+        ],
+        "paths": [
+          "~/.config/goose"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.config/goose/config.yaml",
+          "format": "yaml",
+          "key": "extensions",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": "type",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "notes": "YAML 根键 extensions；type/name/enabled/cmd/args/envs。写 YAML 要保注释，用块追加。",
+      "doc": "https://block.github.io/goose/docs/getting-started/using-extensions"
+    },
+    {
+      "id": "grok-build",
+      "name": "Grok Build (xAI CLI)",
+      "vendor": "xAI",
+      "kind": "cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "grok"
+        ],
+        "paths": [
+          "~/.grok"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.grok/config.toml",
+          "format": "toml",
+          "key": "[mcp_servers.<name>]",
+          "strategy": "file-append"
+        },
+        {
+          "scope": "project",
+          "path": ".grok/config.toml",
+          "format": "toml",
+          "key": "[mcp_servers.<name>]",
+          "strategy": "file-append"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "notes": "形状与 Codex 一致（TOML 表）。grok mcp doctor 可自检。$GROK_HOME 可改根目录。"
+    },
+    {
+      "id": "kimi-code",
+      "name": "Kimi Code / Kimi CLI",
+      "vendor": "Moonshot",
+      "kind": "cli",
+      "src": "mixed",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "kimi",
+          "kimi-cli"
+        ],
+        "paths": [
+          "~/.kimi-code"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.kimi-code/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        },
+        {
+          "scope": "project",
+          "path": ".kimi-code/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "kiro",
+      "name": "Kiro (IDE / CLI)",
+      "vendor": "AWS",
+      "kind": "ide+cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "kiro"
+        ],
+        "paths": [
+          "~/.kiro"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.kiro/settings/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        },
+        {
+          "scope": "workspace",
+          "path": ".kiro/settings/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "cline",
+      "name": "Cline",
+      "vendor": "Cline Bot",
+      "kind": "vscode-ext",
+      "src": "open",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "paths": [
+          "<vscode-globalStorage>/saoudrizwan.claude-dev"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "<vscode-globalStorage>/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": false,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "roo-code",
+      "name": "Roo Code",
+      "vendor": "Roo",
+      "kind": "vscode-ext",
+      "src": "open",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "paths": [
+          "<vscode-globalStorage>/rooveterinaryinc.roo-cline"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "<vscode-globalStorage>/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": false,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "kilo-code",
+      "name": "Kilo Code",
+      "vendor": "Kilo",
+      "kind": "vscode-ext",
+      "src": "open",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "paths": [
+          "<vscode-globalStorage>/kilocode.kilo-code"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "<vscode-globalStorage>/kilocode.kilo-code/settings/mcp_settings.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": false,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "augment",
+      "name": "Augment Code / Auggie CLI",
+      "vendor": "Augment",
+      "kind": "ide+cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "auggie"
+        ],
+        "paths": [
+          "~/.augment"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.augment/settings.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": "transport",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "needs_verify": true,
+      "notes": "远程用 transport（不是 type）+ url。auggie mcp add|list|remove 写同一文件。"
+    },
+    {
+      "id": "continue",
+      "name": "Continue",
+      "vendor": "Continue",
+      "kind": "vscode-ext+cli",
+      "src": "open",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "paths": [
+          "~/.continue"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.continue/config.yaml",
+          "format": "yaml",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "crush",
+      "name": "Crush",
+      "vendor": "Charm",
+      "kind": "cli",
+      "src": "fsl",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "crush"
+        ],
+        "paths": [
+          "~/.config/crush",
+          "~/.crush"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.config/crush/crush.json",
+          "format": "json",
+          "key": "mcp",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "type_field": "type",
+        "headers": true
+      },
+      "restart": false,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "droid",
+      "name": "Factory Droid",
+      "vendor": "Factory",
+      "kind": "cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "droid"
+        ],
+        "paths": [
+          "~/.factory"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.factory/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "amp",
+      "name": "Amp",
+      "vendor": "Sourcegraph 分拆",
+      "kind": "cli",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "amp"
+        ],
+        "paths": [
+          "~/.config/amp"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.config/amp/settings.json",
+          "format": "json",
+          "key": "amp.mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": false,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "openhands",
+      "name": "OpenHands",
+      "vendor": "All Hands AI",
+      "kind": "cli+gui",
+      "src": "open",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "openhands"
+        ],
+        "paths": [
+          "~/.openhands"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.openhands/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "http",
+      "needs_verify": true
+    },
+    {
+      "id": "trae",
+      "name": "Trae / Trae Agent",
+      "vendor": "ByteDance",
+      "kind": "ide+cli",
+      "src": "mixed",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "bins": [
+          "trae-agent"
+        ],
+        "paths": [
+          "~/.trae",
+          "%APPDATA%\\Trae"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.trae/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "manual"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "manual",
+      "needs_verify": true
+    },
+    {
+      "id": "qoder",
+      "name": "Qoder",
+      "vendor": "Alibaba",
+      "kind": "ide",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "B",
+      "detect": {
+        "paths": [
+          "~/.qoder",
+          "%APPDATA%\\Qoder"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "~/.qoder/mcp.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "manual"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": true,
+      "artex": "manual",
+      "needs_verify": true
+    },
+    {
+      "id": "claude-desktop",
+      "name": "Claude Desktop",
+      "vendor": "Anthropic",
+      "kind": "gui",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "A",
+      "detect": {
+        "paths": [
+          "~/Library/Application Support/Claude",
+          "%APPDATA%\\Claude",
+          "~/.config/Claude"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "%APPDATA%\\Claude\\claude_desktop_config.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file",
+          "os": [
+            "windows"
+          ]
+        },
+        {
+          "scope": "user",
+          "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "file",
+          "os": [
+            "darwin"
+          ]
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true,
+        "note": "远程以连接器 UI 为主"
+      },
+      "restart": true,
+      "artex": "http"
+    },
+    {
+      "id": "jetbrains-ai",
+      "name": "JetBrains AI Assistant",
+      "vendor": "JetBrains",
+      "kind": "ide",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "C",
+      "detect": {
+        "paths": [
+          "<config>/options"
+        ],
+        "apps": [
+          "/Applications/IntelliJ IDEA.app",
+          "%APPDATA%\\JetBrains"
+        ]
+      },
+      "config": [
+        {
+          "scope": "ide",
+          "path": "Settings → Tools → AI Assistant → MCP",
+          "format": "ui",
+          "key": "-",
+          "strategy": "manual"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": false
+      },
+      "restart": true,
+      "artex": "stdio",
+      "notes": "无公开文件契约；远程 url 无 header 字段、无 OAuth（LLM-25012）。只给 stdio 片段。"
+    },
+    {
+      "id": "junie",
+      "name": "JetBrains Junie",
+      "vendor": "JetBrains",
+      "kind": "ide-plugin",
+      "src": "closed",
+      "mcp": "native",
+      "tier": "C",
+      "detect": {
+        "paths": [
+          "<config>/options"
+        ]
+      },
+      "config": [
+        {
+          "scope": "ide",
+          "path": "Settings → Tools → Junie → MCP Settings",
+          "format": "ui",
+          "key": "-",
+          "strategy": "manual"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": false
+      },
+      "restart": true,
+      "artex": "stdio"
+    },
+    {
+      "id": "warp",
+      "name": "Warp（含 Warp Agent CLI）",
+      "vendor": "Warp",
+      "kind": "terminal",
+      "src": "open(AGPL)",
+      "mcp": "native",
+      "tier": "C",
+      "detect": {
+        "bins": [
+          "warp"
+        ],
+        "apps": [
+          "/Applications/Warp.app",
+          "%LOCALAPPDATA%\\Programs\\Warp"
+        ]
+      },
+      "config": [
+        {
+          "scope": "user",
+          "path": "Warp 设置 → MCP Servers（UI）",
+          "format": "ui",
+          "key": "-",
+          "strategy": "manual"
+        }
+      ],
+      "remote": {
+        "field": "url",
+        "headers": true
+      },
+      "restart": false,
+      "artex": "manual",
+      "notes": "MCP 连接是 UI 手动，无稳定文件写入点。"
+    },
+    {
+      "id": "xcode",
+      "name": "Xcode 26.3+",
+      "vendor": "Apple",
+      "kind": "ide",
+      "src": "closed",
+      "mcp": "server-only",
+      "tier": "C",
+      "detect": {
+        "apps": [
+          "/Applications/Xcode.app"
+        ]
+      },
+      "config": [
+        {
+          "scope": "builtin-agent",
+          "path": "~/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig/.claude.json",
+          "format": "json",
+          "key": "mcpServers",
+          "strategy": "manual"
+        }
+      ],
+      "remote": {
+        "field": "-",
+        "headers": false
+      },
+      "restart": true,
+      "artex": "manual",
+      "notes": "Xcode 自己是一个 MCP 服务端（xcrun mcpbridge），不是接入目标；其内置 Claude/Codex agent 有独立配置目录，属另一套作用域，不代写。"
+    }
+  ]
+}

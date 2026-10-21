@@ -827,6 +827,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/mcp/server/rotate", s.mcpServerRotate)
 	// 能力清单：一个能力一份实现，两个投影（MCP 给外部 AI / HTTP 给控制台）。
 	mux.HandleFunc("GET /api/capabilities", s.capabilitiesHandler)
+
+	// 外部 harness 一键配置：扫描本机、预览 diff、写配置。
+	// 三个接口都只收 target id，路径由服务端从注册表现算。
+	mux.HandleFunc("GET /api/harness", s.harnessListHandler)
+	mux.HandleFunc("POST /api/harness/plan", s.harnessPlanHandler)
+	mux.HandleFunc("POST /api/harness/apply", s.harnessApplyHandler)
 	mux.HandleFunc("GET /api/stats", s.stats)
 	mux.HandleFunc("GET /api/metrics", s.reliabilityMetrics)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
