@@ -381,6 +381,12 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 
 // updateRollback 主动退回上一版本（换装前备份的 artex.old）。
 func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
+	// 先答"正在更新中"这个更具体的拒绝，再谈能力门控：
+	// 前者是此刻的事实，后者是部署形态，混在一起的顺序会让真正的原因被盖掉。
+	if _, running := updHub.snapshot(); running {
+		writeErr(w, 409, updateErrRollbackInProgress)
+		return
+	}
 	// 回滚同样是"换装 + 退出 75"，前提条件与一键更新完全一致。
 	if !selfupdate.Supervised() {
 		writeErr(w, 400, updateErrUnsupervised)
@@ -388,10 +394,6 @@ func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
 	}
 	if selfupdate.InDocker() {
 		writeErr(w, 400, updateErrDockerOneClick)
-		return
-	}
-	if _, running := updHub.snapshot(); running {
-		writeErr(w, 409, updateErrRollbackInProgress)
 		return
 	}
 	if err := selfupdate.Rollback(); err != nil {
