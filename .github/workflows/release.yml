@@ -57,8 +57,17 @@ jobs:
 
       # 内嵌前端路径只在 -tags embedui 下参与编译，默认构建覆盖不到；
       # 单独 vet 一次，避免 embedui 分支长期不构建而悄悄腐化。
+      #
+      # 注意：//go:embed all:webui/dist 要求该目录**在编译时存在**，而 gate 不构建前端
+      # （前端产物由 frontend job 产出后交给 binaries）。所以这里放一个占位页满足
+      # embed 模式即可——本步只验证 embedui 分支能否编译，不验证真实前端内容。
       - name: go vet（含内嵌前端）
-        run: go vet -tags embedui ./server/
+        run: |
+          mkdir -p server/webui/dist
+          if [ ! -f server/webui/dist/index.html ]; then
+            printf '<!doctype html><title>embed-check</title>\n' > server/webui/dist/index.html
+          fi
+          go vet -tags embedui ./server/
 
       # 格式门禁：gofmt -l 输出任何文件即失败。
       - name: gofmt 门禁
