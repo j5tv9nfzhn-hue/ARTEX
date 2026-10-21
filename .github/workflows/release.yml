@@ -143,7 +143,12 @@ jobs:
     runs-on: ubuntu-latest
     cache-mode: none
     steps:
+      # 发布说明要从「上一个 tag」累计变更，必须有完整历史与 tag；
+      # 默认 fetch-depth: 1 拿不到任何 tag，会退化成「首个版本」。
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/download-artifact@v8
         with:
           pattern: pkg-*
@@ -163,18 +168,30 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: sha256sum -- *.zip > SHA256SUMS
+      - name: 生成发布说明（完整变更）
+        # 不用 --generate-notes：它只汇总 PR 标题，本仓库大量改动是直接提交，
+        # 自动生成的结果常常只剩两三条（v2.2.0 首发即如此），等于没写。
+        run: |
+          set -euo pipefail
+          python3 -I scripts/gen-release-notes.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" \
+            --dist dist \
+            --out dist/RELEASE_NOTES.md
+
       - name: 建草稿发布（此时对外不可见）
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "已存在同名草稿/发布，复用"
+            echo "已存在同名草稿/发布，按当前历史刷新说明"
+            gh release edit "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md
           else
             gh release create "$GITHUB_REF_NAME" \
               --draft --verify-tag \
               --title "ARTEX-REA ${GITHUB_REF_NAME}" \
-              --generate-notes
+              --notes-file dist/RELEASE_NOTES.md
           fi
       - name: 上传 zip 与校验和
         env:
