@@ -9,13 +9,13 @@
 # 格式检查不在此处启用（2026-10-16）：golangci-lint 的 gofmt 使用其二进制
 # 内嵌的 Go 版本（v2.14.0 = go1.27），与 setup-go 锁定的 Go 1.26 工具链对
 # 中文对齐的行可能给出相反判定——errmsg_catalog.go 曾因此出现两个门禁互相
-# 矛盾、无法同时通过。格式的唯一权威是 ci.yml 的「gofmt 门禁」。
+# 矛盾、无法同时通过。格式的唯一权威是 release.yml 的「gofmt 门禁」。
 #
 # 后续收紧路径（每加一项，先在本地 `golangci-lint run --enable-only=<name>` 清零）：
 #   ineffassign、unused、staticcheck、misspell、revive。
 #
 # 注意：本机未安装 golangci-lint，v2.14.0 的配置格式按官方 v2 文档书写；
-# CI（ci.yml 的 go job）会以固定版本运行，第一次运行即是真实校验。
+# CI（release.yml 的 gate job）会以固定版本运行，第一次运行即是真实校验。
 version: "2"
 
 run:

@@ -1,22 +1,37 @@
 name: release
+
+# 唯一的构建与发布工作流。
+#
+# 2026-10-21 之前 ci.yml 与 release.yml 各有一套前端构建与 Go 编译：ci 每次 push 都跑
+# 「前端静态导出 → go build → build.sh --release → 传 artifact」，release 在 tag 上把
+# 同样的事再做一遍。两套构建 = 两处维护、两套缓存 key，还会出现「ci 绿了但 release 挂了」。
+# 现在只保留这一份：
+#
+#   gate      编译与静态检查（硬门禁：编不过就不发）
+#   frontend  前端静态导出，产物给 binaries 复用（硬门禁：前端编不过就不发）
+#   binaries  六目标交叉编译与打包（硬门禁）
+#   release   建草稿 → 传资产 → 校验齐全 → 转正（失败即删草稿）
+#   signals   测试 / 语言 / 文档链接：只报告，不拦发布
+#
+# 检测规则仍由独立的 detections.yml 按路径触发——它不产出二进制，
+# 与本工作流没有重复构建。
+#
+# 触发方式：
+#   push tag vX.Y.Z   完整流水线并发布
+#   workflow_dispatch 干跑（不发布），用于打 tag 前确认能编过
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write # 建草稿、传资产、公开 Release
 
 jobs:
-  # ⓪ 发布门禁：只拦「编不过」，不拦测试断言。
+  # ⓪ 编译与静态检查：确定性失败必须拦住。
   #
-  # 为什么不直接等 ci.yml 全绿：ci 的 go job 里混着两类东西——
-  #   1) 真实的集成测试（数据库、通知投递、引擎）：红了通常就是真坏了；
-  #   2) 快照类断言（capability golden / 档位计数 / manifest 形状）：红了只说明
-  #      「改了工具面没同步快照」，二进制与发布包本身照常可用。
-  # 用 2) 去拦发布，会把一个能跑的新版本卡在门外；而 1) 的价值在于「早发现」，
-  # 不在于「拦住发版」——真要拦，也该是人工判断，不是自动化一刀切。
-  # 所以门禁只做最保守、最没有歧义的一件事：编不过 / 静态检查不过就别发。
-  # 测试仍在 ci.yml 里全量跑，红了看得见，只是不再决定「能不能发」。
+  # 这里只放「产物一定不可用」的判断：编不过、vet 不过、格式不过、lint 不过。
+  # 测试不放这里（见 signals）：测试红通常说明源码健康度，不说明二进制坏掉。
   gate:
     runs-on: ubuntu-latest
     steps:
@@ -24,6 +39,7 @@ jobs:
       # 不可比较，所有客户端的一键更新会静默禁用。宁可在这一步失败，也不要发出
       # 一个没人能自动升级的版本。
       - name: 校验 tag 必须是 vX.Y.Z
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "::error::tag 必须是 vX.Y.Z（三段式），当前为 $GITHUB_REF_NAME"
@@ -38,6 +54,31 @@ jobs:
         run: go build ./...
       - name: go vet（静态检查不过就不发）
         run: go vet ./...
+
+      # 内嵌前端路径只在 -tags embedui 下参与编译，默认构建覆盖不到；
+      # 单独 vet 一次，避免 embedui 分支长期不构建而悄悄腐化。
+      - name: go vet（含内嵌前端）
+        run: go vet -tags embedui ./server/
+
+      # 格式门禁：gofmt -l 输出任何文件即失败。
+      - name: gofmt 门禁
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt（请运行 gofmt -w <文件>）："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # 静态检查门禁：配置见 .golangci.yml。
+      # 格式不在此重复：golangci-lint 内嵌的 gofmt 使用其构建时的 Go 版本
+      # （v2.14.0 = go1.27），与上面 Go 1.26 的 gofmt 可能判定相反，
+      # 格式的唯一权威是上一步的「gofmt 门禁」。
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          args: --timeout=5m
 
   # ① 前端静态导出仅执行一次，供各平台目标复用。
   frontend:
@@ -61,6 +102,16 @@ jobs:
             node-${{ runner.os }}-
       - run: npm ci
         working-directory: web
+      # 下面两步是信号灯：继续用 continue-on-error，红了看得见但不挡发布包。
+      - name: 前端单元测试（信号）
+        continue-on-error: true
+        run: npm test
+        working-directory: web
+      - name: biome check（信号）
+        continue-on-error: true
+        run: npm run check
+        working-directory: web
+      # 这一步是硬门禁：类型检查与静态导出都在里面，前端编不过就没有可发布的包。
       - run: npm run build:static
         working-directory: web
       - uses: actions/upload-artifact@v7
@@ -140,6 +191,8 @@ jobs:
   # 草稿期间外部不可见；任何一步失败就删掉草稿（tag 保留），绝不对外留下半成品。
   release:
     needs: binaries
+    # 干跑（workflow_dispatch）只验证能编过，不碰 Release。
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     cache-mode: none
     steps:
@@ -239,3 +292,35 @@ jobs:
         run: |
           gh release delete "$GITHUB_REF_NAME" --yes || true
           echo "已清掉草稿；tag $GITHUB_REF_NAME 保留，修好后重跑本 workflow 即可。"
+
+  # ④ 信号灯：测试、语言、文档链接。
+  # 放在独立 job 并 continue-on-error：红的 job 在界面上依然显眼，
+  # 但不影响本次运行成败，也不影响前面已经产出并发布的包——「测试红 ≠ 产物坏」。
+  signals:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: 恢复 Go 模块与编译缓存
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+      # 各包 TestMain 各自指向自己的临时 SQLite 库，不依赖任何外部服务。
+      - name: go test（全量真实执行；红了只是信号）
+        run: go test ./... -count=1 -timeout 600s
+      - name: 语言检查（源码、注释、词库与文档无韩文残留）
+        if: always()
+        run: python3 -I scripts/check-language.py --source
+      - name: 文档内部链接、图片与锚点
+        if: always()
+        run: python3 -I scripts/check-doc-links.py

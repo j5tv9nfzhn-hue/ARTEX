@@ -16,7 +16,7 @@ build.sh、dev.sh、任何打包脚本
 
 **允许**：读文件、写文件、列目录、`git status|diff|log|show`、`git add|commit|push|tag`、`gh` 只读查询。
 
-构建与验证一律由 GitHub Actions 承担（`ci.yml` / `release.yml`）。
+构建与验证一律由 GitHub Actions 承担（`release.yml` 构建与发布，`detections.yml` 检测规则）。
 
 ## 二、门禁分层
 

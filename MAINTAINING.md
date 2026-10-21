@@ -155,7 +155,7 @@ chore(upstream): 合入 d003372..b55ceb1 的审批计量逻辑并同步新文案
 fork 可能同时有 origin/upstream，gh 的默认仓库可能不是当前仓库，导致查看错误的 CI 或误判 404。显式指定：
 
 ```bash
-gh run list -R j5tv9nfzhn-hue/ARTEX --workflow ci.yml --limit 5
+gh run list -R j5tv9nfzhn-hue/ARTEX --workflow release.yml --limit 5
 gh run list -R j5tv9nfzhn-hue/ARTEX --workflow detections.yml --limit 5
 ```
 
@@ -186,7 +186,7 @@ python3 -I scripts/check-external-links.py --list   # 离线预览目标
 python3 -I scripts/check-external-links.py --strict # 需要相应网络访问权限
 ```
 
-外部检查容易波动，**不作为 PR 合并门禁**。[ci.yml 的定时任务](.github/workflows/ci.yml)每周一或手动运行；strict 仅对允许列表之外的 DOWN 失败。允许列表需保留无法修复的理由，不能掩盖本仓库可修复的损坏链接。
+外部检查容易波动，**不作为 PR 合并门禁**。已不再配置定时任务，需要时手动运行 `python3 -I scripts/check-external-links.py --strict`；strict 仅对允许列表之外的 DOWN 失败。允许列表需保留无法修复的理由，不能掩盖本仓库可修复的损坏链接。
 
 ## 9. Release 发布流程
 
