@@ -861,6 +861,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/update/stream", s.updateStream)
 	// 只读缓存的轻量状态，顶栏红点用；不会触发任何网络请求。
 	mux.HandleFunc("GET /api/update/status", s.updateStatus)
+	mux.HandleFunc("GET /api/update/journal", s.updateJournal)
 
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/tasks", s.createTask)

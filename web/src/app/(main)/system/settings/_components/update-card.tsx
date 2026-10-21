@@ -18,7 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import type { UpdateCheck, UpdateProgress } from "@/lib/types";
+import type { UpdateCheck, UpdateJournal, UpdateProgress } from "@/lib/types";
 
 /** 字节数 → 人类可读大小；发布包通常在几十 MB。 */
 function humanSize(n?: number): string {
@@ -59,6 +59,8 @@ export function UpdateCard() {
   const [applying, setApplying] = React.useState(false);
   const [progress, setProgress] = React.useState<UpdateProgress | null>(null);
   const [restarting, setRestarting] = React.useState(false);
+  // 看门狗拿到的失败台账：非空即代表"这次升级没成"，界面必须说清楚。
+  const [journalIssue, setJournalIssue] = React.useState<UpdateJournal | null>(null);
   const [autoCheck, setAutoCheck] = React.useState(true);
   const [autoApply, setAutoApply] = React.useState(false);
   const [savingPref, setSavingPref] = React.useState(false);
@@ -116,11 +118,16 @@ export function UpdateCard() {
     return () => es.close();
   }, [applying]);
 
-  // 换装 → 进程退出 → 守护脚本拉起新版本。轮询健康检查，等版本号变了再刷新页面，
-  // 否则用户会停在旧页面上看到"正在重启"直到手动刷新。
+  // 换装看门狗：健康轮询负责"版本变了就刷新"，落盘台账负责"到底成没成"。
+  //
+  // 旧实现只有 2s 无限轮询：只要换装静默失败（暂存件被误启动、文件被锁、
+  // 健康检查不过），页面就会永远停在"正在重启"，用户拿不到任何原因。
+  // 这里 60s 后读一次 /api/update/journal，失败即显式收尾。
   React.useEffect(() => {
     if (!restarting) return;
-    const id = window.setInterval(() => {
+    let alive = true;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
       api
         .health()
         .then((h) => {
@@ -128,11 +135,28 @@ export function UpdateCard() {
           if (v && v !== currentRef.current) window.location.reload();
         })
         .catch(() => undefined);
-    }, 2000);
-    return () => window.clearInterval(id);
+
+      if (Date.now() - startedAt < 60000) return;
+      api
+        .updateJournal()
+        .then((j) => {
+          if (!alive) return;
+          if (j.state === "failed" || j.state === "rolled-back") {
+            setJournalIssue(j);
+            setRestarting(false);
+            window.clearInterval(timer);
+          }
+        })
+        .catch(() => undefined);
+    }, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
   }, [restarting]);
 
   const apply = () => {
+    setJournalIssue(null);
     setProgress({ phase: "idle", percent: -1, message: "正在准备…" });
     setApplying(true);
     api.applyUpdate().catch((e) => {
@@ -249,6 +273,20 @@ export function UpdateCard() {
             <div className="font-medium">正在重启，切换到新版本…</div>
             <p className="mt-1 text-muted-foreground text-xs">
               服务会短暂中断，页面在检测到新版本后自动刷新。若长时间没有反应，请手动重启服务。
+            </p>
+          </div>
+        )}
+        {/* 升级失败：原因来自落盘台账，而不是一句"正在重启"。 */}
+        {journalIssue && (
+          <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm">
+            <div className="font-medium">升级未完成（{journalIssue.state}）</div>
+            <p className="mt-1 text-muted-foreground text-xs">
+              {journalIssue.last_error || journalIssue.detail || "未记录具体原因"}
+            </p>
+            <p className="mt-1 text-muted-foreground text-xs">
+              详见程序目录下的 <span className="font-mono">logs/update.log</span> 与{" "}
+              <span className="font-mono">updates/journal.json</span>。
+              {journalIssue.pointer?.previous ? " 可先回滚到上一版本恢复服务。" : ""}
             </p>
           </div>
         )}

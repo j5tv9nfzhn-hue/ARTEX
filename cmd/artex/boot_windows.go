@@ -62,9 +62,23 @@ func isOwnedProcess(pid uint32, exeDir string) (string, bool) {
 	dir := clean(exeDir)
 	base := lower(filepath.Base(target))
 
-	// 同目录下的 artex*.exe：上一轮残留的自身
-	if filepath.Dir(target) == dir && strings.HasPrefix(base, "artex") && strings.HasSuffix(base, ".exe") {
-		return path, true
+	// 只认"恰好是正式入口 / 核心程序"的映像名。
+	//
+	// 这里曾经用 artex*.exe 前缀通配，于是 artex-rea.new.exe、artex-rea.old.exe
+	// 也被当成"自己人"：暂存件一旦被启动，就会与正式进程互相终止（谁后启动谁赢），
+	// 表现是"更新完还是老版本"，且没有任何一处会报告这件事。
+	switch base {
+	case "artex-rea.exe", "artex-rea-core.exe", "artex.exe":
+		if filepath.Dir(target) == dir {
+			return path, true
+		}
+	}
+	// 版本化布局：核心程序位于 <dir>/versions/<ver>/artex-rea-core.exe。
+	if base == "artex-rea-core.exe" {
+		prefix := dir + string(filepath.Separator) + "versions" + string(filepath.Separator)
+		if strings.HasPrefix(filepath.Dir(target), prefix) {
+			return path, true
+		}
 	}
 	return "", false
 }

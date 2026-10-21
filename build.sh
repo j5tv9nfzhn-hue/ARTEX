@@ -184,6 +184,16 @@ package_binary() {
   rm -rf "$package_root" "$archive"
   mkdir -p "$package_root"
   cp "$binary" "$package_root/"
+  # 版本化安装的"入口 + 核心"两件套（字节相同，只是名字不同）：
+  #   artex-rea[.exe]       入口，永远待在根目录，只按 pointer.json 转发；
+  #   artex-rea-core[.exe]  真正干活的核心，首次启动被收进 versions/<ver>/。
+  # 升级因此只新增 versions/<新版本>/ 并原子改指针，不再替换任何正在运行的程序
+  # ——Windows 上"删除/覆盖运行中的 exe"必然失败，旧方案就是死在这里。
+  case "$goos" in
+    windows) core_ext=".exe" ;;
+    *) core_ext="" ;;
+  esac
+  cp "$binary" "$package_root/artex-rea-core${core_ext}"
   # 启动监护脚本是正式入口；页面一键更新需要进程退出后由脚本重启。
   # 直接运行 artex-rea 不会自动重启，发布包仅包含对应系统的启动脚本。
   if [ "$goos" = "windows" ]; then

@@ -164,8 +164,17 @@ func TestApplyStagedHappyPath(t *testing.T) {
 	if !strings.Contains(readAll(t, p.Current), "new") {
 		t.Error("artex 应已被替换为新版本")
 	}
-	if !strings.Contains(readAll(t, p.Old), "old") {
-		t.Error("旧版本应备份到 artex.old")
+	// 备份改用带时间戳的唯一名（artex-rea.old-<ns>），不再复用固定名 artex.old：
+	// 固定名一旦被残留进程锁住，之后每次升级都会卡在"清理 .old"这一步。
+	backup, ok := latestBackup(p)
+	if !ok {
+		t.Fatal("换装后应留下上一版本的备份，供手动回滚")
+	}
+	if !strings.Contains(readAll(t, backup), "old") {
+		t.Errorf("备份 %s 应是刚被换下的旧版本", filepath.Base(backup))
+	}
+	if _, err := os.Stat(p.Old); !os.IsNotExist(err) {
+		t.Error("不应再写出固定名 artex.old（它正是上一版的死锁来源）")
 	}
 	if _, err := os.Stat(p.New); !os.IsNotExist(err) {
 		t.Error("换装后 artex.new 应已消失")
@@ -201,7 +210,7 @@ func TestApplyStagedKeepsCurrentWhenVerifyFails(t *testing.T) {
 	}
 }
 
-func TestSwapOverwritesPreviousBackup(t *testing.T) {
+func TestSwapReplacesPreviousBackup(t *testing.T) {
 	requireUnix(t)
 	p := testPaths(t)
 	fakeBin(t, p.Current, "v2", 0)
@@ -214,8 +223,16 @@ func TestSwapOverwritesPreviousBackup(t *testing.T) {
 	if !strings.Contains(readAll(t, p.Current), "v3") {
 		t.Error("应换装到 v3")
 	}
-	if !strings.Contains(readAll(t, p.Old), "v2") {
+	backup, ok := latestBackup(p)
+	if !ok {
+		t.Fatal("应留下上一版本的备份")
+	}
+	if !strings.Contains(readAll(t, backup), "v2") {
 		t.Error("备份应更新为刚被换下的 v2")
+	}
+	// 上一轮的 v1 备份必须被清掉，否则每升一次级目录里就多一个整包大小的 exe。
+	if all := legacyBackups(p); len(all) != 1 {
+		t.Errorf("旧备份应只剩一个，实际 %d 个: %v", len(all), all)
 	}
 }
 

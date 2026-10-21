@@ -76,6 +76,14 @@ func Language() string {
 	return DefaultLanguage
 }
 
+// InstallRootEnv 是"安装根目录"的环境变量名。
+//
+// 自更新的版本化布局把真正运行的核心程序放在 <root>/versions/<ver>/ 下，
+// 于是"可执行文件所在目录"不再等于"安装目录"。入口进程（<root>/artex-rea[.exe]）
+// 转发时注入这个变量，核心程序才能把 data/、config.json、skills/ 解析回根目录。
+// selfupdate.InstallRootEnv 与之同名，两边必须是同一个字符串。
+const InstallRootEnv = "ARTEX_INSTALL_ROOT"
+
 // BaseDir is the directory that anchors all runtime artifacts (config.json and
 // the data/ store). It is the directory the running binary lives in, so a
 // distributed executable keeps its files next to itself on any OS (Windows,
@@ -87,6 +95,13 @@ func Language() string {
 // current working directory so dev artifacts (data/, transcripts) and config
 // resolve against the project dir, not the throwaway binary's location.
 func BaseDir() string {
+	// 版本化安装（selfupdate）下核心程序跑在 <root>/versions/<ver>/artex-rea-core
+	// 里：如果这里仍取"可执行文件所在目录"，data/、config.json、skills/、jwt.key
+	// 全都会被解析进版本目录，用户看到的就是"升级后数据没了、还得重新配"。
+	// 入口进程转发时显式注入安装根目录，优先级高于一切路径推断。
+	if v := strings.TrimSpace(os.Getenv(InstallRootEnv)); v != "" {
+		return filepath.Clean(v)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "."

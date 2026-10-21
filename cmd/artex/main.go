@@ -66,8 +66,30 @@ func run() int {
 		dataDir   = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
 		proxy     = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
 		resetPass = flag.Bool("reset-password", false, "重置 ARTEX-REA 管理员密码后退出；新密码取自 ARTEX_RESET_NEWPASS，未设置则交互输入")
+		selfTest  = flag.Bool("self-test", false, "仅做启动自检并退出（升级流程的冒烟测试入口，不占端口/不开库/不出网）")
 	)
 	flag.Parse()
+
+	// 冒烟测试专用出口：什么都不做、什么也不碰（不占端口、不开库、不出网），
+	// 立刻退出。升级流程用它在真实系统上确认新二进制能执行。
+	if *selfTest {
+		fmt.Println("self-test ok")
+		return 0
+	}
+
+	// 启动守卫：拒绝从升级临时文件（.new/.old/.failed/.staged/.part…）启动。
+	// 否则一个被误启动的暂存件会按 os.Executable() 推出属于自己的一套台账与暂存路径，
+	// 在同一台机器上形成"第二个安装"，还会和正式进程抢同一批端口。
+	if err := selfupdate.RefuseUnsafeExecutable(); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 2
+	}
+
+	// 版本化布局的入口转发：pointer.json 指向的核心程序不是自己时，交给它执行。
+	// 升级因此不再替换任何正在运行的文件，只新增 versions/<ver>/ 并原子改指针。
+	if code, handed := selfupdate.Handoff(); handed {
+		return code
+	}
 
 	// exeDir 是发行包根目录：凭据主密钥、jwt.key 与用户数据都相对它定位。
 	// 单独求值一次，供自举逻辑复用，避免与 config.BaseDir() 的解析时机耦合。
@@ -99,7 +121,7 @@ func run() int {
 	// attempt and roll back if the new build keeps dying. Must run before we open
 	// the stores or bind a port — this may end with "exit and let the start script
 	// relaunch me", and there is no point paying for either first.
-	action, upState := selfupdate.Bootstrap()
+	action, upState := selfupdate.Bootstrap(version)
 	server.SetBootUpdateState(upState)
 	if action == selfupdate.Restart {
 		return selfupdate.ExitRestart
@@ -153,7 +175,13 @@ func run() int {
 	// Surviving this long means a freshly swapped-in build actually works, so drop
 	// the upgrade marker and stop counting attempts. Until it fires, every boot
 	// increments the count and a build that keeps dying gets rolled back.
-	settle := time.AfterFunc(selfupdate.SettleDelay, selfupdate.Settle)
+	// 新版本"活下来"的判定不只看进程还活着：还要核对运行版本号与 /api/health，
+	// 不通过就把台账置为 failed，由下一次启动的 Bootstrap 累计失败次数并回滚。
+	settle := time.AfterFunc(selfupdate.SettleDelay, func() {
+		if err := selfupdate.Settle(version, *addr); err != nil {
+			log.Printf("[update] %v", err)
+		}
+	})
 	defer settle.Stop()
 
 	skillDir := config.SkillDir()

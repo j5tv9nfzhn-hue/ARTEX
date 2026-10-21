@@ -27,6 +27,11 @@ const (
 	updateErrAlreadyLatestFmt   = "已是最新版本 (%s)"
 	updateErrInProgress         = "已有更新正在进行"
 	updateErrRollbackInProgress = "正在更新，无法回滚"
+	// 换装要重启进程，重启由 start.sh / start.bat 的守护循环完成。
+	// 没有守护者时点"立即更新"= 下载成功后进程退出再没人拉起 = 直接停服，
+	// 所以这里必须拦在服务端，而不是只在前端把按钮置灰。
+	updateErrUnsupervised   = "当前进程不是由 start.sh / start.bat 启动，换装后没有人把它重新拉起，会直接停服。请改用启动脚本运行，或手动停止服务后用脚本重启完成升级。"
+	updateErrDockerOneClick = "容器内不支持一键换装（只改容器可写层，重建容器即回退），请拉取新镜像后重建容器。"
 )
 
 // 更新偏好的设置键。两个开关都存在 settings 表里（而不是浏览器 localStorage）：
@@ -262,6 +267,24 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		"auto_apply":     s.updateAutoApply(),
 	}
 
+	// 把落盘的升级台账一并回传：它是"上一次升级到底怎么样了"的唯一权威来源。
+	// 内存里的 bootState 与 SSE 都会随进程退出消失，台账不会。
+	if snap, jerr := selfupdate.JournalSnapshot(); jerr == nil {
+		out["journal_state"] = snap["state"]
+		out["staged_path"] = snap["staged_path"]
+		out["attempts"] = snap["attempts"]
+		if st, _ := snap["state"].(string); st == string(selfupdate.StateFailed) ||
+			st == string(selfupdate.StateRolledBack) {
+			if msg, _ := snap["last_error"].(string); msg != "" {
+				out["boot_notice"] = msg
+				out["rolled_back"] = st == string(selfupdate.StateRolledBack)
+			}
+		}
+		if ptr, ok := snap["pointer"].(map[string]any); ok {
+			out["pointer"] = ptr
+		}
+	}
+
 	// 顶栏提示走缓存（默认）；用户点"检查更新"时带 force=1 强制回源。
 	force := r.URL.Query().Get("force") != ""
 	client := selfupdate.NewClient(s.m.GlobalProxy())
@@ -307,6 +330,18 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 	current := BuildVersion
 
+	// 能力门控（服务端强制，不依赖前端置灰）：
+	// 换装之后进程要以 ExitRestart 退出，由守护脚本重新拉起；容器内换装只作用于
+	// 容器可写层。两者都不该走到下载，否则用户会得到"更新成功但服务没了"。
+	if !selfupdate.Supervised() {
+		writeErr(w, 400, updateErrUnsupervised)
+		return
+	}
+	if selfupdate.InDocker() {
+		writeErr(w, 400, updateErrDockerOneClick)
+		return
+	}
+
 	// 走缓存：确保装上的就是用户在界面上看到并确认的那个版本。
 	client := selfupdate.NewClient(s.m.GlobalProxy())
 	rel, err := relCache.get(r.Context(), client, false)
@@ -346,6 +381,15 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 
 // updateRollback 主动退回上一版本（换装前备份的 artex.old）。
 func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
+	// 回滚同样是"换装 + 退出 75"，前提条件与一键更新完全一致。
+	if !selfupdate.Supervised() {
+		writeErr(w, 400, updateErrUnsupervised)
+		return
+	}
+	if selfupdate.InDocker() {
+		writeErr(w, 400, updateErrDockerOneClick)
+		return
+	}
 	if _, running := updHub.snapshot(); running {
 		writeErr(w, 409, updateErrRollbackInProgress)
 		return
@@ -373,6 +417,12 @@ func (s *Server) stageUpdate(client *http.Client, rel *selfupdate.Release, curre
 	err := selfupdate.Stage(s.ctx, client, rel, current, func(ph selfupdate.Phase, pct int, msg string) {
 		updHub.publish(ph, pct, msg)
 	})
+	if err == nil {
+		// 暂存成功后立刻安装：把核心放进 versions/<ver>/ 并原子切换 pointer.json。
+		// 全程不替换任何正在运行的文件，所以既不需要"谁来换装"这个角色，
+		// 也不会遇到 Windows 上"运行中的 exe 不能覆盖/删除"的锁问题。
+		err = selfupdate.Activate()
+	}
 	updHub.finish(err)
 	if err != nil {
 		log.Printf("[update] 更新失败：%v", err)
@@ -552,4 +602,17 @@ func (s *Server) updateStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// updateJournal 只读 upgrade 台账与版本指针。
+//
+// 前端在"正在重启"超过看门狗时限后拉它：失败原因因此能摆到用户面前，
+// 而不是让页面永远转圈（旧实现只有 SSE + 无限健康轮询，SSE 一断就再无信息）。
+func (s *Server) updateJournal(w http.ResponseWriter, r *http.Request) {
+	snap, err := selfupdate.JournalSnapshot()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, snap)
 }

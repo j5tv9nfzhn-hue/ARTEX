@@ -74,6 +74,9 @@ type Asset struct {
 	Name string `json:"name"`
 	URL  string `json:"browser_download_url"`
 	Size int64  `json:"size"`
+	// SHA256 是发布清单（latest.json）里随资产一起给出的摘要。
+	// 它与 SHA256SUMS 是两条独立通道，取到两者就做交叉校验（见 stage.go）。
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // NewClient 构造一个只认 GitHub 域名的 HTTP 客户端。proxy 为空则直连。

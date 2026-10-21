@@ -61,6 +61,15 @@ func ResolvePaths() (Paths, error) {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
+	return pathsFor(exe), nil
+}
+
+// pathsFor 按给定的可执行文件路径推导旧协议文件（.new/.old/marker）。
+//
+// 单独抽出来是因为迁移到版本化布局后进程实际跑在 versions/<ver>/ 里，
+// 而旧协议的文件全都留在安装根目录——那种情况下要按根目录里的入口程序重新推导，
+// 不能拿 os.Executable()（它指向版本目录）。
+func pathsFor(exe string) Paths {
 	dir := filepath.Dir(exe)
 	name := filepath.Base(exe)
 	ext := filepath.Ext(name) // Windows 上是 ".exe"，Unix 上通常为空
@@ -74,7 +83,7 @@ func ResolvePaths() (Paths, error) {
 		Sum:     join(".new") + ".sha256",
 		Old:     join(".old"),
 		Marker:  filepath.Join(dir, stem+".upgrade.json"),
-	}, nil
+	}
 }
 
 // marker 记录一次换装的进度，用来在新版起不来时触发自动回滚。
@@ -178,6 +187,20 @@ func Supervised() bool {
 // 自动更新只做到这一步就停：把包下好、校验好放在磁盘上，换装留给用户下一次
 // 启动。这样自动更新永远不会在渗透任务跑到一半时把进程重启掉。
 func StagedVersion() string {
+	// 版本化布局：台账里"已暂存 / 已安装待重启"的目标版本就是答案。
+	// 这条必须先于旧协议判断，否则新流程下前端永远显示"没有待生效的版本"，
+	// 用户会以为自动更新什么都没做。
+	if l, lerr := ResolveLayout(); lerr == nil {
+		if j, ok := ReadJournal(l); ok {
+			switch j.State {
+			case StateStaged, StateApplying, StateSwapped:
+				if v := strings.TrimSpace(j.To); v != "" {
+					return v
+				}
+			}
+		}
+	}
+	// 旧协议兼容：marker + artex-rea.new（v2.2.2 及更早的暂存方式）。
 	p, err := ResolvePaths()
 	if err != nil {
 		return ""

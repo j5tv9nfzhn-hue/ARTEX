@@ -122,6 +122,7 @@ import type {
   TrafficHost,
   TrafficResp,
   UpdateCheck,
+  UpdateJournal,
   UpdateStatus,
   UsageStats,
   VerificationCapabilities,
@@ -1604,6 +1605,8 @@ export const api = {
   rollbackUpdate: () => post<{ ok: boolean }>(`/update/rollback`),
   // 只读缓存的状态：顶栏红点用，不发网络请求、不消耗 GitHub 配额。
   updateStatus: () => get<UpdateStatus>(`/update/status`),
+  // 落盘的升级台账：重启后仍然可读，用来回答"上一次升级到底成没成、为什么没成"。
+  updateJournal: () => get<UpdateJournal>(`/update/journal`),
   // SSE 地址（自动带 token）：EventSource 不能带 cookie，故走 token 查询参数。
   updateStreamUrl: () => sseUrl("/api/update/stream"),
 };

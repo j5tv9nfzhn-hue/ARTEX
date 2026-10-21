@@ -51,11 +51,14 @@ func Stage(ctx context.Context, c *http.Client, rel *Release, currentVersion str
 	if prog == nil {
 		prog = func(Phase, int, string) {}
 	}
-	p, err := ResolvePaths()
+	l, err := ResolveLayout()
 	if err != nil {
 		return err
 	}
-	if err := checkWritable(p.Dir); err != nil {
+	if err := EnsureLayoutDirs(l); err != nil {
+		return err
+	}
+	if err := checkWritable(l.Root); err != nil {
 		return err
 	}
 
@@ -74,11 +77,23 @@ func Stage(ctx context.Context, c *http.Client, rel *Release, currentVersion str
 	if !ok {
 		return fmt.Errorf("%s 中缺少 %s 条目，拒绝安装未验证的二进制", sumsAsset, name)
 	}
+	// 双源交叉校验：latest.json 的 assets[].sha256 与 SHA256SUMS 必须一致。
+	// 两份摘要由同一次发布的两条独立通道产出，任何一边被替换都会在这里暴露，
+	// 而不是像过去那样"摘要与产物同源、比对再严也只证明文件没坏"。
+	if manifestSum := strings.ToLower(strings.TrimSpace(asset.SHA256)); manifestSum != "" {
+		if !strings.EqualFold(manifestSum, want) {
+			return fmt.Errorf("校验和来源不一致：%s=%s，latest.json=%s，已拒绝更新",
+				sumsAsset, short(want), short(manifestSum))
+		}
+	}
 
-	// 临时文件全部落在目标目录里，保证最后的 rename 是同一文件系统内的原子操作
-	// （跨设备 rename 会失败，而 /tmp 常常是独立挂载点）。
-	zipPath := p.New + ".zip.part"
-	binPath := p.New + ".part"
+	stagedDst := StagedPath(l, rel.TagName)
+	if err := os.MkdirAll(filepath.Dir(stagedDst), 0o755); err != nil {
+		return fmt.Errorf("创建暂存目录失败：%w", err)
+	}
+	// 临时文件与最终暂存件同目录：保证最后一次 rename 是同文件系统内的原子操作。
+	zipPath := stagedDst + ".zip.part"
+	binPath := stagedDst + ".part" + exeExt()
 	defer func() {
 		_ = os.Remove(zipPath)
 		_ = os.Remove(binPath)
@@ -99,33 +114,40 @@ func Stage(ctx context.Context, c *http.Client, rel *Release, currentVersion str
 	if err := extractBinary(zipPath, binPath); err != nil {
 		return err
 	}
-	_ = extractSkills(zipPath, filepath.Join(p.Dir, "skills"))
+	_ = extractSkills(zipPath, filepath.Join(l.Root, "skills"))
 	if err := smokeTest(binPath); err != nil {
 		return fmt.Errorf("新版本无法在当前系统运行：%w", err)
 	}
 
-	// 暂存件自己的 sha256 单独存一份：下次启动换装前还要再校验一次，
-	// 防止暂存后到重启前这段时间里文件被改动或写坏。
+	// 暂存件的 sha256 单独记一份：安装前还要再比对一次，覆盖"下载完成到安装之间
+	// 文件被改动或写坏"这段窗口。
 	binSum, err := fileSHA256(binPath)
 	if err != nil {
-		return fmt.Errorf("计算新二进制校验和失败：%w", err)
+		return fmt.Errorf("计算新版本校验和失败：%w", err)
 	}
-	if err := os.WriteFile(p.Sum, []byte(binSum), 0o644); err != nil {
+	if err := os.WriteFile(stagedDst+".sha256", []byte(binSum), 0o644); err != nil {
 		return fmt.Errorf("写入校验和失败：%w", err)
 	}
-	if err := os.Rename(binPath, p.New); err != nil {
-		_ = os.Remove(p.Sum)
+	if err := os.Rename(binPath, stagedDst); err != nil {
+		_ = os.Remove(stagedDst + ".sha256")
 		return fmt.Errorf("准备新版本失败：%w", err)
 	}
 
-	if err := writeMarker(p.Marker, marker{
-		From:     currentVersion,
-		To:       strings.TrimPrefix(rel.TagName, "v"),
-		StagedAt: time.Now().Unix(),
-	}); err != nil {
-		// 标记只影响自动回滚能力，暂存件本身已就位，不因此中断升级。
-		prog(PhaseStaged, -1, "警告：写入更新标记文件失败，本次更新无法获得自动回滚保护")
-	}
+	j := UpdateJournal(l, func(jj *Journal) {
+		jj.State = StateStaged
+		jj.Mode = "pointer"
+		jj.From = currentVersion
+		jj.To = rel.TagName
+		jj.StagedVersion = strings.TrimPrefix(rel.TagName, "v")
+		jj.StagedPath = stagedDst
+		jj.SHA256 = binSum
+		jj.Attempts = 0
+		jj.RequestedAt = time.Now().Unix()
+		jj.LastError = ""
+		jj.Detail = "新版本已下载并校验完成，等待安装"
+		jj.ByPID = os.Getpid()
+	})
+	logUpdate(l, "已暂存 %s（%s，sha256=%s，state=%s）", rel.TagName, stagedDst, short(binSum), j.State)
 
 	prog(PhaseStaged, 100, "新版本已准备就绪，正在重启…")
 	return nil

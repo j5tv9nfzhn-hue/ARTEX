@@ -2087,3 +2087,39 @@ export type HarnessPlanResult = {
   changes: HarnessChange[];
   summary: Record<string, number>;
 };
+
+/**
+ * GET /api/update/journal —— 落盘的升级台账与版本指针。
+ *
+ * 与 SSE 进度不同，它跨进程存活：进程换装、崩溃、被守护脚本重启都不影响。
+ * 前端在"正在重启"超时后读它，就能把失败原因（暂存件被替换、冒烟不过、
+ * 健康检查不过、已回滚）明确告诉用户，而不是永远转圈。
+ */
+export interface UpdateJournal {
+  state: "idle" | "staging" | "staged" | "applying" | "swapped" | "confirmed" | "failed" | "rolled-back" | string;
+  root?: string;
+  last_error?: string;
+  detail?: string;
+  staged_version?: string;
+  staged_path?: string;
+  attempts?: number;
+  to?: string;
+  journal?: {
+    state: string;
+    mode?: string;
+    from?: string;
+    to?: string;
+    attempts?: number;
+    swapped_at?: number;
+    confirmed_at?: number;
+    last_error?: string;
+    detail?: string;
+  } | null;
+  pointer?: {
+    available: boolean;
+    current?: string;
+    previous?: string;
+    updated_at?: number;
+    versions?: string[];
+  };
+}
