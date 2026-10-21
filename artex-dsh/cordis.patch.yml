@@ -1,0 +1,9 @@
+# artex-dsh 的 Cordis overlay：把插件行插进 profile 的插件表。
+# 安装后可用 `dsh --profile web --dump-config` 确认这一行出现在配置里。
+- insert:
+    - id: artex
+      name: artex-dsh
+      config:
+        url: http://127.0.0.1:8787/mcp
+        tokenEnv: ARTEX_MCP_TOKEN
+        timeoutMs: 300000
