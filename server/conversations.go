@@ -62,6 +62,12 @@ const (
 	convRetestFailedToStart    = "无法启动复测"
 	convRetestStatusReadFailed = "无法读取复测状态，请重新启动"
 	convRetestStoppedOrClosed  = "复测已停止或服务已关闭"
+
+	// 复核（finding_verifications.error）的对应三条。措辞与复测保持平行，
+	// 让面板上「复测失败了」和「复核失败了」读起来是同一件事的两种视角。
+	convVerifyFailedToStart    = "无法启动复核"
+	convVerifyStatusReadFailed = "无法读取复核状态，请重新启动"
+	convVerifyStoppedOrClosed  = "复核已停止或服务已关闭"
 )
 
 // isDefaultConversationTitle 判断标题是否为空或为 convDefaultTitle。
@@ -650,6 +656,38 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 		s.captureConversationCheckpointNow(c, db.CheckpointReasonTurnComplete,
 			"回合结束："+convFinishLabel(finishStatus))
 	}()
+	if c.AgentKey == db.VerifierAgentKey {
+		// 复核会话的封存与复测同构，只是结论落到 findings.validation。差别在于
+		// 「读不到记录」时不按会话 id 兜底：验证记录的 finding_id 是唯一真相，
+		// 而 FailPendingVerificationForConversation 正是按会话补齐这条路。
+		v, err := s.m.pg.FindingVerificationForConversation(context.Background(), c.ID)
+		if err != nil {
+			log.Printf("[conv %d] load verification: %v", c.ID, err)
+			if err := s.m.pg.FailPendingVerificationForConversation(c.ID, convVerifyStatusReadFailed); err != nil {
+				log.Printf("[conv %d] seal verification: %v", c.ID, err)
+			}
+			return
+		}
+		if v != nil && v.Status == "pending" {
+			defer func() {
+				if ctx.Err() != nil {
+					finishStatus, finishReason = "stopped", convVerifyStoppedOrClosed
+				}
+				s.finishVerification(v.ID, finishStatus, finishReason)
+			}()
+			if ctx.Err() != nil {
+				return
+			}
+			started, err := s.m.pg.StartFindingVerification(ctx, v.ID)
+			if err != nil {
+				finishReason = err.Error()
+				return
+			}
+			if !started {
+				return
+			}
+		}
+	}
 	if c.AgentKey == db.FindingRetestAgentKey {
 		// Read without the run cancellation so an immediate stop still seals pending.
 		r, err := s.m.pg.FindingRetestForConversation(context.Background(), c.ID)

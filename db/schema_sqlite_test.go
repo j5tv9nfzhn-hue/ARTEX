@@ -78,6 +78,7 @@ func TestSQLiteSchemaApplies(t *testing.T) {
 		"exploration_nodes",
 		"explorations",
 		"finding_retests",
+		"finding_verifications",
 		"finding_traffic_bindings",
 		"findings",
 		"intercept_pending",

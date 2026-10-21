@@ -34,15 +34,21 @@ type FindingAssetNode struct {
 	Label     string `json:"label"`
 	AssetID   int64  `json:"asset_id,omitempty"`
 	CompanyID int64  `json:"company_id,omitempty"`
-	// Self 是直接挂在该资产上的发现数;Total 含全部子孙且按 finding 去重
+	// Self / SelfVerified 是直接挂在该资产上的发现数(后者只数已复核);
+	// Total / VerifiedTotal 含全部子孙且按 finding 去重
 	// (一个发现挂多个资产时,只在共同祖先上计一次)。
-	Self        int       `json:"self"`
-	Total       int       `json:"total"`
-	Critical    int       `json:"critical"`
-	High        int       `json:"high"`
-	Medium      int       `json:"medium"`
-	Low         int       `json:"low"`
-	LastFoundAt time.Time `json:"last_found_at"`
+	Self         int `json:"self"`
+	SelfVerified int `json:"self_verified"`
+	Total        int `json:"total"`
+	// VerifiedTotal 是 Total 里已通过独立复核（findings.validation='verified'）的部分。
+	// 两个数都要给：Total 是「上报了多少」（含未复核线索），VerifiedTotal 才是
+	// 「确认存在多少」。只给前者会把线索当真值，只给后者会让新任务看起来一片干净。
+	VerifiedTotal int       `json:"verified_total"`
+	Critical      int       `json:"critical"`
+	High          int       `json:"high"`
+	Medium        int       `json:"medium"`
+	Low           int       `json:"low"`
+	LastFoundAt   time.Time `json:"last_found_at"`
 }
 
 // FindingAssetTree 是整棵树的一次性快照。Nodes 已排好序:同一父节点下按发现数
@@ -125,6 +131,8 @@ type findingAssetHit struct {
 	severity string
 	ts       time.Time
 	assetIDs []int64
+	// verified 来自 findings.validation：只有独立复核对上了才算存在。
+	verified bool
 }
 
 // BuildFindingAssetTree 按当前筛选构建资产树。AssetScope 自身不参与(否则树会随
@@ -140,7 +148,7 @@ func (d *DB) buildFindingAssetTree(f FindingFilter, maxNodes int) (*FindingAsset
 	f.assetIDs, f.assetNone, f.assetMiss = nil, false, false
 	where, args := f.where()
 
-	rows, err := d.Query(`SELECT COALESCE(f.severity,''), f.created_at,
+	rows, err := d.Query(`SELECT COALESCE(f.severity,''), f.created_at, COALESCE(f.validation,''),
        `+findingAssetIDsExpr()+`
 FROM findings f LEFT JOIN tasks t ON f.task_id = t.id`+where, args...)
 	if err != nil {
@@ -150,12 +158,13 @@ FROM findings f LEFT JOIN tasks t ON f.task_id = t.id`+where, args...)
 	assetIDs := map[int64]bool{}
 	for rows.Next() {
 		var h findingAssetHit
-		var aidsJSON string
-		if err := rows.Scan(&h.severity, &h.ts, &aidsJSON); err != nil {
+		var aidsJSON, validation string
+		if err := rows.Scan(&h.severity, &h.ts, &validation, &aidsJSON); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &h.assetIDs)
+		h.verified = validation == FindingVerified
 		for _, id := range h.assetIDs {
 			if id > 0 {
 				assetIDs[id] = true
@@ -199,11 +208,11 @@ FROM findings f LEFT JOIN tasks t ON f.task_id = t.id`+where, args...)
 		}
 		if len(direct) == 0 {
 			countFinding(unassigned, h)
-			unassigned.Self++
+			countSelf(unassigned, h)
 			continue
 		}
 		for _, node := range direct {
-			node.Self++
+			countSelf(node, h)
 		}
 		for key := range touched {
 			countFinding(nodes[key], h)
@@ -223,12 +232,27 @@ FROM findings f LEFT JOIN tasks t ON f.task_id = t.id`+where, args...)
 	return tree, nil
 }
 
-// countFinding 把一条发现累加到节点上(总数 / 严重度分桶 / 最近发现时间)。
+// countSelf 记一条「直接挂在该资产上」的发现。与 countFinding 分开是因为
+// 祖先链上的节点只加 Total（各自去重），Self 只属于发现直接挂载的那个资产。
+func countSelf(n *FindingAssetNode, h findingAssetHit) {
+	if n == nil {
+		return
+	}
+	n.Self++
+	if h.verified {
+		n.SelfVerified++
+	}
+}
+
+// countFinding 把一条发现累加到节点上(总数 / 已复核数 / 严重度分桶 / 最近发现时间)。
 func countFinding(n *FindingAssetNode, h findingAssetHit) {
 	if n == nil {
 		return
 	}
 	n.Total++
+	if h.verified {
+		n.VerifiedTotal++
+	}
 	switch h.severity {
 	case "critical":
 		n.Critical++

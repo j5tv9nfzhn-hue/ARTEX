@@ -349,12 +349,16 @@ func emitApprovalPendingMilestone(convID int64, taskID, toolName string, pending
 // 因此统一用包级回调（见 db/findings.go、intercept/intercept.go）。
 // 其余三个收敛点都是 server 自己的函数，直接调 emit 即可。
 func (s *Server) installUINotifyHooks() {
+	// 这个钩子是**单槽**的（db 包只有一个函数变量），所以两个互不相干的消费者
+	// 必须在这里合流：应用内通知（漏了用户看不到）与自动复核入队（漏了口径为 0）。
+	// 顺序无所谓，两者都不阻塞、都不返回错误。
 	db.OnFindingInserted = func(id, taskID int64, name, vulnclass, severity, summary string) {
 		title := ""
 		if s != nil && s.m != nil && taskID > 0 {
 			title = s.m.taskTitleFor(taskID)
 		}
 		emitFindingMilestone(id, taskID, name, vulnclass, severity, summary, title)
+		s.enqueueAutoVerification(id, severity)
 	}
 	// 审批挂起发生在 intercept 包（那里才拿得到 pending id），用回调接进浮层。
 	intercept.OnApprovalPending = func(convID int64, taskID, toolName string, pendingID int64) {

@@ -96,7 +96,7 @@ func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes str
 		return nil, nil, false, err
 	}
 	defer tx.Rollback()
-	title, snapshot, err := retestSnapshotTx(ctx, tx, findingID)
+	title, snapshot, err := findingSnapshotTx(ctx, tx, findingID)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -133,7 +133,7 @@ func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes str
 	return r, &c, true, nil
 }
 
-// retestSnapshotTx 读出复测快照需要的全部数据，并在 Go 侧拼成
+// findingSnapshotTx 读出复测快照需要的全部数据，并在 Go 侧拼成
 // {"finding": {…}, "assets": [{…}], "constraints": [{…}]}。
 //
 // 返回值分别是会话标题与快照字节；finding 不存在时返回 sql.ErrNoRows
@@ -170,7 +170,7 @@ func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes str
 // 原来的 jsonb_agg 没有 ORDER BY，数组顺序由执行计划决定（实际上是不确定的）。
 // 现在两条子查询都加了 ORDER BY a.id / c.id，让快照里的资产与约束顺序稳定。
 // 这是把「本来就不确定」变成「确定」，不改变任何一条记录是否出现。
-func retestSnapshotTx(ctx context.Context, tx *sql.Tx, findingID int64) (string, []byte, error) {
+func findingSnapshotTx(ctx context.Context, tx *sql.Tx, findingID int64) (string, []byte, error) {
 	// 1) 锁住 findings 行，同时取出标题与整行内容。
 	//    标题表达式与原语句逐字相同，放在 SQL 里而不是 Go 里，是因为它必须与
 	//    读到的正是同一行；SELECT f.* 则是 to_jsonb(f) 的等价物（列增删自动跟随

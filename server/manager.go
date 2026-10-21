@@ -428,6 +428,12 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		pg.Close()
 		return nil, fmt.Errorf("recover finding retests: %w", err)
 	}
+	// 复核与复测同样是「进程内会话 + 外置状态行」，重启后必须封存遗留的
+	// pending/running，否则面板会永远转圈、且永远不会有人去补结论。
+	if err := pg.RecoverFindingVerifications(); err != nil {
+		pg.Close()
+		return nil, fmt.Errorf("recover finding verifications: %w", err)
+	}
 	if err := pg.EnsureLLMRecordsTable(); err != nil {
 		log.Printf("[llmrec] create table: %v", err)
 	}

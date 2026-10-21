@@ -181,6 +181,12 @@ type Server struct {
 	triggerActive map[string]int
 	triggerCfg    map[string]triggerBehavior
 
+	// verifyQueue buffers「发现落库后待复核」的发现 id（P2 verifier）。串行消费、
+	// 有界、满即丢弃：复核是旁路，不能反压正在跑的探测任务。进程内队列，
+	// 重启丢失是刻意的——重启后没有任何会话在跑，遗留记录由
+	// db.RecoverFindingVerifications 统一封存为 failed，不会永远转圈。
+	verifyQueue chan verifyRequest
+
 	// profChatAgents caches a per-profile ChatAgent (chat page), keyed by profile id.
 	// Built lazily on first use; invalidated when any profile is saved/activated/deleted
 	// so edits take effect.
@@ -252,7 +258,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		log.Fatalf("[auth] JWT key: %v", err)
 	}
 	s := &Server{m: m, engine: NewEngine(m), ctx: ctx, skillDir: skillDir, jwtKey: key, chatBusy: map[string]bool{},
-		chatCancel: map[string]context.CancelCauseFunc{}, triggerQ: map[string][]triggeredRun{},
+		chatCancel: map[string]context.CancelCauseFunc{}, triggerQ: map[string][]triggeredRun{}, verifyQueue: make(chan verifyRequest, verifyQueueCap),
 		triggerActive: map[string]int{}, triggerCfg: map[string]triggerBehavior{},
 		profChatAgents: map[int64]*agent.ChatAgent{},
 		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
@@ -358,6 +364,10 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
 		}
+		if err := s.seedFindingVerifier(); err != nil {
+			log.Printf("[verifier] seed: %v", err)
+		}
+		go s.runVerificationQueue(s.ctx) // P2 复核队列：串行消费，见 finding_verify.go
 		go s.evidenceStore().RunGC(s.ctx)
 		s.seedPythonInterpreter()     // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
 		go newScheduler(s).Run(s.ctx) // P3 自定义 Agent 事件调度与通知投递引擎独立运行。
@@ -963,6 +973,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/exploration/findings/{id}/retests", s.listFindingRetests)
 	mux.HandleFunc("GET /api/exploration/findings/retests/active", s.listActiveFindingRetests)
 	mux.HandleFunc("POST /api/exploration/findings/{id}/retests", s.startFindingRetest)
+	mux.HandleFunc("GET /api/exploration/findings/{id}/verifications", s.listFindingVerifications)
+	mux.HandleFunc("GET /api/exploration/findings/verifications/active", s.listActiveFindingVerifications)
+	mux.HandleFunc("POST /api/exploration/findings/{id}/verifications", s.startFindingVerification)
 	mux.HandleFunc("PATCH /api/exploration/findings/{id}", s.patchFinding)
 	mux.HandleFunc("DELETE /api/exploration/findings/{id}", s.deleteFinding)
 	mux.HandleFunc("GET /api/exploration/intents", s.intents)

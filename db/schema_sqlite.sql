@@ -1194,6 +1194,39 @@ BEGIN
 END;
 
 
+-- 独立复核（P2 verifier）:每条 finding 可以被独立复核员读一遍,结论落 findings.validation。
+-- 与 finding_retests 分表而不是共用:复测问「修好没有」(结论改 status),复核问「成不成立」
+-- (结论改 validation),两套结论词表不同,合表就得在每一处查询上分支。
+CREATE TABLE IF NOT EXISTS finding_verifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    conversation_id BIGINT UNIQUE REFERENCES conversations(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','completed','failed','stopped')),
+    verdict TEXT NOT NULL DEFAULT '' CHECK (verdict IN ('','verified','refuted','inconclusive')),
+    notes TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    snapshot TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_finding_verifications_history ON finding_verifications(finding_id, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_finding_verifications_active ON finding_verifications(finding_id)
+    WHERE status IN ('pending','running');
+
+DROP TRIGGER IF EXISTS trg_conversation_verification_delete;
+
+CREATE TRIGGER IF NOT EXISTS trg_conversation_verification_delete
+BEFORE DELETE ON conversations
+BEGIN
+  UPDATE finding_verifications SET status='stopped', error='复核会话已删除', finished_at=now()
+    WHERE conversation_id=OLD.id AND status IN ('pending','running');
+END;
+
+
 CREATE TABLE IF NOT EXISTS traffic_evidence_snapshots (
     id TEXT PRIMARY KEY,
     source_traffic_id TEXT NOT NULL,
