@@ -1314,6 +1314,32 @@ export interface MCPServer {
   tools?: string[]; // mcp_tools_cache (names only, for the count)
 }
 
+// 对外 MCP 接入（系统 → MCP 卡片）。方向与上面的 MCPServer 相反：
+// MCPServer 是 ARTEX 去连别人，MCPExposure 是别人来连 ARTEX。
+export interface MCPExposureTier {
+  id: string;
+  label: string;
+  enabled: boolean;
+}
+
+export interface MCPExposureTool {
+  name: string;
+  tier: string;
+  description: string;
+}
+
+export interface MCPExposure {
+  enabled: boolean;
+  tiers: string[];
+  all_tiers: MCPExposureTier[];
+  endpoint: string;
+  exe?: string;
+  token: string;
+  token_mask: string;
+  tools: MCPExposureTool[];
+  tool_count: number;
+}
+
 export interface MCPTool {
   name: string;
   description: string;

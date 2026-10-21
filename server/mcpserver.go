@@ -283,6 +283,14 @@ func mcpOriginAllowed(origin string) bool {
 
 // --- 控制台 API ---
 
+// mcpExePath 返回当前可执行文件路径，接入卡片据此生成 stdio 配置。
+func mcpExePath() string {
+	if p, err := os.Executable(); err == nil {
+		return p
+	}
+	return ""
+}
+
 // mcpServerStatus 是 GET /api/mcp/server：给「对外接入」卡片用的状态。
 func (s *Server) mcpServerStatus(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
@@ -306,6 +314,7 @@ func (s *Server) mcpServerStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"exe":        mcpExePath(),
 		"enabled":    s.mcpEnabled(),
 		"tiers":      tiers,
 		"all_tiers":  all,

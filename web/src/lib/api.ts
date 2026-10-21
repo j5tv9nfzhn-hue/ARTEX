@@ -63,6 +63,7 @@ import type {
   LLMRetryOverride,
   LLMRetryPolicy,
   LLMTask,
+  MCPExposure,
   MCPServer,
   MCPTool,
   MissingSkill,
@@ -1272,6 +1273,11 @@ export const api = {
   deleteMcpServer: (id: number) => del<{ deleted: number }>(`/mcp/${id}`),
   mcpTools: (id: number) => get<{ tools: MCPTool[] }>(`/mcp/${id}/tools`).then((r) => arr(r.tools)),
   refreshMcpServer: (id: number) => post<{ tools: MCPTool[] }>(`/mcp/${id}/refresh`, {}).then((r) => arr(r.tools)),
+
+  // ---- 对外接入（ARTEX 作为 MCP 服务器）----
+  mcpExposure: () => get<MCPExposure>("/mcp/server"),
+  saveMcpExposure: (body: { enabled?: boolean; tiers?: string[] }) => put<MCPExposure>("/mcp/server", body),
+  rotateMcpExposureToken: () => post<MCPExposure>("/mcp/server/rotate", {}),
 
   // ---- 资产同步 (ScopeSentry 数据源) ----
   ssStatus: () =>

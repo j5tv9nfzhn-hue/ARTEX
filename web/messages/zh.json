@@ -1,4 +1,29 @@
 {
+  "mcpExposure": {
+    "title": "对外接入（MCP 服务器）",
+    "subtitle": "把 ARTEX 当成一台 MCP 服务器：Codex、OpenCode、Cursor、Claude Code、VS Code、Gemini CLI 与 DSH 都能直接挂上，用它的样本分诊、资产图与验证能力。与下方「服务器」方向相反——那里是 ARTEX 去连别人。",
+    "on": "对外服务中",
+    "off": "已关闭",
+    "refresh": "刷新",
+    "endpointLabel": "Streamable HTTP 端点（仅本机可访问）",
+    "stdioHint": "或让客户端本地拉起（零端口暴露）：",
+    "tokenLabel": "Bearer token（已加密存储）",
+    "show": "显示",
+    "hide": "隐藏",
+    "copy": "复制",
+    "copied": "已复制",
+    "copyFailed": "复制失败，请手动选中",
+    "rotate": "轮换",
+    "tokenHint": "轮换后旧 token 立即失效，需要同步更新各客户端配置。",
+    "tiersLabel": "开放档位：",
+    "toolCount": "{count} 个工具已开放",
+    "l3Hint": "L3 编排委派需要写库并起任务，默认不开放。",
+    "l3Short": "未开放",
+    "l2Warning": "已开放 L2 主动探测：外部 harness 可以对目标出网发起 DNS/TCP/TLS/HTTP 验证。请确认授权范围，并优先在隔离环境验证。",
+    "clientsTitle": "客户端接入配置（点复制）",
+    "clientsHint": "工具名在各客户端的呈现不同（如 Claude Code 为 mcp__artex__pe_info）；Cursor 对总工具数有上限，工具多时收窄档位。",
+    "rotated": "token 已轮换"
+  },
   "agentEditor": {
     "config": {
       "maxTurns": "最大循环次数（0=不限）",
