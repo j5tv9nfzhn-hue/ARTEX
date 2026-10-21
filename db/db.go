@@ -245,7 +245,7 @@ ON CONFLICT DO NOTHING`, r.kind, r.pattern, r.note); err != nil {
 // that MCP is enabled/configured.
 var builtinSkillVisibility = map[string][]string{
 	"api-recon":           {"auto", "pentest", "worker", "planner", "mainagent"},
-	"camoufox":      {"auto", "pentest", "worker", "planner", "mainagent"},
+	"camoufox":            {"auto", "pentest", "worker", "planner", "mainagent"},
 	"scopesentry-mcp":     {"auto", "pentest", "worker", "planner", "mainagent"},
 	"web-vuln-tactics":    {"auto", "pentest", "worker", "planner", "mainagent"},
 	"reverse-engineering": {"auto", "pentest", "worker", "planner", "mainagent"},

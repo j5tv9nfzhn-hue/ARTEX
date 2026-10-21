@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -78,12 +77,10 @@ func TestSeedBuiltinMCPToolsPopulatesCache(t *testing.T) {
 		t.Fatalf("expected ScopeSentry seeded with 17 tools, got %+v", ss)
 	}
 
-	br := byName["browser"]
-	if br == nil || len(br.Tools) != 22 || !slices.Contains(br.Tools, "mcp__browser__browser_navigate") {
-		t.Fatalf("expected browser seeded with 22 tools, got %+v", br)
-	}
-	var brArgs []string
-	if err := json.Unmarshal(br.Args, &brArgs); err != nil || !slices.Contains(brArgs, "-y") {
-		t.Fatalf("expected browser args to include -y, got %s (%v)", string(br.Args), err)
+	// browser（Chromium / Playwright）MCP 已在浏览器链路替换中退役：种子不再创建它，
+	// 存量安装也会被 browser_mcp_retired_v1 标记清掉。这条断言是“别复活”的栅栏——
+	// 浏览器自动化现在只走 Camoufox 技能（skills/camoufox + scripts/camoufox_cli.py）。
+	if br := byName["browser"]; br != nil {
+		t.Fatalf("browser MCP 应已退役，但种子仍创建了 %+v", br)
 	}
 }
