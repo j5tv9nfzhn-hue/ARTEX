@@ -40,6 +40,9 @@ func jsonResult(v any) (actool.Result, error) {
 func (s *Server) hostTools() ([]actool.CoreTool, map[string][]string) {
 	tools := append(s.m.HostTools(), s.orchestrationTools()...)
 	tools = append(tools, s.findingRetestTools()...)
+	// 复核工具与复测工具一样必须出现在这里：tools 表里只有元数据，实现靠 hostTools
+	// 按名字绑定。漏掉这一步，verifier 会话会拿到「工具不存在」而不是「没有权限」。
+	tools = append(tools, s.findingVerifyTools()...)
 	tools = append(tools, s.softwareAnalysisTools()...)
 	tools = append(tools, s.platformTools()...) // 平台操作工具(建改 skill/工具/MCP，给 Auto 用)
 	custom, err := s.customTools()

@@ -111,6 +111,8 @@ function Row({
         ) : (
           <StatusBadge domain="finding" value={f.status} dot />
         )}
+        {/* 复核态与处置态正交：任务内也照实显示，否则同一条发现在两个页面口径不一。 */}
+        {f.finding_id ? <StatusBadge domain="validation" value={f.validation ?? "unverified"} /> : null}
         <span className="hidden shrink-0 text-xs text-muted-foreground md:block">
           {new Date(f.ts).toLocaleString("zh-CN")}
         </span>
