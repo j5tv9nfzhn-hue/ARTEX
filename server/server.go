@@ -119,6 +119,7 @@ type Server struct {
 	// 活动流自动保留循环的最近一次运行结果（只服务存储页展示，不参与调度）。
 	// 见 server/activity_retention.go。
 	activityPrune activityPruneState
+	retentionAuto retentionAutoState
 
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
@@ -405,6 +406,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s.startUpdateWatcher()
 	// 活动流自动保留（默认关闭，用户在存储页设天数后才生效）。
 	s.startActivityRetention()
+	s.startRetentionAuto()
 	return s
 }
 

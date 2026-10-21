@@ -21,8 +21,9 @@ var (
 	ErrRetentionStale    = errors.New("清理预览已过期、已使用、策略已变化或凭据无效；请重新预览")
 )
 
-// Enabled arms MANUAL execution only. No timer/worker calls the cleanup API.
-// Zero days means keep indefinitely. Every selected row is rechecked at execute.
+// Enabled 是清理总开关：手动「预览 → 执行」与后台保底循环（server/retention_auto.go）
+// 都看它；关闭 = 一行都不删。Zero days means keep indefinitely. Every selected row is
+// rechecked at execute.
 type RetentionPolicy struct {
 	Enabled          bool `json:"enabled"`
 	UsageDays        int  `json:"usage_days"`
@@ -31,8 +32,12 @@ type RetentionPolicy struct {
 	MaxRowsPerTable  int  `json:"max_rows_per_table"`
 }
 
+// DefaultRetentionPolicy 是「没人动过」时的保底档：清扫类数据按 30 / 14 / 30 天丢，
+// 每次每表最多 200 行（写锁只按一次事务持有）。三个谓词都很保守——
+// llm_usage 里带 task_id / exploration_id 的行永远不动；server_logs 只动 debug/info
+// 且不含 auth/audit/security/intercept/approval/retention；通知只动已无任何引用的事件。
 func DefaultRetentionPolicy() RetentionPolicy {
-	return RetentionPolicy{UsageDays: 90, LogDays: 30, NotificationDays: 90, MaxRowsPerTable: 100}
+	return RetentionPolicy{Enabled: true, UsageDays: 30, LogDays: 14, NotificationDays: 30, MaxRowsPerTable: 200}
 }
 
 func (p RetentionPolicy) Validate() error {
