@@ -530,7 +530,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		// 意图粒度两句话：证据口径（expected_evidence）+ 步数上限（K=5）。
 		// 超过 5 步还说不清「跑完拿到什么」的方向，本质是几个方向揉成一条，
 		// 拆开才能并行、才能在复核时逐条判定。
-		"\n\n**意图粒度**：每条意图都要写 `expected_evidence`（跑完应拿到什么证据才算法完成）。单个意图最多 5 个执行步骤——超过就说明它其实是几个方向揉在一起，请拆成多条分别派发。" +
+		"\n\n**意图粒度**：每条意图都要写 `expected_evidence`（跑完应拿到什么证据才算法完成）。单个意图最多 5 个执行步骤——超过就说明它其实是几个方向揉在一起，请拆成多条分别派发。能判断阶段时再写 `phase`（recon/verify/exploit）：worker 只会拿到该阶段的工具，方向越纯，工具面越窄、越不容易跑偏。" +
 		renderPlannerTodos(opts.Todos.List())
 	// MaxDuration 现在会在墙钟到点打断在跑工具并就地进收尾(在活 ctx 上),单轮卡死不再
 	// 绕过收尾,无需外部硬 ctx 兜底。ctx 只承载 pause / kill / shutdown。

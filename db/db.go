@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"sync"
 
 	"github.com/Autumn-27/artex/config"
 	"github.com/Autumn-27/artex/mcpbuiltin"
@@ -29,7 +30,13 @@ func DSN() (dsn, source string, err error) {
 }
 
 // DB wraps the shared *sql.DB.
-type DB struct{ *sql.DB }
+type DB struct {
+	*sql.DB
+	// wq 是单写协程（见 db/writer.go）。懒初始化：测试里直接 &DB{DB: raw} 构造的
+	// 句柄也能用，不必依赖 openSQLite。
+	wqMu sync.Mutex
+	wq   *writeQueue
+}
 
 // Open connects, applies the schema (idempotent), and seeds builtin rows.
 //

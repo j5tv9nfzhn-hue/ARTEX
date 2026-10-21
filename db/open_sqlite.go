@@ -183,7 +183,13 @@ func openSQLite(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("ping sqlite (%s): %w", config.Redact(dsn), err)
 	}
 
-	d := &DB{sqlDB}
+	// 连接池上限:每条 sqlite 连接都带自己的页缓存(DSN 里 cache_size=-64MiB),无上限
+	// 意味着空闲连接越多常驻内存越高。写全部走单写协程(db/writer.go),8 条读连接
+	// 足够覆盖页面查询与流式读取。
+	sqlDB.SetMaxOpenConns(8)
+	sqlDB.SetMaxIdleConns(4)
+
+	d := &DB{DB: sqlDB}
 	// One connection for schema application and seeding, so the two cannot
 	// interleave and so a partially-created file is not left behind by a
 	// failed seed.

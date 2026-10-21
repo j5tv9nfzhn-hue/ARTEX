@@ -114,7 +114,7 @@ func Precheck(tool string, arguments json.RawMessage) (Decision, bool) {
 				Action:     "deny",
 				RuleName:   "precheck:destructive",
 				Confidence: 1,
-				Message:    "预检拒绝：该命令属于宿主级不可逆破坏（" + r.reason + "），与授权测试目标无关。",
+				Message:    "[预检] 拒绝：该命令属于宿主级不可逆破坏（" + r.reason + "），与授权测试目标无关。",
 			}, true
 		}
 	}
@@ -123,7 +123,7 @@ func Precheck(tool string, arguments json.RawMessage) (Decision, bool) {
 			Action:     "allow",
 			RuleName:   "precheck:readonly",
 			Confidence: 0.95,
-			Message:    "预检放行：只读侦察命令，不改动任何状态。",
+			Message:    "[预检] 放行：只读侦察命令，不改动任何状态。",
 		}, true
 	}
 	return Decision{}, false

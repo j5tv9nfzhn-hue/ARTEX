@@ -4337,6 +4337,27 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 	}
 	findings, _ := t.Store.ListByKind(db.KindFinding, 1000) // 纯漏洞（事实是独立的 KindFact）
 	facts, _ := t.Store.ListByKind(db.KindFact, 200)
+	// 报告正文只认「已被独立复核」的发现：读节点视图，用 findings 表的复核态过滤。
+	// 一条都没复核过时不做过滤（否则新任务第一次出报告就是空的），但会在开头注明口径。
+	reportNote := ""
+	if r.URL.Query().Get("include_unverified") != "1" && len(findings) > 0 {
+		taskID, _ := t.Store.TaskID()
+		if meta, err := s.m.Assets().FindingMetaByNodeID(taskID); err == nil {
+			verified := make([]*db.Node, 0, len(findings))
+			for _, n := range findings {
+				if meta[n.ID].Validation == db.FindingVerified {
+					verified = append(verified, n)
+				}
+			}
+			switch {
+			case len(verified) > 0:
+				reportNote = fmt.Sprintf("> 本报告仅纳入已被独立复核（verified）的 %d 条发现；另有 %d 条待复核未纳入（加 `include_unverified=1` 可取全部）。\n\n", len(verified), len(findings)-len(verified))
+				findings = verified
+			default:
+				reportNote = fmt.Sprintf("> 本任务尚无复核通过的发现，以下 %d 条均按未复核口径列出。\n\n", len(findings))
+			}
+		}
+	}
 	counts := map[string]int{}
 	for _, ty := range []string{"root_domain", "ip", "subdomain", "app", "service", "endpoint"} {
 		ns, _ := s.m.Assets().QueryByType(ty, 100000, 0)
@@ -4344,7 +4365,7 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 			counts[ty] = len(ns)
 		}
 	}
-	md := report.Markdown(report.Input{
+	md := reportNote + report.Markdown(report.Input{
 		Title: t.Description, Goal: t.Goal, GeneratedAt: time.Now(),
 		AssetCounts: counts, Findings: findings,
 		Intents: intents, Facts: facts, Hints: hints, Activities: activities,

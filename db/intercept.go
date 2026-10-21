@@ -228,6 +228,7 @@ func scanInterceptApprovalRow(rows interface{ Scan(...any) error }, r *Intercept
 // Keep legacy rows without decision_source consistent with their displayed source.
 const approvalDecisionSource = `COALESCE(NULLIF(ip.decision_source,''), CASE
  WHEN ip.rule_id IS NOT NULL THEN 'rule'
+ WHEN ip.reason LIKE '[预检]%' THEN 'rule'
  WHEN ip.reason LIKE '[模型]%' THEN 'model' ELSE 'unknown' END)`
 
 const approvalRowColumns = `ip.id, ip.rule_id, ip.conversation_id, ip.task_id, ip.agent_name,
@@ -246,6 +247,11 @@ const approvalRowSelectWithAudit = `SELECT ` + approvalRowColumns + `, ip.audit`
 
 func interceptSource(ruleID int64, reason string) string {
 	if ruleID != 0 {
+		return "rule"
+	}
+	// 预检是确定性规则层（不是模型），来源归到 rule：审批历史与筛选器都按
+	// rule/model 二分，多造一个来源值会把这些统计全部打散。
+	if strings.HasPrefix(reason, "[预检]") {
 		return "rule"
 	}
 	if strings.HasPrefix(reason, "[模型]") {

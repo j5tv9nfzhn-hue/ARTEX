@@ -448,9 +448,22 @@ func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int
 	return w.execute(ctx, name, taskID, as, ts, intent, hooks, emit, enr, notifyFinding, strings.TrimSpace(requestID), strings.TrimSpace(message))
 }
 
+// intentPhase 读意图 payload 里 planner 声明的阶段;读不到就返回空(不限制工具面)。
+func intentPhase(n *db.Node) string {
+	if n == nil || len(n.Payload) == 0 {
+		return ""
+	}
+	var p struct {
+		Phase string `json:"phase"`
+	}
+	_ = json.Unmarshal(n.Payload, &p)
+	return normalizeWorkerPhase(p.Phase)
+}
+
 func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
 	runDir := ensureRunDir(w.workDir, taskID, intent.ID)
 	tsx := NewToolSet(ts, name)
+	tsx.SetPhase(intentPhase(intent)) // 意图声明了阶段 → worker 只注入该阶段工具面
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)
 	tsx.SetProxy(w.proxyAddr, w.proxyCACert)

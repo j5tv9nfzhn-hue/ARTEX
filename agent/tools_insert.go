@@ -640,8 +640,63 @@ func splitLines(s string) []string {
 	return out
 }
 
-// WorkerTools returns the tool set for a work agent.
+// SetPhase 设置本 run 的阶段(recon/verify/exploit;其它值视为不限制)。
+func (t *ToolSet) SetPhase(phase string) { t.phase = normalizeWorkerPhase(phase) }
+
+// normalizeWorkerPhase 把外部传入的阶段名收敛到三个合法值,未知值一律当「不限制」——
+// 阶段只用来裁工具面,拼错一个词不该让 worker 少一半能力。
+func normalizeWorkerPhase(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case workerPhaseRecon:
+		return workerPhaseRecon
+	case workerPhaseVerify:
+		return workerPhaseVerify
+	case workerPhaseExploit:
+		return workerPhaseExploit
+	}
+	return ""
+}
+
+// 阶段取值。工具面按阶段分组的理由:worker 的 system prompt 里塞着整份工具定义,
+// 一个纯侦察的 worker 拿着 fuzz/利用工具既花 token 又容易被带跑偏(实测通用工具吞掉
+// 专用工具是主要问题)。阶段是「意图自己声明的」,缺省不限制,所以老流程不变。
+const (
+	workerPhaseRecon   = "recon"
+	workerPhaseVerify  = "verify"
+	workerPhaseExploit = "exploit"
+)
+
+// WorkerTools 按意图阶段注入工具面。阶段为空/未知 → 全量(与历史行为一致)。
 func (t *ToolSet) WorkerTools() []actool.CoreTool {
+	switch t.phase {
+	case workerPhaseRecon:
+		return []actool.CoreTool{
+			t.insertAssets(), t.listAssets(),
+			t.webReconTool(), t.dnsProbeTool(), t.netProbeTool(), t.httpRequestTool(),
+			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.nodeDetail(),
+			t.listFindings(), t.recordFact(), t.tacticalKBTool(),
+		}
+	case workerPhaseVerify:
+		return []actool.CoreTool{
+			t.humanVerificationTool(), t.verificationSolveTool(), t.verificationCapabilitiesTool(), t.verificationFlowTool(),
+			t.httpRequestTool(), t.binaryInspectTool(), t.extractDataTool(), t.codecCryptoTool(),
+			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.nodeDetail(),
+			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
+		}
+	case workerPhaseExploit:
+		return []actool.CoreTool{
+			t.httpFuzzTool(), t.httpSequenceTool(), t.httpRequestTool(),
+			t.codecCryptoTool(), t.extractDataTool(), t.binaryInspectTool(),
+			t.insertAssets(), t.listAssets(),
+			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.nodeDetail(),
+			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
+		}
+	}
+	return t.allWorkerTools()
+}
+
+// allWorkerTools 是阶段为空时的完整工具面(原 WorkerTools 的实现)。
+func (t *ToolSet) allWorkerTools() []actool.CoreTool {
 	return []actool.CoreTool{
 		// list_findings 保留：报漏洞前先查本任务已确认漏洞，避免重复上报同一漏洞。
 		t.listFindings(),

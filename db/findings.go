@@ -829,6 +829,9 @@ type FindingMeta struct {
 	ID       int64
 	Status   string
 	AssetIDs []int64
+	// Validation 是这条发现的复核态（unverified/verified/refuted）。按任务读节点视图
+	// 时用它决定这条发现进不进报告正文：只有 verified 才算真值。
+	Validation string
 }
 
 // FindingMetaByNodeID maps a task's finding node ids to their standalone-row
@@ -846,7 +849,7 @@ func (d *DB) FindingMetaByNodeID(taskID int64) (map[int64]FindingMeta, error) {
 	if taskID <= 0 {
 		return out, nil
 	}
-	rows, err := d.Query(`SELECT node_id, id, COALESCE(status,'pending'), asset_ids, (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=findings.id) FROM findings
+	rows, err := d.Query(`SELECT node_id, id, COALESCE(status,'pending'), asset_ids, (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=findings.id), COALESCE(validation,'') FROM findings
 		WHERE task_id=$1 AND node_id IS NOT NULL`, taskID)
 	if err != nil {
 		return out, err
@@ -856,7 +859,7 @@ func (d *DB) FindingMetaByNodeID(taskID int64) (map[int64]FindingMeta, error) {
 		var nid int64
 		var m FindingMeta
 		var aidsJSON string
-		if err := rows.Scan(&nid, &m.ID, &m.Status, &aidsJSON, &m.TrafficCount); err != nil {
+		if err := rows.Scan(&nid, &m.ID, &m.Status, &aidsJSON, &m.TrafficCount, &m.Validation); err != nil {
 			return out, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &m.AssetIDs)
