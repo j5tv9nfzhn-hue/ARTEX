@@ -85,6 +85,7 @@ export default function StoragePage() {
   const [days, setDays] = React.useState(30);
   // null = 跟着服务端值走；用户一改就变成草稿，保存成功后回到 null。
   const [keepDays, setKeepDays] = React.useState<number | null>(null);
+  const [keepMaxRows, setKeepMaxRows] = React.useState<number | null>(null);
 
   const load = React.useCallback(async () => {
     setError(null);
@@ -125,7 +126,11 @@ export default function StoragePage() {
   const wq = stats?.memory_db?.write_queue;
   const keep = stats?.activity_retention;
   const savedKeepDays = keep?.days ?? 0;
+  const savedMaxRows = keep?.max_rows ?? 0;
   const effectiveKeepDays = keepDays ?? savedKeepDays;
+  const effectiveMaxRows = keepMaxRows ?? savedMaxRows;
+  const retentionDirty =
+    (keepDays !== null && keepDays !== savedKeepDays) || (keepMaxRows !== null && keepMaxRows !== savedMaxRows);
   const freeRatio = db && db.page_count > 0 ? db.freelist / db.page_count : 0;
   const tables = db?.tables ?? [];
   const visibleTables = showAll ? tables : tables.slice(0, TABLE_PREVIEW);
@@ -466,15 +471,31 @@ export default function StoragePage() {
                   onChange={(e) => setKeepDays(Math.max(0, Math.min(3650, Number(e.target.value) || 0)))}
                 />
               </div>
+              <div className="flex-1">
+                <Label htmlFor="activity-retention-rows" className="text-xs">
+                  {t("retentionMaxRowsLabel")}
+                </Label>
+                <Input
+                  id="activity-retention-rows"
+                  type="number"
+                  min={0}
+                  max={10000000}
+                  step={10000}
+                  value={effectiveMaxRows}
+                  onChange={(e) => setKeepMaxRows(Math.max(0, Math.min(10000000, Number(e.target.value) || 0)))}
+                />
+              </div>
               <Button
                 variant="outline"
-                disabled={busy !== null || keepDays === null || keepDays === savedKeepDays}
+                disabled={busy !== null || !retentionDirty}
                 onClick={() =>
                   void run("retention", async () => {
                     const days = effectiveKeepDays;
-                    await storageApi.activityRetention(days);
+                    const rows = effectiveMaxRows;
+                    await storageApi.activityRetention(days, rows);
                     setKeepDays(null);
-                    return t("retentionSaved", { days });
+                    setKeepMaxRows(null);
+                    return t("retentionSaved", { days, rows: fmtNum(rows) });
                   })
                 }
               >
@@ -491,6 +512,7 @@ export default function StoragePage() {
                 }
               />
               <Stat label={t("retentionLastRows")} value={fmtNum(keep?.last_deleted ?? 0)} />
+              <Stat label={t("retentionLastCapped")} value={fmtNum(keep?.last_capped ?? 0)} />
             </div>
             <p className="text-[11px] text-muted-foreground">{t("retentionNote")}</p>
           </CardContent>

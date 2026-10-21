@@ -63,8 +63,13 @@ export interface StorageWriteQueue {
 export interface StorageActivityRetention {
   /** 自动保留天数；0 = 关闭。 */
   days: number;
+  /** 行数上限；0 = 不限。默认 10 万（≈200MB）。 */
+  max_rows: number;
+  /** 行数闸门的保护期：比它新的行不因超限被删。 */
+  floor_days: number;
   last_run_unix_ms?: number;
   last_deleted: number;
+  last_capped?: number;
   last_error?: string;
   interval_minutes: number;
 }
@@ -146,7 +151,10 @@ export const storageApi = {
     ),
   activityPurge: (days: number) =>
     storageRequest<PurgeResult>("/storage/activity/purge", post({ dry_run: false, confirm: true, days })),
-  /** 保存自动保留天数；0 = 关闭。 */
-  activityRetention: (days: number) =>
-    storageRequest<{ days: number; saved: boolean }>("/storage/activity/retention", post({ days })),
+  /** 保存保留策略；days 0 = 关闭，maxRows 0 = 不限。 */
+  activityRetention: (days: number, maxRows: number) =>
+    storageRequest<{ days: number; max_rows: number; saved: boolean }>(
+      "/storage/activity/retention",
+      post({ days, max_rows: maxRows }),
+    ),
 };
