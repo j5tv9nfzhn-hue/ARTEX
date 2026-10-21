@@ -116,8 +116,18 @@ func (s *Server) harnessApplyHandler(w http.ResponseWriter, r *http.Request) {
 			ok++
 		}
 	}
+	// 写完再扫一遍：这一步才是「客户端真的变成已接入」的证据。
+	//
+	// 它只能证明「配置文件里现在有 artex 且我们读得到」，不能证明客户端解析成功
+	// ——后者要么需要客户端自己在跑，要么需要它有 CLI 能列出 MCP。所以 B 级那批
+	// 仍然标 needs_verify，不因为是「我们写的」就升格成已核实。
+	states := make(map[string]string, len(targets))
+	for _, st := range harnessScanAll(in.ProjectDir) {
+		states[st.ID] = st.State
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"changes": applied,
+		"states":  states,
 		"summary": map[string]int{"applied": ok, "failed": failed, "skipped": len(applied) - ok - failed},
 	})
 }

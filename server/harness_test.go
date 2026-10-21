@@ -46,10 +46,10 @@ func TestHarnessExpandPath(t *testing.T) {
 	t.Setenv("TEST_HARNESS_HOME", filepath.Join(home, "custom"))
 
 	cases := map[string]string{
-		"~/.cursor/mcp.json":            filepath.Join(home, ".cursor", "mcp.json"),
-		"$TEST_HARNESS_HOME/mcp.json":   filepath.Join(home, "custom", "mcp.json"),
-		"${TEST_HARNESS_HOME}/a.json":   filepath.Join(home, "custom", "a.json"),
-		"$DSH_HOME/cordis.patch.yml":    filepath.Join(home, ".dsh", "cordis.patch.yml"),
+		"~/.cursor/mcp.json":             filepath.Join(home, ".cursor", "mcp.json"),
+		"$TEST_HARNESS_HOME/mcp.json":    filepath.Join(home, "custom", "mcp.json"),
+		"${TEST_HARNESS_HOME}/a.json":    filepath.Join(home, "custom", "a.json"),
+		"$DSH_HOME/cordis.patch.yml":     filepath.Join(home, ".dsh", "cordis.patch.yml"),
 		"$DSH_HOME/profiles/<profile>/x": filepath.Join(home, ".dsh", "profiles", "web", "x"),
 	}
 	for raw, want := range cases {
@@ -319,5 +319,47 @@ func TestHarnessHTTPEndpoints(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".cursor", "mcp.json")); err != nil {
 		t.Fatalf("apply 后文件不存在: %v", err)
+	}
+}
+
+func TestHarnessValidateRejectsBrokenContent(t *testing.T) {
+	if err := harnessValidate("json", `{"a":1}`); err != nil {
+		t.Errorf("合法 JSON 被拒: %v", err)
+	}
+	if err := harnessValidate("json", `{"a":`); err == nil {
+		t.Error("残缺 JSON 应当被拒")
+	}
+	// JSONC：注释和尾逗号都不该影响判定。
+	jsonc := "{\n // 注释\n \"servers\": {\"artex\": {\"url\": \"u\"},},\n}"
+	if err := harnessValidate("jsonc", jsonc); err != nil {
+		t.Errorf("合法 JSONC 被拒: %v", err)
+	}
+	if err := stripJSONC(`{"u":"http://x//y"}`); !strings.Contains(err, "http://x//y") {
+		t.Errorf("字符串里的 // 被吃掉了: %s", err)
+	}
+}
+
+func TestHarnessPlanSkipsUnwritableContent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
+
+	// 用户把 mcp.json 写成了数组：我们不能硬塞，只能标成手工。
+	dir := filepath.Join(home, ".cursor")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(`[1,2,3]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changes := harnessPlanAll(HarnessPlanInput{Targets: []string{"cursor"}, BaseURL: "http://127.0.0.1:8787", Token: "t"})
+	if len(changes) == 0 {
+		t.Fatal("没有产出")
+	}
+	if changes[0].Action != "manual" {
+		t.Fatalf("根不是对象时应标 manual，得到 %s", changes[0].Action)
+	}
+	if changes[0].Reason == "" {
+		t.Error("manual 必须给出原因")
 	}
 }

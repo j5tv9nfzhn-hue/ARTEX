@@ -69,7 +69,9 @@ func harnessEntry(c HarnessClient, in HarnessPlanInput) []harnessKV {
 	url := strings.TrimRight(in.BaseURL, "/") + "/mcp"
 
 	if c.Artex == "stdio" {
-		args := []string{"mcp", "serve", "--stdio"}
+		// --auto 让 L3 转发给控制台；不带的话客户端只能拿到 L0–L2，
+		// 而用户不会知道「少了四个工具」——那正是这次要修的坑。
+		args := []string{"mcp", "serve", "--stdio", "--auto"}
 		switch c.ID {
 		case "opencode":
 			return []harnessKV{
@@ -697,6 +699,9 @@ func harnessPlanClient(c HarnessClient, in HarnessPlanInput) []HarnessChange {
 			existed = true
 		}
 		after, err := harnessRender(cfg, c, in, before)
+		if err == nil {
+			err = harnessValidate(cfg.Format, after)
+		}
 		if err != nil {
 			ch.Action = "manual"
 			ch.Reason = err.Error()
@@ -725,6 +730,114 @@ func harnessPlanClient(c HarnessClient, in HarnessPlanInput) []HarnessChange {
 		out = append(out, base)
 	}
 	return out
+}
+
+// harnessValidate 在落盘前把「我们刚拼出来的这份内容」再解一遍。
+//
+// 为什么值得多这一步：一键配置是全自动写用户的配置文件，写坏一次用户就再也
+// 不敢点第二次。JSON/JSONC 能就地验；TOML/YAML 没有标准库解析器，交给写入后
+// 回扫（内容里能不能找到 artex）做最低限度的确认。
+func harnessValidate(format, content string) error {
+	switch format {
+	case "json":
+		var probe map[string]any
+		if err := json.Unmarshal([]byte(content), &probe); err != nil {
+			return fmt.Errorf("生成的 JSON 解不开，已放弃写入: %v", err)
+		}
+	case "jsonc":
+		var probe map[string]any
+		if err := json.Unmarshal([]byte(stripJSONC(content)), &probe); err != nil {
+			return fmt.Errorf("生成的 JSONC 解不开，已放弃写入: %v", err)
+		}
+	}
+	return nil
+}
+
+// stripJSONC 去掉注释与尾逗号，只为「能不能解开」这一件事。
+//
+// 它不是解析器，也不打算是：字符串里的 // 不动，注释里的引号不管。
+// 用它做校验，宁可漏报（放过一个坏文件），也不误杀（把好文件判成坏）。
+func stripJSONC(s string) string {
+	var b strings.Builder
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if inStr {
+			b.WriteByte(ch)
+			if ch == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+				continue
+			}
+			if ch == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inStr = true
+			b.WriteByte(ch)
+			continue
+		}
+		if ch == '/' && i+1 < len(s) {
+			if s[i+1] == '/' {
+				for i < len(s) && s[i] != '\n' {
+					i++
+				}
+				if i < len(s) {
+					b.WriteByte('\n')
+				}
+				continue
+			}
+			if s[i+1] == '*' {
+				i += 2
+				for i+1 < len(s) && !(s[i] == '*' && s[i+1] == '/') {
+					i++
+				}
+				i++
+				continue
+			}
+		}
+		b.WriteByte(ch)
+	}
+	return stripTrailingCommas(b.String())
+}
+
+// stripTrailingCommas 把 ,} 与 ,] 里的逗号去掉（同样只在字符串外动手）。
+func stripTrailingCommas(s string) string {
+	var b strings.Builder
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if inStr {
+			b.WriteByte(ch)
+			if ch == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+				continue
+			}
+			if ch == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inStr = true
+			b.WriteByte(ch)
+			continue
+		}
+		if ch == ',' {
+			j := i + 1
+			for j < len(s) && strings.ContainsRune(" \t\r\n", rune(s[j])) {
+				j++
+			}
+			if j < len(s) && (s[j] == '}' || s[j] == ']') {
+				continue // 丢掉这个逗号
+			}
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
 }
 
 // harnessRender 按方言把 entry 合进现有内容。
@@ -880,7 +993,7 @@ func harnessSnippet(c HarnessClient, in HarnessPlanInput) string {
 	case "claude-code":
 		return fmt.Sprintf("claude mcp add --transport http artex %s \\\n  --header \"Authorization: Bearer %s\" --scope user", url, in.Token)
 	case "codex":
-		return fmt.Sprintf("[mcp_servers.artex]\ncommand = %s\nargs = [\"mcp\", \"serve\", \"--stdio\"]", jsonQuote(in.Exe))
+		return fmt.Sprintf("[mcp_servers.artex]\ncommand = %s\nargs = [\"mcp\", \"serve\", \"--stdio\", \"--auto\"]", jsonQuote(in.Exe))
 	}
 	kvs := harnessEntry(c, in)
 	switch c.Config[0].Format {

@@ -25,9 +25,10 @@ const EXE_FALLBACK = "C:\\ARTEX程序\\artex-rea.exe";
 function buildSnippets(exe: string, endpoint: string): Record<ClientKey, string> {
   return {
     codex: `# ~/.codex/config.toml（表名必须是 mcp_servers，写成 JSON 会被静默忽略）
+# --auto 让 L3（建任务）转发给控制台；不加只有 L0–L2 共 21 个工具
 [mcp_servers.artex]
 command = "${exe}"
-args = ["mcp", "serve", "--stdio"]
+args = ["mcp", "serve", "--stdio", "--auto"]
 startup_timeout_sec = 20
 tool_timeout_sec = 300
 enabled = true
@@ -42,7 +43,7 @@ enabled = true
   "mcp": {
     "artex": {
       "type": "local",
-      "command": ["${exe}", "mcp", "serve", "--stdio"],
+      "command": ["${exe}", "mcp", "serve", "--stdio", "--auto"],
       "enabled": true,
       "timeout": 15000
     }
@@ -67,7 +68,7 @@ enabled = true
   --header "Authorization: Bearer $ARTEX_MCP_TOKEN" --scope user
 
 # 或本地 stdio：
-claude mcp add artex -- "${exe}" mcp serve --stdio
+claude mcp add artex -- "${exe}" mcp serve --stdio --auto
 # 工具在 Claude Code 里呈现为 mcp__artex__pe_info`,
     vscode: `// .vscode/mcp.json —— 根键是 servers（唯一不同的一家）
 {
@@ -92,7 +93,8 @@ claude mcp add artex -- "${exe}" mcp serve --stdio
     }
   }
 }`,
-    dsh: `# 原生插件（推荐）：
+    dsh: `# --auto 的 L3 由控制台承载：控制台没开时建任务会明确报错，不会静默停在 pending
+# 原生插件（推荐）：
 dsh plugin --profile web add artex-dsh
 
 # 若坚持用官方 mcp-client 桥接，$DSH_HOME/cordis.patch.yml 加一行：
