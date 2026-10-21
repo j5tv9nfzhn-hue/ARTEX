@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -257,5 +259,65 @@ func TestHarnessPlanUnknownTarget(t *testing.T) {
 	changes := harnessPlanAll(HarnessPlanInput{Targets: []string{"nope"}, BaseURL: "http://x"})
 	if len(changes) != 1 || changes[0].Action != "skip" {
 		t.Fatalf("未知目标应 skip: %+v", changes)
+	}
+}
+
+func TestHarnessHTTPEndpoints(t *testing.T) {
+	s := newMCPTestServer(t)
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
+
+	// GET /api/harness：扫描要能返回全部注册项与端点。
+	rec := httptest.NewRecorder()
+	s.harnessListHandler(rec, httptest.NewRequest("GET", "http://127.0.0.1:8787/api/harness", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d: %s", rec.Code, rec.Body.String())
+	}
+	var scan struct {
+		Endpoint string `json:"endpoint"`
+		Clients  []struct {
+			ID string `json:"id"`
+		} `json:"clients"`
+		Stats map[string]int `json:"stats"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &scan); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if !strings.HasSuffix(scan.Endpoint, "/mcp") {
+		t.Errorf("端点应指向 /mcp，得到 %q", scan.Endpoint)
+	}
+	if len(scan.Clients) < 25 {
+		t.Errorf("扫描结果太少: %d", len(scan.Clients))
+	}
+
+	// POST /api/harness/plan：只读，必须给出 create 且不落盘。
+	rec2 := httptest.NewRecorder()
+	body := `{"targets":["cursor"],"project_dir":""}`
+	s.harnessPlanHandler(rec2, httptest.NewRequest("POST", "http://127.0.0.1:8787/api/harness/plan", strings.NewReader(body)))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("plan 状态码 %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var plan struct {
+		Changes []HarnessChange `json:"changes"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &plan); err != nil {
+		t.Fatalf("plan 响应不是合法 JSON: %v", err)
+	}
+	if len(plan.Changes) == 0 || plan.Changes[0].Action != "create" {
+		t.Fatalf("plan 应给出 create: %+v", plan.Changes)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "mcp.json")); !os.IsNotExist(err) {
+		t.Error("plan 不应该写盘")
+	}
+
+	// POST /api/harness/apply：真写，且回读得到 artex。
+	rec3 := httptest.NewRecorder()
+	s.harnessApplyHandler(rec3, httptest.NewRequest("POST", "http://127.0.0.1:8787/api/harness/apply", strings.NewReader(body)))
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("apply 状态码 %d: %s", rec3.Code, rec3.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "mcp.json")); err != nil {
+		t.Fatalf("apply 后文件不存在: %v", err)
 	}
 }

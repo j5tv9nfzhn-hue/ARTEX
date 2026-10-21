@@ -1,14 +1,12 @@
-"use client";
-
 import { useTranslations } from "next-intl";
 
+import { HarnessTargetsCard } from "@/components/harness-targets-card";
 import { MCPExposureCard } from "@/components/mcp-exposure-card";
 
 // 外部接入：ARTEX 作为 MCP 服务端，给 Codex / Claude Code / Cursor 这类外部 harness 用。
 //
-// 为什么从 MCP 页拆出来：那一页管的是「ARTEX 去连别人」（作为客户端），
-// 这一页管的是「别人来连 ARTEX」（作为服务端）。两者的心智、权限和风险完全不同，
-// 混在一页里，用户找「怎么让 Cursor 接进来」根本不会想到去点 MCP。
+// 页面上两件事：先「扫描到谁、一键写进去」（HarnessTargetsCard），
+// 再「没扫到的、或想手工配的，抄这段」（MCPExposureCard）。
 export default function ExternalAccessPage() {
   const t = useTranslations("externalPage");
   return (
@@ -17,6 +15,8 @@ export default function ExternalAccessPage() {
         <h1 className="font-semibold text-xl tracking-tight">{t("title")}</h1>
         <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
       </div>
+
+      <HarnessTargetsCard />
 
       <MCPExposureCard />
 

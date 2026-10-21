@@ -48,6 +48,8 @@ import type {
   FindingsPage,
   FindingTraffic,
   FindingTrafficDetail,
+  HarnessPlanResult,
+  HarnessScan,
   IntentAsset,
   InterceptApprovalFilter,
   InterceptApprovalRow,
@@ -1272,6 +1274,14 @@ export const api = {
     post<{ id: number; renamed_from?: string; migrated?: Record<string, number> }>("/mcp", m),
   deleteMcpServer: (id: number) => del<{ deleted: number }>(`/mcp/${id}`),
   mcpTools: (id: number) => get<{ tools: MCPTool[] }>(`/mcp/${id}/tools`).then((r) => arr(r.tools)),
+
+  // ---- 外部 harness 扫描与一键配置 ----
+  harnessScan: (projectDir?: string) =>
+    get<HarnessScan>(`/harness${projectDir ? `?project_dir=${encodeURIComponent(projectDir)}` : ""}`),
+  harnessPlan: (targets: string[], projectDir?: string) =>
+    post<HarnessPlanResult>("/harness/plan", { targets, project_dir: projectDir ?? "" }),
+  harnessApply: (targets: string[], projectDir?: string) =>
+    post<HarnessPlanResult>("/harness/apply", { targets, project_dir: projectDir ?? "" }),
   refreshMcpServer: (id: number) => post<{ tools: MCPTool[] }>(`/mcp/${id}/refresh`, {}).then((r) => arr(r.tools)),
 
   // ---- 对外接入（ARTEX 作为 MCP 服务器）----

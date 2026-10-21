@@ -1986,3 +1986,75 @@ export interface REMCPCandidate {
   enabled: boolean;
   cached_tools: string[] | null;
 }
+
+// ---- 外部 harness 接入（ARTEX 作为 MCP 服务端）----
+
+export type HarnessConfigStatus = {
+  scope: string;
+  display: string;
+  path: string;
+  resolved: boolean;
+  format: string;
+  strategy: string;
+  note?: string;
+  exists: boolean;
+  writable: boolean;
+  has_artex: boolean;
+  size_bytes: number;
+  unreadable?: string;
+};
+
+export type HarnessClientStatus = {
+  id: string;
+  name: string;
+  vendor: string;
+  kind: string;
+  src: string;
+  mcp: string;
+  tier: string;
+  artex: string;
+  restart: boolean;
+  needs_verify: boolean;
+  notes: string;
+  doc: string;
+  bin_path?: string;
+  state: string;
+  stale: boolean;
+  configs: HarnessConfigStatus[];
+};
+
+export type HarnessScan = {
+  version: number;
+  generated: string;
+  project_dir: string;
+  endpoint: string;
+  exe: string;
+  token_mask: string;
+  stats: Record<string, number>;
+  clients: HarnessClientStatus[];
+};
+
+export type HarnessChange = {
+  client_id: string;
+  client_name: string;
+  tier: string;
+  needs_verify: boolean;
+  scope: string;
+  format: string;
+  strategy: string;
+  path: string;
+  display_path: string;
+  action: string;
+  reason?: string;
+  diff?: string;
+  after?: string;
+  snippet?: string;
+  applied?: boolean;
+  backup?: string;
+  error?: string;
+};
+
+export type HarnessPlanResult = {
+  changes: HarnessChange[];
+  summary: Record<string, number>;
+};
