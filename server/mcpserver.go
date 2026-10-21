@@ -88,7 +88,7 @@ func mcpFileGuard() *mcpserver.FileGuard {
 // buildMCPServer 按当前设置装配工具面。每次请求重建：工具是闭包，成本可忽略，
 // 换来的是「改完开关立即生效」，没有缓存失效的坑。
 func (s *Server) buildMCPServer() *mcpserver.Server {
-	return mcpBuild(s.m.pg, s.mcpTiers(), mcpFileGuard(), s.recordMCPUsage)
+	return mcpBuild(s, s.mcpTiers(), mcpFileGuard(), s.recordMCPUsage)
 }
 
 // NewMCPStdioServer 用一条独立数据库连接装配 MCP 服务端，供 `artex mcp serve`
@@ -98,12 +98,19 @@ func NewMCPStdioServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string) *mcps
 	if root := strings.TrimSpace(fileRoot); root != "" {
 		guard = &mcpserver.FileGuard{Root: root}
 	}
-	return mcpBuild(pg, tiers, guard, nil)
+	// 独立进程里没有正在跑的引擎：L3 建的任务不会被任何人执行，
+	// 所以 stdio 模式一律不收 L3（要委派请走控制台进程的 /mcp）。
+	kept := make([]mcpserver.Tier, 0, len(tiers))
+	for _, t := range tiers {
+		if t != mcpserver.L3 {
+			kept = append(kept, t)
+		}
+	}
+	return mcpBuild(&Server{m: &Manager{pg: pg}}, kept, guard, nil)
 }
 
 // mcpBuild 是两条入口（控制台 HTTP / CLI stdio）共用的装配函数。
-func mcpBuild(pg *db.DB, tiers []mcpserver.Tier, guard *mcpserver.FileGuard, audit func(mcpserver.AuditEvent)) *mcpserver.Server {
-	owner := &Server{m: &Manager{pg: pg}}
+func mcpBuild(owner *Server, tiers []mcpserver.Tier, guard *mcpserver.FileGuard, audit func(mcpserver.AuditEvent)) *mcpserver.Server {
 	tools := make([]mcpserver.Tool, 0, 32)
 	tools = append(tools, mcpserver.BuiltinTools("artex-binscan", mcpserver.L0, guard)...)
 	tools = append(tools, owner.mcpL1Tools()...)

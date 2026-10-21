@@ -342,9 +342,6 @@ func (s *Server) mcpTacticalKB(_ context.Context, raw json.RawMessage) (string, 
 	return "", fmt.Errorf("未知 mode: %s（可选 vuln_patterns / logic_invariants / past_findings / past_assets）", mode)
 }
 
-// mcpL3Tools 预留给 P5 的编排委派；默认 L3 档未开启，这里返回空。
-func (s *Server) mcpL3Tools() []mcpserver.Tool { return nil }
-
 // --- 小工具 ---
 
 func mcpJSONString(v any) (string, error) {

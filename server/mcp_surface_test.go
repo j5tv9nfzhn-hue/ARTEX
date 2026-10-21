@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -310,5 +311,71 @@ func TestMCPFileGuard(t *testing.T) {
 	if _, err := fileIdentify.Handler(context.Background(),
 		json.RawMessage(fmt.Sprintf(`{"path":%q}`, sample))); err != nil {
 		t.Fatalf("普通样本应可读: %v", err)
+	}
+}
+
+// TestMCPL3Gating：L3 默认不可见；显式开启后出现四个编排工具。
+func TestMCPL3Gating(t *testing.T) {
+	s := newMCPTestServer(t)
+	if hasTool(s.buildMCPServer(), "task_create") {
+		t.Fatal("L3 默认不应可见 task_create")
+	}
+	if err := s.saveMCPTiers([]mcpserver.Tier{mcpserver.L0, mcpserver.L1, mcpserver.L3}); err != nil {
+		t.Fatalf("saveMCPTiers: %v", err)
+	}
+	srv := s.buildMCPServer()
+	for _, n := range []string{"task_create", "task_status", "task_pause", "task_resume"} {
+		if !hasTool(srv, n) {
+			t.Fatalf("开 L3 后缺少工具 %s", n)
+		}
+	}
+	if hasTool(srv, "dns_recon") {
+		t.Fatal("未开 L2 时 dns_recon 不应可见")
+	}
+}
+
+// TestMCPL3Delegation：外部 harness 起任务 → 用 task_status 拿到进度。
+func TestMCPL3Delegation(t *testing.T) {
+	s := newMCPTestServer(t)
+	if err := s.saveMCPTiers([]mcpserver.Tier{mcpserver.L0, mcpserver.L1, mcpserver.L3}); err != nil {
+		t.Fatalf("saveMCPTiers: %v", err)
+	}
+	srv := s.buildMCPServer()
+	var create, status mcpserver.Tool
+	for _, tl := range srv.Tools() {
+		switch tl.Name {
+		case "task_create":
+			create = tl
+		case "task_status":
+			status = tl
+		}
+	}
+	text, err := create.Handler(context.Background(), json.RawMessage(
+		`{"description":"smoke: mcp 委派","goal":"确认 /api/health 可达","analysis_domain":"web_security","name":"mcp-delegation"}`))
+	if err != nil {
+		t.Fatalf("task_create: %v", err)
+	}
+	// 任务的 id 在 JSON 里是字符串（Task 的序列化约定），两种形态都接受。
+	var created struct {
+		TaskID json.RawMessage `json:"task_id"`
+	}
+	if err := json.Unmarshal([]byte(text), &created); err != nil {
+		t.Fatalf("task_create 输出不是 JSON: %v (%s)", err, text)
+	}
+	idStr := strings.Trim(string(created.TaskID), `"`)
+	taskID, convErr := strconv.ParseInt(idStr, 10, 64)
+	if convErr != nil || taskID <= 0 {
+		t.Fatalf("task_id=%q (%v)", idStr, convErr)
+	}
+	out, err := status.Handler(context.Background(), json.RawMessage(fmt.Sprintf(`{"id":%d}`, taskID)))
+	if err != nil {
+		t.Fatalf("task_status: %v", err)
+	}
+	if !strings.Contains(out, "mcp-delegation") {
+		t.Fatalf("task_status 没带上任务名: %s", clipRunes(out, 300))
+	}
+	// 参数缺失必须被拒，而不是建出一个空任务。
+	if _, err := create.Handler(context.Background(), json.RawMessage(`{"description":"x"}`)); err == nil {
+		t.Fatal("缺 goal 应报错")
 	}
 }
