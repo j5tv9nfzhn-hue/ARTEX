@@ -29,6 +29,10 @@ func (s *Server) mcpL3Tools() []mcpserver.Tool {
 			Description: "把一个目标交给 ARTEX 后台任务。description 写清范围与约束，goal 写要达成的验证目标。返回 task_id，用 task_status 跟进。属于写操作，仅在 L3 开启时可用。",
 			Tier:        mcpserver.L3,
 			ReadOnly:    false,
+			// 建任务是「新增」，不破坏既有数据；但会驱动 ARTEX 对目标出网。
+			Destructive: false,
+			Idempotent:  false,
+			OpenWorld:   true,
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

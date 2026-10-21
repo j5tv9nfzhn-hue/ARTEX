@@ -274,3 +274,75 @@ func TestAllowAndDenyLists(t *testing.T) {
 		t.Fatalf("白名单+黑名单交集应为 [echo]，得到 %v", got)
 	}
 }
+
+// TestServerDiscover：2026-07-28 要求服务端必须实现 server/discover。
+func TestServerDiscover(t *testing.T) {
+	s := fixture()
+	out := decodeResult(t, s.HandleFrame(context.Background(),
+		frame(t, map[string]any{"jsonrpc": "2.0", "id": 11, "method": "server/discover"})))
+	res, ok := out["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("server/discover 没有 result: %v", out)
+	}
+	if res["resultType"] != "complete" {
+		t.Fatalf("resultType=%v", res["resultType"])
+	}
+	versions, _ := res["protocolVersions"].([]any)
+	found := false
+	for _, v := range versions {
+		if v == ProtocolVersion {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("protocolVersions 不含当前版本: %v", versions)
+	}
+	caps, _ := res["capabilities"].(map[string]any)
+	if _, ok := caps["tools"]; !ok {
+		t.Fatalf("capabilities 缺 tools: %v", caps)
+	}
+	info, _ := res["serverInfo"].(map[string]any)
+	if info["name"] != "artex" {
+		t.Fatalf("serverInfo.name=%v", info["name"])
+	}
+}
+
+// TestToolAnnotations：四个注解位必须全部下发。
+// 缺任何一位，Codex 会按「危险」解释（每次调用都要求审批），
+// Claude Code 的 plan 模式也不会自动放行。
+func TestToolAnnotations(t *testing.T) {
+	s := fixture()
+	out := decodeResult(t, s.HandleFrame(context.Background(),
+		frame(t, map[string]any{"jsonrpc": "2.0", "id": 12, "method": "tools/list"})))
+	res, _ := out["result"].(map[string]any)
+	tools, _ := res["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatal("tools 为空")
+	}
+	for _, item := range tools {
+		tl, _ := item.(map[string]any)
+		ann, ok := tl["annotations"].(map[string]any)
+		if !ok {
+			t.Fatalf("%v 没有 annotations", tl["name"])
+		}
+		for _, key := range []string{"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"} {
+			if _, ok := ann[key]; !ok {
+				t.Fatalf("%v 缺 %s", tl["name"], key)
+			}
+		}
+		if ann["readOnlyHint"] == true && ann["idempotentHint"] != true {
+			t.Fatalf("%v 是只读却没标幂等", tl["name"])
+		}
+	}
+}
+
+// TestResultType：每个结果都带 resultType（新客户端靠它识别结果种类）。
+func TestResultType(t *testing.T) {
+	s := fixture()
+	out := decodeResult(t, s.HandleFrame(context.Background(),
+		frame(t, map[string]any{"jsonrpc": "2.0", "id": 13, "method": "tools/list"})))
+	res, _ := out["result"].(map[string]any)
+	if res["resultType"] != "complete" {
+		t.Fatalf("resultType=%v", res["resultType"])
+	}
+}

@@ -24,7 +24,9 @@ func BuiltinTools(server string, tier Tier, guard *FileGuard) []Tool {
 			Schema:      t.Schema,
 			Tier:        tier,
 			ReadOnly:    true,
-			Handler:     guardHandler(t.Handler, guard),
+			// L2 会出网访问目标；L0 只读本地文件。
+			OpenWorld: tier == L2,
+			Handler:   guardHandler(t.Handler, guard),
 		})
 	}
 	return out

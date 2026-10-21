@@ -101,6 +101,15 @@ type Tool struct {
 	Tier        Tier
 	// ReadOnly 会作为 annotations.readOnlyHint 透出，客户端据此决定是否要求确认。
 	ReadOnly bool
+	// Destructive / Idempotent / OpenWorld 对应 MCP 的另外三个注解位。
+	//
+	// 为什么必须显式给：Codex 的默认审批模式把「缺省」当作最危险解释
+	// （destructiveHint / openWorldHint 缺省 = true），没注解的工具每调一次都要审批；
+	// Claude Code 的 plan 模式只自动放行 readOnlyHint=true 的工具。
+	// 所以宁可写死，也不要留空。
+	Destructive bool
+	Idempotent  bool
+	OpenWorld   bool
 	// Handler 收到模型传来的原始 JSON 对象（可能是 {} 或 null 归一后的 {}）。
 	Handler func(ctx context.Context, args json.RawMessage) (string, error)
 }

@@ -151,6 +151,13 @@ func (s *Server) handleOne(ctx context.Context, req Request) *Response {
 	if rerr != nil {
 		return &Response{JSONRPC: "2.0", ID: req.ID, Error: rerr}
 	}
+	// 2026-07-28 要求结果带 resultType；老客户端会忽略这个多余字段，
+	// 新客户端靠它区分「普通结果 / task 句柄 / 需要补输入」。
+	if m, ok := result.(map[string]any); ok {
+		if _, exists := m["resultType"]; !exists {
+			m["resultType"] = "complete"
+		}
+	}
 	return &Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 }
 
@@ -161,7 +168,10 @@ func (s *Server) Handle(ctx context.Context, method string, params json.RawMessa
 		return s.initialize(params), nil
 	case "notifications/initialized", "notifications/cancelled":
 		return nil, nil
+	case "server/discover":
+		return s.discover(), nil
 	case "ping":
+		// ping 在 2026-07-28 里被移除，但旧客户端仍会用；保留无副作用。
 		return map[string]any{}, nil
 	case "tools/list":
 		return map[string]any{"tools": s.toolList()}, nil
@@ -185,6 +195,50 @@ func (s *Server) Handle(ctx context.Context, method string, params json.RawMessa
 	return nil, &Error{Code: CodeMethodNotFound, Message: "method not found: " + method}
 }
 
+// discover 是 2026-07-28 的 server/discover：服务端必须实现，客户端可选调用。
+//
+// 这个版本的核心是「无状态」——没有 initialize 握手，协议版本与客户端能力
+// 随每个请求的 _meta 到达；server/discover 只是让想提前知道能力的客户端问一次。
+// 我们同时保留 initialize 以兼容 2025 系客户端（它们仍然会先握手）。
+func (s *Server) discover() map[string]any {
+	versions := make([]string, 0, len(supportedProtocols))
+	versions = append(versions, ProtocolVersion)
+	for v := range supportedProtocols {
+		if v != ProtocolVersion {
+			versions = append(versions, v)
+		}
+	}
+	sort.Strings(versions[1:])
+	out := map[string]any{
+		"resultType":       "complete",
+		"protocolVersions": versions,
+		"capabilities":     s.capabilities(),
+		"serverInfo": map[string]any{
+			"name":    s.cfg.Name,
+			"title":   s.cfg.Title,
+			"version": s.cfg.Version,
+		},
+	}
+	if s.cfg.Instructions != "" {
+		out["instructions"] = s.cfg.Instructions
+	}
+	return out
+}
+
+// capabilities 是 initialize 与 server/discover 共用的一份能力声明。
+func (s *Server) capabilities() map[string]any {
+	caps := map[string]any{
+		"tools": map[string]any{"listChanged": false},
+	}
+	if s.cfg.ReadResource != nil {
+		caps["resources"] = map[string]any{"subscribe": false, "listChanged": false}
+	}
+	if s.cfg.GetPrompt != nil {
+		caps["prompts"] = map[string]any{"listChanged": false}
+	}
+	return caps
+}
+
 // initialize 结果。协议版本按客户端声明协商，未知版本回我们的首选版本，
 // 由客户端决定是否继续（规范允许服务端返回自己支持的最高版本）。
 func (s *Server) initialize(params json.RawMessage) map[string]any {
@@ -196,18 +250,9 @@ func (s *Server) initialize(params json.RawMessage) map[string]any {
 	if supportedProtocols[strings.TrimSpace(p.ProtocolVersion)] {
 		version = strings.TrimSpace(p.ProtocolVersion)
 	}
-	caps := map[string]any{
-		"tools": map[string]any{"listChanged": false},
-	}
-	if s.cfg.ReadResource != nil {
-		caps["resources"] = map[string]any{"subscribe": false, "listChanged": false}
-	}
-	if s.cfg.GetPrompt != nil {
-		caps["prompts"] = map[string]any{"listChanged": false}
-	}
 	out := map[string]any{
 		"protocolVersion": version,
-		"capabilities":    caps,
+		"capabilities":    s.capabilities(),
 		"serverInfo": map[string]any{
 			"name":    s.cfg.Name,
 			"title":   s.cfg.Title,
@@ -241,7 +286,13 @@ func (s *Server) toolList() []mcpTool {
 			Title:       t.Title,
 			Description: t.Description,
 			InputSchema: schema,
-			Annotations: map[string]any{"readOnlyHint": t.ReadOnly},
+			Annotations: map[string]any{
+				"readOnlyHint":    t.ReadOnly,
+				"destructiveHint": t.Destructive,
+				// 只读工具天然幂等；写工具由注册方显式声明。
+				"idempotentHint": t.Idempotent || t.ReadOnly,
+				"openWorldHint":  t.OpenWorld,
+			},
 		})
 	}
 	return out
