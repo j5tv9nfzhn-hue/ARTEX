@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/Autumn-27/norma/agentcore"
+	"github.com/Autumn-27/norma/noa"
 	"github.com/Autumn-27/norma/noaadapter"
 )
 
@@ -24,19 +25,43 @@ func noaWarn(session string) func(string) {
 // (取全局 workDir,各 agent 统一落在 <workDir>/noa 下,不随任务/意图目录分散),sessionID
 // 命名其下的归档子目录(全局唯一,故同一基目录内不冲突)。
 //
+// window 是用户为该模型配置的上下文窗口。noa 的 nudge 压力带按它算百分比,不传就会
+// 一律按 200K 处理——1M 窗口的模型会被当成 200K,提前五倍开始压缩。
+// 触发比例与内置压缩共用 CompactionRatio()(默认 0.80),两条链路口径一致。
+//
 // noa 是实验功能:接入失败不得中断真实任务。发生错误时经 onWarn 上报并回退内置压缩。
 // 启用成功时清掉 opts.Compaction,避免 agentcore 因「两个上下文管理器同时设置」告警。
-func enableNoa(opts *agentcore.Options, enabled func() bool, archiveRoot, sessionID string, onWarn func(string)) {
+func enableNoa(opts *agentcore.Options, enabled func() bool, archiveRoot, sessionID string, window int, onWarn func(string)) {
 	if enabled == nil || !enabled() {
 		return
 	}
 	if opts.OnWarn == nil {
 		opts.OnWarn = onWarn
 	}
+	if window <= 0 {
+		window = 200000
+	}
+	cfg := noa.DefaultConfig(window)
+	ratio := CompactionRatio()
+	// nudge 压力带的下沿就是"开始提示模型压缩"的位置,对齐黄金比例。
+	cfg.Nudge.MaxContextLimitPct = ratio
+	if cfg.Nudge.MinContextLimitPct >= ratio {
+		cfg.Nudge.MinContextLimitPct = ratio * 0.6
+	}
+	// ValidateConfig 要求 Max ≤ Emergency;比例调高时把紧急线一并抬起。
+	if cfg.Nudge.EmergencyThresholdPct < ratio {
+		emergency := ratio + 0.15
+		if emergency > 0.99 {
+			emergency = 0.99
+		}
+		cfg.Nudge.EmergencyThresholdPct = emergency
+	}
 	if err := noaadapter.Enable(opts, noaadapter.Options{
-		ArchiveBaseDir: filepath.Join(archiveRoot, "noa"),
-		SessionID:      sessionID,
-		OnWarn:         onWarn,
+		ArchiveBaseDir:    filepath.Join(archiveRoot, "noa"),
+		SessionID:         sessionID,
+		OnWarn:            onWarn,
+		ModelContextLimit: window,
+		Config:            &cfg,
 	}); err != nil {
 		if onWarn != nil {
 			onWarn("noa 压缩启用失败,回退内置压缩:" + err.Error())

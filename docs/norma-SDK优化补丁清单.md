@@ -15,6 +15,7 @@
 | 4 | 截断恢复次数未暴露 | 低 | maxOutputTokensRecoveryLimit=3 不可配置 |
 | 5 | OpenAI prompt_cache_key | 中 | OpenAI 格式请求缺 prompt_cache_key 字段 |
 | 6 | TokenBudget 语义评价 | 低 | 是「续跑激励」不是硬上限，不建议宿主当成本闸 |
+| 7 | 压缩触发比例不可配 | 中 | 触发点由 ContextWindow 反推，同一套默认值在 128K/1M 上差 18 个百分点 |
 
 ## 1. messages / tools 级缓存断点
 
@@ -73,3 +74,22 @@
 **评价与建议：** 它是**续跑激励**而不是硬上限——口径是输出 token，且以「≈90% 停止」为正目标；把它当成本闸，预算会变成「至少花到 90%」。ARTEX 已有自己的任务级硬闸（达到 input+output 上限即自动暂停，见实施记录第 2 节），与该语义冲突，故未接入。**建议不要为成本控制在 ARTEX 启用；SDK 侧可做的只是把「非硬上限」写进字段注释/文档，避免宿主误用。**
 
 **优先级：低（文档/语义澄清；不建议启用）。**
+
+## 7. 压缩触发比例不可配（AutoThresholdRatio）
+
+**现状：** `compaction/compaction.go` 的 `Config` 只有 `ContextWindow` / `MaxOutputTokens` / `KeepRecent`，阈值全部派生：
+`autoThreshold = effectiveWindow − buffer`、`predictiveOver(t) = t + maxTurnGrowth > effectiveWindow`；
+`buffer` 按 effectiveWindow 分 50000 / 30000 / 13000 三档，`maxTurnGrowth = reserved + 15000`。
+结果：同一套默认参数在 128K / 200K / 400K / 1M 窗口上的实际触发比例是 75.8% / 84.5% / 92.3% / 94.2%，
+窗口越大压得越晚——1M 窗口要烧到 94 万 token 才开始压缩。
+
+**建议改动：** `Config` 增加 `AutoThresholdRatio float64`（0 = 维持现状）。
+非零时令 `autoThreshold = int(ContextWindow × ratio)`，并把 `predictiveOver` 的边界按同一比例推导
+（或将 `effectiveWindow` 反解为 `autoThreshold + buffer`），`buffer` / `maxTurnGrowth` 仅作为默认策略保留。
+
+**宿主侧临时方案（已在 ARTEX 落地）：** 反解等效窗口——先定触发点，再倒推一个 `ContextWindow` 传进来，
+使 `min(autoThreshold, predictiveThreshold)` 恰好落在目标比例上。实现与验证矩阵见
+[上下文压缩黄金比例-落地说明](上下文压缩黄金比例-落地说明-2026-10-21.md)。
+副作用是 micro 清退线与预测线随等效窗口一起小幅前移（≤3%），且宿主需复刻阈值算法做自检。
+
+**优先级：中。**

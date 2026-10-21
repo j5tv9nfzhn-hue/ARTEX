@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,6 +127,117 @@ func (c Config) CompactionWindow() int {
 	return k * 1000
 }
 
+// 上下文压缩的触发比例：默认在模型窗口用掉 80% 时压缩（黄金比例）。
+//
+// 为什么不直接把比例交给 SDK：norma v0.4.3 的 compaction.Config 只有
+// ContextWindow / MaxOutputTokens / KeepRecent 三个旋钮，触发点是反推出来的
+// （窗口 − 摘要预留 − 缓冲／一轮增长），同一条策略在不同窗口上算出来的比例并不一样：
+// 默认参数下 128K → 75.8%、200K → 84.5%、400K → 92.3%、1M → 94.2%，同一套默认值在不同窗口上差出 18 个百分点。
+// 所以这里改成反解：先按 80% 定触发点，再倒推一个"等效窗口"交给 SDK。
+const (
+	defaultCompactRatio = 0.80 // 黄金比例：用到 80% 再压
+	minCompactRatio     = 0.50
+	maxCompactRatio     = 0.95
+	// 与 norma compaction 的 reservedForSummary 对齐（摘要预留，默认 8000 token）。
+	compactionSummaryReserve = 8000
+	// 与 norma compaction 的 toolResultGrowthGuess 对齐：预估一轮会再长多少 token。
+	compactionTurnGrowth = 15000
+)
+
+// CompactionRatio 返回压缩触发比例（占模型窗口的比例，落在 [0.5, 0.95]）。
+// 默认 0.80；临时要改可用 ARTEX_COMPACT_RATIO=0.85（写 85 也认，按百分比解释）。
+func CompactionRatio() float64 {
+	raw := strings.TrimSpace(os.Getenv("ARTEX_COMPACT_RATIO"))
+	if raw == "" {
+		return defaultCompactRatio
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v <= 0 {
+		return defaultCompactRatio
+	}
+	if v > 1 { // 允许写 85 表示 85%
+		v /= 100
+	}
+	if v < minCompactRatio {
+		return minCompactRatio
+	}
+	if v > maxCompactRatio {
+		return maxCompactRatio
+	}
+	return v
+}
+
+// compactionBuffer 复刻 norma 的空间缓冲分档：窗口越大，留的余量越多。
+func compactionBuffer(effective int) int {
+	switch {
+	case effective >= 800000:
+		return 50000
+	case effective >= 400000:
+		return 30000
+	default:
+		return 13000
+	}
+}
+
+// 下面三个函数把 norma compaction 的阈值算法抄了一份，只用于自检、测算与反解，
+// 不参与实际决策（真正的压缩在 SDK 里跑）。阈值都按"等效窗口"算，
+// 对应 compaction/compaction.go 的 autoThreshold / predictiveOver。
+
+// autoCompactThreshold 是自动压缩的硬触发线：窗口 − 预留 − 缓冲。
+func autoCompactThreshold(window int) int {
+	effective := window - compactionSummaryReserve
+	if effective <= 0 {
+		return 0
+	}
+	return effective - compactionBuffer(effective)
+}
+
+// predictiveCompactThreshold 是更早的预测线：预估"再来一轮会不会顶到窗口"。
+func predictiveCompactThreshold(window int) int {
+	effective := window - compactionSummaryReserve
+	if effective <= 0 {
+		return 0
+	}
+	return effective - compactionTurnGrowth
+}
+
+// compactionTrigger 取两条触发线里较早的一条 —— 实际压缩就发生在这一刻。
+func compactionTrigger(window int) int {
+	auto, predictive := autoCompactThreshold(window), predictiveCompactThreshold(window)
+	if predictive < auto {
+		return predictive
+	}
+	return auto
+}
+
+// compactionTriggerWindow 反解出"等效窗口"，使实际触发点等于 ratio × realWindow。
+// 触发点随窗口单调递增，取不动点即可（缓冲只有三档，几轮就收敛）。
+// 解出来比真实窗口还大时按真实窗口封顶：宁可早压，也不能虚报窗口
+// （虚报会让压缩永远来不及，直到 API 返 413）。
+func compactionTriggerWindow(realWindow int, ratio float64) int {
+	if realWindow <= 0 {
+		realWindow = defaultWindowK * 1000
+	}
+	target := int(float64(realWindow) * ratio)
+	// 触发点 = 等效窗口 − 预留 − max(缓冲, 一轮增长)；反解时把预留与余量加回去。
+	margin := compactionTurnGrowth
+	x := target + compactionSummaryReserve + margin
+	for i := 0; i < 4; i++ {
+		margin = compactionBuffer(x - compactionSummaryReserve)
+		if margin < compactionTurnGrowth {
+			margin = compactionTurnGrowth
+		}
+		x = target + compactionSummaryReserve + margin
+	}
+	if x > realWindow {
+		x = realWindow
+	}
+	if x < minWindowK*1000 {
+		x = minWindowK * 1000
+	}
+	return x
+}
+
 // compactionConfig builds the agent-core compaction config for a context window
 // in tokens. agentcore.NewSession wires the summarizer (same provider) when this
 // is set on Options.Compaction.
@@ -133,7 +245,10 @@ func compactionConfig(windowTokens int) *compaction.Config {
 	if windowTokens <= 0 {
 		windowTokens = defaultWindowK * 1000
 	}
-	return &compaction.Config{ContextWindow: windowTokens}
+	return &compaction.Config{
+		ContextWindow:   compactionTriggerWindow(windowTokens, CompactionRatio()),
+		MaxOutputTokens: compactionSummaryReserve, // 钉死摘要预留，别让 SDK 默认值漂移
+	}
 }
 
 // FromEnv resolves the LLM provider config:

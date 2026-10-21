@@ -480,7 +480,7 @@ flowchart LR
     R1["意图重试 ≤4 次<br/>指数退避 3→24s · 硬失败 2 次"]
     R2["触发器间隔 ≥60s"]
     R3["任务 Token 预算闸<br/>每轮收尾核算 → 超限自动暂停"]
-    R4["上下文压缩<br/>micro / auto / 冷摘要 800tok"]
+    R4["上下文压缩<br/>用户窗口 80% 触发<br/>micro / auto / 冷摘要 800tok"]
   end
   subgraph OBSV["观测与出口"]
     direction TB
