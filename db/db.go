@@ -32,10 +32,30 @@ func DSN() (dsn, source string, err error) {
 // DB wraps the shared *sql.DB.
 type DB struct {
 	*sql.DB
+	// rd 是只读连接池（query_only=ON）。读走它，写只在主池上发生——这样「误把写语句
+	// 放到读路径」会当场报 readonly database，而不是悄悄抢写锁。为 nil 时回落到主池
+	// （内存库/测试构造的句柄）。
+	rd *sql.DB
 	// wq 是单写协程（见 db/writer.go）。懒初始化：测试里直接 &DB{DB: raw} 构造的
 	// 句柄也能用，不必依赖 openSQLite。
 	wqMu sync.Mutex
 	wq   *writeQueue
+}
+
+// ReadDB 返回只读连接池；没有（内存库/测试句柄）时返回主池。
+func (d *DB) ReadDB() *sql.DB {
+	if d.rd != nil {
+		return d.rd
+	}
+	return d.DB
+}
+
+// Close 先关只读池再关主池，避免文件句柄比连接活得久。
+func (d *DB) Close() error {
+	if d.rd != nil {
+		_ = d.rd.Close()
+	}
+	return d.DB.Close()
 }
 
 // Open connects, applies the schema (idempotent), and seeds builtin rows.

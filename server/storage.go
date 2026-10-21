@@ -226,7 +226,8 @@ func storageMemStats(m *Manager) map[string]any {
 
 func storageCount(ctx context.Context, d *db.DB, query string) int64 {
 	var n int64
-	if err := d.QueryRowContext(ctx, query).Scan(&n); err != nil {
+	// 统计是纯读：走只读池（query_only），不会和写事务抢同一批连接。
+	if err := d.ReadDB().QueryRowContext(ctx, query).Scan(&n); err != nil {
 		return 0
 	}
 	return n
@@ -252,6 +253,9 @@ func storageMemoryDBStats(ctx context.Context, d *db.DB) map[string]any {
 		"orphan_edges":       storageCount(ctx, d, storageOrphanEdgesSQL),
 		"orphan_activity":    storageCount(ctx, d, storageOrphanActivitySQL),
 		"activity_older_30d": storageCount(ctx, d, `SELECT COUNT(*) FROM activity WHERE datetime(created_at) < datetime('now','-30 days')`),
+		// 单写协程的观测值：平均批量、平均等待、回滚次数。存储页直接展示，
+		// 用来回答「批量提交到底省了多少」以及「有没有在悄悄回滚」。
+		"write_queue": d.WriteStats(),
 	}
 }
 

@@ -230,6 +230,25 @@ func openSQLite(dsn string) (*DB, error) {
 	// PRAGMA optimize 让查询规划器在启动时收集一次统计(长期运行的桌面库里表行数
 	// 变化很大,默认统计会过期)。失败不影响启动:它只是让后续查询慢一点。
 	_, _ = conn.ExecContext(context.Background(), "PRAGMA optimize")
+
+	// 只读连接池：与主池同一个文件，但带 query_only(ON)。读路径(统计/列表/导出)
+	// 用它，任何误落到读路径的写语句都会当场报 readonly database，而不是悄悄抢写锁。
+	// 内存库不能用：file::memory: 每个连接都是一个新库，第二个池会看到空库。
+	if !strings.Contains(dsn, ":memory:") && !strings.Contains(dsn, "mode=memory") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		rd, rerr := sql.Open("sqlite", dsn+sep+"_pragma=query_only(ON)")
+		if rerr == nil && rd.Ping() == nil {
+			rd.SetMaxOpenConns(3)
+			rd.SetMaxIdleConns(3)
+			d.rd = rd
+		} else if rd != nil {
+			rd.Close()
+			log.Printf("[db] 只读连接池打开失败（回落到主池）：%v", rerr)
+		}
+	}
 	return d, nil
 }
 

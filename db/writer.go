@@ -16,6 +16,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"sync"
 	"time"
 )
 
@@ -30,13 +31,36 @@ const (
 )
 
 type writeJob struct {
-	run  func(*sql.Tx) error
-	done chan error
+	run   func(*sql.Tx) error
+	done  chan error
+	began time.Time
+}
+
+// WriteStats 是单写协程的累计观测值。存储页展示它，用来回答「批量提交到底省了多少」：
+// Batches/Jobs 的比值就是平均批量，AvgWaitMillis 是一次写入从入队到提交完成的平均耗时。
+type WriteStats struct {
+	Batches       uint64  `json:"batches"`
+	Jobs          uint64  `json:"jobs"`
+	MaxBatch      int     `json:"max_batch"`
+	LastBatch     int     `json:"last_batch"`
+	Rollbacks     uint64  `json:"rollbacks"`
+	QueueDepth    int     `json:"queue_depth"`
+	AvgBatch      float64 `json:"avg_batch"`
+	AvgWaitMillis float64 `json:"avg_wait_ms"`
 }
 
 type writeQueue struct {
 	db *DB
 	ch chan *writeJob
+
+	statsMu   sync.Mutex
+	batches   uint64
+	jobs      uint64
+	okJobs    uint64
+	rollbacks uint64
+	maxBatch  int
+	lastBatch int
+	waitNanos uint64
 }
 
 func newWriteQueue(d *DB) *writeQueue {
@@ -63,7 +87,7 @@ func (d *DB) WriteQueued(run func(*sql.Tx) error) error {
 }
 
 func (q *writeQueue) submit(ctx context.Context, run func(*sql.Tx) error) error {
-	job := &writeJob{run: run, done: make(chan error, 1)}
+	job := &writeJob{run: run, done: make(chan error, 1), began: time.Now()}
 	select {
 	case q.ch <- job:
 	case <-ctx.Done():
@@ -102,6 +126,7 @@ func (q *writeQueue) loop() {
 func (q *writeQueue) commit(batch []*writeJob) {
 	tx, err := q.db.Begin()
 	if err != nil {
+		q.record(batch, len(batch), true)
 		for _, j := range batch {
 			j.done <- err
 		}
@@ -110,6 +135,7 @@ func (q *writeQueue) commit(batch []*writeJob) {
 	for _, j := range batch {
 		if err := j.run(tx); err != nil {
 			_ = tx.Rollback()
+			q.record(batch, len(batch), true)
 			for _, k := range batch {
 				k.done <- err
 			}
@@ -117,12 +143,73 @@ func (q *writeQueue) commit(batch []*writeJob) {
 		}
 	}
 	if err := tx.Commit(); err != nil {
+		q.record(batch, len(batch), true)
 		for _, j := range batch {
 			j.done <- err
 		}
 		return
 	}
+	q.record(batch, len(batch), false)
 	for _, j := range batch {
 		j.done <- nil
 	}
+}
+
+// record 累加一批的观测值（每批一次，锁竞争可忽略）。
+func (q *writeQueue) record(batch []*writeJob, size int, failed bool) {
+	now := time.Now()
+	var waited uint64
+	for _, j := range batch {
+		if !j.began.IsZero() {
+			waited += uint64(now.Sub(j.began))
+		}
+	}
+	q.statsMu.Lock()
+	defer q.statsMu.Unlock()
+	q.jobs += uint64(size)
+	if !failed {
+		// 只有提交成功的那批才算进「平均批量」：回滚的批不该把分母做大。
+		q.batches++
+		q.okJobs += uint64(size)
+	}
+	q.waitNanos += waited
+	q.lastBatch = size
+	if size > q.maxBatch {
+		q.maxBatch = size
+	}
+	if failed {
+		q.rollbacks++
+	}
+}
+
+// snapshot 取一份一致的观测快照。
+func (q *writeQueue) snapshot() WriteStats {
+	q.statsMu.Lock()
+	defer q.statsMu.Unlock()
+	st := WriteStats{
+		Batches:    q.batches,
+		Jobs:       q.jobs,
+		MaxBatch:   q.maxBatch,
+		LastBatch:  q.lastBatch,
+		Rollbacks:  q.rollbacks,
+		QueueDepth: len(q.ch),
+	}
+	if q.batches > 0 {
+		st.AvgBatch = float64(q.okJobs) / float64(q.batches)
+	}
+	if q.jobs > 0 {
+		st.AvgWaitMillis = float64(q.waitNanos) / float64(q.jobs) / float64(time.Millisecond)
+	}
+	return st
+}
+
+// WriteStats 返回单写协程的累计观测值；队列还没启动时返回零值。
+func (d *DB) WriteStats() WriteStats {
+	d.wqMu.Lock()
+	q := d.wq
+	d.wqMu.Unlock()
+	if q == nil {
+		return WriteStats{}
+	}
+	return q.snapshot()
 }
