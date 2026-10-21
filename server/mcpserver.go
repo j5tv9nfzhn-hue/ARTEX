@@ -93,6 +93,18 @@ func (s *Server) buildMCPServer() *mcpserver.Server {
 
 // NewMCPStdioServer 用一条独立数据库连接装配 MCP 服务端，供 `artex mcp serve`
 // 的 stdio 模式使用：不起 Manager、不监听端口、不读 JWT。
+// NewMCPHeadlessServer 给「按需拉起、用完自退」的后台实例用。
+//
+// 与 stdio 同源构建，但保留 L3：stdio 剔掉 L3 是因为它没有控制台进程承接委派；
+// headless 只在控制台活着时才会被拉起，控制台不在时 L3 调用会明确报错。
+func NewMCPHeadlessServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string) *mcpserver.Server {
+	guard := &mcpserver.FileGuard{AllowAny: true}
+	if root := strings.TrimSpace(fileRoot); root != "" {
+		guard = &mcpserver.FileGuard{Root: root}
+	}
+	return mcpBuild(&Server{m: &Manager{pg: pg}}, tiers, guard, nil)
+}
+
 func NewMCPStdioServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string) *mcpserver.Server {
 	guard := &mcpserver.FileGuard{AllowAny: true}
 	if root := strings.TrimSpace(fileRoot); root != "" {

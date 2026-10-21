@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/Autumn-27/artex/db"
 )
 
 // 对外 MCP 接入的三项设置。都落在 settings 表（mcp_server_token 走凭据加密，
@@ -81,6 +83,28 @@ func (s *Server) mcpAuthorize(r *http.Request) error {
 		return errors.New("invalid token")
 	}
 	return nil
+}
+
+// MCPTokenForCLI 供命令行与 headless 实例读取（必要时生成）当前 token。
+//
+// 和 mcpTokenValue 是同一份存储、同一套加密，只是不依赖 *Server：
+// CLI 里没有 Server 实例，但 token 必须和 console 用的是同一个，
+// 否则附着时会 401。
+func MCPTokenForCLI(pg *db.DB) (string, error) {
+	if pg == nil {
+		return "", errors.New("数据库未就绪")
+	}
+	if v, ok, err := pg.GetSetting(settingMCPToken); err == nil && ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v), nil
+	}
+	tok, err := newMCPToken()
+	if err != nil {
+		return "", err
+	}
+	if err := pg.SetSetting(settingMCPToken, tok); err != nil {
+		return "", err
+	}
+	return tok, nil
 }
 
 // maskToken 只保留前缀与末 4 位，供界面默认展示；完整值由用户主动「显示」。
