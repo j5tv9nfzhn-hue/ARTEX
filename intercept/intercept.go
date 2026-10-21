@@ -312,6 +312,9 @@ type Decision struct {
 	TimeoutEnabled   bool
 	TimeoutSeconds   int
 	TimeoutAction    string // "deny" | "allow"
+	// Confidence 是判定的置信度(0–1)。确定性规则(规则命中 / Precheck)给 1 或接近 1;
+	// 模型判定由调用方填,低置信时可降级为人工确认(ask)。0 = 未提供。
+	Confidence float64
 }
 
 // --- LLM fallback judge ---
@@ -448,7 +451,15 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 	i.mu.RLock()
 	rv := i.reviewer
 	i.mu.RUnlock()
-	if !cfg.Enabled || rv == nil {
+	if !cfg.Enabled {
+		return Decision{}, false
+	}
+	// 规则优先:明确破坏的、明确只读的,都不该花一次模型调用——也不该让模型在确定性
+	// 场景上给出前后不一致的结论。灰区(绝大多数真实渗透动作)照旧交给模型。
+	if d, ok := Precheck(tool, arguments); ok {
+		return d, true
+	}
+	if rv == nil {
 		return Decision{}, false
 	}
 

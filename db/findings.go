@@ -76,6 +76,40 @@ func ValidSeverity(s string) bool {
 	return false
 }
 
+// Finding validation states (findings.validation).
+//
+// 与 status 的区别:status 是「人怎么处置这条漏洞」,validation 是「这条漏洞本身有没有
+// 被独立复核过」。只有 verified 的发现才算真值(报告/统计口径),未复核的只能当线索——
+// 这样「worker 自称发现了」和「复核过确实存在」在数据层就分得开,不用再靠 prompt 自觉。
+const (
+	FindingUnverified = "unverified" // 未复核(新上报的默认态)
+	FindingVerified   = "verified"   // 已复核:独立复现或独立证据确认
+	FindingRefuted    = "refuted"    // 已复核:无法复现/证据不成立
+)
+
+// ValidFindingValidation reports whether s is a known validation state.
+func ValidFindingValidation(s string) bool {
+	switch s {
+	case FindingUnverified, FindingVerified, FindingRefuted:
+		return true
+	}
+	return false
+}
+
+// SetFindingValidation moves one finding along the validation state machine. Returns
+// rows affected (0 = no such finding). 刻意不镜像进 exploration_nodes 的 payload:
+// 复核结论是独立审计字段,前端与报告都从 findings 表读。
+func (d *DB) SetFindingValidation(id int64, validation string) (int64, error) {
+	if !ValidFindingValidation(validation) {
+		return 0, fmt.Errorf("未知的复核状态 %q", validation)
+	}
+	res, err := d.Exec(`UPDATE findings SET validation=$1 WHERE id=$2`, validation, id)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // OnFindingInserted 是可选的进程内回调：findings 行提交成功后触发。
 //
 // 存在的理由：应用内通知（server/ui_notify.go）需要「漏洞落库」这个时刻，而 db
@@ -184,6 +218,10 @@ type FindingFilter struct {
 	// 选中一个节点等于选中它的整棵子树。空 = 不按资产筛选。
 	AssetScope string
 
+	// Validation 按复核状态过滤(findings.validation):空 = 不过滤;
+	// "verified" = 只要已被独立复核的发现(报告/真值口径)。
+	Validation string
+
 	// 下面三个由 applyAssetScope 从 AssetScope 解析而来,调用方不用设置。
 	assetIDs  []int64 // 子树里所有资产 id
 	assetNone bool    // 只要「未关联资产」的发现
@@ -211,6 +249,8 @@ func (f FindingFilter) where() (string, []any) {
 	add("severity", f.Severity)
 	add("status", f.Status)
 	add("vulnclass", f.VulnClass)
+	// 复核状态过滤:空 = 不过滤(旧调用方行为不变),填 verified 即「只出真值」。
+	add("validation", f.Validation)
 	// task_id 是 bigint 列,按整数比较(不能走上面的文本 add);空/非法值忽略。
 	if f.TaskID == FindingUnassignedTask {
 		conds = append(conds, "(f.task_id IS NULL OR t.id IS NULL)")

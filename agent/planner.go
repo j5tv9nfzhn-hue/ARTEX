@@ -523,15 +523,41 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		}
 	}
 	input := lead + situational + "\n\n据上面的态势，判定目标。目标已【真正达成】（已拿到目标成果/已确认目标漏洞）时用 prove_goal 逐个标记。**硬底线：只要目标尚未达成、且当前没有任何 open 或 running 意图（frontier_open=0 且 running_intents 为空），本轮就必须产出至少一个向目标推进的意图——此时没有在跑的 work 可等、也没有在排队的方向，产出 0 意图=任务停摆。仅当已有 open/running 意图在推进、或目标已达成时，本轮才可以不产出新意图。**" +
+		// 0 意图必须给理由。以前「不派方向 + 不 prove_goal」是静默的:引擎只看到本轮
+		// 什么都没发生,任务就这样停在那里等人发现。现在把它写成协议,并在 Plan 末尾
+		// 做一次硬校验(见 gapRoundInput)。
+		"\n\n**0 意图契约**：本轮若既不产出新意图、也不 prove_goal，必须在回复里用一行 `coverage_gaps: …` 写明还缺什么证据、或为什么这一轮不派方向。没有 `coverage_gaps:` 的 0 意图轮视为协议违规，引擎会立即补跑一轮。" +
 		renderPlannerTodos(opts.Todos.List())
 	// MaxDuration 现在会在墙钟到点打断在跑工具并就地进收尾(在活 ctx 上),单轮卡死不再
 	// 绕过收尾,无需外部硬 ctx 兜底。ctx 只承载 pause / kill / shutdown。
-	_, _, err = captureRun(ctx, opts, input,
-		func(r db.Activity) {
-			if emit != nil {
-				r.Worker = "planner" // planner activity has no intent_id (it generates them)
-				emit(r)
+	emitPlanner := func(r db.Activity) {
+		if emit != nil {
+			r.Worker = "planner" // planner activity has no intent_id (it generates them)
+			emit(r)
+		}
+	}
+	_, _, err = captureRun(ctx, opts, input, emitPlanner)
+	// 0 意图契约的硬校验。只在「真的没有活可等」时补跑:已经有 open/running 意图在
+	// 推进,本轮不派新方向是合理的;而 0 意图 + 目标未达成 + 无在跑意图 = 任务停摆,
+	// 只等下一次心跳就太晚了。补跑最多一次,add_intent 自己的方向代际门控仍然生效。
+	if err == nil && !tsx.GoalMet && tsx.intentsAdded == 0 {
+		if active, aerr := ts.HasActiveIntent(); aerr == nil && !active {
+			emitPlanner(db.Activity{Kind: "text",
+				Summary: "本轮没有新增意图、也没有可等的在跑意图——按 0 意图契约补跑一轮规划。"})
+			if _, _, rerr := captureRun(ctx, opts, gapRoundInput(taskID), emitPlanner); rerr != nil && err == nil {
+				err = rerr
 			}
-		})
+		}
+	}
 	return tsx.GoalMet, tsx.Reason, err
+}
+
+// gapRoundInput 是 0 意图契约触发的那一轮补充输入。它不重复整段态势(graph_overview
+// 已经在同一 session 的历史里),只讲清「上一轮漏了什么、现在只能二选一」,让模型在
+// 一次往返内把方向补上、或把缺口写明。
+func gapRoundInput(taskID int64) string {
+	return fmt.Sprintf("任务 #%d：上一轮你既没有用 add_intent 派发新方向，也没有 prove_goal，而目标未达成、当前没有任何 open/running 意图。"+
+		"\n\n这属于 0 意图契约违规。请二选一，不要只回复“收到/将继续”：\n"+
+		"1) 用 add_intent 指派至少一个向目标推进、且与图中既有意图不重复的方向（可一次批量提交多个）；\n"+
+		"2) 若确实无法推进，用一行 `coverage_gaps: …` 写明缺什么证据、卡在哪个前提上。", taskID)
 }

@@ -219,6 +219,21 @@ func reclaimSQLiteFreePages(ctx context.Context, con *sql.Conn) (int, error) {
 	return reclaimed, nil
 }
 
+// VacuumInto 把当前库整体快照到 dst(dst 必须是不存在的路径)。
+//
+// 这是 SQLite 官方推荐的在线备份方式:VACUUM INTO 在一个读事务里生成一致的、已整理
+// 的副本——不需要停写,也不会像直接复制文件那样把 -wal 里尚未 checkpoint 的提交漏掉。
+// 失败时可能留下半成品文件,由调用方清理(这里不替调用方猜要不要删)。
+func (d *DB) VacuumInto(ctx context.Context, dst string) error {
+	if dst == "" {
+		return fmt.Errorf("vacuum into: 目标路径为空")
+	}
+	if _, err := d.ExecContext(ctx, `VACUUM INTO $1`, dst); err != nil {
+		return fmt.Errorf("vacuum into %s: %w", dst, err)
+	}
+	return nil
+}
+
 // ReclaimFreePages hands pages freed by a committed delete back to the filesystem.
 //
 // 最佳努力、有界、可重入：调用方在删除提交之后调用它，只记录失败——绝不能因为

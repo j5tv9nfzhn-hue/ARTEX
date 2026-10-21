@@ -39,6 +39,50 @@ const (
 // overviewTruncatedNote 是态势块经字节硬上限压缩后追加的说明(仅在触发上限时出现)。
 const overviewTruncatedNote = "…（态势块超长已压缩:完整图、全部资产、更早明细等可随时用 graph_overview / list_facts / list_findings / list_assets / node_detail 等工具按需查询）"
 
+// overviewOmittedKey 是注入块里「少给了你什么」的清单键。
+//
+// 以前超预算只是整键丢弃、末尾加一行笼统说明:模型并不知道自己缺了哪一段,常见的
+// 反应是把 graph_overview 整个再调一遍——省下的输入 token 又花回去,还多一轮往返。
+// 现在把被省略/被截断的键(以及少了多少条)逐条写进态势块,模型能直接判断「要不要
+// 补、补哪一个」,一次 get_overview_slice 就够。
+const (
+	overviewOmittedKey = "overview_omitted"
+	overviewSliceHint  = "以上键可用 get_overview_slice(key=…, filter=…) 取回完整内容"
+)
+
+// overviewManifest 收集「本次注入被削减」的键。列表 cap 与字节预算两条路径都往这里
+// 登记,最后由 marshalOverviewCapped 合并成 overview_omitted(见下)。
+type overviewManifest struct{ entries []map[string]any }
+
+func (m *overviewManifest) add(key, reason string, kept, total int) {
+	if m == nil {
+		return
+	}
+	e := map[string]any{"key": key, "reason": reason}
+	if total > 0 {
+		e["kept"], e["total"] = kept, total
+	}
+	m.entries = append(m.entries, e)
+}
+
+// overviewMustKeep 是撞上字节上限时也必须先装填、并且各自保底
+// overviewMustKeepFloor 的键:task 是「我是谁、在做什么」,open_intents 是「下一步
+// 能干什么」。其余块(related_tasks / cold_digests / finding_list…)都能按需回查,
+// 让位顺序不变。
+var overviewMustKeep = []string{"task", "open_intents"}
+
+const overviewMustKeepFloor = 2 << 10
+
+// overviewIsMustKeep reports whether key is in overviewMustKeep.
+func overviewIsMustKeep(key string) bool {
+	for _, k := range overviewMustKeep {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
 // overviewPromptCaps 是注入侧各列表的条数上限;0 = 沿用工具默认值(不再收紧)。
 type overviewPromptCaps struct {
 	openIntents int
@@ -74,19 +118,23 @@ func (t *ToolSet) graphOverviewForPrompt(caps overviewPromptCaps) map[string]any
 	// 完整血缘边没有进过 graphOverviewData 的返回体(内部只折叠成 parents/yields);
 	// 防御性剥离:未来若把 raw edges 加进数据层,也不会自动灌进每轮注入。
 	delete(data, "edges")
-	capOverviewList(data, "open_intents", caps.openIntents)
-	capOverviewList(data, "recent_done_intents", caps.recentDone)
-	capOverviewList(data, "finding_list", caps.findingList)
-	capOverviewList(data, "recent_facts", caps.recentFacts)
-	capOverviewList(data, "goals", caps.goals)
-	capOverviewList(data, "hints", caps.hints)
-	capColdDigests(data, caps.coldDigests)
+	m := &overviewManifest{}
+	capOverviewList(data, "open_intents", caps.openIntents, m)
+	capOverviewList(data, "recent_done_intents", caps.recentDone, m)
+	capOverviewList(data, "finding_list", caps.findingList, m)
+	capOverviewList(data, "recent_facts", caps.recentFacts, m)
+	capOverviewList(data, "goals", caps.goals, m)
+	capOverviewList(data, "hints", caps.hints, m)
+	capColdDigests(data, caps.coldDigests, m)
 	truncateDigestBodies(data, promptDigestBodyMaxRunes)
+	if len(m.entries) > 0 {
+		data[overviewOmittedKey] = map[string]any{"hint": overviewSliceHint, "items": m.entries}
+	}
 	return data
 }
 
 // capOverviewList 收紧某个列表键的条数(只影响本次注入的数据副本;n<=0 = 保持原样)。
-func capOverviewList(data map[string]any, key string, n int) {
+func capOverviewList(data map[string]any, key string, n int, m *overviewManifest) {
 	if n <= 0 {
 		return
 	}
@@ -94,17 +142,19 @@ func capOverviewList(data map[string]any, key string, n int) {
 	case []map[string]any:
 		if len(list) > n {
 			data[key] = list[:n]
+			m.add(key, "list_cap", n, len(list))
 		}
 	case []any:
 		if len(list) > n {
 			data[key] = list[:n]
+			m.add(key, "list_cap", n, len(list))
 		}
 	}
 }
 
 // capColdDigests 收紧 cold_digests 条数,并把被截掉的 digest id 并入 cold_digests_more
 // ——即使不展示正文,规划者仍知道这些折叠区存在、可用 expand_digest(id) 展开。
-func capColdDigests(data map[string]any, n int) {
+func capColdDigests(data map[string]any, n int, m *overviewManifest) {
 	if n <= 0 {
 		return
 	}
@@ -122,6 +172,7 @@ func capColdDigests(data map[string]any, n int) {
 		}
 	}
 	data["cold_digests"] = list[:n]
+	m.add("cold_digests", "list_cap", n, len(list))
 	if len(more) > 0 {
 		data["cold_digests_more"] = more
 	}
@@ -212,13 +263,44 @@ func marshalOverviewCapped(data map[string]any, maxBytes int) string {
 	if budget < 0 {
 		budget = maxBytes
 	}
+	// 注入前的「已削减」清单(列表 cap / digest 截断)先收进来,再叠加这一次字节预算
+	// 挤掉的键,最后一起写回 overview_omitted。
+	omitted := []map[string]any{}
+	if prev, ok := data[overviewOmittedKey].(map[string]any); ok {
+		if items, ok := prev["items"].([]map[string]any); ok {
+			omitted = append(omitted, items...)
+		}
+	}
+	delete(data, overviewOmittedKey)
+	pendingMustKeep := len(overviewMustKeep)
 	var sb strings.Builder
 	sb.WriteByte('{')
 	wroteAny := false
 	for _, k := range order {
 		v, ok := data[k]
 		if !ok {
+			// 该键本轮根本不存在：不能把它的保底额度一直占着。
+			if overviewIsMustKeep(k) {
+				pendingMustKeep--
+			}
 			continue
+		}
+		// 必留键先装填,并为后面还没轮到的必留键各留一份保底额度:让 related_tasks
+		// 这类可回查块把 task/open_intents 挤掉,等于让模型看不见自己在干什么。
+		limit := budget
+		if overviewIsMustKeep(k) {
+			if pendingMustKeep > 1 {
+				limit = budget - (pendingMustKeep-1)*overviewMustKeepFloor
+			}
+			if limit < sb.Len()+overviewMustKeepFloor {
+				limit = sb.Len() + overviewMustKeepFloor
+			}
+			pendingMustKeep--
+		} else if pendingMustKeep > 0 {
+			limit = budget - pendingMustKeep*overviewMustKeepFloor
+		}
+		if limit > budget {
+			limit = budget
 		}
 		val := v
 		for {
@@ -227,7 +309,7 @@ func marshalOverviewCapped(data map[string]any, maxBytes int) string {
 			if wroteAny {
 				need++ // 逗号
 			}
-			if ok && need <= budget {
+			if ok && need <= limit {
 				if wroteAny {
 					sb.WriteByte(',')
 				}
@@ -237,10 +319,21 @@ func marshalOverviewCapped(data map[string]any, maxBytes int) string {
 			}
 			shrunk, can := shrinkOverviewValue(val)
 			if !can {
-				break // 装不下的整键省略;尾注提示用工具查
+				omitted = append(omitted, map[string]any{"key": k, "reason": "budget"})
+				break // 整键省略,但清单里点名 → 可按需回查
 			}
 			val = shrunk
 		}
+	}
+	// 清单本身也要占字节:从尾部逐条丢到塞得下为止;一条都塞不下就不写(仍是合法 JSON)。
+	for len(omitted) > 0 {
+		inner, ok := marshalEntry(overviewOmittedKey, map[string]any{"hint": overviewSliceHint, "items": omitted})
+		if ok && sb.Len()+1+len(inner) <= budget {
+			sb.WriteByte(',')
+			sb.WriteString(inner)
+			break
+		}
+		omitted = omitted[:len(omitted)-1]
 	}
 	sb.WriteByte('}')
 	return sb.String() + "\n" + overviewTruncatedNote

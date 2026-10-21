@@ -146,6 +146,14 @@ func SQLiteDSNFor(path string) string {
 		"&_pragma=synchronous(NORMAL)" +
 		"&_pragma=foreign_keys(ON)" +
 		"&_pragma=auto_vacuum(incremental)" +
+		// 页缓存 64MiB(负值 = KiB):默认 2MB 太小,一次图查询/分页就把缓存冲干净,
+		// 于是每次都要重新读页。桌面单机多这 64MB 换掉大量随机读,值得。
+		"&_pragma=cache_size(-65536)" +
+		// 256MiB 只读内存映射:命中映射的读省掉一次从页缓存到用户态的拷贝
+		// (SQLite 官方压在 mmap 上的主要收益就是这个)。写仍走常规缓冲。
+		"&_pragma=mmap_size(268435456)" +
+		// 临时表/临时排序放内存:排序中间结果落盘会在每次大查询时制造新的写锁竞争。
+		"&_pragma=temp_store(MEMORY)" +
 		"&_texttotime=1" +
 		"&_time_format=" + sqliteTimeFormat +
 		"&_txlock=immediate"

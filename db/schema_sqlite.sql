@@ -1152,7 +1152,11 @@ CREATE TABLE IF NOT EXISTS findings (
     report      TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
     evidence_version BIGINT NOT NULL DEFAULT 0,
-    report_evidence_version BIGINT NOT NULL DEFAULT 0
+    report_evidence_version BIGINT NOT NULL DEFAULT 0,
+    -- 复核状态：unverified 未复核（默认） / verified 已复核（可进真值与报告） / refuted 已推翻。
+    -- 与 status 分开：status 是「人怎么处置」，validation 是「这条发现本身有没有被独立复核」。
+    -- 取值不加 CHECK，由 db.ValidFindingValidation + server 白名单校验，与 status 一致。
+    validation  TEXT NOT NULL DEFAULT 'unverified'
 );
 CREATE INDEX IF NOT EXISTS idx_findings_task ON findings(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_findings_time ON findings(created_at DESC);

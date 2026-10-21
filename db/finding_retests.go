@@ -382,6 +382,13 @@ func (d *DB) FinishFindingRetest(id int64, status, reason string) error {
 	if err != nil {
 		return err
 	}
+	// 复核状态机:独立复测「复现」= 这条发现被独立证据确认,升到 verified;
+	// 「未修复(inconclusive)」不降级——没结论不等于被推翻,refuted 只由人工判定。
+	if finalStatus == "completed" && verdict == "reproduced" {
+		if _, err := tx.Exec(`UPDATE findings SET validation='verified' WHERE id=$1`, findingID); err != nil {
+			return err
+		}
+	}
 	if finalStatus == "completed" && verdict == "fixed" {
 		// 走带通知的版本，与人工在详情页改状态共用同一套语义。
 		//

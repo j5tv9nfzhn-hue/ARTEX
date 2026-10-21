@@ -78,6 +78,10 @@ type ToolSet struct {
 	GoalMet   bool
 	Reason    string
 	writes    WriteCounts
+	// intentsAdded 记录本 ToolSet 生命周期内成功派发的意图数(planner 一轮一实例)。
+	// planner.Plan 用它做 0 意图契约的硬校验:0 意图 + 目标未达成 + 无在跑意图 =
+	// 协议违规,立刻补跑一轮把方向补上或把缺口写出来。
+	intentsAdded int
 	// killWork, if set, terminates a running work by intent id (engine callback,
 	// wired by the planner). nil = the kill_work tool reports unavailable.
 	killWork func(intentID int64) error
@@ -1152,7 +1156,59 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if t.dirAck != nil {
 		t.dirAck()
 	}
+	t.intentsAdded++
 	return id, nil
+}
+
+// overviewSlice 是「注入瘦身」的配套出口:注入块里被 cap / 超预算丢掉的键,用它可以
+// 只把那一个键的完整内容取回来,而不是把整张图重新拉一遍。
+func (t *ToolSet) overviewSlice() actool.CoreTool {
+	return t.readExpTool("get_overview_slice",
+		"按需回查本任务态势里被省略/截断的部分。key 取注入块 overview_omitted.items[].key 里列出的键（open_intents / recent_done_intents / finding_list / recent_facts / goals / hints / cold_digests / coverage / task 等）；filter 可选，按子串过滤记录；limit 可选条数上限（省略=全量）。只取一个键，比 graph_overview 便宜。",
+		obj(map[string]any{
+			"key":    str("要回查的态势键名，如 open_intents"),
+			"filter": str("可选：按子串过滤记录（不区分大小写）；省略=不过滤"),
+			"limit":  intp("可选：返回条数上限；省略或 0 = 全量"),
+		}),
+		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+			var a struct {
+				Key    string `json:"key"`
+				Filter string `json:"filter"`
+				Limit  int    `json:"limit"`
+			}
+			_ = json.Unmarshal(in, &a)
+			key := strings.TrimSpace(a.Key)
+			if key == "" {
+				return actool.Errorf("key 不能为空（可选键见注入块 overview_omitted.items[].key）"), nil
+			}
+			data := t.graphOverviewData()
+			v, ok := data[key]
+			if !ok {
+				return actool.Errorf("未知的态势键 %q（可选键见注入块 overview_omitted.items[].key）", key), nil
+			}
+			items, isList := v.([]map[string]any)
+			if !isList {
+				return jsonResult(v)
+			}
+			out := items
+			if f := strings.ToLower(strings.TrimSpace(a.Filter)); f != "" {
+				filtered := make([]map[string]any, 0, len(items))
+				for _, it := range items {
+					b, _ := json.Marshal(it)
+					if strings.Contains(strings.ToLower(string(b)), f) {
+						filtered = append(filtered, it)
+					}
+				}
+				out = filtered
+			}
+			if a.Limit > 0 && len(out) > a.Limit {
+				out = out[:a.Limit]
+			}
+			if out == nil {
+				out = []map[string]any{}
+			}
+			return jsonResult(out)
+		})
 }
 
 func (t *ToolSet) addIntent() actool.CoreTool {
@@ -2153,7 +2209,7 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
 	return []actool.CoreTool{
 		t.verificationCapabilitiesTool(), t.binaryInspectTool(), t.recordFact(),
-		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
+		t.graphOverview(), t.overviewSlice(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),

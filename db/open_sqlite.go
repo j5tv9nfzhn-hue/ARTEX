@@ -137,6 +137,13 @@ var sqliteColumnAdds = []struct {
 		"token_budget",
 		`ALTER TABLE tasks ADD COLUMN token_budget INTEGER NOT NULL DEFAULT 0`,
 	},
+	{
+		// 复核状态机(findings.validation)。老库整体回填 unverified:历史发现没有走过
+		// 独立复核,不能默认当成真值。
+		"findings",
+		"validation",
+		`ALTER TABLE findings ADD COLUMN validation TEXT NOT NULL DEFAULT 'unverified'`,
+	},
 }
 
 // applySQLiteColumnAdds 逐条补齐上表缺失的列。pragma_table_info 是表值函数,表名
