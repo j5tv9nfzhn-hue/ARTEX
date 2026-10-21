@@ -39,6 +39,17 @@ GROUPS: list[tuple[str, str]] = [
     ("other", "其他"),
 ]
 
+# 每个版本在正文顶部的定位说明。内容型版本必须写清楚「这一版做到了什么程度」，
+# 避免读者把「第一版」当成「已经改完」。
+VERSION_NOTES: dict[str, str] = {
+    "v2.2.2": (
+        "**架构优化第一版**：本版把「五断层收口」与流式链路的第一轮改造全部落地——"
+        "存储保底、活动流自动保留、系统浏览器 L1、思考/正文/工具实时流式、"
+        "流式 markdown 增量渲染。**不保证完全优化完整**：`tool_usage` 清理规则、"
+        "L2 Firefox 加固档、工具结果按类型折叠等仍留待后续版本。"
+    ),
+}
+
 # type(scope)!: subject
 COMMIT_RE = re.compile(r"^(?P<type>[a-zA-Z]+)(?:\((?P<scope>[^)]*)\))?!?:\s*(?P<subject>.+)$")
 
@@ -158,6 +169,9 @@ def main() -> int:
     if tail:
         summary += "；另有 " + "、".join(tail)
     header.append(summary + "。")
+    note = VERSION_NOTES.get(args.tag, "")
+    if note:
+        header.extend(["", note])
     header.append("")
 
     footer_lines = []
