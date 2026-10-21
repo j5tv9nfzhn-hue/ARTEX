@@ -50,8 +50,11 @@ func newRetentionFixture(t *testing.T) *DB {
 
 func TestRetentionPolicyDefaultsAndBounds(t *testing.T) {
 	p := DefaultRetentionPolicy()
-	if p.Enabled {
-		t.Fatal("cleanup armed by default")
+	// 保底档是「默认开启」，依据见 db/retention.go#DefaultRetentionPolicy：
+	// 不依赖用户点按钮，但谓词足够保守（带 task_id 的 usage 永不删）。关闭仍然
+	// 合法，只是不再等于默认档。
+	if !p.Enabled {
+		t.Fatal("默认档应当开启；要关闭请显式保存一条 enabled=false 的策略")
 	}
 	if err := p.Validate(); err != nil {
 		t.Fatal(err)
@@ -86,6 +89,13 @@ func TestRetentionPreviewScopeAndReferenceRecheck(t *testing.T) {
 		if _, err := d.Exec(stmt); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// 这条复查的是「关闭时拒执」这道闸门本身，与默认档无关：先显式存一条
+	// enabled=false 的策略，否则默认档（开启）会让下面的断言失去意义。
+	off := DefaultRetentionPolicy()
+	off.Enabled = false
+	if err := d.SaveRetentionPolicy(ctx, off); err != nil {
+		t.Fatal(err)
 	}
 	preview, err := d.CreateRetentionPreview(ctx)
 	if err != nil {
