@@ -91,6 +91,41 @@ func (s *Server) mcpL3Tools() []mcpserver.Tool {
 				return s.mcpTaskControl(ctx, raw, "resume")
 			},
 		},
+		{
+			Name:        "artex_status",
+			Title:       "ARTEX 态势",
+			Description: "查 ARTEX 本体的运行态势：活动任务、全部任务及状态、运行/排队/暂停计数、并发上限。想知道 ARTEX 现在在干什么、能干什么，先调这个——不要读源码、不要翻文档、不要猜。",
+			Tier:        mcpserver.L3,
+			ReadOnly:    true,
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"include_done": map[string]any{"type": "boolean", "description": "是否包含已结束（done/failed/timeout）的任务，默认 false"},
+					"limit":        map[string]any{"type": "integer", "description": "最多返回多少个任务，默认 20，上限 50"},
+				},
+			},
+			Handler: s.mcpArtexStatus,
+		},
+		{
+			Name:        "task_steer",
+			Title:       "给任务下指令",
+			Description: "任务跑偏、需要补充约束或新增方向时，把一段人类指令注入任务。mode=hint（默认）记为提示节点，planner 下一轮会读到；mode=intent 直接插入一条高优先级意图，planner 优先处理。不暂停任务、不删除数据。",
+			Tier:        mcpserver.L3,
+			ReadOnly:    false,
+			Destructive: false,
+			Idempotent:  false,
+			OpenWorld:   true,
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id":   map[string]any{"type": "integer", "description": "任务 id（task_create 返回的 task_id）"},
+					"text": map[string]any{"type": "string", "description": "要补充的方向、约束或验收标准；写具体，不要写『继续加油』"},
+					"mode": map[string]any{"type": "string", "enum": []string{"hint", "intent"}, "description": "hint=提示（默认）；intent=高优先级意图"},
+				},
+				"required": []string{"id", "text"},
+			},
+			Handler: s.mcpTaskSteer,
+		},
 	}
 }
 
@@ -192,4 +227,130 @@ func mcpTaskID(raw json.RawMessage) (int64, error) {
 		return 0, fmt.Errorf("id 必填且为正整数")
 	}
 	return id, nil
+}
+
+// mcpArtexStatus 返回 ARTEX 本体的运行态势。
+//
+// 外部 AI 想「接管」ARTEX 时先调这个，而不是去读源码或猜能力边界：
+// 它一次性给出活动任务、全部任务、运行/排队/暂停计数与并发上限。
+func (s *Server) mcpArtexStatus(_ context.Context, raw json.RawMessage) (string, error) {
+	var a struct {
+		IncludeDone bool `json:"include_done"`
+		Limit       int  `json:"limit"`
+	}
+	_ = decodeMCPArgs(raw, &a)
+	limit := a.Limit
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+
+	activeID := ""
+	if at := s.m.ActiveTask(); at != nil {
+		activeID = at.ID
+	}
+
+	rows := s.m.List()
+	briefs := make([]map[string]any, 0, len(rows))
+	running, queued, paused, finished := 0, 0, 0, 0
+	for _, t := range rows {
+		terminal := t.Status == "done" || t.Status == "failed" || t.Status == "timeout" || t.CompletedAt > 0
+		switch {
+		case terminal:
+			finished++
+		case t.Queued:
+			queued++
+		case t.Paused:
+			paused++
+		default:
+			running++
+		}
+		if terminal && !a.IncludeDone {
+			continue
+		}
+		if len(briefs) >= limit {
+			continue
+		}
+		briefs = append(briefs, map[string]any{
+			"id":              t.ID,
+			"name":            t.Name,
+			"status":          t.Status,
+			"analysis_domain": t.AnalysisDomain,
+			"paused":          t.Paused,
+			"queued":          t.Queued,
+			"active":          t.ID == activeID,
+			"goal":            clipRunes(t.Goal, 200),
+			"created_at":      t.CreatedAt,
+		})
+	}
+
+	enabled, concLimit := s.m.ConcurrencyLimit()
+	return mcpJSONString(map[string]any{
+		"server":      "artex",
+		"active_task": activeID,
+		"task_total":  len(rows),
+		"running":     running,
+		"queued":      queued,
+		"paused":      paused,
+		"finished":    finished,
+		"concurrency": map[string]any{"enabled": enabled, "limit": concLimit},
+		"tasks":       briefs,
+		"hint":        "给任务下指令用 task_steer；看单个任务详情用 task_status；开新任务用 task_create",
+	})
+}
+
+// mcpTaskSteer 把一段人类指令注入正在跑的任务。
+//
+// 两种落点：
+//   - hint（默认）：写一个 KindHint 节点，planner 下一轮规划时会读到，不改变优先级；
+//   - intent：直接插一条高优先级意图，planner 优先处理——相当于人从控制台插队。
+//
+// 两者都不暂停任务；要叫停走 task_pause。
+func (s *Server) mcpTaskSteer(_ context.Context, raw json.RawMessage) (string, error) {
+	var a struct {
+		ID   any    `json:"id"`
+		Text string `json:"text"`
+		Mode string `json:"mode"`
+	}
+	if err := decodeMCPArgs(raw, &a); err != nil {
+		return "", err
+	}
+	id := int64(mcpInt(a.ID, 0))
+	if id <= 0 {
+		return "", fmt.Errorf("id 必填且为正整数")
+	}
+	text := strings.TrimSpace(a.Text)
+	if text == "" {
+		return "", fmt.Errorf("text 必填：写清要补充的方向、约束或验收标准")
+	}
+	mode := strings.ToLower(strings.TrimSpace(a.Mode))
+	if mode == "" {
+		mode = "hint"
+	}
+	if mode != "hint" && mode != "intent" {
+		return "", fmt.Errorf("mode 只能是 hint 或 intent")
+	}
+
+	t, ok := s.m.Task(strconv.FormatInt(id, 10))
+	if !ok || t == nil {
+		return "", fmt.Errorf("任务 %d 不存在", id)
+	}
+
+	var nodeID int64
+	var err error
+	if mode == "intent" {
+		nodeID, err = t.Store.AddIntent(map[string]any{"summary": text}, 9, nil, "human")
+	} else {
+		nodeID, err = t.Store.AddNode(db.KindHint, map[string]any{"text": text}, 0, "active", "human", nil)
+	}
+	if err != nil {
+		return "", err
+	}
+	t.Notify()
+
+	return mcpJSONString(map[string]any{
+		"task_id": id,
+		"mode":    mode,
+		"node_id": nodeID,
+		"hint":    "已注入；用 task_status 观察 planner 是否采纳",
+	})
 }

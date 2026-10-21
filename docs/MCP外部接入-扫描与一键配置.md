@@ -58,3 +58,37 @@ POST /api/harness/apply  备份 → 临时文件 → rename → 回读 sha256 �
 - B 级 14 家的路径来自社区，写入按钮灰着，等实机确认
 - 控制台版本过旧（没有 `/mcp` 路由）时，L3 转发会报「该地址返回 HTML，不是 MCP 端点」——升级控制台即可
 - `task_pause` / `task_resume` 依赖控制台内存里的任务表，控制台重启后需要重新查询
+
+
+## 6. 指挥员模型：外部 AI 用 L3 做什么
+
+L3 不是「更多工具」，而是一套**下达 / 观察 / 干预**的指挥接口。外部 AI 不直接操作目标，
+它把目标拆成可验证的子目标交给 ARTEX，然后读证据。
+
+| 动词 | 工具 | 说明 |
+|---|---|---|
+| 下达 | `task_create` | description 写范围与授权边界，goal 写验证目标，analysis_domain 选 web_security / software_re |
+| 观察 | `artex_status` | **全局态势**：活动任务、运行/排队/暂停/结束计数、并发上限、任务列表 |
+| 观察 | `task_status` | **单任务详情**：进度、资产计数、最近发现 |
+| 干预 | `task_steer` | `mode=hint` 写提示节点（下一轮规划读到）；`mode=intent` 插一条高优先级意图 |
+| 干预 | `task_pause` / `task_resume` | 叫停与继续，不删任何数据 |
+
+### 6.1 为什么需要 `artex_status`
+
+实测：外部 AI 连上 ARTEX 后，被问「ARTEX 能做什么 / 现在在干什么」时，会去翻本机源码和文档
+——因为它没有一个权威的「我面前这个东西现在是什么状态」的入口。`artex_status` 就是这个入口；
+`mcpInstructions()` 里也明写了「不要读源码，调这个」。
+
+### 6.2 `task_steer` 的两种落点
+
+- `hint`（默认）：`Store.AddNode(KindHint, …, source="human")`，等价于控制台里的「提示」命令。
+  不改变优先级，planner 下一轮规划时读到。
+- `intent`：`Store.AddIntent(summary, priority=9, source="human")`，等价于人工插队，planner 优先处理。
+
+两者都不暂停任务；要停下用 `task_pause`。
+
+### 6.3 边界
+
+- 两个新工具都是 L3，只存在于**控制台进程**（需要编排器 `s.m.pg`）。headless 与本地 stdio 都拿不到。
+- `task_steer` 只对活着的任务有效；控制台重启后任务表需要重新加载。
+- 指挥员模型的前提是 instructions 生效：客户端必须真的读取 `initialize.instructions`（绝大多数支持）。
