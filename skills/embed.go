@@ -11,8 +11,12 @@ import (
 // (CI artifacts, build.sh ARTEX_PACKAGE=0, or self-updated binaries) always
 // materialize the default skills into the runtime skills/ directory when missing.
 //
-//go:embed api-recon playwright-cli scopesentry-mcp web-vuln-tactics reverse-engineering exploit-kb-patterns expert-triage-pivot human-verification ai-coding-sandbox-tactics wasm-cloud-saas-tactics rea-mcp wpe64-mcp mitmproxy-traffic ai-gateway-logic
+//go:embed api-recon camoufox scopesentry-mcp web-vuln-tactics reverse-engineering exploit-kb-patterns expert-triage-pivot human-verification ai-coding-sandbox-tactics wasm-cloud-saas-tactics rea-mcp wpe64-mcp mitmproxy-traffic ai-gateway-logic
 var Bundled embed.FS
+
+// retiredSkills 是从内置技能里**下线**的目录。升级安装时主动删除，
+// 避免旧技能继续把流量导回已废弃的浏览器引擎（Chromium / playwright-cli）。
+var retiredSkills = []string{"playwright-cli"}
 
 // EnsureBundled idempotently writes embedded built-in skill files into dstDir.
 // Existing files on disk are NEVER overwritten so user edits via the Web UI
@@ -20,6 +24,9 @@ var Bundled embed.FS
 func EnsureBundled(dstDir string) error {
 	if dstDir == "" {
 		return nil
+	}
+	for _, name := range retiredSkills {
+		_ = os.RemoveAll(filepath.Join(dstDir, name))
 	}
 	return fs.WalkDir(Bundled, ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil || rel == "." {

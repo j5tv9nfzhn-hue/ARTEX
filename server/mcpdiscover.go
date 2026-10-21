@@ -83,7 +83,7 @@ func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
 
 // prepareStdioMCP normalizes the stdio command, arguments and environment across
 // Windows / macOS / Linux so packaged single-binary builds can reliably spawn
-// Node/npx-based MCP servers (such as the built-in Playwright browser MCP)
+// Node/npx-based MCP servers (npx 启动的第三方 MCP，例如 ScopeSentry 的社区实现)
 // without hanging on interactive prompts or missing PATH entries.
 func prepareStdioMCP(command string, args []string, env map[string]string) (string, []string, map[string]string) {
 	outEnv := make(map[string]string, len(env)+4)

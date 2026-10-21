@@ -835,7 +835,7 @@ func (s *Server) seedDefaultSkillVisibility() {
 	}
 	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
 	skills := []string{
-		"api-recon", "playwright-cli", "scopesentry-mcp",
+		"api-recon", "camoufox", "scopesentry-mcp",
 		"web-vuln-tactics", "reverse-engineering", "exploit-kb-patterns", "expert-triage-pivot",
 	}
 	for _, sk := range skills {

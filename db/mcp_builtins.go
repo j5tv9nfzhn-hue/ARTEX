@@ -8,13 +8,13 @@ import (
 	"github.com/Autumn-27/artex/mcpbuiltin"
 )
 
-// builtinMCPStaticTools 定义内置 MCP 服务器（ScopeSentry 与 browser）的标准工具集。
+// builtinMCPStaticTools 定义内置 MCP 服务器（ScopeSentry / rea / wpe64）的标准工具集。
 //
 // 为什么在数据库初始化时预置到 mcp_tools_cache：
-//  1. ScopeSentry（HTTP）与 browser（Playwright stdio）默认以 enabled=false 播种，
+//  1. ScopeSentry（HTTP）等服务默认以 enabled=false 播种，
 //     启动时的 discoverEmptyMCPsOnStartup 仅对已启用服务器发起实时连接；
 //  2. 若不预置工具缓存，前端 /system/mcp 页面在未启用或离线打包分发状态下会一直显示
-//     「尚未发现工具」，用户无法在启用/授权前预览这两个内置 MCP 包含哪些工具；
+//     「尚未发现工具」，用户无法在启用/授权前预览内置 MCP 包含哪些工具；
 //  3. 预置仅在对应服务器的 mcp_tools_cache 为空时幂等写入；一旦用户配置并启用服务或
 //     点击「刷新」完成实时发现，SaveMCPTools 会用远端实际返回的列表覆盖本缓存。
 var builtinScopeSentryTools = []MCPTool{
@@ -35,31 +35,6 @@ var builtinScopeSentryTools = []MCPTool{
 	{Name: "mcp__ScopeSentry__get_asset_detail", Description: "获取单条 ScopeSentry 资产或漏洞记录的完整详情"},
 	{Name: "mcp__ScopeSentry__add_asset_tag", Description: "为指定 ScopeSentry 资产添加分类标签"},
 	{Name: "mcp__ScopeSentry__list_nodes", Description: "列出 ScopeSentry 在线扫描节点及其负载状态"},
-}
-
-var builtinBrowserMCPTools = []MCPTool{
-	{Name: "mcp__browser__browser_navigate", Description: "导航浏览器到指定 URL 并等待页面加载"},
-	{Name: "mcp__browser__browser_navigate_back", Description: "回退到当前标签页的上一访问页面"},
-	{Name: "mcp__browser__browser_snapshot", Description: "采集当前页面的可访问性 DOM 快照与元素引用（ref）"},
-	{Name: "mcp__browser__browser_click", Description: "点击页面上的指定目标元素（按 ref 或定位器）"},
-	{Name: "mcp__browser__browser_type", Description: "在指定输入框或可编辑元素中输入文本（可选提交）"},
-	{Name: "mcp__browser__browser_hover", Description: "将鼠标悬停在页面指定元素上"},
-	{Name: "mcp__browser__browser_drag", Description: "在两个页面元素之间执行拖放操作"},
-	{Name: "mcp__browser__browser_select_option", Description: "在下拉选择框（select）中选择指定选项"},
-	{Name: "mcp__browser__browser_press_key", Description: "在当前页面或聚焦元素上按下指定键盘按键"},
-	{Name: "mcp__browser__browser_wait_for", Description: "等待指定文本出现、消失或等待指定时长"},
-	{Name: "mcp__browser__browser_take_screenshot", Description: "对当前视口、整页或指定元素进行截图"},
-	{Name: "mcp__browser__browser_pdf_save", Description: "将当前页面导出保存为 PDF 文件"},
-	{Name: "mcp__browser__browser_file_upload", Description: "向文件选择控件上传一个或多个本地文件"},
-	{Name: "mcp__browser__browser_fill_form", Description: "批量填写页面表单中的多个字段"},
-	{Name: "mcp__browser__browser_handle_dialog", Description: "接受或取消页面的 alert/confirm/prompt 弹窗"},
-	{Name: "mcp__browser__browser_evaluate", Description: "在当前页面上下文中执行 JavaScript 表达式并返回结果"},
-	{Name: "mcp__browser__browser_console_messages", Description: "读取页面控制台（console）输出的日志与错误消息"},
-	{Name: "mcp__browser__browser_network_requests", Description: "列出当前页面发起的 HTTP/XHR/Fetch 网络请求记录"},
-	{Name: "mcp__browser__browser_tabs", Description: "列出、新建、切换或关闭浏览器标签页"},
-	{Name: "mcp__browser__browser_resize", Description: "调整浏览器窗口视口宽高尺寸"},
-	{Name: "mcp__browser__browser_close", Description: "关闭当前浏览器页面并释放会话资源"},
-	{Name: "mcp__browser__browser_install", Description: "安装或修复 Playwright 所需的受管浏览器内核"},
 }
 
 // builtinReaMCPTools 预置 REA (Reverse Engineering Assistant) 引擎 MCP 的标准
@@ -101,43 +76,44 @@ var builtinWPE64MCPTools = []MCPTool{
 	{Name: "mcp__wpe64__load_trace", Description: "加载既有 trace 文件用于重放或编辑"},
 }
 
-// seedBuiltinMCPServersAndTools 幂等确保内置的 browser 与 ScopeSentry MCP 具备正确的
-// 启动参数及初始工具缓存，使打包分发后开箱即可看到完整内置工具集并能非交互启动。
+// seedBuiltinMCPServersAndTools 幂等确保内置的 ScopeSentry 等 MCP 具备正确的启动参数
+// 及初始工具缓存，使打包分发后开箱即可看到完整内置工具集；同时清理已下线的
+// browser（Chromium / Playwright）条目。
 func (d *DB) seedBuiltinMCPServersAndTools() error {
-	// 1. 修正旧库中 browser MCP 缺少 "-y" 的默认 npx 参数（避免 stdio 下 npx 等待 y/n 确认卡死）。
-	if v, _, _ := d.GetSetting("browser_mcp_npx_yes_v1"); v != "done" {
+	// 1. 下线内置 browser（npx @playwright/mcp）MCP：它驱动 Chromium，而无头 Chromium
+	//    会在 sec-ch-ua 暴露 HeadlessChrome，是最容易被拦的形态。浏览器自动化统一
+	//    走 skills/camoufox（Camoufox / Firefox 内核）。升级安装时清掉旧库里的
+	//    默认行与工具缓存——只删「仍是出厂配置」的那一条，用户自定义过的同名服务器
+	//    命令行不同，不会被误删。
+	if v, _, _ := d.GetSetting("browser_mcp_retired_v1"); v != "done" {
 		var id int64
 		var cmd, rawArgs string
 		err := d.QueryRow(`SELECT id, COALESCE(command,''), COALESCE(args,'[]') FROM mcp_servers WHERE name='browser'`).Scan(&id, &cmd, &rawArgs)
 		if err == nil && id > 0 && strings.EqualFold(strings.TrimSpace(cmd), "npx") {
 			var args []string
-			if json.Unmarshal([]byte(rawArgs), &args) == nil && len(args) > 0 {
-				hasYes := false
+			stock := strings.Contains(rawArgs, "@playwright/mcp")
+			if json.Unmarshal([]byte(rawArgs), &args) == nil {
 				for _, a := range args {
-					if a == "-y" || a == "--yes" {
-						hasYes = true
-						break
-					}
-				}
-				if !hasYes && args[0] == "@playwright/mcp" {
-					args = append([]string{"-y"}, args...)
-					if b, merr := json.Marshal(args); merr == nil {
-						_, _ = d.Exec(`UPDATE mcp_servers SET args=$1 WHERE id=$2`, string(b), id)
+					if a == "@playwright/mcp" {
+						stock = true
 					}
 				}
 			}
+			if stock {
+				_, _ = d.Exec(`DELETE FROM mcp_tools_cache WHERE server_id=$1`, id)
+				_, _ = d.Exec(`DELETE FROM mcp_servers WHERE id=$1`, id)
+			}
 		}
-		_ = d.SetSetting("browser_mcp_npx_yes_v1", "done")
+		_ = d.SetSetting("browser_mcp_retired_v1", "done")
 	}
 
-	// 2. 为 ScopeSentry 与 browser 预置初始工具缓存（仅当该 server 的 mcp_tools_cache 为空时写入）。
+	// 2. 为 ScopeSentry / rea / wpe64 预置初始工具缓存（仅当该 server 的 mcp_tools_cache 为空时写入）。
 	type catalog struct {
 		serverName string
 		tools      []MCPTool
 	}
 	builtinCatalogs := []catalog{
 		{serverName: "ScopeSentry", tools: builtinScopeSentryTools},
-		{serverName: "browser", tools: builtinBrowserMCPTools},
 		{serverName: "rea", tools: builtinReaMCPTools},
 		{serverName: "wpe64", tools: builtinWPE64MCPTools},
 	}

@@ -201,7 +201,7 @@ def main():
     print(f"[+] route paths:   {len(routes)} (routes.txt)")
     print(f"[+] outdir: {outdir}")
     print("\n[next] reverse the 3 gate facts (see reference.md), fill config.json, "
-          "then: node runtime_harvest.js config.json")
+          "then: python runtime_harvest.py config.json")
 
 if __name__ == "__main__":
     main()

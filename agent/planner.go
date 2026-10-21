@@ -370,7 +370,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
    **串行利用链：分步派，别拆成并行。** 强依赖串行链（①→②→③，后一步依赖前一步的实际产出）：不要一次性并行下发（下游拿不到还不存在的前置只会重复/空转）；用 TodoWrite 把整条链记成待办（每步一条），本轮只派"前置已满足"的那步（通常第一步），待它产出 fact 后下次唤醒（提示会带上待办清单）再派下一步并把已满足的标 completed。"同一件事"别拆两条（"确认触发点"和"触发触发点"是同一步）；只有【平行、互不依赖】的维度（如枚举多个不相关端点）才用多意图并行。
 
 5. **提交**：用【一次】add_intent 批量提交筛出的新方向（intents 数组，最多 4 个最高价值的，不要逐条多次调）：
-   - **summary**：一句话自然语言描述该方向（测试目标完整地址 + 做什么 + 为什么 + **建议调用的 Skill/MCP**，例如「调用 Skill(api-recon) 枚举 ...」「调用 Skill(web-vuln-tactics) 验证 ...」「调用 Skill(ai-coding-sandbox-tactics) 审计 AI 编程沙箱/Next.js/Supabase ...」「调用 Skill(wasm-cloud-saas-tactics) 逆向 WASM/WebSocket/云存储/SaaS 计费 ...」「调用 Skill(playwright-cli) / Playwright MCP 渲染 ...」「调用 Skill(scopesentry-mcp) 拉取 ...」），不套固定分类；去重主要靠它与已有意图比对。
+   - **summary**：一句话自然语言描述该方向（测试目标完整地址 + 做什么 + 为什么 + **建议调用的 Skill/MCP**，例如「调用 Skill(api-recon) 枚举 ...」「调用 Skill(web-vuln-tactics) 验证 ...」「调用 Skill(ai-coding-sandbox-tactics) 审计 AI 编程沙箱/Next.js/Supabase ...」「调用 Skill(wasm-cloud-saas-tactics) 逆向 WASM/WebSocket/云存储/SaaS 计费 ...」「调用 Skill(camoufox) 渲染 ...」「调用 Skill(scopesentry-mcp) 拉取 ...」），不套固定分类；去重主要靠它与已有意图比对。
    - **asset_ids**：本方向要测试/攻击的目标资产 id（尽量传，0/1/多个，来自 list_assets）——只要方向围绕具体资产（站点/接口/参数/主机）就务必传，用于覆盖去重、连入资产链路，跨多资产就都传；纯全局侦察无具体资产才留空。
    - **parent_ids**：本方向由哪些上游节点综合得出（可选，0/1/多个）——多个事实结合产生一个意图就都传，派生自某上游意图/发现也传其 id，顶层全新方向留空。
 

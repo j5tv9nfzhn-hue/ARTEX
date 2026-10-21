@@ -95,7 +95,7 @@ secrets.env
 
 # 浏览器运行时在仓库根目录留下的用户数据目录。
 #
-# 任务里启动 Chrome/Chromium 时若未指定 --user-data-dir，浏览器会在「当前工作
+# 历史上启动 Chrome/Chromium 时若未指定 --user-data-dir，浏览器会在「当前工作
 # 目录」下建一份完整 profile：登录凭据库(Login Data)、信任令牌、扩展数据、
 # 浏览痕迹、GPU 缓存、组件下载缓存等。它们体积极大(实测约 60 MB)、含敏感内容，
 # 且与本项目代码毫无关系，绝不能进入版本库。
@@ -177,3 +177,7 @@ secrets.env
 /GraphiteDawnCache/
 mcpd.json
 mcpd.lock
+
+# Camoufox 运行时产物（会话状态、profile、截图）
+.camoufox/
+artex-camoufox/

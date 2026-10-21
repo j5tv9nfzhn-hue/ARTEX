@@ -66,7 +66,7 @@ func TestLoopBreakerDoesNotInterpretOpaqueOrTruncatedOutput(t *testing.T) {
 
 func TestSkillHistoryRestoresOnlyPairedSuccess(t *testing.T) {
 	msgs := []llm.Message{
-		{Content: []llm.ContentBlock{{Type: llm.BlockToolUse, ID: "ok", Name: "Skill", Input: json.RawMessage(`{"skill":"api"}`)}, {Type: llm.BlockToolUse, ID: "bad", Name: "Skill", Input: json.RawMessage(`{"name":"playwright-cli"}`)}, {Type: llm.BlockToolUse, ID: "pending", Name: "Skill", Input: json.RawMessage(`{"name":"expert-triage-pivot"}`)}}},
+		{Content: []llm.ContentBlock{{Type: llm.BlockToolUse, ID: "ok", Name: "Skill", Input: json.RawMessage(`{"skill":"api"}`)}, {Type: llm.BlockToolUse, ID: "bad", Name: "Skill", Input: json.RawMessage(`{"name":"camoufox"}`)}, {Type: llm.BlockToolUse, ID: "pending", Name: "Skill", Input: json.RawMessage(`{"name":"expert-triage-pivot"}`)}}},
 		{Content: []llm.ContentBlock{llm.ToolResultText("ok", "loaded", false), llm.ToolResultText("bad", "failed", true)}},
 	}
 	var got []string

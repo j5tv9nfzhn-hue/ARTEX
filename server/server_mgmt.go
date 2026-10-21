@@ -1749,10 +1749,10 @@ func readZipEntry(f *zip.File) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(rc, maxSkillFileBytes))
 }
 
-// isReservedMCPName 报告名称是否被系统内部集成按名引用（manager 的浏览器代理
-// 注入与 ScopeSentry 数据源同步都用常量名查找服务器）。
+// isReservedMCPName 报告名称是否被系统内部集成按名引用（ScopeSentry 数据源
+// 同步用常量名查找服务器）。
 func isReservedMCPName(name string) bool {
-	return strings.EqualFold(name, browserMCPName) || strings.EqualFold(name, scopeSentryMCPName)
+	return strings.EqualFold(name, scopeSentryMCPName)
 }
 
 // skillFrontmatterMCPs 解析 SKILL.md frontmatter 的 mcps 列表（逗号分隔，已 trim）。

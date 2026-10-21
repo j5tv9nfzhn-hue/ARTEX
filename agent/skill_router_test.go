@@ -33,12 +33,12 @@ func TestBuildTacticalRoutingHintMatchesDistilledCaseSkill(t *testing.T) {
 	tools := []actool.CoreTool{
 		dummyTool("Skill", skillDesc),
 		dummyTool("tactical_kb", "Tactical knowledge base"),
-		dummyTool("mcp__Playwright__browser_navigate", "Navigate browser"),
+		dummyTool("mcp__ScopeSentry__list_projects", "List ScopeSentry projects"),
 		dummyTool("mcp__Ghidra__decompile_function", "Decompile in Ghidra"),
 	}
 
 	def := DeferredInfo{
-		GlobalNames: []string{"mcp__Playwright__browser_navigate"},
+		GlobalNames: []string{"mcp__ScopeSentry__list_projects"},
 	}
 
 	hint := BuildTacticalRoutingHint("请对目标商城的 coupon_redeem 优惠券接口做并发重放与越权测试", tools, def)
@@ -51,8 +51,8 @@ func TestBuildTacticalRoutingHintMatchesDistilledCaseSkill(t *testing.T) {
 	if !strings.Contains(hint, "web-vuln-tactics") {
 		t.Fatalf("expected builtin web-vuln-tactics alongside distilled skill, got:\n%s", hint)
 	}
-	if !strings.Contains(hint, "Playwright") || !strings.Contains(hint, "Ghidra") {
-		t.Fatalf("expected both active (Playwright) and skill-gated (Ghidra) MCP servers in routing hint, got:\n%s", hint)
+	if !strings.Contains(hint, "ScopeSentry") || !strings.Contains(hint, "Ghidra") {
+		t.Fatalf("expected both active (ScopeSentry) and skill-gated (Ghidra) MCP servers in routing hint, got:\n%s", hint)
 	}
 	if strings.Contains(hint, "case-re-99") {
 		t.Fatalf("unrelated RE case skill should not match coupon web task:\n%s", hint)

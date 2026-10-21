@@ -4,7 +4,7 @@
  * ⚠ 非通用成品：须按目标站点调整后再注入。
  * 常见改动：loginPathRe、stubs、neutralize.fields/success、apiPattern、mockTier、forward
  *
- * document-start 注入（CDP addScriptToEvaluateOnNewDocument 或 userscript）
+ * document-start 注入（Camoufox: page.add_init_script / userscript）
  * CONFIG 字段应与 recon/config.json 保持一致
  */
 (function () {

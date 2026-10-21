@@ -85,15 +85,14 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"api-recon\"})` 加载 API 侦察 SOP，并配合 `web_recon` / `http_fuzz` / `http_request` 探测文档端点与越权参数。",
 	},
 	{
-		skillName:   "playwright-cli",
+		skillName:   "camoufox",
 		nativeTools: []string{"http_request"},
-		mcpServer:   "Playwright",
 		title:       "SPA 前端动态渲染、登录态交互与 DOM/XSS 验证",
 		keywords: []string{
 			"spa", "vue", "react", "angular", "dom", "xss", "前端渲染", "单页应用",
-			"浏览器", "playwright", "登录态", "验证码", "滑块", "弹窗", "截图", "headless",
+			"浏览器", "camoufox", "firefox", "登录态", "验证码", "滑块", "弹窗", "截图", "headless",
 		},
-		action: "优先调用 `Skill({\"name\":\"playwright-cli\"})` 加载无头浏览器交互规约；若已挂载 Playwright MCP，可直接调用 `mcp__Playwright__*` 工具或通过 `ExecuteExtraTool` 执行页面导航与 DOM 交互。",
+		action: "优先调用 `Skill({\"name\":\"camoufox\"})` 加载浏览器自动化规约，然后用 `camoufox-cli`（open/snapshot/fill/click/eval）完成页面导航与 DOM 交互；不要用 Playwright、puppeteer 或系统 Chrome。",
 	},
 	{
 		skillName: "scopesentry-mcp",

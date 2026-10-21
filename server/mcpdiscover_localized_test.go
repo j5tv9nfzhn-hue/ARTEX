@@ -43,15 +43,15 @@ func TestConnectMCPErrorsLocalized(t *testing.T) {
 }
 
 func TestPrepareStdioMCPInjectsNPXYesAndEnv(t *testing.T) {
-	_, args, env := prepareStdioMCP("npx", []string{"@playwright/mcp", "--headless"}, map[string]string{"FOO": "bar"})
-	if len(args) < 3 || args[0] != "-y" || args[1] != "@playwright/mcp" {
+	_, args, env := prepareStdioMCP("npx", []string{"@modelcontextprotocol/server-filesystem", "--headless"}, map[string]string{"FOO": "bar"})
+	if len(args) < 3 || args[0] != "-y" || args[1] != "@modelcontextprotocol/server-filesystem" {
 		t.Fatalf("expected -y prepended to npx args, got %v", args)
 	}
 	if env["npm_config_yes"] != "true" || env["NPM_CONFIG_YES"] != "true" || env["FOO"] != "bar" {
 		t.Fatalf("unexpected stdio env: %v", env)
 	}
 
-	_, args2, _ := prepareStdioMCP("npx", []string{"-y", "@playwright/mcp", "--headless"}, nil)
+	_, args2, _ := prepareStdioMCP("npx", []string{"-y", "@modelcontextprotocol/server-filesystem", "--headless"}, nil)
 	if len(args2) != 3 || args2[0] != "-y" {
 		t.Fatalf("expected existing -y preserved without duplication, got %v", args2)
 	}

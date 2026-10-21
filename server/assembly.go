@@ -409,7 +409,7 @@ func buildSmartExecuteExtraTool(
 			"properties": map[string]any{
 				"tool_name": map[string]any{
 					"type":        "string",
-					"description": "要调用的 MCP / 扩展工具全名（如 mcp__Playwright__browser_navigate）",
+					"description": "要调用的 MCP / 扩展工具全名（如 mcp__ScopeSentry__list_projects）",
 				},
 				"params": map[string]any{
 					"type":        "object",

@@ -31,7 +31,7 @@ func TestSkillCanonicalContractAndLegacyAliases(t *testing.T) {
 			t.Fatalf("SDK Skill contract failed: %v / %s", err, result.Flatten())
 		}
 	}
-	for _, raw := range []string{`null`, `{"name":"api-recon","skill":"playwright"}`, `{"skill":null}`, `{"name":"api-recon","args":{}}`, `{"name":"api-recon","unknown":1}`} {
+	for _, raw := range []string{`null`, `{"name":"api-recon","skill":"camoufox"}`, `{"skill":null}`, `{"name":"api-recon","args":{}}`, `{"name":"api-recon","unknown":1}`} {
 		if _, _, err := m.resolveInput(json.RawMessage(raw)); err == nil {
 			t.Fatalf("invalid input accepted: %s", raw)
 		}

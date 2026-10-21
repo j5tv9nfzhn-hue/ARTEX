@@ -23,7 +23,7 @@ description: Web 与前端 API 接口侦察专家规程（全面发现后端 RES
 
 ### 无凭据动态分析（Phase 3 默认）
 
-1. 通过 `preload.js` / `runtime_harvest.js` **拦截并 stub** 登录、权限、菜单等 bootstrap 接口；
+1. 通过 `preload.js` / `runtime_harvest.py` **拦截并 stub** 登录、权限、菜单等 bootstrap 接口；
 2. 对业务查询接口返回 **结构正确、业务码成功、数据可为空** 的 mock body；
 3. 使前端在无后端或 401 环境下仍能渲染登录后页面，从而触发更多 XHR/fetch/WebSocket；
 4. **空数据、空白表格、占位 UI 均属预期**——勿为此转向真实登录或漏洞测试。
@@ -56,7 +56,7 @@ description: Web 与前端 API 接口侦察专家规程（全面发现后端 RES
 
 | 运行模式 | 引擎 | 适用 |
 |---|---|---|
-| **depth** | `runtime_harvest.js`（Puppeteer） | API 清单、METHOD/params/响应体、WS/SSE、可复现批量跑 |
+| **depth** | `runtime_harvest.py`（Camoufox） | API 清单、METHOD/params/响应体、WS/SSE、可复现批量跑 |
 | **coverage** | browser + `preload.js` | 点 Tab/弹窗/表格，功能点覆盖更深 |
 | **both** | 先 depth 再 coverage | 最完整，耗时最长 |
 
@@ -86,7 +86,7 @@ description: Web 与前端 API 接口侦察专家规程（全面发现后端 RES
 | 门禁 | 何时 | 参考脚本 → OUTDIR 副本 | 常见必改项 |
 |---|---|---|---|
 | **A（静态）** | Phase 0 后、**第一次**跑 harvest/spider 前 | `harvest_static.py` / `spider_mpa.py` | **多数站点默认 regex 可直接跑**；仅 manifest/方言不匹配时改 endpoint 正则、webpack/Vite `publicPath`、MPA exclude/cookie |
-| **B（运行时）** | Phase 2 后、跑 depth/coverage 前 | `runtime_harvest.js` / `preload.js` + `config.json` | Cookie/localStorage 键、neutralize 成功值、stubs、login 正则、api 前缀、hash/history |
+| **B（运行时）** | Phase 2 后、跑 depth/coverage 前 | `runtime_harvest.py` / `preload.js` + `config.json` | Cookie/localStorage 键、neutralize 成功值、stubs、login 正则、api 前缀、hash/history |
 
 **SPA 强制顺序**（不可交换；Phase 编号优先于「先探索再脚本」）：
 
@@ -258,7 +258,7 @@ DevTools call stack 从 `fetch`/`XHR.send` 往上追组包函数。
 
 禁止把 localStorage 键名当凭据——须从 chunk/请求链确认。
 
-**出口 = 门禁 B**：结论落到 `config.json`，并改 `OUTDIR/runtime_harvest.js` / `preload.js`。
+**出口 = 门禁 B**：结论落到 `config.json`，并改 `OUTDIR/runtime_harvest.py` / `preload.js`。
 
 ### Phase 2b — API 观察（可选）
 
@@ -291,13 +291,13 @@ coverage 每轮导出：`__API_RECON_LOG__`、`__API_RECON_DETAIL__`、`__API_RE
 | L3 兜底 | 未命中 L1 的 `/api` 等 | 空成功体，撑开 UI |
 
 - **depth**：fake auth + `forward` 改业务码 + `stubs`；遍历 `routes`（hash/history）；产出 `runtime_api.json`
-- **coverage**：**document-start** 注入 `preload.js`（CDP `addScriptToEvaluateOnNewDocument` 或 Userscript）
+- **coverage**：**document-start** 注入 `preload.js`（`page.add_init_script`（Camoufox））
 
 验证：`window.__API_RECON_PRELOAD__` 存在；业务 path 不回 `/login`。
 
 ```bash
 cd recon && npm install
-node runtime_harvest.js config.json
+python runtime_harvest.py config.json
 ```
 
 ### 3b — coverage 动态枚举（必做）

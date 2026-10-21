@@ -1,5 +1,13 @@
 # MCP 能力扩展：调研与路线图（渗透 / 逆向双域）
 
+> **状态：已废弃（2026-10-21）。**
+> 本文是早期「Playwright MCP + Chrome DevTools」路线的调研记录，仅作历史存档。
+> 浏览器自动化现已统一为 **Camoufox（Firefox 内核，Juggler 协议）**，不再使用
+> Chromium / CDP / `@playwright/mcp`：无头 Chromium 会在 `sec-ch-ua` 暴露
+> `HeadlessChrome`（1 万站点实测软封禁率 15.2%，Firefox 为 6.8%）。新实现见
+> `skills/camoufox`，接口采集见 `skills/api-recon/scripts/runtime_harvest.py`。
+
+
 > 状态：调研稿，未实现。日期 2026-10-20。
 > 结论先行：**知识层（SKILLS）已经够厚，执行层（MCP）太薄**。14 个技能覆盖了"怎么想"，
 > 4 个 MCP 服务器只覆盖了"怎么点"——资产测绘、静态反编译、封包改包、浏览器。

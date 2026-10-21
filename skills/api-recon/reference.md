@@ -9,7 +9,7 @@ Grep 配方、`config.json` 模板与排障。所有 grep 针对 `js/` 目录执
 | 脚本 | 常见需调整项 |
 |---|---|
 | `harvest_static.py` | endpoint 正则、webpack/Vite manifest 解析、微前端 publicPath、重试/并发 |
-| `runtime_harvest.js` | neutralize 字段名与成功值、stub 匹配规则与 body 结构、routes 来源、WS 录制、`waitUntil`/`routeTimeout`/`proxy` |
+| `runtime_harvest.py` | neutralize 字段名与成功值、stub 匹配规则与 body 结构、routes 来源、WS 录制、`waitUntil`/`routeTimeout`/`proxy` |
 | `preload.js` | `loginPathRe`、L1 stubs、`neutralize.fields`、`apiPattern`、是否启用 L3、`recordDetail`、`observe.*`、`neutralizeVueRouter` |
 | `spider_mpa.py` | `--exclude` 破坏性链接、cookie、depth/max、同域过滤 |
 | `extract_route_map.py` | `routeMap` / `routeLink` 正则、KEY 命名模式 |
@@ -93,7 +93,6 @@ grep -rhoaE '([A-Z_][A-Z0-9_]*):\{name:"[^"]*",link:"/[^"]+"\}' js | head
 {
   "baseUrl": "https://target/",
   "runtimeMode": "both",
-  "chromium": "/usr/bin/chromium",
 
   "cookies": [
     { "name": "auth", "value": "b64json:{\"id\":1,\"username\":\"admin\",\"role\":\"admin\",\"func\":{},\"permissions\":[\"*\"]}" }
@@ -273,7 +272,7 @@ grep -rhoaE '/api/[a-zA-Z0-9_./-]+' js | sort -u
 | 每个 API 都跳登录 | 拦截器门 → 确认 `neutralize`；嵌套字段需扩展 walk 逻辑 |
 | WS 帧为 0 | 需用户交互后才 subscribe；加长 `perRouteMs` |
 | 响应体空 | 仅 `forward: true` 时有真实响应 |
-| Chromium 缺失 | 安装 chromium 或设置 `config.chromium` / `CHROMIUM` |
+| Camoufox 缺失 | `python -m pip install -U "camoufox[geoip]"` 后执行 `python -m camoufox fetch` |
 | Mock 很多仍回登录 | Hook 太晚或缺 `location.href` setter → document-start + preload |
 | 列表全空 | L3 空数组正常；继续点 Tab/设置/详情 |
 | 误把 Redux action 当路由 | 过滤含 get/set/change/clear/toggle/upload 的内部 path |
@@ -300,7 +299,7 @@ grep -rhoaE '/api/[a-zA-Z0-9_./-]+' js | sort -u
 2. **阅读** `scripts/harvest_static.py` → 按目标调整 → 运行 → 审 `api_static.txt`、`routes.txt`
 3. **Phase 1b**：path 锚点扩窗 + 绑定层 → `param_candidates.json`（J 节）
 4. 逆向 A1/A2/A3 → 写站点专属 `config.json`
-5. **阅读并调整** `runtime_harvest.js` / `preload.js` 后再执行
+5. **阅读并调整** `runtime_harvest.py` / `preload.js` 后再执行
 6. `runtimeMode=depth`：`npm install` → 运行调整后的 harvest 脚本
 7. `runtimeMode=coverage/both`：document-start 注入调整后的 preload → browser MCP 动态枚举 + **参数触发矩阵**
 8. 模块不渲染 → **I 节权限树还原** → patch stubs → 重跑
@@ -366,7 +365,7 @@ python3 -c "import json; m=json.load(open('recon/route_map.json')); r=set(json.l
 ### I5. 重跑 runtime 并对比
 
 ```bash
-node recon/runtime_harvest.js recon/config.json
+python recon/runtime_harvest.py recon/config.json
 # 对比 forge 前后 runtime_api.json 条数；检查 /attack、/asset 等是否出现模块 API
 ```
 

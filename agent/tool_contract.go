@@ -8,8 +8,8 @@ func CanonicalSkillAlias(name string) string {
 	aliases := map[string]string{
 		"scopesentry":               "scopesentry-mcp",
 		"scope-sentry":              "scopesentry-mcp",
-		"playwright":                "playwright-cli",
-		"browser":                   "playwright-cli",
+		"playwright":                "camoufox",
+		"browser":                   "camoufox",
 		"api":                       "api-recon",
 		"apirecon":                  "api-recon",
 		"web-vuln":                  "web-vuln-tactics",

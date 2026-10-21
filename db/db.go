@@ -122,18 +122,10 @@ ON CONFLICT (agent_id, var_name) DO UPDATE
 		}
 		_ = d.SetSetting("interactive_shell_default_v1", "true")
 	}
-	// Seed the built-in browser (Playwright) MCP once — DISABLED by default (用户
-	// 需要时自行启用), no proxy by default. The traffic-capture toggle injects/strips
-	// the recording proxy + CA at runtime (server.Manager.syncBrowserMCPProxy).
-	// Insert only if absent so we never clobber user edits (args/env/enabled/
-	// visibility) on restart.
-	if _, err := d.Exec(`
-INSERT INTO mcp_servers(name, transport, command, args, env, enabled)
-VALUES ('browser', 'stdio', 'npx', $1, '{}', false)
-ON CONFLICT (name) DO NOTHING`,
-		`["-y","@playwright/mcp","--headless"]`); err != nil {
-		return fmt.Errorf("seed browser mcp: %w", err)
-	}
+	// 内置浏览器 MCP（npx @playwright/mcp）已下线：它驱动的是 Chromium，而无头
+	// Chromium 会在 sec-ch-ua 里暴露 HeadlessChrome，正是最容易被拦的形态。
+	// 浏览器自动化改由 skills/camoufox（Camoufox / Firefox 内核）承担，
+	// 这里不再自动注册任何 Chromium 系浏览器。
 	// Seed placeholder REA (Reverse Engineering Assistant) 与 WPE64 封包实验 MCP
 	// 行 —— 默认禁用、stdio、command 留空（操作员在 /system/mcp 填启动器）。
 	// REA 供 software_re REProvider 预设绑定；WPE64 与内置 mitmproxy 记录代理
@@ -247,13 +239,13 @@ ON CONFLICT DO NOTHING`, r.kind, r.pattern, r.note); err != nil {
 // builtinSkillVisibility maps a shipped skill's directory name → the built-in
 // agent keys that should see it by default. The skill FILES themselves live on the
 // filesystem (SkillDir, loaded by norma at runtime); DB only carries this visibility
-// binding. Skills omitted here (e.g. playwright-cli, scopesentry) ship invisible by
+// binding. Skills omitted here (e.g. camoufox, scopesentry) ship invisible by
 // default — the user turns them on per-agent when needed. scopesentry additionally
 // declares `mcps: ScopeSentry`, which only takes effect once it's made visible and
 // that MCP is enabled/configured.
 var builtinSkillVisibility = map[string][]string{
 	"api-recon":           {"auto", "pentest", "worker", "planner", "mainagent"},
-	"playwright-cli":      {"auto", "pentest", "worker", "planner", "mainagent"},
+	"camoufox":      {"auto", "pentest", "worker", "planner", "mainagent"},
 	"scopesentry-mcp":     {"auto", "pentest", "worker", "planner", "mainagent"},
 	"web-vuln-tactics":    {"auto", "pentest", "worker", "planner", "mainagent"},
 	"reverse-engineering": {"auto", "pentest", "worker", "planner", "mainagent"},

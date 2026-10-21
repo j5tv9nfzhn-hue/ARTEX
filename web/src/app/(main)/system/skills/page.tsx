@@ -58,7 +58,7 @@ type SkillBucket = "all" | "knowledge" | "memory" | "custom";
 // 旧后端未返回 origin 时的兜底，判定规则与后端完全一致（内置优先，再看前缀）。
 const LEGACY_BUILTIN_SKILL_NAMES = new Set([
   "api-recon",
-  "playwright-cli",
+  "camoufox",
   "scopesentry-mcp",
   "web-vuln-tactics",
   "reverse-engineering",

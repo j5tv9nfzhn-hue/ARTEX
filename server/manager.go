@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -505,9 +504,6 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		}
 	}
 	m.enrich = enrich.New(m.assets, m.ProxyAddr, 4)
-	// Reconcile the seeded browser MCP with the persisted capture state, so a
-	// restart with capture already on keeps Playwright routed through the proxy.
-	m.syncBrowserMCPProxy()
 	return m, nil
 }
 
@@ -528,11 +524,6 @@ func (m *Manager) SetTrafficEnabled(on bool) error {
 	m.mu.Lock()
 	m.trafficOn = on
 	m.mu.Unlock()
-	// Inject (on) or strip (off) the recording proxy + CA on the browser MCP so
-	// Playwright routes through the MITM. Must run after the flag flip above, since
-	// ProxyAddr/ProxyCACert honor it. putSettings rebuilds agents next (applyLLM),
-	// which re-spawns the MCP with the new args/env.
-	m.syncBrowserMCPProxy()
 	return nil
 }
 
@@ -693,103 +684,6 @@ func (m *Manager) SetWebSearch(on bool, backend string, braveKey, tavilyKey, pro
 	return nil
 }
 
-// browserMCPName is the seeded Playwright MCP whose proxy args + CA env are kept
-// in sync with the traffic-capture toggle.
-const browserMCPName = "browser"
-
-// syncBrowserMCPProxy reconciles the seeded browser MCP's proxy args + CA env with
-// the current traffic-capture state: capture on → route Playwright through the
-// recording proxy (--proxy-server) and trust its MITM CA (NODE_EXTRA_CA_CERTS);
-// capture off → strip both. Idempotent, and a no-op if the user deleted/renamed the
-// MCP. Must be called WITHOUT m.mu held (ProxyAddr/ProxyCACert take the lock).
-func (m *Manager) syncBrowserMCPProxy() {
-	servers, err := m.pg.ListMCP()
-	if err != nil {
-		log.Printf("[mcp] browser 代理同步: 读取 MCP 列表失败: %v", err)
-		return
-	}
-	var srv *pgdb.MCPServer
-	for _, s := range servers {
-		if s.Name == browserMCPName {
-			srv = s
-			break
-		}
-	}
-	if srv == nil {
-		return // user removed/renamed it — leave it alone
-	}
-
-	proxy := m.ProxyAddr()  // "" when capture off
-	cert := m.ProxyCACert() // "" when capture off
-
-	args := stripProxyArgs(decodeStrSlice(srv.Args))
-	if strings.EqualFold(strings.TrimSpace(srv.Command), "npx") && len(args) > 0 && args[0] == "@playwright/mcp" {
-		args = append([]string{"-y"}, args...)
-	}
-	env := decodeStrMap(srv.Env)
-	delete(env, "NODE_EXTRA_CA_CERTS")
-	if proxy != "" {
-		args = append(args, "--proxy-server", proxy)
-		if cert != "" {
-			env["NODE_EXTRA_CA_CERTS"] = cert
-		}
-	}
-	srv.Args = encodeJSON(args)
-	srv.Env = encodeJSON(env)
-	if _, err := m.pg.SaveMCP(srv); err != nil {
-		log.Printf("[mcp] browser 代理同步失败: %v", err)
-		return
-	}
-	if proxy != "" {
-		log.Printf(logT("[mcp] browser MCP 抓包代理已连接：%s (CA %s)"), proxy, cert)
-	} else {
-		log.Print(logT("[mcp] 已移除 browser MCP 抓包代理配置"))
-	}
-}
-
-// stripProxyArgs removes any --proxy-server/--proxy-bypass flags (both "--flag val"
-// and "--flag=val" forms) so they can be re-added cleanly from current state,
-// without mutating the input slice.
-func stripProxyArgs(args []string) []string {
-	out := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "--proxy-server" || a == "--proxy-bypass" {
-			i++ // skip the following value too
-			continue
-		}
-		if strings.HasPrefix(a, "--proxy-server=") || strings.HasPrefix(a, "--proxy-bypass=") {
-			continue
-		}
-		out = append(out, a)
-	}
-	return out
-}
-
-func decodeStrSlice(raw json.RawMessage) []string {
-	var out []string
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &out)
-	}
-	return out
-}
-
-func decodeStrMap(raw json.RawMessage) map[string]string {
-	out := map[string]string{}
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &out)
-	}
-	return out
-}
-
-func encodeJSON(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	return b
-}
-
 // HostTools are runtime host-provided tools added to EVERY agent's base list (via
 // ToolAugment); the tools table then filters them per-agent binding. Currently the
 // traffic tools, gated by the global capture switch: empty when capture is off, so
@@ -863,8 +757,6 @@ func (m *Manager) SetGlobalProxy(raw string) error {
 			return err
 		}
 	}
-	// Keep the browser MCP's egress in sync with the new global proxy too.
-	m.syncBrowserMCPProxy()
 	return nil
 }
 
