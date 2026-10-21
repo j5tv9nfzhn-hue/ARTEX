@@ -999,13 +999,6 @@ CREATE TABLE IF NOT EXISTS conversations (
     agent_key      TEXT NOT NULL,
     title          TEXT NOT NULL DEFAULT '',
     llm_profile_id BIGINT REFERENCES llm_profiles(id) ON DELETE SET NULL,
-    -- Harness 能力域：general | dev | office | pentest（唯一真值源见 agent/domain.go）。
-    -- 默认 general = 引入该列之前 ChatAgent 的行为，老会话语义不变。
-    mode           TEXT NOT NULL DEFAULT 'general',
-    -- 会话工作根：正常使用（通用/开发/办公）由用户在目录选择器里指定；空 = 沿用数据目录。
-    -- kind=data 表示沿用既有数据目录语义（渗透/逆向走这条）。
-    workspace_root TEXT NOT NULL DEFAULT '',
-    workspace_kind TEXT NOT NULL DEFAULT 'data',
     pinned_at      TIMESTAMP,
     created_at     TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
     updated_at     TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))

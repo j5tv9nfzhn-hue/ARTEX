@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Autumn-27/artex/db"
@@ -104,21 +103,6 @@ type chatVars struct{ DataDir, Now string }
 // tool_use / tool_result / text / result), tagged with the agent key as the
 // worker lane.
 func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message string, maxTurns int, maxDuration time.Duration, webSearch bool, emit func(db.Activity)) (string, error) {
-	return c.ChatRun(ctx, ChatRun{}, agentKey, sessionID, message, maxTurns, maxDuration, webSearch, emit)
-}
-
-// ChatRun 是「本次运行」的会话级覆盖项。ChatAgent 按 LLM profile 缓存、被多个会话共享，
-// 所以工作根与能力域这类**按会话**的设定必须走参数，不能写到 agent 字段上（否则并发会话互相污染）。
-type ChatRun struct {
-	// WorkDir 非空时直接作为本次运行的工作目录（会话级项目根）。
-	// 为空则沿用旧行为：<data>/sessions/<sessionID>/。
-	WorkDir string
-	// Mode 是能力域（agent/domain.go），决定追加的系统提示与后续工具策略。
-	Mode string
-}
-
-// ChatRun 与 Chat 相同，额外接受会话级覆盖（工作根 / 能力域）。
-func (c *ChatAgent) ChatRun(ctx context.Context, run ChatRun, agentKey, sessionID, message string, maxTurns int, maxDuration time.Duration, webSearch bool, emit func(db.Activity)) (string, error) {
 	// gate the global web-search opts by this agent's own flag.
 	ws := c.webSearch
 	if !webSearch {
@@ -128,11 +112,6 @@ func (c *ChatAgent) ChatRun(ctx context.Context, run ChatRun, agentKey, sessionI
 	// Per-session working directory: <workDir>/sessions/<sessionID>/
 	// Isolates file writes across conversations, mirroring how workers use i<intentID>/.
 	sessionWorkDir := filepath.Join(c.workDir, "sessions", sessionID)
-	if root := strings.TrimSpace(run.WorkDir); root != "" {
-		// 会话级项目根：用户在选择器里挑的目录就是 CWD，不再套 sessions/<id>/ 子目录，
-		// 这样模型读写的相对路径与用户在编辑器里看到的一致。
-		sessionWorkDir = root
-	}
 	_ = os.MkdirAll(sessionWorkDir, 0o755)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, sessionWorkDir)
 
@@ -145,9 +124,6 @@ func (c *ChatAgent) ChatRun(ctx context.Context, run ChatRun, agentKey, sessionI
 	defer cleanup()
 
 	chatSys := chatSystem(agentKey, c.workDir, sessionWorkDir)
-	if spec := ModeSystemSpec(run.Mode, sessionWorkDir); spec != "" {
-		chatSys += "\n\n" + spec
-	}
 	if hint := BuildTacticalRoutingHint(message, tools, def); hint != "" {
 		chatSys += "\n\n" + hint
 	}

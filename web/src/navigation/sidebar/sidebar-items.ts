@@ -11,7 +11,6 @@ import {
   FolderSync,
   HardDrive,
   LayoutDashboard,
-  LayoutPanelLeft,
   type LucideIcon,
   MessageSquare,
   Network,
@@ -80,12 +79,6 @@ export const sidebarItems: NavGroup[] = [
     items: [
       { id: "dashboard", title: "仪表盘", url: "/dashboard", icon: LayoutDashboard },
       { id: "chat", title: "对话", url: "/chat", icon: MessageSquare },
-      // 独立前端：/harness 挂在 (standalone) 路由组，不套控制台外壳，所以用新标签打开。
-      // 嵌入式 iframe（预览沙箱 sandbox="allow-scripts"，无 allow-popups）里 target="_blank"
-      // 会被静默吞掉 → nav-main 检测到不在顶层窗口时退回整页跳转。
-      // 图标用三栏面板而不是 Terminal：Terminal 已被「工具执行」占用，两个相邻条目
-      // 同图标会让人以为是同一个入口；而且工作台本身就是 左列表 / 中时间线 / 右变更 三栏。
-      { id: "harness", title: "Harness 工作台", url: "/harness", icon: LayoutPanelLeft, badge: "new", newTab: true },
       { id: "tasks", title: "任务", url: "/function/tasks", icon: Target },
       { id: "findings", title: "发现", url: "/function/findings", icon: Bug },
       { id: "traffic", title: "流量", url: "/function/traffic", icon: Activity },

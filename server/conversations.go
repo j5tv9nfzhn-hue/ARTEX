@@ -9,7 +9,6 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -175,11 +174,8 @@ func (s *Server) pgUpdateConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// llm_profile_id 用 RawMessage 而不是 *int64：这里必须区分「没传」和「显式传 null」。
-	// 旧实现两者同为 nil，于是只改 mode 的一次 PATCH 会把会话的模型绑定清掉。
 	var req struct {
-		LLMProfileID  json.RawMessage `json:"llm_profile_id"`
-		Mode          *string         `json:"mode"`
-		WorkspaceRoot *string         `json:"workspace_root"`
+		LLMProfileID json.RawMessage `json:"llm_profile_id"`
 	}
 	if !decodeConversationRequest(w, r, &req) {
 		return
@@ -199,45 +195,6 @@ func (s *Server) pgUpdateConversation(w http.ResponseWriter, r *http.Request) {
 		profileID = &id
 	}
 
-	// 能力域：只接受白名单值。未知值直接拒绝，不回落到 general —— 否则前端切错了
-	// 也看不出来，会话会静默降级成「通用」。
-	if req.Mode != nil {
-		m := strings.ToLower(strings.TrimSpace(*req.Mode))
-		if !agent.ModeValid(m) {
-			writeErr(w, 400, "未知的能力域: "+m+"（可选: general | dev | office | pentest）")
-			return
-		}
-		req.Mode = &m
-	}
-
-	// 工作根：空串 = 回到「沿用数据目录」；非空必须是存在且可访问的目录，落库为绝对路径。
-	// 这里不做「预登记允许根」限制 —— 与 Claude Code / Codex 一致，目录由用户在会话开始时选。
-	patch := db.ConversationPatch{Mode: req.Mode}
-	if req.WorkspaceRoot != nil {
-		root := strings.TrimSpace(*req.WorkspaceRoot)
-		kind := "data"
-		if root != "" {
-			abs, err := filepath.Abs(root)
-			if err != nil {
-				writeErr(w, 400, "无法解析工作根路径: "+err.Error())
-				return
-			}
-			st, err := os.Stat(abs)
-			if err != nil || !st.IsDir() {
-				writeErr(w, 400, "工作根必须是存在且可访问的目录: "+abs)
-				return
-			}
-			root, kind = abs, "project"
-		}
-		patch.WorkspaceRoot = &root
-		patch.WorkspaceKind = &kind
-	}
-	if patch.Mode != nil || patch.WorkspaceRoot != nil {
-		if _, err := pg.UpdateConversation(c.ID, patch); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
 	if setProfile {
 		if err := pg.UpdateConversationProfile(c.ID, profileID); err != nil {
 			writeErr(w, 500, err.Error())
@@ -776,10 +733,7 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 	}
 	// On a manual stop ctx is cancelled; Chat already emits a clean "已手动停止"
 	// step, so skip the raw-error entry — only surface genuine failures.
-	// 会话级覆盖：能力域 + 工作根（用户在选择器里挑的项目目录）。
-	// 两者都按「本次运行」传入，不改缓存中的 agent 字段，避免并发会话互相污染。
-	run := agent.ChatRun{Mode: c.Mode, WorkDir: c.WorkspaceRoot}
-	if _, err := ca.ChatRun(ctx, run, c.AgentKey, sessionID, msg, maxTurns, maxDuration, webSearch, emit); err != nil {
+	if _, err := ca.Chat(ctx, c.AgentKey, sessionID, msg, maxTurns, maxDuration, webSearch, emit); err != nil {
 		finishReason = err.Error()
 		// 预算越线是「预期内的停止」，不是故障：写结构化终止记录而不是原始错误。
 		if ledger.Exhausted() {

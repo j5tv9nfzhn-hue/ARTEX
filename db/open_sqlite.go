@@ -137,23 +137,6 @@ var sqliteColumnAdds = []struct {
 		"token_budget",
 		`ALTER TABLE tasks ADD COLUMN token_budget INTEGER NOT NULL DEFAULT 0`,
 	},
-	{
-		// Harness 能力域。默认 general = 该列不存在时的行为，老会话打开后语义不变。
-		"conversations",
-		"mode",
-		`ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'general'`,
-	},
-	{
-		// 会话工作根。空串 = 沿用数据目录（渗透/逆向与老会话）。
-		"conversations",
-		"workspace_root",
-		`ALTER TABLE conversations ADD COLUMN workspace_root TEXT NOT NULL DEFAULT ''`,
-	},
-	{
-		"conversations",
-		"workspace_kind",
-		`ALTER TABLE conversations ADD COLUMN workspace_kind TEXT NOT NULL DEFAULT 'data'`,
-	},
 }
 
 // applySQLiteColumnAdds 逐条补齐上表缺失的列。pragma_table_info 是表值函数,表名
