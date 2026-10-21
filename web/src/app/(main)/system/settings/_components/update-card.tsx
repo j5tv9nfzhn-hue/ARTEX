@@ -136,12 +136,18 @@ export function UpdateCard() {
         })
         .catch(() => undefined);
 
-      if (Date.now() - startedAt < 60000) return;
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 60000) return;
       api
         .updateJournal()
         .then((j) => {
           if (!alive) return;
-          if (j.state === "failed" || j.state === "rolled-back") {
+          const bad = j.state === "failed" || j.state === "rolled-back";
+          // 台账还停在 staged/applying/swapped，说明换装压根没走完。
+          // 等够 3 分钟仍无结论就显式收尾：无限转圈正是上一版的表现。
+          const stuck =
+            elapsed > 180000 && j.state !== "confirmed" && j.state !== "idle";
+          if (bad || stuck) {
             setJournalIssue(j);
             setRestarting(false);
             window.clearInterval(timer);
