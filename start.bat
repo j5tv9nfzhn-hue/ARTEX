@@ -29,6 +29,11 @@ if not exist "%BIN%" (
 	)
 )
 
+rem 告诉 artex-rea「外面有个循环会在我以 75 退出后把我重新拉起来」。
+rem 只有它为真时页面才允许自动更新：换装后进程要退出，没人拉起就变成
+rem 「更新完打不开」。直接双击 exe（没有本脚本）时它为假，界面会禁用自动更新。
+set "ARTEX_SUPERVISED=1"
+
 set "RESTART_CODE=75"
 set "MAX_DELAY=60"
 set /a delay=1

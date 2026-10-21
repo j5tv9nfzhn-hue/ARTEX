@@ -69,25 +69,29 @@ func harnessEntry(c HarnessClient, in HarnessPlanInput) []harnessKV {
 	url := strings.TrimRight(in.BaseURL, "/") + "/mcp"
 
 	if c.Artex == "stdio" {
-		// --auto 让 L3 转发给控制台；不带的话客户端只能拿到 L0–L2，
-		// 而用户不会知道「少了四个工具」——那正是这次要修的坑。
-		args := []string{"mcp", "serve", "--stdio", "--auto"}
+		// stdio 只是控制台的透明前置：不建库、不拉进程。因此控制台地址与
+		// token 必须随配置一起发下去，否则客户端会在自己的当前目录
+		// （往往就是桌面）新建一个空库，然后报一句看不懂的错。
+		args := []string{"mcp", "serve", "--stdio", "--addr", strings.TrimRight(in.BaseURL, "/")}
+		env := []harnessKV{{"ARTEX_MCP_TOKEN", in.Token}}
 		switch c.ID {
 		case "opencode":
 			return []harnessKV{
 				{"type", "local"},
 				{"command", append([]string{in.Exe}, args...)},
+				{"environment", env},
 				{"enabled", true},
 			}
 		case "zed":
 			// Zed 的 stdio 是嵌套 command 对象，不是 command+args 平铺。
 			return []harnessKV{
-				{"command", []harnessKV{{"path", in.Exe}, {"args", args}}},
+				{"command", []harnessKV{{"path", in.Exe}, {"args", args}, {"env", env}}},
 			}
 		}
 		return []harnessKV{
 			{"command", in.Exe},
 			{"args", args},
+			{"env", env},
 			{"enabled", true},
 		}
 	}
@@ -993,7 +997,13 @@ func harnessSnippet(c HarnessClient, in HarnessPlanInput) string {
 	case "claude-code":
 		return fmt.Sprintf("claude mcp add --transport http artex %s \\\n  --header \"Authorization: Bearer %s\" --scope user", url, in.Token)
 	case "codex":
-		return fmt.Sprintf("[mcp_servers.artex]\ncommand = %s\nargs = [\"mcp\", \"serve\", \"--stdio\", \"--auto\"]", jsonQuote(in.Exe))
+		args := []string{"mcp", "serve", "--stdio", "--addr", strings.TrimRight(in.BaseURL, "/")}
+		quoted := make([]string, 0, len(args))
+		for _, a := range args {
+			quoted = append(quoted, jsonQuote(a))
+		}
+		return fmt.Sprintf("[mcp_servers.artex]\ncommand = %s\nargs = [%s]\nenv = { ARTEX_MCP_TOKEN = %s }",
+			jsonQuote(in.Exe), strings.Join(quoted, ", "), jsonQuote(in.Token))
 	}
 	kvs := harnessEntry(c, in)
 	switch c.Config[0].Format {

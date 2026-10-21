@@ -159,6 +159,39 @@ func parseVersion(s string) ([3]int, bool) {
 	return out, true
 }
 
+// supervisedEnv 由 start.sh / start.bat 设置：它告诉进程"外面有个循环会在
+// 我以 ExitRestart 退出后把我重新拉起来"。没有它，换装后进程退出就再没人拉起，
+// 用户看到的是"更新完程序打不开了"。
+const supervisedEnv = "ARTEX_SUPERVISED"
+
+// Supervised 报告当前进程是否由守护脚本（start.sh / start.bat）启动。
+func Supervised() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(supervisedEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// StagedVersion 返回已下载、已校验、等待下次启动生效的版本号；没有暂存件时返回空串。
+//
+// 自动更新只做到这一步就停：把包下好、校验好放在磁盘上，换装留给用户下一次
+// 启动。这样自动更新永远不会在渗透任务跑到一半时把进程重启掉。
+func StagedVersion() string {
+	p, err := ResolvePaths()
+	if err != nil {
+		return ""
+	}
+	mk, ok := readMarker(p.Marker)
+	if !ok || strings.TrimSpace(mk.To) == "" {
+		return ""
+	}
+	if _, err := os.Stat(p.New); err != nil {
+		return ""
+	}
+	return mk.To
+}
+
 // InDocker 报告进程是否跑在容器里。Docker 下换装写的是容器可写层，
 // `docker compose up -d` 重建容器会退回镜像自带的版本——这是预期行为
 // （那时用户本来就在拉新镜像），但前端要能据此把话说清楚。

@@ -1037,6 +1037,12 @@ export interface Settings {
   skill_review_gate?: boolean;
   skill_auto_distill?: boolean;
   skill_auto_distill_apply?: boolean;
+  // 版本更新偏好（存在服务端，多客户端共享）：
+  // update_auto_check=true 定时检测新版本（默认开，只读版本清单，不下载不换装）；
+  // update_auto_apply=true 检测到后自动下载并校验，下次启动生效（默认关）——
+  // 渗透任务可能跑到一半，自动更新不替用户决定"现在就重启"。
+  update_auto_check?: boolean;
+  update_auto_apply?: boolean;
   // ---- 漏洞 IM 推送（渠道本身是独立资源，见 /api/notify/*，这里只有三项全局配置）----
   notify_enabled?: boolean; // 推送总开关，默认开；用于维护期一键止血
   notify_public_base_url?: string; // 漏洞详情回链的外部访问地址；空=消息不带回链
@@ -1847,6 +1853,14 @@ export interface UpdateCheck {
   comparable?: boolean;
   /** comparable 为 false 时的说明。 */
   reason?: string;
+  /** 是否由守护脚本（start.sh / start.bat）启动；false 时自动更新无法自动重启。 */
+  supervised?: boolean;
+  /** 已下载并校验、等待下次启动生效的版本；空 = 没有暂存件。 */
+  staged_version?: string;
+  /** 自动检测开关（服务端存储，默认 true）。 */
+  auto_check?: boolean;
+  /** 自动下载开关（服务端存储，默认 false）。 */
+  auto_apply?: boolean;
 }
 
 /** /api/update/stream 推送的一条更新进度。 */
@@ -1857,6 +1871,21 @@ export interface UpdateProgress {
   message: string;
   version?: string;
   error?: string;
+}
+
+/**
+ * GET /api/update/status —— 只读缓存的轻量状态，绝不触发网络请求。
+ * 顶栏红点用它：自动检测关掉时 checked 恒为 false，不会在后台替用户查 GitHub。
+ */
+export interface UpdateStatus {
+  current: string;
+  staged_version?: string;
+  /** 后端是否已经查过（有缓存）；false 时下面的字段都没有。 */
+  checked: boolean;
+  checked_at?: string;
+  error?: string;
+  latest?: string;
+  has_update?: boolean;
 }
 
 // Original execution selected from an approval, never submitted to the reviewer.

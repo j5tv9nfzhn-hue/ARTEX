@@ -25,15 +25,16 @@ const EXE_FALLBACK = "C:\\ARTEX程序\\artex-rea.exe";
 function buildSnippets(exe: string, endpoint: string): Record<ClientKey, string> {
   return {
     codex: `# ~/.codex/config.toml（表名必须是 mcp_servers，写成 JSON 会被静默忽略）
-# --auto 让 L3（建任务）转发给控制台；不加只有 L0–L2 共 21 个工具
+# stdio 只是转发：ARTEX 控制台必须与 Codex 同时在线（不会另起后台进程）
 [mcp_servers.artex]
 command = "${exe}"
-args = ["mcp", "serve", "--stdio", "--auto"]
+args = ["mcp", "serve", "--stdio", "--addr", "${endpoint}"]
+env = { ARTEX_MCP_TOKEN = "<本卡片显示的 token>" }
 startup_timeout_sec = 20
 tool_timeout_sec = 300
 enabled = true
 
-# 远程形态（二选一）：
+# 远程形态（二选一，更直接）：
 # [mcp_servers.artex]
 # url = "${endpoint}"
 # bearer_token_env_var = "ARTEX_MCP_TOKEN"`,
@@ -43,7 +44,8 @@ enabled = true
   "mcp": {
     "artex": {
       "type": "local",
-      "command": ["${exe}", "mcp", "serve", "--stdio", "--auto"],
+      "command": ["${exe}", "mcp", "serve", "--stdio", "--addr", "${endpoint}"],
+      "environment": { "ARTEX_MCP_TOKEN": "<本卡片显示的 token>" },
       "enabled": true,
       "timeout": 15000
     }
@@ -68,7 +70,7 @@ enabled = true
   --header "Authorization: Bearer $ARTEX_MCP_TOKEN" --scope user
 
 # 或本地 stdio：
-claude mcp add artex -- "${exe}" mcp serve --stdio --auto
+claude mcp add artex --env ARTEX_MCP_TOKEN=<token> -- "${exe}" mcp serve --stdio --addr "${endpoint}"
 # 工具在 Claude Code 里呈现为 mcp__artex__pe_info`,
     vscode: `// .vscode/mcp.json —— 根键是 servers（唯一不同的一家）
 {
@@ -93,7 +95,7 @@ claude mcp add artex -- "${exe}" mcp serve --stdio --auto
     }
   }
 }`,
-    dsh: `# --auto 的 L3 由控制台承载：控制台没开时建任务会明确报错，不会静默停在 pending
+    dsh: `# stdio 只是转发：ARTEX 控制台必须与客户端同时在线；控制台没开会明确报错
 # 原生插件（推荐）：
 dsh plugin --profile web add artex-dsh
 
@@ -220,7 +222,7 @@ export function MCPExposureCard() {
             </div>
             <div className="mt-2 text-muted-foreground text-xs">{t("stdioHint")}</div>
             <code className="mt-1 block truncate rounded bg-muted px-2 py-1 font-mono text-xs">
-              "{exe}" mcp serve --stdio
+              "{exe}" mcp serve --stdio --addr {endpoint}
             </code>
           </div>
 

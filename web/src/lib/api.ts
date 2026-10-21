@@ -122,6 +122,7 @@ import type {
   TrafficHost,
   TrafficResp,
   UpdateCheck,
+  UpdateStatus,
   UsageStats,
   VerificationCapabilities,
   WorkerTokenStat,
@@ -1601,4 +1602,8 @@ export const api = {
   // 202 即返回，实际下载在后台跑，进度走 /api/update/stream。
   applyUpdate: () => post<{ ok: boolean; target: string }>(`/update/apply`),
   rollbackUpdate: () => post<{ ok: boolean }>(`/update/rollback`),
+  // 只读缓存的状态：顶栏红点用，不发网络请求、不消耗 GitHub 配额。
+  updateStatus: () => get<UpdateStatus>(`/update/status`),
+  // SSE 地址（自动带 token）：EventSource 不能带 cookie，故走 token 查询参数。
+  updateStreamUrl: () => sseUrl("/api/update/stream"),
 };

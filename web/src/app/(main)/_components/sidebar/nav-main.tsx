@@ -5,10 +5,9 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { ChevronRight, MailIcon, PlusCircleIcon } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -30,6 +29,7 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { useNotifyUnread } from "@/hooks/use-notify-inbox";
 import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
 import { toggleSidebarGroupCollapsed, useSidebarPrefs } from "@/lib/sidebar-prefs";
@@ -272,6 +272,30 @@ function NavItem({ item, isItemActive, isSubItemActive, isSubmenuOpen }: NavItem
   );
 }
 
+// NotifyUnreadBadge 显示站内通知未读数。
+//
+// 角标放在侧边栏而不是页面右下角：原来的常驻铃铛固定在 right-4 bottom-4，
+// 会压住页面右下角的「创建」按钮。通知卡片改到右上角弹，入口与未读数留在
+// 这里，既不会遮挡任何内容，也仍然「任何页面都看得见」。
+// 数据源与通知列表同一份（lib/notify-inbox），进列表页即自动清零。
+function NotifyUnreadBadge() {
+  const unread = useNotifyUnread();
+  if (unread === 0) return null;
+  return (
+    <SidebarMenuBadge className="flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-red-600 px-1 font-semibold text-[10px] text-white leading-none shadow-sm ring-1 ring-red-500/40">
+      {unread > 99 ? "99+" : unread}
+    </SidebarMenuBadge>
+  );
+}
+
+// 侧边栏条目右侧的角标：审批数是现算的，通知未读同理，其余走静态 badge。
+// 写成函数而不是嵌套三元，是为了让每个分支各自可读（biome 也禁止嵌套三元）。
+function navItemBadge(item: NavMainLinkItem) {
+  if (item.id === "approvals") return <InterceptPendingBadge />;
+  if (item.id === "notify") return <NotifyUnreadBadge />;
+  return <NavItemBadge badge={item.badge} />;
+}
+
 // InterceptPendingBadge polls /api/intercept/pending every 5 s and shows a red
 // count badge when there are unresolved approval requests.
 function InterceptPendingBadge() {
@@ -286,7 +310,7 @@ function InterceptPendingBadge() {
   );
   if (count === 0) return null;
   return (
-    <SidebarMenuBadge className="flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-none text-white shadow-sm ring-1 ring-amber-400/40">
+    <SidebarMenuBadge className="flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-amber-500 px-1 font-semibold text-[10px] text-white leading-none shadow-sm ring-1 ring-amber-400/40">
       {count > 99 ? "99+" : count}
     </SidebarMenuBadge>
   );
@@ -326,7 +350,7 @@ function NavLinkItem({ item, isActive, showIconFallback }: NavLinkItemProps) {
           <span>{title}</span>
         </Link>
       </SidebarMenuButton>
-      {item.id === "approvals" ? <InterceptPendingBadge /> : <NavItemBadge badge={item.badge} />}
+      {navItemBadge(item)}
     </SidebarMenuItem>
   );
 }

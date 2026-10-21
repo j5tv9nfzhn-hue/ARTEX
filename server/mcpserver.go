@@ -91,59 +91,11 @@ func (s *Server) buildMCPServer() *mcpserver.Server {
 	return mcpBuild(s, s.mcpTiers(), mcpFileGuard(), s.recordMCPUsage)
 }
 
-// NewMCPStdioServer 用一条独立数据库连接装配 MCP 服务端，供 `artex mcp serve`
-// 的 stdio 模式使用：不起 Manager、不监听端口、不读 JWT。
-// NewMCPHeadlessServer 给「按需拉起、用完自退」的后台实例用。
+// mcpBuild 是控制台工具面的唯一装配入口。
 //
-// 与 stdio 同源构建，但保留 L3：stdio 剔掉 L3 是因为它没有控制台进程承接委派；
-// headless 只在控制台活着时才会被拉起，控制台不在时 L3 调用会明确报错。
-func NewMCPHeadlessServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string) *mcpserver.Server {
-	guard := &mcpserver.FileGuard{AllowAny: true}
-	if root := strings.TrimSpace(fileRoot); root != "" {
-		guard = &mcpserver.FileGuard{Root: root}
-	}
-	return mcpBuild(&Server{m: &Manager{pg: pg}}, tiers, guard, nil)
-}
-
-// NewMCPStdioBridgeServer 与 stdio 同源，但保留 L3 —— L3 的 handler 换成
-// 「转发给控制台」。调用方（cmd/artex）负责在 bridge 里做探活与报错。
-//
-// 为什么不在这里直接连：server 包不该知道 8787 这个地址，也不该管进程。
-func NewMCPStdioBridgeServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string,
-	bridge func(ctx context.Context, name string, args json.RawMessage) (string, error)) *mcpserver.Server {
-	guard := &mcpserver.FileGuard{AllowAny: true}
-	if root := strings.TrimSpace(fileRoot); root != "" {
-		guard = &mcpserver.FileGuard{Root: root}
-	}
-	owner := &Server{m: &Manager{pg: pg}, l3Bridge: bridge}
-	return mcpBuild(owner, tiers, guard, nil)
-}
-
-// MCPTiersFromSettings 给 CLI 用：读控制台里保存的档位。
-//
-// `mcp serve --auto` 没显式给 --tiers 时用它，这样「外部 AI 能拿到什么」由界面
-// 上的开关决定，而不是由某台机器上的一次命令行参数决定。
-func MCPTiersFromSettings(pg *db.DB) []mcpserver.Tier {
-	return (&Server{m: &Manager{pg: pg}}).mcpTiers()
-}
-
-func NewMCPStdioServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string) *mcpserver.Server {
-	guard := &mcpserver.FileGuard{AllowAny: true}
-	if root := strings.TrimSpace(fileRoot); root != "" {
-		guard = &mcpserver.FileGuard{Root: root}
-	}
-	// 独立进程里没有正在跑的引擎：L3 建的任务不会被任何人执行，
-	// 所以 stdio 模式一律不收 L3（要委派请走控制台进程的 /mcp）。
-	kept := make([]mcpserver.Tier, 0, len(tiers))
-	for _, t := range tiers {
-		if t != mcpserver.L3 {
-			kept = append(kept, t)
-		}
-	}
-	return mcpBuild(&Server{m: &Manager{pg: pg}}, kept, guard, nil)
-}
-
-// mcpBuild 是两条入口（控制台 HTTP / CLI stdio）共用的装配函数。
+// 外部客户端的 stdio 只是一层透明转发（cmd/artex 的 `mcp serve`），
+// 不会再各自装配一套工具面、也不会各自打开数据库，因此这里不再有
+// 「CLI stdio / headless / bridge」三种变体。
 func mcpBuild(owner *Server, tiers []mcpserver.Tier, guard *mcpserver.FileGuard, audit func(mcpserver.AuditEvent)) *mcpserver.Server {
 	// 工具面从能力注册表生成：暴露与否是注册表里的数据，不是文档约定。
 	// 顺序与历史行为一致（L0 → L1 → L2 recon → L2 webscan → L3），

@@ -124,10 +124,6 @@ type Server struct {
 	// See skill_review_tools.go for why this needs to exist at all.
 	skillGateOverride *bool
 
-	// l3Bridge 非 nil 表示「本进程没有引擎」。L3 工具照常出现在 tools/list，
-	// 但调用会被转发到有引擎的进程（stdio --auto 用）。
-	l3Bridge func(ctx context.Context, name string, args json.RawMessage) (string, error)
-
 	// authMu guards the first-run setup token, the cached password hash (tokens
 	// are signed with a key derived from it — see auth.go signingKey) and the
 	// failed-attempt limiter. initMu serialises /api/auth/init check-then-set.
@@ -401,6 +397,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	go s.reconcileConcurrency()
 	s.startTaskArchiveWorker()
 	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
+	// 版本自动检测（默认开，可在设置页关闭）。只查版本号，不下载、不换装。
+	s.startUpdateWatcher()
 	return s
 }
 
@@ -853,6 +851,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/update/apply", s.updateApply)
 	mux.HandleFunc("POST /api/update/rollback", s.updateRollback)
 	mux.HandleFunc("GET /api/update/stream", s.updateStream)
+	// 只读缓存的轻量状态，顶栏红点用；不会触发任何网络请求。
+	mux.HandleFunc("GET /api/update/status", s.updateStatus)
 
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/tasks", s.createTask)
@@ -3621,6 +3621,10 @@ func (s *Server) settingsPayload() map[string]any {
 		"skill_review_gate":        s.SkillReviewGateEnabled(),
 		"skill_auto_distill":       s.SkillAutoDistillEnabled(),
 		"skill_auto_distill_apply": s.SkillAutoDistillApplyEnabled(),
+		// 版本更新偏好：检测默认开（只查版本号，不改任何东西），
+		// 自动下载默认关（只下载+校验，重启才换装）。
+		"update_auto_check": s.updateAutoCheck(),
+		"update_auto_apply": s.updateAutoApply(),
 	}
 }
 
@@ -3706,10 +3710,35 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		SkillReviewGate       *bool `json:"skill_review_gate"`
 		SkillAutoDistill      *bool `json:"skill_auto_distill"`
 		SkillAutoDistillApply *bool `json:"skill_auto_distill_apply"`
+		// 版本更新偏好（见 server/update.go）：
+		//   update_auto_check  定时检测新版本（默认开）
+		//   update_auto_apply  检测到后自动下载并校验，下次启动生效（默认关）
+		UpdateAutoCheck *bool `json:"update_auto_check"`
+		UpdateAutoApply *bool `json:"update_auto_apply"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	if req.UpdateAutoCheck != nil {
+		if err := s.m.pg.SetBool(settingUpdateAutoCheck, *req.UpdateAutoCheck); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		// 刚打开就立刻查一次，用户不用等下一个 6 小时周期。
+		if *req.UpdateAutoCheck {
+			go s.updateTick()
+		}
+	}
+	if req.UpdateAutoApply != nil {
+		// 与检测开关各自独立：关掉检测时不连带清掉"自动下载"的偏好。
+		if err := s.m.pg.SetBool(settingUpdateAutoApply, *req.UpdateAutoApply); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		if *req.UpdateAutoApply {
+			go s.updateTick()
+		}
 	}
 	if req.ConstraintsInjectPlanner != nil {
 		if err := s.m.pg.SetBool(settingConstraintsInjectPlanner, *req.ConstraintsInjectPlanner); err != nil {

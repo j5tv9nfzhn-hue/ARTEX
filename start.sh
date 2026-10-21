@@ -20,6 +20,12 @@ set -u
 
 cd "$(dirname "$0")" || exit 1
 
+# 告诉 artex-rea「外面有个循环会在我以 75 退出后把我重新拉起来」。
+# 只有这个变量为真时，页面才允许自动更新：换装后进程要退出，没人拉起就变成
+# 「更新完打不开」。直接跑二进制（没有本脚本）时它为假，界面会禁用自动更新。
+ARTEX_SUPERVISED=1
+export ARTEX_SUPERVISED
+
 BIN=./artex-rea
 if [ ! -x "$BIN" ] && [ -x ./artex ]; then
 	BIN=./artex

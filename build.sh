@@ -102,6 +102,17 @@ ARTEX_BUILD_VERSION="${ARTEX_BUILD_VERSION#v}"
 ARTEX_OUTPUT_DIR="${ARTEX_OUTPUT_DIR:-dist}"
 ARTEX_PACKAGE_DIR="${ARTEX_PACKAGE_DIR:-$ARTEX_OUTPUT_DIR}"
 ARTEX_UPX_ARGS="${ARTEX_UPX_ARGS:---best --lzma}"
+# 更新源（owner/name）。默认为空 = 用 selfupdate 包里写死的本仓库；发布流水线
+# 显式传入本仓库全名，fork 出来的构建就不会去连上游。只允许构建期注入，
+# 运行时可配等于给一条 RCE 通道，selfupdate 刻意不提供。
+ARTEX_UPDATE_REPO="${ARTEX_UPDATE_REPO:-}"
+if [ -n "$ARTEX_UPDATE_REPO" ]; then
+  case "$ARTEX_UPDATE_REPO" in
+    */*/*) die "ARTEX_UPDATE_REPO 必须是 owner/name 形式：$ARTEX_UPDATE_REPO" ;;
+    */*) ;;
+    *) die "ARTEX_UPDATE_REPO 必须是 owner/name 形式：$ARTEX_UPDATE_REPO" ;;
+  esac
+fi
 
 if [ "${ARTEX_RELEASE}" = "1" ]; then
   ARTEX_TARGETS="${ARTEX_TARGETS:-$RELEASE_TARGETS_DEFAULT}"
@@ -212,6 +223,12 @@ build_target() {
   fi
   mkdir -p "$(dirname "$output")"
 
+  # 版本号决定客户端能不能比对（纯三段式才可比），更新源决定从哪拿包。
+  ldflags="-s -w -buildid= -X main.version=${ARTEX_BUILD_VERSION}"
+  if [ -n "$ARTEX_UPDATE_REPO" ]; then
+    ldflags="$ldflags -X github.com/Autumn-27/artex/selfupdate.Repo=${ARTEX_UPDATE_REPO}"
+  fi
+
   info "编译 ${goos}/${goarch}，版本 ${ARTEX_BUILD_VERSION}"
   GOSUMDB="$ARTEX_GOSUMDB" \
   CGO_ENABLED=0 \
@@ -220,7 +237,7 @@ build_target() {
   go build \
     -tags embedui \
     -trimpath \
-    -ldflags "-s -w -buildid= -X main.version=${ARTEX_BUILD_VERSION}" \
+    -ldflags "$ldflags" \
     -o "$output" \
     ./cmd/artex
 

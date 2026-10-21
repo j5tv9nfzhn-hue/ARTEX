@@ -30,6 +30,8 @@ import {
 } from "./_components/channel-fields";
 import { ConfigField, FilterSummary } from "./_components/channel-form";
 import { DeliveryList } from "./_components/delivery-list";
+import { NotifyInboxList } from "./_components/notify-inbox-list";
+import { NotifySettings } from "./_components/notify-settings";
 import { formatBacklog, StatTile } from "./_components/stat-tile";
 
 // 本页只负责编排：加载数据、维护表单状态、调用接口。
@@ -43,7 +45,9 @@ export default function NotifyPage() {
   const kindLabel = (k: string) => (k in CHANNEL_FIELDS ? t(`kind.${k}`) : k);
   const [meta, setMeta] = React.useState<NotificationMeta | null>(null);
   const [channels, setChannels] = React.useState<NotificationChannel[]>([]);
-  const [tab, setTab] = React.useState<"channels" | "deliveries">("channels");
+  // 默认落在「站内通知」：这页现在同时是站内通知中心，进来先看到刚才发生了什么。
+  // 渠道与投递记录仍在，只是不再是第一眼看到的东西。
+  const [tab, setTab] = React.useState<"inbox" | "channels" | "deliveries">("inbox");
 
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<NotificationChannel | null>(null);
@@ -277,7 +281,7 @@ export default function NotifyPage() {
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">{t("title")}</h1>
+          <h1 className="font-semibold text-xl tracking-tight">{t("title")}</h1>
           <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
         </div>
         {meta && (
@@ -355,18 +359,32 @@ export default function NotifyPage() {
         </CardContent>
       </Card>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as "channels" | "deliveries")} className="flex flex-col gap-4">
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as "inbox" | "channels" | "deliveries")}
+        className="flex flex-col gap-4"
+      >
         <TabsList>
+          <TabsTrigger value="inbox">{t("tab.inbox")}</TabsTrigger>
           <TabsTrigger value="channels">{t("tab.channels")}</TabsTrigger>
           <TabsTrigger value="deliveries">{t("tab.deliveries")}</TabsTrigger>
         </TabsList>
+
+        {/* 站内通知：左边是会话内的通知列表（原来的右下角抽屉搬到了这里），
+            右边是显示设置。宽屏并排，窄屏上下堆叠。 */}
+        <TabsContent value="inbox">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+            <NotifyInboxList />
+            <NotifySettings />
+          </div>
+        </TabsContent>
 
         <TabsContent value="channels">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <button
               type="button"
               onClick={openAdd}
-              className="text-foreground/70 border-foreground/70 hover:bg-muted/60 hover:shadow-sm flex min-h-[130px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed transition"
+              className="flex min-h-[130px] flex-col items-center justify-center gap-2 rounded-xl border border-foreground/70 border-dashed text-foreground/70 transition hover:bg-muted/60 hover:shadow-sm"
             >
               <PlusIcon className="size-6" />
               <span className="text-sm">{t("addChannel")}</span>
@@ -376,11 +394,11 @@ export default function NotifyPage() {
               <Card
                 key={ch.id}
                 onClick={() => openEdit(ch)}
-                className="hover:border-primary/60 cursor-pointer gap-3 transition hover:shadow-sm"
+                className="cursor-pointer gap-3 transition hover:border-primary/60 hover:shadow-sm"
               >
                 <CardHeader>
                   <div className="flex items-center gap-2">
-                    <BellIcon className="text-muted-foreground size-4 shrink-0" />
+                    <BellIcon className="size-4 shrink-0 text-muted-foreground" />
                     <CardTitle className="truncate text-base">{ch.name}</CardTitle>
                     {/* 卡片整体可点（进入编辑），所以这两个控件必须各自吞掉冒泡，
                         否则开关/删除会顺带触发编辑。把 stopPropagation 挂在控件自己
@@ -515,7 +533,7 @@ export default function NotifyPage() {
               </div>
 
               <div className="border-t pt-4">
-                <p className="mb-3 text-sm font-medium">{t("filter.title")}</p>
+                <p className="mb-3 font-medium text-sm">{t("filter.title")}</p>
                 <div className="grid gap-4">
                   <div className="grid gap-2">
                     <Label>{t("filter.minSeverity")}</Label>

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,21 @@ const (
 	updateErrAlreadyLatestFmt   = "已是最新版本 (%s)"
 	updateErrInProgress         = "已有更新正在进行"
 	updateErrRollbackInProgress = "正在更新，无法回滚"
+)
+
+// 更新偏好的设置键。两个开关都存在 settings 表里（而不是浏览器 localStorage）：
+// 自动检测跑在服务端，多个浏览器、多个客户端看到的是同一份状态。
+const (
+	settingUpdateAutoCheck = "update_auto_check" // 默认开：只查新版本，不改任何东西
+	settingUpdateAutoApply = "update_auto_apply" // 默认关：查到后自动下载并暂存
+)
+
+const (
+	// 启动后先等一会儿再查：别和首屏请求抢代理/带宽，也让"刚上线就发现新版"
+	// 这种噪声晚一点出现。
+	autoCheckFirstDelay = 90 * time.Second
+	// 自动检测间隔。清单通道走网页别名，不计入 API 配额，所以 6 小时一次几乎没有成本。
+	autoCheckInterval = 6 * time.Hour
 )
 
 // restartCh 在升级就绪或回滚完成后关闭，main 收到后以 ExitRestart 退出。
@@ -88,6 +104,13 @@ var relCache = &releaseCache{}
 //
 // 取数期间一直持有锁：并发请求会排队等同一次查询的结果，而不是各自去打 GitHub
 // （页面刚加载时多个标签页同时来查，正是最容易触发限流的时刻）。
+// snapshot 只读缓存，不触发任何网络请求（顶栏红点用）。
+func (c *releaseCache) snapshot() (*selfupdate.Release, error, time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.rel, c.err, c.at
+}
+
 func (c *releaseCache) get(ctx context.Context, client *http.Client, force bool) (*selfupdate.Release, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -104,7 +127,7 @@ func (c *releaseCache) get(ctx context.Context, client *http.Client, force bool)
 
 	fetch := c.fetch
 	if fetch == nil {
-		fetch = selfupdate.FetchLatest
+		fetch = selfupdate.FetchLatestWithFallback
 	}
 	ctx, cancel := context.WithTimeout(ctx, releaseTimeout)
 	defer cancel()
@@ -231,6 +254,12 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		"repo":        selfupdate.Repo,
 		"boot_notice": boot.Detail,
 		"rolled_back": boot.RolledBack,
+		// 自动更新只在"有守护脚本"的部署里生效：没有守护者时换装后没人拉起进程。
+		"supervised": selfupdate.Supervised(),
+		// 已下载待重启的版本；非空时前端应提示"重启后生效"，而不是再让用户点更新。
+		"staged_version": selfupdate.StagedVersion(),
+		"auto_check":     s.updateAutoCheck(),
+		"auto_apply":     s.updateAutoApply(),
 	}
 
 	// 顶栏提示走缓存（默认）；用户点"检查更新"时带 force=1 强制回源。
@@ -299,22 +328,18 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go func() {
-		// 刻意用 s.ctx 而不是请求的 ctx：HTTP 响应一返回请求就结束了，
-		// 挂在它上面下载会立刻被取消。
-		err := selfupdate.Stage(s.ctx, client, rel, current, func(ph selfupdate.Phase, pct int, msg string) {
-			updHub.publish(ph, pct, msg)
-		})
-		updHub.finish(err)
-		if err != nil {
-			log.Printf("[update] 更新失败：%v", err)
-			return
-		}
-		log.Printf("[update] %s → %s 已暂存，即将退出以完成换装", current, rel.TagName)
-		// 留一点时间把最后一条进度推给前端，再触发退出。
-		time.Sleep(1500 * time.Millisecond)
-		requestRestart()
-	}()
+	// 自动更新可能已经把它下好并校验过了：直接重启生效，不重复下载。
+	if stagedMatches(rel) {
+		updHub.finish(nil)
+		go func() {
+			time.Sleep(1200 * time.Millisecond)
+			requestRestart()
+		}()
+		writeJSON(w, 202, map[string]any{"ok": true, "target": rel.TagName, "staged": true})
+		return
+	}
+
+	go s.stageUpdate(client, rel, current, true)
 
 	writeJSON(w, 202, map[string]any{"ok": true, "target": rel.TagName})
 }
@@ -335,6 +360,155 @@ func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 		requestRestart()
 	}()
+}
+
+// stageUpdate 下载 → 校验 SHA256 → 暂存。
+//
+// restart=true：用户点了「立即更新」，暂存完就退出换装（由守护脚本拉起新版本）。
+// restart=false：自动更新，只把包下好、校验好放在磁盘上，换装留到下次启动——
+// 渗透任务可能正跑到一半，自动更新绝不能替用户决定"现在就重启"。
+func (s *Server) stageUpdate(client *http.Client, rel *selfupdate.Release, current string, restart bool) {
+	// 刻意用 s.ctx 而不是某次请求的 ctx：HTTP 响应一返回请求就结束了，
+	// 挂在它上面下载会立刻被取消。
+	err := selfupdate.Stage(s.ctx, client, rel, current, func(ph selfupdate.Phase, pct int, msg string) {
+		updHub.publish(ph, pct, msg)
+	})
+	updHub.finish(err)
+	if err != nil {
+		log.Printf("[update] 更新失败：%v", err)
+		return
+	}
+	if !restart {
+		log.Printf("[update] %s → %s 已下载并校验完成，下次启动生效", current, rel.TagName)
+		return
+	}
+	log.Printf("[update] %s → %s 已暂存，即将退出以完成换装", current, rel.TagName)
+	// 留一点时间把最后一条进度推给前端，再触发退出。
+	time.Sleep(1500 * time.Millisecond)
+	requestRestart()
+}
+
+// stagedMatches 报告磁盘上的暂存件是不是 rel 这个版本。
+//
+// 注意两边的版本号写法不同：marker 里存的是去掉 v 的版本号（selfupdate.Stage
+// 写入 "0.3.16"），而 Release 的 tag 是 "v0.3.16"。直接比较会永远不相等，
+// 结果就是自动更新下好的包被「立即更新」重新下载一遍。
+func stagedMatches(rel *selfupdate.Release) bool {
+	if rel == nil {
+		return false
+	}
+	return strings.TrimPrefix(rel.TagName, "v") == strings.TrimPrefix(selfupdate.StagedVersion(), "v")
+}
+
+// updateAutoCheck 读「自动检测新版本」开关（默认开）。
+func (s *Server) updateAutoCheck() bool {
+	return s.m.pg.GetBool(settingUpdateAutoCheck, true)
+}
+
+// updateAutoApply 读「自动更新」开关（默认关）。
+func (s *Server) updateAutoApply() bool {
+	return s.m.pg.GetBool(settingUpdateAutoApply, false)
+}
+
+// startUpdateWatcher 起自动检测循环。开关每拍现读，所以在设置页关掉之后，
+// 下一拍就不再访问网络——不需要重启服务。
+func (s *Server) startUpdateWatcher() {
+	go func() {
+		// sleepCtx 返回 true = 等待期间服务已退出，直接收摊。
+		if sleepCtx(s.ctx, autoCheckFirstDelay) {
+			return
+		}
+		ticker := time.NewTicker(autoCheckInterval)
+		defer ticker.Stop()
+		for {
+			s.updateTick()
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+// 注：sleepCtx 由 engine.go 提供（返回 true = 等待期间 ctx 被取消）。
+// updateTick 是一次「自动检测」。检测本身只读远端版本号，不改本地任何东西。
+func (s *Server) updateTick() {
+	if !s.updateAutoCheck() {
+		return
+	}
+	client := selfupdate.NewClient(s.m.GlobalProxy())
+	rel, err := relCache.get(s.ctx, client, true)
+	if err != nil {
+		log.Printf("[update] 自动检测失败：%v", err)
+		return
+	}
+	if rel == nil {
+		return
+	}
+	current := BuildVersion
+	cmp, comparable := selfupdate.CompareVersions(current, rel.TagName)
+	if !comparable {
+		// 开发构建（dev / git describe 带后缀）不参与自动更新，避免把调试中的
+		// 二进制换成正式版。手动检查同样会被 updateCheck 拒掉。
+		return
+	}
+	if cmp >= 0 {
+		return
+	}
+	asset := selfupdate.AssetName(rel.TagName, runtime.GOOS, runtime.GOARCH)
+	if _, ok := rel.FindAsset(asset); !ok {
+		log.Printf("[update] 新版本 %s 未提供 %s/%s 的安装包，跳过自动更新", rel.TagName, runtime.GOOS, runtime.GOARCH)
+		return
+	}
+	log.Printf("[update] 检测到新版本 %s（当前 %s）", rel.TagName, current)
+	if !s.updateAutoApply() {
+		return
+	}
+	if selfupdate.InDocker() {
+		// 容器里换装只作用于可写层，重建容器就退回镜像版本，自动下载没有意义。
+		return
+	}
+	if stagedMatches(rel) {
+		return
+	}
+	if !updHub.begin(rel.TagName) {
+		return
+	}
+	go s.stageUpdate(client, rel, current, false)
+}
+
+// updateStatus 只读缓存，绝不发网络请求。
+//
+// 顶栏红点用它：红点必须便宜、离线可用，而且不能因为界面上挂了个红点，就在
+// 背后替用户去问 GitHub——自动检测关掉时，这里永远返回"还没查过"。
+func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
+	rel, err, at := relCache.snapshot()
+	out := map[string]any{
+		"current":        BuildVersion,
+		"staged_version": selfupdate.StagedVersion(),
+	}
+	if at.IsZero() {
+		out["checked"] = false
+		writeJSON(w, 200, out)
+		return
+	}
+	out["checked"] = true
+	out["checked_at"] = at.Format(time.RFC3339)
+	if err != nil {
+		out["error"] = err.Error()
+		writeJSON(w, 200, out)
+		return
+	}
+	if rel == nil {
+		out["checked"] = false
+		writeJSON(w, 200, out)
+		return
+	}
+	out["latest"] = rel.TagName
+	cmp, comparable := selfupdate.CompareVersions(BuildVersion, rel.TagName)
+	out["has_update"] = comparable && cmp < 0
+	writeJSON(w, 200, out)
 }
 
 // updateStream 以 SSE 推送更新进度。

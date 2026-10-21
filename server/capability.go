@@ -127,22 +127,6 @@ var deniedCapabilities = []CapabilityManifest{
 	{ID: "file.write", Title: "任意文件写入", Reason: "同上"},
 }
 
-// bridgeL3Tool 把 L3 工具的 handler 换成转发。
-//
-// 只换 handler，不动 Name/Title/Schema/注解：客户端看到的工具面必须完全一致，
-// 否则 golden 测试会变、客户端侧的审批规则也要跟着改。
-func bridgeL3Tool(t mcpserver.Tool, owner *Server) mcpserver.Tool {
-	if owner == nil || owner.l3Bridge == nil {
-		return t
-	}
-	name := t.Name
-	bridge := owner.l3Bridge
-	t.Handler = func(ctx context.Context, raw json.RawMessage) (string, error) {
-		return bridge(ctx, name, raw)
-	}
-	return t
-}
-
 // buildRegistry 按固定顺序装配全部能力。
 //
 // 顺序必须与 mcpBuild 历史行为一致：L0 内置 → L1 → L2(recon) → L2(webscan) → L3。
@@ -151,9 +135,6 @@ func buildRegistry(owner *Server, guard *mcpserver.FileGuard) *Registry {
 	r := NewRegistry()
 	add := func(tools []mcpserver.Tool) {
 		for _, t := range tools {
-			if t.Tier == mcpserver.L3 {
-				t = bridgeL3Tool(t, owner)
-			}
 			r.Add(Capability{
 				ID:     "mcp." + t.Name,
 				Title:  firstNonEmpty(t.Title, t.Name),
