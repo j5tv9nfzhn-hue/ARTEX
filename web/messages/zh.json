@@ -2338,6 +2338,11 @@
     "totalLines": "{count} 行",
     "warnCount": "{count} 警告"
   },
+  "externalPage": {
+    "title": "外部接入",
+    "subtitle": "把 ARTEX 当作一个 MCP 服务端，接进 Codex / Claude Code / Cursor / VS Code / Gemini CLI / OpenCode / DSH。",
+    "hint": "ARTEX 不需要常驻：客户端按需拉起临时实例（默认 127.0.0.1:8799），空闲 10 分钟后自行退出；没有任务时可以是 0 个进程。"
+  },
   "mcpPage": {
     "actionFailed": "操作失败：{msg}",
     "add": "添加",
