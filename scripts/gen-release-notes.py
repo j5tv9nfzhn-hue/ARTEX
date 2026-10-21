@@ -48,6 +48,14 @@ VERSION_NOTES: dict[str, str] = {
         "流式 markdown 增量渲染。**不保证完全优化完整**：`tool_usage` 清理规则、"
         "L2 Firefox 加固档、工具结果按类型折叠等仍留待后续版本。"
     ),
+    "v2.2.3": (
+        "**架构与框架第二阶段（P2+P3）**：独立复核（verifier）成为链路上的一等角色——"
+        "发现落库后按「高危强制复核 + 中低危采样」进入复核队列，由独立会话、只读工具的"
+        "复核员给出 `verified / refuted / inconclusive`；只有 `verified` 计入资产真值与"
+        "报告正文，`inconclusive` 与未写结论一律保持未复核（发现列表与详情页均已接入"
+        "复核态徽标、发起入口与历史证据）。同时把 `db/dialect_*` 中读起来像还存在"
+        "第二条实现的 PostgreSQL 残留整体删除，心智模型统一为 SQLite 单引擎。"
+    ),
 }
 
 # type(scope)!: subject
