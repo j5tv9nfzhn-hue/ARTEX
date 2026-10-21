@@ -24,6 +24,9 @@ name: detections
 # 遇到临时限流可重新运行工作流。
 on:
   push:
+    # tag 推送不再重复触发：同一个 commit 已经在 main 的 push 上验证过了，
+    # tag 再跑一遍纯属重复（界面噪声 + 白耗额度）。tag 只交给 release.yml。
+    tags-ignore: ["v*"]
     paths:
       - "detections/**"
       - "enrich/enrich.go"

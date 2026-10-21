@@ -784,5 +784,63 @@
       ],
       "type": "object"
     }
+  },
+  {
+    "name": "artex_status",
+    "title": "ARTEX 态势",
+    "description": "查 ARTEX 本体的运行态势：活动任务、全部任务及状态、运行/排队/暂停计数、并发上限。想知道 ARTEX 现在在干什么、能干什么，先调这个——不要读源码、不要翻文档、不要猜。",
+    "tier": "L3",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "include_done": {
+          "description": "是否包含已结束（done/failed/timeout）的任务，默认 false",
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "最多返回多少个任务，默认 20，上限 50",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "task_steer",
+    "title": "给任务下指令",
+    "description": "任务跑偏、需要补充约束或新增方向时，把一段人类指令注入任务。mode=hint（默认）记为提示节点，planner 下一轮会读到；mode=intent 直接插入一条高优先级意图，planner 优先处理。不暂停任务、不删除数据。",
+    "tier": "L3",
+    "read_only": false,
+    "destructive": false,
+    "idempotent": false,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "id": {
+          "description": "任务 id（task_create 返回的 task_id）",
+          "type": "integer"
+        },
+        "mode": {
+          "description": "hint=提示（默认）；intent=高优先级意图",
+          "enum": [
+            "hint",
+            "intent"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "description": "要补充的方向、约束或验收标准；写具体，不要写『继续加油』",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "type": "object"
+    }
   }
 ]

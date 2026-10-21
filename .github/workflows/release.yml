@@ -4,11 +4,20 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # 创建 Release 所需权限
+  contents: write # 建草稿、传资产、公开 Release
 
 jobs:
-  # ① 前端静态导出仅执行一次，供各平台目标复用。
-  frontend:
+  # ⓪ 发布门禁：只拦「编不过」，不拦测试断言。
+  #
+  # 为什么不直接等 ci.yml 全绿：ci 的 go job 里混着两类东西——
+  #   1) 真实的集成测试（数据库、通知投递、引擎）：红了通常就是真坏了；
+  #   2) 快照类断言（capability golden / 档位计数 / manifest 形状）：红了只说明
+  #      「改了工具面没同步快照」，二进制与发布包本身照常可用。
+  # 用 2) 去拦发布，会把一个能跑的新版本卡在门外；而 1) 的价值在于「早发现」，
+  # 不在于「拦住发版」——真要拦，也该是人工判断，不是自动化一刀切。
+  # 所以门禁只做最保守、最没有歧义的一件事：编不过 / 静态检查不过就别发。
+  # 测试仍在 ci.yml 里全量跑，红了看得见，只是不再决定「能不能发」。
+  gate:
     runs-on: ubuntu-latest
     steps:
       # 客户端只认 vX.Y.Z：带 -rc.1 / -ko.1 之类后缀的 tag 会被 parseVersion 判成
@@ -20,6 +29,21 @@ jobs:
             echo "::error::tag 必须是 vX.Y.Z（三段式），当前为 $GITHUB_REF_NAME"
             exit 1
           fi
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: go build（编不过就不发）
+        run: go build ./...
+      - name: go vet（静态检查不过就不发）
+        run: go vet ./...
+
+  # ① 前端静态导出仅执行一次，供各平台目标复用。
+  frontend:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
@@ -108,49 +132,93 @@ jobs:
           name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
           path: "dist/*.zip"
 
-  # ③ 汇总 zip 并创建 GitHub Release。
-  # cache-mode: none —— 该 job 持有发布凭据，不从任何缓存恢复内容，
-  # 杜绝被污染的缓存条目影响对外发布的产物（GitHub 2026-06 起的缓存隔离机制）。
+  # ③ 汇总 zip → 建草稿 → 传全部资产 → 校验数量 → 最后一步才公开。
+  #
+  # 为什么要草稿：旧流程是「先建已发布的 Release，再补 latest.json」。只要补清单那步
+  # 失败，/releases/latest 就会指向一个缺清单的发布——客户端自动检测立刻退化成
+  # 60 次/小时/IP 的 REST 轮询，而外部看到的却是「已经发了一个不完整的包」。
+  # 草稿期间外部不可见；任何一步失败就删掉草稿（tag 保留），绝不对外留下半成品。
   release:
     needs: binaries
     runs-on: ubuntu-latest
     cache-mode: none
     steps:
-      # 只用仓库里的 scripts/gen-update-manifest.py，不执行任何构建产物。
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           pattern: pkg-*
           merge-multiple: true
           path: dist
+      - name: 校验 6 个平台产物齐全
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          missing=0
+          for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            f="artex-rea-${version}-${t%%/*}-${t##*/}.zip"
+            if [ -f "$f" ]; then echo "✓ $f"; else echo "::error::缺少 $f"; missing=1; fi
+          done
+          [ "$missing" = "0" ] || exit 1
       - name: Generate checksums
         working-directory: dist
         run: sha256sum -- *.zip > SHA256SUMS
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.zip
-            dist/SHA256SUMS
-          generate_release_notes: true
-      # latest.json 必须等 Release 建好之后再生：它的 body 就是 GitHub 生成的
-      # 发布说明，published_at / html_url 也来自这条 Release。
-      #
-      # 这个文件是客户端日常检测的入口
-      # （https://github.com/<repo>/releases/latest/download/latest.json），
-      # 走网页别名不计 API 配额；缺失时客户端会回落到 REST API（60 次/小时/IP）。
-      # 所以它上传失败不会让更新不可用，只是把额度压力还回去——仍然要让整条流水线红掉。
-      - name: 生成并上传更新清单 latest.json
+      - name: 建草稿发布（此时对外不可见）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "已存在同名草稿/发布，复用"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --draft --verify-tag \
+              --title "ARTEX-REA ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
+      - name: 上传 zip 与校验和
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS --clobber
+      - name: 生成并上传 latest.json
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh release view "$GITHUB_REF_NAME" --json body --jq .body > dist/notes.md
-          PUBLISHED_AT=$(gh release view "$GITHUB_REF_NAME" --json publishedAt --jq .publishedAt)
+          # 草稿没有 publishedAt，用当前时间补：该字段只用于界面展示。
           python3 scripts/gen-update-manifest.py \
             --dist dist \
             --repo "$GITHUB_REPOSITORY" \
             --tag "$GITHUB_REF_NAME" \
             --notes dist/notes.md \
-            --published-at "$PUBLISHED_AT" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --out dist/latest.json
           gh release upload "$GITHUB_REF_NAME" dist/latest.json --clobber
+      - name: 校验资产齐全后才公开
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort > dist/uploaded.txt
+          {
+            for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+              echo "artex-rea-${version}-${t%%/*}-${t##*/}.zip"
+            done
+            echo SHA256SUMS
+            echo latest.json
+          } | sort > dist/expected.txt
+          if ! diff -u dist/expected.txt dist/uploaded.txt; then
+            echo "::error::资产与预期不一致，拒绝公开。"
+            exit 1
+          fi
+          gh release edit "$GITHUB_REF_NAME" --draft=false
+          echo "已发布：https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
+      - name: 失败则删除草稿（tag 保留）
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$GITHUB_REF_NAME" --yes || true
+          echo "已清掉草稿；tag $GITHUB_REF_NAME 保留，修好后重跑本 workflow 即可。"

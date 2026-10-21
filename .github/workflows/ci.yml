@@ -23,10 +23,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
-  # ---------- Go：构建、静态分析、单元测试 ----------
-  # 无数据库环境下依赖数据库的集成测试由 t.Skipf 跳过，
-  # 跳过记为通过，不能代替下面的真实数据库测试。
-  go:
+  # ---------- Go：构建、静态分析、打包（不跑测试）----------
+  # 与 go-test 拆成两个 job：测试红说明的是源码健康度，不该让人连包都拿不到。
+  # 以前 go test 排在打包前面、且在同一个 job 里串行——一条快照断言漂移（例如新增
+  # 工具却忘了同步 capability golden）就会让整轮构建白跑，三个平台的 zip 一个都传不
+  # 上去，可产物本身其实是好的。拆开之后：
+  #   go-build → 只有「编不过 / vet / gofmt / lint 不过」才失败（确定性检查）
+  #   go-test  → 并行跑测试，红了是信号灯，不影响 go-build 传产物
+  go-build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -106,15 +110,6 @@ jobs:
         with:
           version: v2.14.0
           args: --timeout=5m
-      # SQLite 无需服务容器，且每个包的 TestMain 都指向自己的临时库文件，
-      # 所以这一条就是完整的真实执行：不再有「因连不上数据库而静默跳过」的用例。
-      - name: go test（含数据库集成，全部真实执行）
-        run: go test ./... -count=1 -timeout 600s
-
-      # 可下载产物：三端发布包 zip（linux/darwin/windows × amd64/arm64），与
-      # release.yml 走同一个 build.sh——内嵌前端（-tags embedui）、start 脚本、
-      # skills 与 config.example.json，版本号默认取提交短 sha。runner 不执行
-      # 非宿主平台二进制，用文件头结构校验代替冒烟测试；正式发布见 release.yml。
       - name: 构建三端发布包（复用 build.sh）
         env:
           ARTEX_SKIP_FRONTEND: "1"
@@ -149,6 +144,46 @@ jobs:
           if-no-files-found: error
 
 
+
+  # ---------- Go：单元与集成测试 ----------
+  # 不产出任何包，也不需要前端产物（前端只在 -tags embedui 下才参与编译）。
+  # 唯一目的是把「源码健康度」和「能不能出包」分开：测试红了看得见，
+  # 但不会挡住上面 go-build 的产物，也不会挡住 release 的发版（见 release.yml）。
+  go-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: false # 缓存由下方 actions/cache 统一管理，避免两套 key 互相失效
+
+      # 模块缓存与平台无关，本工作流所有 Go job 共用一份；
+      # 编译缓存按 runner 平台区分。actions/cache 在 post 阶段保存，
+      # 此时构建已完成，写盘的是真实产物。
+      - name: 恢复 Go 模块与编译缓存
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+
+      # 产物需要内嵌前端，因此本 job 自行构建静态资源。
+      # 不复用 web job 的 artifact：让 go 与 web 保持独立，
+      # 任意一方失败都不掩盖另一方的结果；npm 与 Next 缓存已共享，重复成本很低。
+      # SQLite 无需服务容器，且每个包的 TestMain 都指向自己的临时库文件，
+      # 所以这一条就是完整的真实执行：不再有「因连不上数据库而静默跳过」的用例。
+      - name: go test（含数据库集成，全部真实执行）
+        run: go test ./... -count=1 -timeout 600s
+
+      # 可下载产物：三端发布包 zip（linux/darwin/windows × amd64/arm64），与
+      # release.yml 走同一个 build.sh——内嵌前端（-tags embedui）、start 脚本、
+      # skills 与 config.example.json，版本号默认取提交短 sha。runner 不执行
+      # 非宿主平台二进制，用文件头结构校验代替冒烟测试；正式发布见 release.yml。
   # ---------- 前端：类型检查、单元测试、静态导出、Biome ----------
   web:
     runs-on: ubuntu-latest
