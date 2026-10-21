@@ -43,6 +43,32 @@ export interface StorageMem {
   http_transports: number;
 }
 
+export interface StorageWriteQueue {
+  /** 提交成功的事务批次数。 */
+  batches: number;
+  /** 入队并被处理过的写入总数（含回滚批里的）。 */
+  jobs: number;
+  max_batch: number;
+  last_batch: number;
+  /** 整批回滚次数：>0 说明有写入失败。 */
+  rollbacks: number;
+  /** 当前队列里还没被取走的写入数。 */
+  queue_depth: number;
+  /** jobs / batches：平均每批攒了几条。 */
+  avg_batch: number;
+  /** 一次写入从入队到提交完成的平均毫秒数（写 p99 的上界代理）。 */
+  avg_wait_ms: number;
+}
+
+export interface StorageActivityRetention {
+  /** 自动保留天数；0 = 关闭。 */
+  days: number;
+  last_run_unix_ms?: number;
+  last_deleted: number;
+  last_error?: string;
+  interval_minutes: number;
+}
+
 export interface StorageMemoryDB {
   facts: number;
   edges: number;
@@ -55,12 +81,15 @@ export interface StorageMemoryDB {
   orphan_activity: number;
   /** 30 天前的活动行数：只用于判断「活动清理」能腾出多少。 */
   activity_older_30d: number;
+  /** 单写协程的累计观测值。 */
+  write_queue: StorageWriteQueue;
 }
 
 export interface StorageStats {
   db: StorageDB;
   mem: StorageMem;
   memory_db: StorageMemoryDB;
+  activity_retention: StorageActivityRetention;
 }
 
 export interface CompactResult {
@@ -117,4 +146,7 @@ export const storageApi = {
     ),
   activityPurge: (days: number) =>
     storageRequest<PurgeResult>("/storage/activity/purge", post({ dry_run: false, confirm: true, days })),
+  /** 保存自动保留天数；0 = 关闭。 */
+  activityRetention: (days: number) =>
+    storageRequest<{ days: number; saved: boolean }>("/storage/activity/retention", post({ days })),
 };

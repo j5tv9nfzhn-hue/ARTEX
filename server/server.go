@@ -116,6 +116,10 @@ type Server struct {
 	engine *Engine
 	ctx    context.Context
 
+	// 活动流自动保留循环的最近一次运行结果（只服务存储页展示，不参与调度）。
+	// 见 server/activity_retention.go。
+	activityPrune activityPruneState
+
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
 
@@ -399,6 +403,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
 	// 版本自动检测（默认开，可在设置页关闭）。只查版本号，不下载、不换装。
 	s.startUpdateWatcher()
+	// 活动流自动保留（默认关闭，用户在存储页设天数后才生效）。
+	s.startActivityRetention()
 	return s
 }
 

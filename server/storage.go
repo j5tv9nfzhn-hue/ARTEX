@@ -22,7 +22,8 @@ import (
 //     漏洞与资产是交付物，删除只能走任务的级联删除（那里有备份、有审计），
 //     在这个页面上「一键清空 findings」等于把证据链半删——不做。
 //  2. 所有写操作都是 POST + JSON，先 dry-run 预览再执行；执行要显式 confirm。
-//  3. 不做定时任务。这个页面是**人工维护入口**，自动清理仍然归 /system/retention。
+//  3. 删除动作一律人工触发。唯一的例外是「活动流自动保留」：它默认关闭，只有用户
+//     在页面上显式设了天数，后台才按批兜底清理（server/activity_retention.go）。
 
 func (s *Server) storageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/storage/stats", s.storageStats)
@@ -31,6 +32,7 @@ func (s *Server) storageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/storage/notify/clear", s.storageNotifyClear)
 	mux.HandleFunc("POST /api/storage/orphans/purge", s.storageOrphansPurge)
 	mux.HandleFunc("POST /api/storage/activity/purge", s.storageActivityPurge)
+	mux.HandleFunc("POST /api/storage/activity/retention", s.storageActivityRetention)
 }
 
 func (s *Server) storageReady(w http.ResponseWriter) bool {
@@ -62,9 +64,10 @@ func (s *Server) storageStats(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"db":        storageDBStats(ctx, s.m.pg),
-		"mem":       storageMemStats(s.m),
-		"memory_db": storageMemoryDBStats(ctx, s.m.pg),
+		"db":                 storageDBStats(ctx, s.m.pg),
+		"mem":                storageMemStats(s.m),
+		"memory_db":          storageMemoryDBStats(ctx, s.m.pg),
+		"activity_retention": s.activityRetentionInfo(),
 	})
 }
 
