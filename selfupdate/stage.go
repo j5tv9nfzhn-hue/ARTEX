@@ -17,6 +17,8 @@ import (
 )
 
 // sumsAsset 是 release.yml 生成的校验和清单，覆盖 Release 里全部 zip。
+// 注意：latest.json 的 assets[] 未必列出它（历史清单只列 zip），取不到时要按
+// Release 的固定命名兜底，不能据此判定"没有校验和"。
 const sumsAsset = "SHA256SUMS"
 
 // maxBinarySize 限制解压出来的二进制体积，防止畸形 zip 把磁盘写满。
@@ -133,10 +135,19 @@ func Stage(ctx context.Context, c *http.Client, rel *Release, currentVersion str
 func fetchSums(ctx context.Context, c *http.Client, rel *Release) (map[string]string, error) {
 	asset, ok := rel.FindAsset(sumsAsset)
 	if !ok {
-		return nil, fmt.Errorf("此发布包缺少 %s，无法验证完整性，拒绝更新", sumsAsset)
+		// 清单通道（latest.json）只列平台 zip，历史上不含 SHA256SUMS；
+		// 拿不到资产条目不等于文件不存在，按 Release 的固定命名拼一个地址
+		// 再试一次：仍是 https + GitHub 白名单，仍要过下面的 SHA256 比对。
+		asset = Asset{
+			Name: sumsAsset,
+			URL:  "https://github.com/" + Repo + "/releases/download/" + rel.TagName + "/" + sumsAsset,
+		}
 	}
 	body, err := get(ctx, c, asset.URL)
 	if err != nil {
+		if !ok {
+			return nil, fmt.Errorf("此发布包缺少 %s，无法验证完整性，拒绝更新（%w）", sumsAsset, err)
+		}
 		return nil, fmt.Errorf("下载 %s 失败：%w", sumsAsset, err)
 	}
 	defer body.Close()

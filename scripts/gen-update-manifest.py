@@ -83,6 +83,18 @@ def main() -> int:
             }
         )
 
+    # 客户端「清单优先」的检测通道会拿 assets[] 去找 SHA256SUMS 做完整性校验。
+    # 清单只列 zip 的话，升级会在校验阶段报「缺少 SHA256SUMS」并拒绝更新——
+    # 文件其实就挂在 Release 上，纯粹是清单没写。这里补进去，两条通道口径一致。
+    if sums_file.exists():
+        assets.append(
+            {
+                "name": sums_file.name,
+                "size": sums_file.stat().st_size,
+                "browser_download_url": f"https://github.com/{args.repo}/releases/download/{args.tag}/{sums_file.name}",
+            }
+        )
+
     body = ""
     if args.notes:
         notes_path = Path(args.notes)
