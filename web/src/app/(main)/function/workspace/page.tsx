@@ -19,6 +19,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/empty-state";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -29,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import type { WorkspaceEntry, WorkspaceFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { workspaceHintFor, workspaceToneClass, workspaceToneLabelKey } from "@/lib/workspace-hints";
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -238,6 +240,7 @@ export default function WorkspacePage() {
             <TableHeader>
               <TableRow>
                 <TableHead>{t("colName")}</TableHead>
+                <TableHead className="w-72">{t("colHint")}</TableHead>
                 <TableHead className="w-28 text-right">{t("colSize")}</TableHead>
                 <TableHead className="w-40">{t("colMtime")}</TableHead>
                 <TableHead className="w-24 text-right">{t("colActions")}</TableHead>
@@ -246,7 +249,7 @@ export default function WorkspacePage() {
             <TableBody>
               {entries.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="p-0">
+                  <TableCell colSpan={5} className="p-0">
                     {/* 加载态与空态拆开:加载中显示文案,加载完成仍为空才给空态插画 */}
                     {loading ? (
                       <div className="text-muted-foreground py-10 text-center text-sm">{t("loading")}</div>
@@ -256,71 +259,87 @@ export default function WorkspacePage() {
                   </TableCell>
                 </TableRow>
               )}
-              {entries.map((e) => (
-                <TableRow key={e.path}>
-                  <TableCell>
-                    <button
-                      type="button"
-                      onClick={() => (e.dir ? load(e.path) : openFile(e))}
-                      className="flex items-center gap-2 text-left hover:underline"
-                    >
-                      {e.dir ? (
-                        <FolderIcon className="size-4 shrink-0 text-blue-500" />
-                      ) : (
-                        <FileIcon className="text-muted-foreground size-4 shrink-0" />
-                      )}
-                      <span className="truncate font-mono text-sm">{e.name}</span>
-                    </button>
-                  </TableCell>
-                  <TableCell
-                    className="text-muted-foreground text-right font-mono text-xs"
-                    title={e.size_partial ? t("sizePartial") : undefined}
-                  >
-                    {/* 目录显示子树累计占用；没统计完的加「≥」，不假装精确。 */}
-                    {e.size_partial ? "≥ " : ""}
-                    {fmtSize(e.size)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{fmtTime(e.mtime)}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center justify-end gap-1">
-                      {/* 目录也能备份：整棵子树打成 ZIP，删之前先留一份。 */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7"
-                        title={t("backup")}
-                        onClick={() => doBackup(e)}
+              {entries.map((e) => {
+                // 系统目录只在根目录解释；子目录里的同名文件夹属于用户数据，不解释。
+                const hint = path === "" ? workspaceHintFor(e.name) : undefined;
+                return (
+                  <TableRow key={e.path}>
+                    <TableCell>
+                      <button
+                        type="button"
+                        onClick={() => (e.dir ? load(e.path) : openFile(e))}
+                        className="flex items-center gap-2 text-left hover:underline"
                       >
-                        <ArchiveIcon className="size-3.5" />
-                      </Button>
-                      {!e.dir && (
+                        {e.dir ? (
+                          <FolderIcon className="size-4 shrink-0 text-blue-500" />
+                        ) : (
+                          <FileIcon className="text-muted-foreground size-4 shrink-0" />
+                        )}
+                        <span className="truncate font-mono text-sm">{e.name}</span>
+                        {hint && (
+                          <Badge
+                            variant="outline"
+                            className={cn("ml-1 shrink-0 font-normal", workspaceToneClass[hint.tone])}
+                            title={t(`hints.${hint.key}.desc`)}
+                          >
+                            {t(workspaceToneLabelKey[hint.tone])}
+                          </Badge>
+                        )}
+                      </button>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground max-w-72 text-xs leading-relaxed">
+                      {hint ? t(`hints.${hint.key}.desc`) : null}
+                    </TableCell>
+                    <TableCell
+                      className="text-muted-foreground text-right font-mono text-xs"
+                      title={e.size_partial ? t("sizePartial") : undefined}
+                    >
+                      {/* 目录显示子树累计占用；没统计完的加「≥」，不假装精确。 */}
+                      {e.size_partial ? "≥ " : ""}
+                      {fmtSize(e.size)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">{fmtTime(e.mtime)}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
+                        {/* 目录也能备份：整棵子树打成 ZIP，删之前先留一份。 */}
                         <Button
                           variant="ghost"
                           size="icon"
                           className="size-7"
-                          title={t("download")}
-                          onClick={() =>
-                            api
-                              .workspaceDownload(e.path)
-                              .catch((err) => toast.error(t("downloadFailed", { msg: (err as Error).message })))
-                          }
+                          title={t("backup")}
+                          onClick={() => doBackup(e)}
                         >
-                          <DownloadIcon className="size-3.5" />
+                          <ArchiveIcon className="size-3.5" />
                         </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive size-7"
-                        title={t("delete")}
-                        onClick={() => askDelete(e)}
-                      >
-                        <Trash2Icon className="size-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        {!e.dir && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7"
+                            title={t("download")}
+                            onClick={() =>
+                              api
+                                .workspaceDownload(e.path)
+                                .catch((err) => toast.error(t("downloadFailed", { msg: (err as Error).message })))
+                            }
+                          >
+                            <DownloadIcon className="size-3.5" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive size-7"
+                          title={t("delete")}
+                          onClick={() => askDelete(e)}
+                        >
+                          <Trash2Icon className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>

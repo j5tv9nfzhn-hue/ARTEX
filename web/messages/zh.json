@@ -1232,6 +1232,7 @@
     "table": {
       "assetInline": "· 资产：",
       "colActions": "操作",
+    "colHint": "说明",
       "colAsset": "资产",
       "colName": "漏洞名称",
       "colSeverity": "严重度",
@@ -4756,6 +4757,26 @@
     "empty": "空目录",
     "folderCreated": "已创建目录",
     "folderNamePlaceholder": "文件夹名称",
+    "hints": {
+      "deleteStaging": {
+        "desc": "删除任务时的中转区：文件先重命名到这里，事务提交后才真正删除。里面还有东西说明上次删除中途失败，可以放心清空。"
+      },
+      "sessions": {
+        "desc": "对话会话的独立工作目录（sessions/<会话ID>）。Agent 在里面落产物、脚本和临时文件，删掉会话里的东西就找不回来。"
+      },
+      "tasks": {
+        "desc": "任务工作区（tasks/<任务ID>/，每个意图一个 i<ID> 子目录）。存中间产物、证据文件与 cmd-output，是任务续跑和复盘的基础。"
+      },
+      "traces": {
+        "desc": "编排语义旁路日志（每线程一个 JSONL）：轮次边界、意图领取/结算、工具调用等。只用于排障与回放，删了不影响任务运行。"
+      },
+      "traffic": {
+        "desc": "抓包记录：CA 证书、SQLite 索引与正文 blob。属于证据链的一部分，删之前先确认已导出或已入库。"
+      },
+      "transcripts": {
+        "desc": "LLM 原始会话转录（exp<任务ID>-*.jsonl）。任务恢复与续跑要读它，删掉后该任务无法再续跑。"
+      }
+    },
     "freedSpace": "已删除，释放 {size}",
     "loading": "加载中…",
     "newFolder": "新建文件夹",
@@ -4769,6 +4790,9 @@
     "sizePartial": "部分内容未统计完（超时或无权限），实际占用可能更大",
     "summary": "{files} 个文件 · {dirs} 个目录",
     "synced": "已同步",
+    "toneCaution": "删除前先确认",
+    "toneClean": "可安全删除",
+    "toneKeep": "建议保留",
     "tooLarge": "文件过大，不支持在线预览/编辑。",
     "upload": "上传",
     "uploadFailed": "上传失败：{msg}",
