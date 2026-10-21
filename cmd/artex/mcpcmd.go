@@ -53,9 +53,9 @@ func mcpUsage() {
   artex mcp ensure [--addr 127.0.0.1:8799] [--tiers L0,L1] [--idle 10m] [--no-spawn]
 
   --stdio       走 stdin/stdout 说 MCP（默认）
-  --attach      先探活，有活实例就附着（透明转发到它的 /mcp），没有才回落本地
-  --auto        先 attach；仍然没有就 detached 拉起一个 headless 再附着
-  --no-spawn    任何情况下都不拉起新进程（EDR 环境兜底）
+  --attach      全量透明转发：有活实例就把整条会话转过去，没有才回落本地
+  --auto        保留 L3：本级仍跑 L0–L2，L3 转发给控制台（需要控制台在运行）
+  --no-spawn    不再拉起任何进程（保留给 EDR 环境；--auto 本来就不拉进程）
   --headless    只开 /mcp 的 HTTP 服务，无 UI、不占 8787、不接管任何端口
   --idle        headless 空闲多久自退（默认 10m）
   --watch-stdin 父进程管道关闭时立即退出（宿主崩溃不留孤儿）
@@ -98,12 +98,22 @@ func runMCPServe(args []string) int {
 	}
 
 	// 附着优先：能连上已有实例就不要自己再开一套（不开数据库、不建 Manager）。
-	if *attach || *auto {
-		if code, ok := attachExisting(*addrFlag, resolveMCPToken(*tokenFlag), *tiersFlag, *auto, *noSpawn, *idle); ok {
+	//
+	// 只有 --attach 才做「整条会话转发」。--auto 不再走这条路：一旦整条会话都
+	// 转给控制台，控制台一重启，IDE 里的工具面就整体断了；而 L0–L2 本来就不需要
+	// 引擎，留在本进程里更稳。
+	if *attach {
+		if code, ok := attachExisting(*addrFlag, resolveMCPToken(*tokenFlag), *tiersFlag, false, *noSpawn, *idle); ok {
 			return code
 		}
 	}
 
+	explicitTiers := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "tiers" {
+			explicitTiers = true
+		}
+	})
 	tiers := parseTiersOr(*tiersFlag, []mcpserver.Tier{mcpserver.L0, mcpserver.L1})
 
 	dsn, source, err := db.DSN()
@@ -118,9 +128,25 @@ func runMCPServe(args []string) int {
 	}
 	defer pg.Close()
 
+	// --auto 且没显式给档位时，跟随控制台里保存的档位：谁能被外部 AI 拿到，
+	// 由界面上的开关决定，不由某台机器上的一次命令行参数决定。
+	if *auto && !explicitTiers {
+		tiers = server.MCPTiersFromSettings(pg)
+	}
+
 	// stdout 只走协议帧，任何日志都去 stderr。
 	fmt.Fprintf(os.Stderr, "artex mcp serve · stdio · 档位 %s · %s\n", joinTiers(tiers), source)
-	srv := server.NewMCPStdioServer(pg, tiers, *fileRoot)
+
+	var srv *mcpserver.Server
+	if *auto {
+		srv = server.NewMCPStdioBridgeServer(pg, tiers, *fileRoot,
+			consoleL3Bridge(resolveMCPToken(*tokenFlag), *addrFlag))
+		if hasTier(tiers, mcpserver.L3) {
+			fmt.Fprintln(os.Stderr, "artex mcp serve · L3 转发给控制台（控制台需在运行；headless 没有引擎）")
+		}
+	} else {
+		srv = server.NewMCPStdioServer(pg, tiers, *fileRoot)
+	}
 	if err := srv.ServeStdio(context.Background(), os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "stdio 会话结束: %v\n", err)
 		return 1
@@ -204,7 +230,9 @@ func runMCPStatus(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	info := mcpserver.ProbeFirst(context.Background(), candidateEndpoints(*addrFlag), *tokenFlag, *timeout)
+	// token 必须和实例用的是同一个：只认 --token / 环境变量的话，用户在界面上
+	// 生成过 token 再来 status，会被自己拒成 401。这里回落到数据库。
+	info := mcpserver.ProbeFirst(context.Background(), candidateEndpoints(*addrFlag), resolveMCPToken(*tokenFlag), *timeout)
 	b, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "序列化失败: %v\n", err)

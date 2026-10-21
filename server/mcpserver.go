@@ -105,6 +105,28 @@ func NewMCPHeadlessServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string) *m
 	return mcpBuild(&Server{m: &Manager{pg: pg}}, tiers, guard, nil)
 }
 
+// NewMCPStdioBridgeServer 与 stdio 同源，但保留 L3 —— L3 的 handler 换成
+// 「转发给控制台」。调用方（cmd/artex）负责在 bridge 里做探活与报错。
+//
+// 为什么不在这里直接连：server 包不该知道 8787 这个地址，也不该管进程。
+func NewMCPStdioBridgeServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string,
+	bridge func(ctx context.Context, name string, args json.RawMessage) (string, error)) *mcpserver.Server {
+	guard := &mcpserver.FileGuard{AllowAny: true}
+	if root := strings.TrimSpace(fileRoot); root != "" {
+		guard = &mcpserver.FileGuard{Root: root}
+	}
+	owner := &Server{m: &Manager{pg: pg}, l3Bridge: bridge}
+	return mcpBuild(owner, tiers, guard, nil)
+}
+
+// MCPTiersFromSettings 给 CLI 用：读控制台里保存的档位。
+//
+// `mcp serve --auto` 没显式给 --tiers 时用它，这样「外部 AI 能拿到什么」由界面
+// 上的开关决定，而不是由某台机器上的一次命令行参数决定。
+func MCPTiersFromSettings(pg *db.DB) []mcpserver.Tier {
+	return (&Server{m: &Manager{pg: pg}}).mcpTiers()
+}
+
 func NewMCPStdioServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string) *mcpserver.Server {
 	guard := &mcpserver.FileGuard{AllowAny: true}
 	if root := strings.TrimSpace(fileRoot); root != "" {

@@ -124,6 +124,10 @@ type Server struct {
 	// See skill_review_tools.go for why this needs to exist at all.
 	skillGateOverride *bool
 
+	// l3Bridge 非 nil 表示「本进程没有引擎」。L3 工具照常出现在 tools/list，
+	// 但调用会被转发到有引擎的进程（stdio --auto 用）。
+	l3Bridge func(ctx context.Context, name string, args json.RawMessage) (string, error)
+
 	// authMu guards the first-run setup token, the cached password hash (tokens
 	// are signed with a key derived from it — see auth.go signingKey) and the
 	// failed-attempt limiter. initMu serialises /api/auth/init check-then-set.
