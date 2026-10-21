@@ -820,6 +820,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/change-password", s.authChangePassword)
 
 	mux.HandleFunc("GET /api/health", s.health)
+
+	// 对外 MCP 接入（系统 → MCP 卡片）：状态、开关/档位、token 轮换。
+	mux.HandleFunc("GET /api/mcp/server", s.mcpServerStatus)
+	mux.HandleFunc("PUT /api/mcp/server", s.mcpServerUpdate)
+	mux.HandleFunc("POST /api/mcp/server/rotate", s.mcpServerRotate)
 	mux.HandleFunc("GET /api/stats", s.stats)
 	mux.HandleFunc("GET /api/metrics", s.reliabilityMetrics)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
@@ -1151,6 +1156,8 @@ func (s *Server) Handler() http.Handler {
 	// no-embed build the webui handler just 404s (run `next dev` separately).
 	api := cors(s.requireAuth(mux))
 	root := http.NewServeMux()
+	// 对外 MCP 接入：POST /mcp 走 Bearer 而不是 JWT，所以在 /api/ 之外单独挂。
+	root.Handle("/mcp", s.mcpHandler())
 	root.Handle("/api/", api)
 	root.Handle("/", s.webuiHandler())
 	return root

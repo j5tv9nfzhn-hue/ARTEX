@@ -55,6 +55,12 @@ func run() int {
 	// 横幅、日志与子进程输出才不会在 GBK 控制台上乱码（批次 7 / #4–5）。
 	enableUTF8Console()
 
+	// 子命令分流必须在 flag.Parse 之前：`artex mcp serve` 的参数属于子命令，
+	// 交给全局 flag 会直接报 "flag provided but not defined"。
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		return runMCPCommand(os.Args[2:])
+	}
+
 	var (
 		addr      = flag.String("addr", "127.0.0.1:8787", "HTTP listen address (default accepts local connections only; use :8787 to serve other hosts)")
 		dataDir   = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")

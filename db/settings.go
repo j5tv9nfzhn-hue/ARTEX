@@ -14,6 +14,8 @@ import "database/sql"
 var settingsSecretKeys = map[string]bool{
 	"brave_search_api_key":  true,
 	"tavily_search_api_key": true,
+	// 对外 MCP 接入的 Bearer token：泄漏等于把工具面交给任意本机进程。
+	"mcp_server_token": true,
 }
 
 // GetSetting returns the stored value and ok=false when the key is unset.
