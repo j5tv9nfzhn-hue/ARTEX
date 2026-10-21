@@ -6,30 +6,38 @@ allowed-tools: Bash(camoufox-cli:*) Bash(python:*) Bash(python3:*)
 
 # 浏览器自动化（Camoufox）
 
-## 为什么是这个
+## 两档引擎（默认轻，按需强）
 
-无头 Chromium 是当前最容易被拦的自动化形态：Chromium 会在 `sec-ch-ua` 里写死
-`HeadlessChrome`；一项覆盖 1 万个站点的测量显示，Chromium 无头软封禁率 **15.2%**，
-Firefox 无头只有 **6.8%**（与有头几乎相同）。Firefox 根本不实现 Client Hints，
-这条检测面直接不存在。
+| 档 | 引擎 | 额外磁盘 | 什么时候用 |
+|---|---|---|---|
+| **L1 默认** | 机器上已装的 Chrome / Edge（CDP） | **0** | 绝大多数任务。真二进制 = 真 TLS/JA4、真编解码，没有「补丁版对不上版本戳」的矛盾 |
+| **L3 高级** | Camoufox（C++ 层改指纹的 Firefox，Juggler） | 约 300MB（`camoufox fetch`） | 目标明确在跑指纹检测（Cloudflare/DataDome 高级档），或 L1 被拦时 |
 
-Camoufox 是在 **C++ 引擎层**改指纹的 Firefox 分支（不是 JS 补丁），通过 **Juggler**
-协议驱动——Juggler 给 Playwright 一份隔离的页面副本，页面脚本看不到自动化代码。
-所以本项目的浏览器自动化**只用 Camoufox**。
+`open` 不带 `--engine` 时是 `auto`：先找系统 Chrome，再找 Edge，都没有才回落到 Camoufox。
+也可以显式 `--engine=chrome|edge|camoufox`。
 
 > **硬规则**
-> 1. 不要调用 `playwright-cli`、`npx @playwright/mcp`、puppeteer、系统 Chrome/Chromium/Edge。
-> 2. 不要安装任何"Camoufox MCP 服务器"——本项目走 `Skill(camoufox)` + `camoufox-cli`，
+> 1. 不要调用 `playwright-cli`、`npx @playwright/mcp`、puppeteer —— 本技能只用 `camoufox-cli`。
+> 2. 不要安装任何"浏览器 MCP 服务器"——本项目走 `Skill(camoufox)` + `camoufox-cli`，
 >    多一层 MCP 只会多一个要维护、要拉进程的东西。
-> 3. 任何回退到 Chromium 系浏览器的做法都会重新引入上面那套指纹，属于**违规操作**。
+> 3. 系统引擎只驱动**真实已安装**的 Chrome/Edge；不要下载 Chromium 包（那是 400MB 的重复安装）。
+> 4. 同一个任务不要中途换引擎——换引擎等于换身份，登录态与指纹都会断。
+> 5. L1 默认 `--headless=new`；被拦先加 `--headed` 再试，别直接上 L3。
 
-## 一次性安装
+## 安装
+
+L1 不需要装任何东西（用机器上的 Chrome 或 Edge）。确认能探测到：
+
+```bash
+python scripts/camoufox_cli.py doctor     # 会打印 system browser: chrome → .../chrome.exe
+```
+
+L3（可选，约 300MB；只有需要更强指纹时才装）：
 
 ```bash
 python -m pip install -U "camoufox[geoip]"
-python -m camoufox fetch                  # 下载打过补丁的 Firefox（约 100–150MB），替代 playwright install
-python -m camoufox version                # 确认库版本 + 浏览器 build
-python scripts/camoufox_cli.py doctor     # 自检环境
+python -m camoufox fetch
+python -m camoufox version
 ```
 
 想在频道上跟进（可选）：

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""camoufox-cli —— 会话式浏览器自动化命令行（Camoufox / Firefox 内核）。
+"""camoufox-cli —— 会话式浏览器自动化命令行（系统 Chrome/Edge 或 Camoufox）。
+
+两档引擎，默认走「不额外占磁盘」的那一档：
+  L1（默认，--engine=auto/chrome/edge）：驱动机器上已安装的 Chrome/Edge，
+     走 CDP，额外磁盘 0；真二进制 = 真 TLS/JA4、真编解码，没有「补丁版与
+     版本戳对不上」的矛盾。
+  L3（--engine=camoufox）：C++ 层改指纹的 Firefox，约 300MB，目标明确做
+     指纹检测时再上。
 
 为什么不是 playwright-cli：Playwright 的 Node CLI 只能驱动 Chromium 系浏览器（CDP），
 而 Camoufox 是打了引擎级补丁的 Firefox（Juggler 协议），必须走 Playwright 的 Python
@@ -154,11 +161,84 @@ def spawn_daemon() -> None:
 # 守护进程
 # --------------------------------------------------------------------------- #
 
+def system_browser_candidates() -> list[tuple[str, str]]:
+    """返回 [(引擎名, 可执行文件路径)]，按优先级排序（Chrome 先于 Edge）。"""
+    cands: list[tuple[str, str]] = []
+    if os.name == "nt":
+        roots = [os.environ.get(k, "") for k in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")]
+        rels = [
+            ("chrome", r"Google\Chrome\Application\chrome.exe"),
+            ("chrome", r"Google\Chrome Beta\Application\chrome.exe"),
+            ("edge", r"Microsoft\Edge\Application\msedge.exe"),
+        ]
+        for root in roots:
+            if not root:
+                continue
+            for name, rel in rels:
+                cands.append((name, os.path.join(root, rel)))
+    elif sys.platform == "darwin":
+        cands += [
+            ("chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ("chrome", os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")),
+            ("edge", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+        ]
+    else:
+        for name, exe in (
+            ("chrome", "google-chrome"),
+            ("chrome", "google-chrome-stable"),
+            ("chrome", "chromium"),
+            ("chrome", "chromium-browser"),
+            ("edge", "microsoft-edge"),
+            ("edge", "microsoft-edge-stable"),
+        ):
+            p = shutil.which(exe)
+            if p:
+                cands.append((name, p))
+    return cands
+
+
+def find_system_browser(prefer: str = "auto", explicit: str | None = None) -> tuple[str, str] | None:
+    """按 prefer(chrome/edge) 挑一个真实存在的系统浏览器；找不到返回 None。"""
+    if explicit:
+        p = Path(explicit).expanduser()
+        return (p.stem.lower().replace(" ", "-"), str(p)) if p.exists() else None
+    seen: set[str] = set()
+    for name, path in system_browser_candidates():
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        if prefer in ("chrome", "edge") and name != prefer:
+            continue
+        if Path(path).exists():
+            return name, path
+    return None
+
+
+def wait_devtools_port(profile: Path, proc, timeout: float = 30.0) -> str:
+    """等 Chrome 把 DevToolsActivePort 写出来，返回 http://127.0.0.1:PORT。"""
+    port_file = profile / "DevToolsActivePort"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if port_file.exists():
+            try:
+                lines = port_file.read_text(encoding="utf-8", errors="replace").splitlines()
+                if lines and lines[0].strip().isdigit():
+                    return f"http://127.0.0.1:{int(lines[0].strip())}"
+            except Exception:
+                pass
+        if proc is not None and proc.poll() is not None:
+            raise RuntimeError(f"浏览器进程提前退出（code={proc.returncode}）")
+        time.sleep(0.2)
+    raise RuntimeError("等待 DevToolsActivePort 超时（浏览器没有启动成功）")
+
+
 class Engine:
-    """持有 Camoufox 实例，跨命令保持。"""
+    """持有浏览器实例，跨命令保持。"""
 
     def __init__(self) -> None:
         self._cm = None
+        self._pw = None                # 系统引擎用的 Playwright 句柄
+        self._proc = None              # 系统引擎拉起的浏览器进程
         self.browser = None
         self.context = None
         self.current = None
@@ -173,6 +253,14 @@ class Engine:
     def launch(self, opts: dict[str, Any]) -> str:
         if self.running:
             return "浏览器已在运行"
+        engine = str(opts.get("engine") or "auto").lower()
+        if engine in ("system", "chrome", "edge"):
+            return self._launch_system(opts, engine)
+        if engine == "auto":
+            pick = find_system_browser()
+            if pick:
+                return self._launch_system(opts, pick[0])
+            # 没有系统浏览器才回落到 Camoufox（需要 pip 安装 + fetch）
         try:
             from camoufox.sync_api import Camoufox
         except Exception as exc:
@@ -261,13 +349,99 @@ class Engine:
         self.meta = {k: v for k, v in opts.items() if v}
         return "已启动 Camoufox（Firefox %s）" % describe_engine_version(self.browser)
 
+    def _launch_system(self, opts: dict[str, Any], prefer: str) -> str:
+        """拉起系统 Chrome/Edge，用 CDP 接上。额外磁盘 0，指纹就是这个真实浏览器。"""
+        pick = find_system_browser(prefer, opts.get("browser_path"))
+        if not pick:
+            raise RuntimeError(
+                "没有找到系统 Chrome/Edge。装一个 Chrome/Edge，"
+                "或用 --engine=camoufox（Camoufox 档，约 300MB）。"
+            )
+        name, exe = pick
+        proxy_raw = opts.get("proxy")
+        if proxy_raw:
+            parsed = urlparse(proxy_raw)
+            if parsed.username or parsed.password:
+                raise RuntimeError(
+                    "系统引擎不支持带凭据的代理（Chrome 的 --proxy-server 不认用户名口令）。"
+                    "请去掉凭据（例如 http://127.0.0.1:7890），或改用 --engine=camoufox。"
+                )
+        profile = Path(opts.get("profile") or (runtime_dir() / "chrome-profile")).expanduser()
+        profile.mkdir(parents=True, exist_ok=True)
+        try:
+            (profile / "DevToolsActivePort").unlink()
+        except Exception:
+            pass
+        headless = not opts.get("headed", False) and not opts.get("virtual")
+        args = [
+            exe,
+            f"--user-data-dir={profile}",
+            "--remote-debugging-port=0",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-default-apps",
+            # 关掉「受自动化控制」这条明示信号；UA-CH 里的 HeadlessChrome 由 --headless=new 消除。
+            "--disable-blink-features=AutomationControlled",
+            "--metrics-recording-only",
+            "--password-store=basic",
+            "--use-mock-keychain",
+            "--no-pings",
+        ]
+        if headless:
+            args.append("--headless=new")
+        win = opts.get("window")
+        if win:
+            args.append("--window-size=%d,%d" % (int(win[0]), int(win[1])))
+        if opts.get("locale"):
+            args.append(f"--lang={opts['locale']}")
+        if proxy_raw:
+            args.append(f"--proxy-server={proxy_raw}")
+        if opts.get("block_images"):
+            args.append("--blink-settings=imagesEnabled=false")
+        self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        endpoint = wait_devtools_port(profile, self._proc)
+        from playwright.sync_api import sync_playwright
+        self._pw = sync_playwright().start()
+        self.browser = self._pw.chromium.connect_over_cdp(endpoint)
+        ctxs = list(getattr(self.browser, "contexts", []) or [])
+        self.context = ctxs[0] if ctxs else self.browser.new_context()
+        # 系统引擎不伪装时区/语言：它们来自真实系统，本身就是最自洽的一组值。
+        self.tz = None
+        self.meta = {k: v for k, v in opts.items() if v}
+        self.meta["engine"] = f"system-{name}"
+        self.meta["endpoint"] = endpoint
+        return f"已启动系统 {name}（Chromium {describe_engine_version(self.browser)}，CDP {endpoint}）"
+
     def shutdown(self) -> str:
         try:
             if self._cm is not None:
                 self._cm.__exit__(None, None, None)
         except Exception:
             pass
+        try:
+            if self.browser is not None:
+                self.browser.close()
+        except Exception:
+            pass
+        try:
+            if self._pw is not None:
+                self._pw.stop()
+        except Exception:
+            pass
+        try:
+            if self._proc is not None and self._proc.poll() is None:
+                self._proc.terminate()
+                try:
+                    self._proc.wait(timeout=5)
+                except Exception:
+                    self._proc.kill()
+        except Exception:
+            pass
         self._cm = self.browser = self.context = self.current = None
+        self._pw = None
+        self._proc = None
         return "已关闭浏览器"
 
     # -- 页面 ---------------------------------------------------------------
@@ -725,6 +899,12 @@ def doctor_text() -> str:
         lines.append(f"browser build: {installed_verstr()}")
     except Exception:
         lines.append("browser build: 未知（未执行 camoufox fetch 时会是这样）")
+    picks = [p for p in system_browser_candidates() if Path(p[1]).exists()]
+    if picks:
+        for name, path in picks[:4]:
+            lines.append(f"system browser: {name} → {path}")
+    else:
+        lines.append("system browser: 未找到 Chrome/Edge（可用 --engine=camoufox）")
     lines.append(f"timezone: {os.environ.get('TZ') or time.tzname[0]}")
     lines.append(f"runtime dir: {runtime_dir()}")
     lines.append(f"profile dir: {profile_dir()}")
@@ -738,7 +918,8 @@ def doctor_text() -> str:
 USAGE = """camoufox-cli —— 基于 Camoufox 的浏览器自动化
 
 会话
-  open [url] [--headed] [--os=windows|macos|linux] [--locale=zh-CN] [--geoip]
+  open [url] [--engine=auto|chrome|edge|camoufox] [--browser-path=EXE]
+             [--headed] [--os=windows|macos|linux] [--locale=zh-CN] [--geoip]
              [--proxy=http://user:pass@host:port] [--profile=DIR] [--block-images]
              [--preset] [--disable-coop] [--trust-os-certs] [--virtual] [--no-humanize]
   goto URL                     导航
@@ -800,6 +981,8 @@ def main() -> int:
         spawn_daemon()
         args: dict[str, Any] = {
             "url": pos[0] if pos else None,
+            "engine": flags.get("engine"),
+            "browser_path": flags.get("browser-path"),
             "headed": bool(flags.get("headed")),
             "os": flags.get("os"),
             "humanize": not bool(flags.get("no-humanize")),

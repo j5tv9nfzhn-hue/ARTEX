@@ -92,7 +92,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 			"spa", "vue", "react", "angular", "dom", "xss", "前端渲染", "单页应用",
 			"浏览器", "camoufox", "firefox", "登录态", "验证码", "滑块", "弹窗", "截图", "headless",
 		},
-		action: "优先调用 `Skill({\"name\":\"camoufox\"})` 加载浏览器自动化规约，然后用 `camoufox-cli`（open/snapshot/fill/click/eval）完成页面导航与 DOM 交互；不要用 Playwright、puppeteer 或系统 Chrome。",
+		action: "优先调用 `Skill({\"name\":\"camoufox\"})` 加载浏览器自动化规约，然后用 `camoufox-cli`（open/snapshot/fill/click/eval）完成页面导航与 DOM 交互；默认驱动系统已装 Chrome/Edge（零额外磁盘），被指纹拦截时再加 `--engine=camoufox`。不要用 playwright-cli 或 puppeteer。",
 	},
 	{
 		skillName: "scopesentry-mcp",
