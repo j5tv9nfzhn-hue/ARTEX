@@ -1,0 +1,788 @@
+[
+  {
+    "name": "file_identify",
+    "title": "",
+    "description": "按魔数判断文件类型（PE/ELF/Mach-O/ZIP/APK/PDF/OLE/压缩包），给出大小、时间与 MD5/SHA256。",
+    "tier": "L0",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "path": {
+          "description": "样本绝对路径或工作目录相对路径",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "pe_info",
+    "title": "",
+    "description": "解析 PE：架构、子系统、时间戳、入口点、节表与每节熵、导入库、导出符号。用于判断编译器/加壳与攻击面。",
+    "tier": "L0",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "max_imps": {
+          "description": "最多列出多少个导入符号，默认 60",
+          "type": "integer"
+        },
+        "path": {
+          "description": "PE 文件路径",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "strings_scan",
+    "title": "",
+    "description": "提取可打印字符串（ASCII + UTF-16LE）并给文件偏移，可按关键词过滤。用于快速找 URL、命令、注册表、错误信息。",
+    "tier": "L0",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "grep": {
+          "description": "可选子串过滤（大小写不敏感）",
+          "type": "string"
+        },
+        "limit": {
+          "description": "最多返回多少条，默认 400",
+          "type": "integer"
+        },
+        "min_len": {
+          "description": "最小长度，默认 4",
+          "type": "integer"
+        },
+        "path": {
+          "description": "文件路径",
+          "type": "string"
+        },
+        "utf16": {
+          "description": "是否同时扫 UTF-16LE，默认 true",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "entropy_scan",
+    "title": "",
+    "description": "计算整体与每节熵，结合节名给出加壳/加密线索（UPX、ASPack、Themida 等）。",
+    "tier": "L0",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "path": {
+          "description": "文件路径",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "ioc_extract",
+    "title": "",
+    "description": "从文件或给定文本里抽取 URL/域名/IP/邮箱/哈希/Windows 路径，去重后按类别输出。",
+    "tier": "L0",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "max_each": {
+          "description": "每类最多返回多少条，默认 40",
+          "type": "integer"
+        },
+        "path": {
+          "description": "文件路径（与 text 二选一）",
+          "type": "string"
+        },
+        "text": {
+          "description": "直接给文本（与 path 二选一）",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_assets",
+    "title": "资产查询",
+    "description": "查资产图。给 query 做关键词检索；给 type 按类型列举（root_domain/ip/subdomain/app/service/endpoint）；给 company_id 或 task_id 按归属过滤；都不给则返回各类型数量概览。",
+    "tier": "L1",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "company_id": {
+          "description": "公司 id",
+          "type": "string"
+        },
+        "query": {
+          "description": "关键词（域名、IP、URL、指纹）",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "任务 id",
+          "type": "string"
+        },
+        "type": {
+          "description": "资产类型",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_findings",
+    "title": "漏洞查询",
+    "description": "分页查历史发现。可按 task_id / severity / status / vuln_class / query 过滤，返回总数与条目（含摘要与证据片段）。",
+    "tier": "L1",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "page": {
+          "description": "页码，默认 1",
+          "type": "string"
+        },
+        "page_size": {
+          "description": "每页条数，默认 20，上限 100",
+          "type": "string"
+        },
+        "query": {
+          "description": "关键词",
+          "type": "string"
+        },
+        "severity": {
+          "description": "critical/high/medium/low",
+          "type": "string"
+        },
+        "status": {
+          "description": "pending/confirmed/false_positive/…",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "任务 id（字符串）",
+          "type": "string"
+        },
+        "vuln_class": {
+          "description": "漏洞分类",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_companies",
+    "title": "公司/范围",
+    "description": "列出公司与其授权范围（domain/CIDR/ICP），以及每家公司的资产数量。",
+    "tier": "L1",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_tasks",
+    "title": "任务列表",
+    "description": "列出任务（id/名称/状态/分析域/目标摘要），可按 status 过滤。用 get_task 取单个任务详情。",
+    "tier": "L1",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "limit": {
+          "description": "最多返回条数，默认 50",
+          "type": "string"
+        },
+        "status": {
+          "description": "created/running/paused/done/failed/timeout",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_task",
+    "title": "任务详情",
+    "description": "按 id 取任务详情，附资产类型计数，便于判断这个目标已经挖到哪一步。",
+    "tier": "L1",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "id": {
+          "description": "任务 id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "tactical_kb",
+    "title": "战术知识库",
+    "description": "本地静态经验检索。mode=vuln_patterns 按分类取打法卡片；mode=logic_invariants 取业务不变量清单；mode=past_findings / past_assets 跨任务检索历史结论与资产。",
+    "tier": "L1",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "category": {
+          "description": "vuln_patterns 模式下的分类，如 bola_idor / ssrf_cloud",
+          "type": "string"
+        },
+        "limit": {
+          "description": "最多返回条数，默认 8，上限 25",
+          "type": "string"
+        },
+        "mode": {
+          "description": "vuln_patterns | logic_invariants | past_findings | past_assets",
+          "type": "string"
+        },
+        "query": {
+          "description": "关键词/目标类型（如 ai_gateway、jwt、ssrf）",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "dns_recon",
+    "title": "",
+    "description": "解析域名的 A/AAAA/CNAME/MX/TXT/NS，可选常见子域爆破。用于确认资产归属与邮件/验证配置。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "brute": {
+          "description": "是否用内置常见前缀做子域探测（默认 false，会发几十次 DNS 查询）",
+          "type": "boolean"
+        },
+        "domain": {
+          "description": "根域名，例如 example.com",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "单次解析超时毫秒，默认 3000",
+          "type": "integer"
+        },
+        "wordlist": {
+          "description": "自定义子域前缀列表，给了就代替内置列表",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "port_probe",
+    "title": "",
+    "description": "TCP connect 探活（不是 SYN 扫描，不发原始包），可读首个 banner。支持 80,443,8000-8100 这种写法。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "banner": {
+          "description": "是否读取首个 banner（默认 true）",
+          "type": "boolean"
+        },
+        "concurrency": {
+          "description": "并发数，默认 128，上限 512",
+          "type": "integer"
+        },
+        "host": {
+          "description": "主机名或 IP",
+          "type": "string"
+        },
+        "ports": {
+          "description": "端口表达式：80,443,1000-1010；默认 21,22,23,25,53,80,110,135,139,143,443,445,1433,1521,3306,3389,5432,6379,8080,8443,9000,9200,11211,27017",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "单个端口超时毫秒，默认 800",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "host"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "tls_inspect",
+    "title": "",
+    "description": "握手并输出证书链（主体/签发者/SAN/有效期）、协议版本、加密套件、ALPN、是否自签名。排查证书泄露的子域与过期配置。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "insecure": {
+          "description": "跳过证书校验（默认 true；需要看真实证书时用 false）",
+          "type": "boolean"
+        },
+        "server_name": {
+          "description": "SNI，缺省用 host",
+          "type": "string"
+        },
+        "target": {
+          "description": "host:port，端口缺省 443",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "超时毫秒，默认 8000",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "tech_hints",
+    "title": "",
+    "description": "抓取首页并按响应头/正文特征推断服务端、框架、CDN/WAF 与前端技术栈。只是指纹，不发攻击载荷。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "insecure": {
+          "description": "跳过证书校验，默认 true",
+          "type": "boolean"
+        },
+        "url": {
+          "description": "完整 URL，例如 https://example.com/",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "http_send",
+    "title": "",
+    "description": "发送一条原始 HTTP 请求（可自定义方法/头/体），返回状态、响应头与正文头部。用于复现验证，等价于 Repeater。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "base_url": {
+          "description": "可选，提供 scheme://host 用于补全 URL 与 Host",
+          "type": "string"
+        },
+        "insecure": {
+          "description": "跳过 TLS 校验，默认 true",
+          "type": "boolean"
+        },
+        "max_body": {
+          "description": "返回正文最大字节，默认 4000",
+          "type": "integer"
+        },
+        "request": {
+          "description": "原始请求文本，例如 `GET /api/x HTTP/1.1` + 换行 + `Host: example.com` + 空行 + body",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "http_fuzz",
+    "title": "",
+    "description": "把一个请求模板里的 FUZZ 占位符逐个替换成载荷并发发送，与基线比对状态/长度，可正则提取命中。适合参数、头、路径的批量试探。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "base_url": {
+          "description": "可选，scheme://host",
+          "type": "string"
+        },
+        "concurrency": {
+          "description": "并发，默认 16，上限 32",
+          "type": "integer"
+        },
+        "insecure": {
+          "description": "跳过 TLS 校验，默认 true",
+          "type": "boolean"
+        },
+        "match": {
+          "description": "可选正则，命中则标记 MATCH，并在结果里列出第一个匹配",
+          "type": "string"
+        },
+        "max_body": {
+          "description": "每条响应读取的最大字节，默认 200000",
+          "type": "integer"
+        },
+        "payloads": {
+          "description": "载荷列表",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "request": {
+          "description": "请求模板，必须包含 FUZZ 占位符（会出现多次则同时替换）",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request",
+        "payloads"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "dir_probe",
+    "title": "",
+    "description": "路径枚举：把内置或自定义字典拼到 URL 后面并发请求，按状态码/长度过滤。只做 GET，不跟随跳转。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "concurrency": {
+          "description": "并发，默认 24，上限 64",
+          "type": "integer"
+        },
+        "extensions": {
+          "description": "附加后缀，例如 ['.php','.bak']",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "insecure": {
+          "description": "跳过 TLS 校验，默认 true",
+          "type": "boolean"
+        },
+        "status": {
+          "description": "关心的状态码，默认 [200,204,301,302,307,401,403]",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "url": {
+          "description": "基地址，例如 https://example.com",
+          "type": "string"
+        },
+        "wordlist": {
+          "description": "自定义路径列表；为空用内置常见路径",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "param_probe",
+    "title": "",
+    "description": "参数反射与行为差异探测：对单个查询参数注入随机 canary，检查是否原样回显在正文/响应头，以及长度与状态是否变化。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "insecure": {
+          "description": "跳过 TLS 校验，默认 true",
+          "type": "boolean"
+        },
+        "param": {
+          "description": "要探测的参数名；为空则探测 URL 里全部参数",
+          "type": "string"
+        },
+        "url": {
+          "description": "带参数的完整 URL，例如 https://x/a?id=1\u0026next=/",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "jwt_inspect",
+    "title": "",
+    "description": "解析 JWT 的 header/payload，检查 alg=none、过期时间与敏感字段，并可用内置弱密钥字典验证 HS256 签名。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "token": {
+          "description": "完整 JWT（三段以点分隔）",
+          "type": "string"
+        },
+        "wordlist": {
+          "description": "自定义候选密钥；为空用内置弱密钥表",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "sqli_probe",
+    "title": "",
+    "description": "SQL 注入三态判定：报错特征、布尔真/假对比、可选时间盲注。请求数有硬上限，只做判定不给利用链。",
+    "tier": "L2",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "insecure": {
+          "description": "跳过 TLS 校验，默认 true",
+          "type": "boolean"
+        },
+        "param": {
+          "description": "要测的参数名",
+          "type": "string"
+        },
+        "time_based": {
+          "description": "是否做时间盲注（会多花约 3 秒），默认 false",
+          "type": "boolean"
+        },
+        "url": {
+          "description": "带参数的完整 URL",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "param"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "task_create",
+    "title": "创建任务",
+    "description": "把一个目标交给 ARTEX 后台任务。description 写清范围与约束，goal 写要达成的验证目标。返回 task_id，用 task_status 跟进。属于写操作，仅在 L3 开启时可用。",
+    "tier": "L3",
+    "read_only": false,
+    "destructive": false,
+    "idempotent": false,
+    "open_world": true,
+    "schema": {
+      "properties": {
+        "analysis_domain": {
+          "description": "分析域，默认 web_security",
+          "enum": [
+            "web_security",
+            "software_re"
+          ],
+          "type": "string"
+        },
+        "company_ids": {
+          "description": "可选：归属公司 id",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "description": {
+          "description": "任务描述：目标范围、授权边界、已知线索",
+          "type": "string"
+        },
+        "goal": {
+          "description": "验证目标，例如『确认 /api/user 是否存在越权读取』",
+          "type": "string"
+        },
+        "name": {
+          "description": "可选任务名",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "description": "任务超时秒数，默认 0（不限）",
+          "type": "integer"
+        },
+        "token_budget": {
+          "description": "token 预算，默认 0（不限）",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "description",
+        "goal"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "task_status",
+    "title": "任务进度",
+    "description": "查任务状态、进度与产出数量（资产/发现），用于轮询自己刚创建的任务。",
+    "tier": "L3",
+    "read_only": true,
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "id": {
+          "description": "任务 id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "task_pause",
+    "title": "暂停任务",
+    "description": "暂停一个正在运行的任务（可再用 task_resume 恢复）。不删除任何数据。",
+    "tier": "L3",
+    "read_only": false,
+    "destructive": false,
+    "idempotent": false,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "id": {
+          "description": "任务 id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "task_resume",
+    "title": "恢复任务",
+    "description": "恢复一个被暂停的任务。",
+    "tier": "L3",
+    "read_only": false,
+    "destructive": false,
+    "idempotent": false,
+    "open_world": false,
+    "schema": {
+      "properties": {
+        "id": {
+          "description": "任务 id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  }
+]

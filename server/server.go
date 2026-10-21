@@ -825,6 +825,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/mcp/server", s.mcpServerStatus)
 	mux.HandleFunc("PUT /api/mcp/server", s.mcpServerUpdate)
 	mux.HandleFunc("POST /api/mcp/server/rotate", s.mcpServerRotate)
+	// 能力清单：一个能力一份实现，两个投影（MCP 给外部 AI / HTTP 给控制台）。
+	mux.HandleFunc("GET /api/capabilities", s.capabilitiesHandler)
 	mux.HandleFunc("GET /api/stats", s.stats)
 	mux.HandleFunc("GET /api/metrics", s.reliabilityMetrics)
 	mux.HandleFunc("GET /api/logs", s.getLogs)

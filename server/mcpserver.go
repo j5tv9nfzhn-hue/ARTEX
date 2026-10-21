@@ -111,18 +111,16 @@ func NewMCPStdioServer(pg *db.DB, tiers []mcpserver.Tier, fileRoot string) *mcps
 
 // mcpBuild 是两条入口（控制台 HTTP / CLI stdio）共用的装配函数。
 func mcpBuild(owner *Server, tiers []mcpserver.Tier, guard *mcpserver.FileGuard, audit func(mcpserver.AuditEvent)) *mcpserver.Server {
-	tools := make([]mcpserver.Tool, 0, 32)
-	tools = append(tools, mcpserver.BuiltinTools("artex-binscan", mcpserver.L0, guard)...)
-	tools = append(tools, owner.mcpL1Tools()...)
-	tools = append(tools, mcpserver.BuiltinTools("artex-recon", mcpserver.L2, nil)...)
-	tools = append(tools, mcpserver.BuiltinTools("artex-webscan", mcpserver.L2, nil)...)
-	tools = append(tools, owner.mcpL3Tools()...)
+	// 工具面从能力注册表生成：暴露与否是注册表里的数据，不是文档约定。
+	// 顺序与历史行为一致（L0 → L1 → L2 recon → L2 webscan → L3），
+	// 由 TestCapabilityGolden 逐字节钉住，改动必须显式更新 golden。
+	tools := buildRegistry(owner, guard).Tools(mcpserver.L3)
 
 	return mcpserver.New(mcpserver.Config{
 		Name:         "artex",
 		Title:        "ARTEX-REA",
 		Version:      BuildVersion,
-		Instructions: mcpInstructions(),
+		Instructions: mcpInstructions() + mcpHostHints(),
 		Tiers:        tiers,
 		Tools:        tools,
 		Resources:    owner.mcpResources(),
