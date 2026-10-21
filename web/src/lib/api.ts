@@ -1278,6 +1278,15 @@ export const api = {
   mcpExposure: () => get<MCPExposure>("/mcp/server"),
   saveMcpExposure: (body: { enabled?: boolean; tiers?: string[] }) => put<MCPExposure>("/mcp/server", body),
   rotateMcpExposureToken: () => post<MCPExposure>("/mcp/server/rotate", {}),
+  // 能力清单：一个能力一份实现，两个投影。前端的「有接口」和「AI 能调」靠它对账。
+  capabilities: () =>
+    get<{
+      enabled: boolean;
+      tiers: string[];
+      exposed: { id: string; title: string; tier: string; mcp_name?: string; exposed: boolean }[];
+      denied: { id: string; title: string; reason?: string }[];
+      tool_count: number;
+    }>("/capabilities"),
 
   // ---- 资产同步 (ScopeSentry 数据源) ----
   ssStatus: () =>
