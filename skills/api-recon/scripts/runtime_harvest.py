@@ -43,7 +43,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 DEFAULT_NEUTRALIZE = {
     "fields": ["response_code", "code", "errno", "ret", "status"],
@@ -78,6 +78,42 @@ def load_cfg(path: str) -> dict:
     for stub in cfg.get("stubs") or []:
         stub["_re"] = re.compile(stub["match"], re.I)
     return cfg
+
+
+def parse_proxy(raw: str) -> dict[str, str]:
+    """Playwright 的 Firefox 不解析 server 里内联的凭据，必须拆成 username/password。"""
+    raw = raw.strip()
+    if "://" not in raw:
+        raw = "http://" + raw
+    u = urlparse(raw)
+    host = u.hostname or ""
+    if ":" in host:                      # IPv6 字面量
+        host = f"[{host}]"
+    out = {"server": f"{u.scheme}://{host}" + (f":{u.port}" if u.port else "")}
+    if u.username:
+        out["username"] = unquote(u.username)
+    if u.password:
+        out["password"] = unquote(u.password)
+    return out
+
+
+def resolve_timezone(proxy: dict[str, str] | None) -> str | None:
+    """启动级 geoip 只配 locale/坐标/WebRTC，时区要自己解析后传给 context（camoufox#773）。"""
+    try:
+        from camoufox.geolocation import get_geolocation
+        from camoufox.ip import Proxy, public_ip
+    except Exception:
+        return None
+    try:
+        if proxy:
+            exit_ip = public_ip(Proxy(server=proxy["server"],
+                                      username=proxy.get("username"),
+                                      password=proxy.get("password")).as_string())
+        else:
+            exit_ip = public_ip()
+        return get_geolocation(exit_ip).timezone
+    except Exception:
+        return None
 
 
 def cookie_value(v: str) -> str:
@@ -130,12 +166,23 @@ def main() -> int:
     sse: set[str] = set()
 
     launch: dict = {"headless": bool(cfg["headless"])}
-    if cfg.get("proxy"):
-        launch["proxy"] = {"server": cfg["proxy"]}
-        launch["geoip"] = True  # 有代理时必须让时区/语言跟随出口 IP
+    proxy = parse_proxy(cfg["proxy"]) if cfg.get("proxy") else None
+    tz = None
+    if proxy:
+        launch["proxy"] = proxy
+        launch["geoip"] = True  # 有代理时让 locale/坐标/WebRTC 跟随出口 IP
+        tz = resolve_timezone(proxy)
 
     with Camoufox(**launch) as browser:
-        ctx = browser.contexts[0] if getattr(browser, "contexts", None) else browser
+        # 时区必须在 context 创建时给：geoip 的启动级 API 不会应用到页面（camoufox#773）。
+        ctx = None
+        if tz:
+            try:
+                ctx = browser.new_context(timezone_id=tz)
+            except Exception:
+                ctx = None
+        if ctx is None:
+            ctx = browser.contexts[0] if getattr(browser, "contexts", None) else browser
         page = ctx.new_page()
 
         # —— 记录 WebSocket 帧（不依赖 CDP，Playwright 原生事件） ——

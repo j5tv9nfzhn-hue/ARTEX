@@ -32,6 +32,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 APP_DIR_NAME = "artex-camoufox"
 IDLE_TIMEOUT = 45 * 60          # 守护进程空闲多久自动退出（秒）
@@ -162,6 +163,7 @@ class Engine:
         self.context = None
         self.current = None
         self.meta: dict[str, Any] = {}
+        self.tz: str | None = None     # 由 geoip 解析出的时区，供 new_page 使用
 
     # -- 生命周期 -----------------------------------------------------------
     @property
@@ -192,8 +194,19 @@ class Engine:
             kwargs["block_images"] = True
         if opts.get("locale"):
             kwargs["locale"] = opts["locale"]
-        if opts.get("proxy"):
-            kwargs["proxy"] = {"server": opts["proxy"]}
+        proxy_cfg = parse_proxy(opts["proxy"]) if opts.get("proxy") else None
+        if proxy_cfg:
+            kwargs["proxy"] = proxy_cfg
+        if opts.get("preset"):
+            # 0.5.x 起支持真实设备指纹预设；旧版本会 TypeError，由下面的降级重试兜住
+            kwargs["fingerprint_preset"] = True
+        if opts.get("disable_coop"):
+            # 允许点击跨域 iframe 里的元素（如 Turnstile 复选框）
+            kwargs["disable_coop"] = True
+        if opts.get("trust_os_certs"):
+            # 走抓包代理（MITM）时必须让浏览器信任系统证书库里的 CA
+            prefs = kwargs.setdefault("firefox_user_prefs", {})
+            prefs["security.enterprise_roots.enabled"] = True
         if opts.get("window"):
             kwargs["window"] = tuple(opts["window"])
 
@@ -204,6 +217,18 @@ class Engine:
             kwargs["user_data_dir"] = str(Path(opts["profile"]).expanduser())
         if opts.get("virtual") and os.name != "nt":
             kwargs["headless"] = "virtual"
+            # 老版本 Xvfb 默认 1x1 画布，屏幕指纹会退化成 1x1；这里兜一个正常尺寸。
+            os.environ.setdefault("CAMOUFOX_VIRTUAL_DISPLAY_SIZE", "1920x1080x24")
+
+        # camoufox#773：启动级 geoip 不会把时区应用到页面，必须自己解析后传给 context。
+        # 只有走代理时才需要反查出口 IP；直连时本机时区就是对的，省掉一次网络请求。
+        self.tz = resolve_timezone(proxy_cfg) if (opts.get("geoip") and proxy_cfg) else None
+        if self.tz:
+            os.environ["TZ"] = self.tz          # 浏览器子进程继承；POSIX 下最直接
+            try:
+                time.tzset()                     # 仅 POSIX 有；Windows 会 AttributeError
+            except Exception:
+                pass
 
         try:
             self._cm = Camoufox(**kwargs)
@@ -211,7 +236,8 @@ class Engine:
         except TypeError as exc:
             # 不同版本的 Camoufox 接受的参数集合略有差异；剔除可选参数后重试一次，
             # 只保留 headless 这类一定存在的项，避免因为一个锦上添花的开关整个起不来。
-            for key in ("locale", "block_images", "window", "os", "humanize"):
+            for key in ("locale", "block_images", "window", "os", "humanize",
+                        "fingerprint_preset", "disable_coop", "firefox_user_prefs"):
                 kwargs.pop(key, None)
             try:
                 self._cm = Camoufox(**kwargs)
@@ -220,8 +246,16 @@ class Engine:
                 raise exc
         ctxs = getattr(self.browser, "contexts", None)
         if opts.get("profile"):
-            # persistent_context=True 时返回的就是 BrowserContext
+            # persistent_context=True 时返回的就是 BrowserContext，context 选项在创建时
+            # 已经固定，无法再改时区——只能靠启动前设置 TZ（POSIX 有效）。
             self.context = self.browser
+        elif self.tz:
+            # camoufox#773 的正解：新建 context 并显式传 timezone_id，
+            # 启动级 geoip 不会把时区应用上去。
+            try:
+                self.context = self.browser.new_context(timezone_id=self.tz)
+            except Exception:
+                self.context = ctxs[0] if ctxs else None
         else:
             self.context = ctxs[0] if ctxs else None
         self.meta = {k: v for k, v in opts.items() if v}
@@ -237,23 +271,71 @@ class Engine:
         return "已关闭浏览器"
 
     # -- 页面 ---------------------------------------------------------------
+    def _new_page(self):
+        return self.context.new_page()
+
     def ensure_page(self):
         if not self.context:
             raise RuntimeError("浏览器未启动：先执行 open")
         if self.current is not None and not self.current.is_closed():
             return self.current
         pages = list(self.context.pages)
-        self.current = pages[-1] if pages else self.context.new_page()
+        self.current = pages[-1] if pages else self._new_page()
         return self.current
 
     def new_page(self, url: str | None = None):
         if not self.context:
             raise RuntimeError("浏览器未启动：先执行 open")
-        page = self.context.new_page()
+        page = self._new_page()
         self.current = page
         if url:
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
         return page
+
+
+def parse_proxy(raw: str) -> dict[str, str]:
+    """把 http://user:pass@host:port 拆成 Playwright 需要的 proxy 字典。
+
+    Playwright 的 Firefox 实现不会解析 server 里内嵌的凭据，直接塞给 server 会导致
+    407 鉴权失败（症状是「代理连上了但每个请求都 401/407」），必须拆成 username/password。
+    """
+    raw = raw.strip()
+    if "://" not in raw:
+        raw = "http://" + raw
+    u = urlparse(raw)
+    host = u.hostname or ""
+    if ":" in host:                      # IPv6 字面量必须带方括号
+        host = f"[{host}]"
+    out: dict[str, str] = {"server": f"{u.scheme}://{host}" + (f":{u.port}" if u.port else "")}
+    if u.username:
+        out["username"] = unquote(u.username)
+    if u.password:
+        out["password"] = unquote(u.password)
+    return out
+
+
+def resolve_timezone(proxy: dict[str, str] | None) -> str | None:
+    """geoip 在启动级 API 里只配 locale/坐标/WebRTC，时区要我们自己取（camoufox#773）。
+
+    返回 IANA 时区名；任何一步失败都返回 None（由调用方保持浏览器默认）。
+    """
+    try:
+        from camoufox.geolocation import get_geolocation
+        from camoufox.ip import Proxy, public_ip
+    except Exception:
+        return None
+    try:
+        if proxy:
+            exit_ip = public_ip(Proxy(
+                server=proxy["server"],
+                username=proxy.get("username"),
+                password=proxy.get("password"),
+            ).as_string())
+        else:
+            exit_ip = public_ip()
+        return get_geolocation(exit_ip).timezone
+    except Exception:
+        return None
 
 
 def describe_engine_version(browser) -> str:
@@ -518,6 +600,7 @@ class Server:
                 {
                     "url": e.current.url if e.current and not e.current.is_closed() else None,
                     "tabs": len(e.context.pages) if e.context else 0,
+                    "timezone": e.tz,
                     "launch": e.meta,
                 },
                 ensure_ascii=False,
@@ -642,6 +725,7 @@ def doctor_text() -> str:
         lines.append(f"browser build: {installed_verstr()}")
     except Exception:
         lines.append("browser build: 未知（未执行 camoufox fetch 时会是这样）")
+    lines.append(f"timezone: {os.environ.get('TZ') or time.tzname[0]}")
     lines.append(f"runtime dir: {runtime_dir()}")
     lines.append(f"profile dir: {profile_dir()}")
     return "\n".join(lines)
@@ -654,8 +738,9 @@ def doctor_text() -> str:
 USAGE = """camoufox-cli —— 基于 Camoufox 的浏览器自动化
 
 会话
-  open [url] [--headed] [--os=windows|macos|linux] [--no-humanize] [--geoip]
-             [--proxy=http://host:port] [--profile=DIR] [--block-images]
+  open [url] [--headed] [--os=windows|macos|linux] [--locale=zh-CN] [--geoip]
+             [--proxy=http://user:pass@host:port] [--profile=DIR] [--block-images]
+             [--preset] [--disable-coop] [--trust-os-certs] [--virtual] [--no-humanize]
   goto URL                     导航
   snapshot                     列出可交互元素并打上 e1/e2 引用
   click e3 | click CSS        点击
@@ -724,6 +809,9 @@ def main() -> int:
             "block_images": bool(flags.get("block-images")),
             "locale": flags.get("locale"),
             "virtual": bool(flags.get("virtual")),
+            "preset": bool(flags.get("preset")),
+            "disable_coop": bool(flags.get("disable-coop")),
+            "trust_os_certs": bool(flags.get("trust-os-certs")),
         }
         if flags.get("window"):
             try:

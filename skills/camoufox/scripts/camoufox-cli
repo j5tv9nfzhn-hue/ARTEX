@@ -1,0 +1,4 @@
+#!/bin/sh
+# camoufox-cli 启动器：把本目录加进 PATH 后可直接用短命令。
+# 没加 PATH 也不影响——用 python scripts/camoufox_cli.py 即可。
+exec python3 "$(dirname "$0")/camoufox_cli.py" "$@"

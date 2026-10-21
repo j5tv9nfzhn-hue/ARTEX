@@ -1,6 +1,6 @@
 ---
 name: camoufox
-description: 浏览器自动化与前端动态交互（Camoufox / Firefox 内核）。用于 SPA 动态渲染、登录态维持、DOM/Cookie/Storage 提取、DOM XSS 与前端状态验证。静态 HTTP 请求渲染不出页面、需要真实浏览器执行 JS 或需要规避无头 Chromium 指纹时调用。
+description: 浏览器自动化与前端动态交互（Camoufox / Firefox 内核）。用于 SPA 动态渲染、登录态维持、DOM/Cookie/Storage 提取、DOM XSS 与前端状态验证。静态 HTTP 请求渲染不出页面、需要真实浏览器执行 JS，或需要规避无头 Chromium 指纹时调用。
 allowed-tools: Bash(camoufox-cli:*) Bash(python:*) Bash(python3:*)
 ---
 
@@ -8,57 +8,83 @@ allowed-tools: Bash(camoufox-cli:*) Bash(python:*) Bash(python3:*)
 
 ## 为什么是这个
 
-无头 Chromium 是当前最容易被拦的自动化形态：一项覆盖 1 万个站点的测量显示，
-Chromium 无头软封禁率 **15.2%**，而 Firefox 无头只有 **6.8%**（与有头几乎相同）。
-主因是 Chromium 会在 `sec-ch-ua` 里暴露 `HeadlessChrome`，而 Firefox 根本不实现
-Client Hints，这条检测面直接不存在。
+无头 Chromium 是当前最容易被拦的自动化形态：Chromium 会在 `sec-ch-ua` 里写死
+`HeadlessChrome`；一项覆盖 1 万个站点的测量显示，Chromium 无头软封禁率 **15.2%**，
+Firefox 无头只有 **6.8%**（与有头几乎相同）。Firefox 根本不实现 Client Hints，
+这条检测面直接不存在。
 
-Camoufox 是在 **C++ 引擎层**改指纹的 Firefox 分支（不是 JS 补丁），通过 Juggler
-协议驱动。所以本项目的浏览器自动化**只用 Camoufox**。
+Camoufox 是在 **C++ 引擎层**改指纹的 Firefox 分支（不是 JS 补丁），通过 **Juggler**
+协议驱动——Juggler 给 Playwright 一份隔离的页面副本，页面脚本看不到自动化代码。
+所以本项目的浏览器自动化**只用 Camoufox**。
 
-> **硬规则**：不要调用 `playwright-cli`、`npx @playwright/mcp`、puppeteer、系统
-> Chrome/Chromium/Edge，也不要传 `--browser=chrome` 之类的参数。任何回退到
-> Chromium 系浏览器的做法都会重新引入上面那套指纹，属于**违规操作**。
+> **硬规则**
+> 1. 不要调用 `playwright-cli`、`npx @playwright/mcp`、puppeteer、系统 Chrome/Chromium/Edge。
+> 2. 不要安装任何"Camoufox MCP 服务器"——本项目走 `Skill(camoufox)` + `camoufox-cli`，
+>    多一层 MCP 只会多一个要维护、要拉进程的东西。
+> 3. 任何回退到 Chromium 系浏览器的做法都会重新引入上面那套指纹，属于**违规操作**。
 
 ## 一次性安装
 
 ```bash
 python -m pip install -U "camoufox[geoip]"
-python -m camoufox fetch          # 下载打了补丁的 Firefox（约 100MB）
-python scripts/camoufox_cli.py doctor   # 自检：python / camoufox / playwright / 浏览器版本
+python -m camoufox fetch                  # 下载打过补丁的 Firefox（约 100–150MB），替代 playwright install
+python -m camoufox version                # 确认库版本 + 浏览器 build
+python scripts/camoufox_cli.py doctor     # 自检环境
 ```
 
-`doctor` 输出的 `browser build` 是 `未知` 时，说明 `fetch` 没成功，先解决它再谈自动化。
+想在频道上跟进（可选）：
 
-## 快速开始
+```bash
+python -m camoufox set official/stable && python -m camoufox fetch
+python -m camoufox list
+```
 
-命令入口是本技能目录下的 `scripts/camoufox_cli.py`（下面统一写 `camoufox-cli`，二者等价；
-若你已把入口软链进 PATH，可以直接用短命令）。在**技能目录内**先 `cd` 进去：
+Linux 另需：`libgtk-3-0 libx11-xcb1 libasound2`；要走 `--virtual` 再加 `xvfb`。
+
+## 怎么调用（AI 必读）
+
+命令入口是本技能目录下的 `scripts/camoufox_cli.py`：
 
 ```bash
 cd <技能目录>/camoufox
-alias camoufox-cli='python scripts/camoufox_cli.py'    # Windows: doskey camoufox-cli=python scripts\camoufox_cli.py $*
-
-camoufox-cli open https://target.example/     # 启动并导航
-camoufox-cli snapshot                          # 给可交互元素编号 e1/e2…
-camoufox-cli fill e3 "admin"
-camoufox-cli fill e5 "password" --submit
-camoufox-cli snapshot
-camoufox-cli eval "document.cookie"
-camoufox-cli screenshot --full --filename=out/home.png
-camoufox-cli close
+python scripts/camoufox_cli.py open https://target.example/
 ```
 
-没有 alias 时，把每条命令里的 `camoufox-cli` 换成 `python scripts/camoufox_cli.py` 即可。
+`scripts/` 里另有 `camoufox-cli`（sh）与 `camoufox-cli.cmd`（Windows）两个启动器；
+把 `scripts` 目录加进 PATH 后可以直接写 `camoufox-cli`。**下文示例用短名，
+没配 PATH 就自行替换成 `python scripts/camoufox_cli.py`。**
 
-会话由后台守护进程维护：**一次 `open`，之后每命令都是同一页面**，登录态、标签页、
-滚动位置都保持。`close` 结束会话；45 分钟无操作也会自动退出。
+调用节奏：**一次 `open`，之后每条命令都是同一页面**（登录态、标签页、滚动位置都保持）。
+不要每条命令都 `open`，那样等于每次都换一个全新的浏览器身份。
+
+找不到脚本位置时（cwd 不确定），先定位一次再调：
+
+```bash
+python -c "import glob;print(glob.glob('**/camoufox_cli.py', recursive=True)[:3])"
+```
+
+拿到绝对路径后就用绝对路径调用，别在路径上猜。
+
+## 快速开始
+
+```bash
+cd <技能目录>/camoufox
+
+python scripts/camoufox_cli.py open https://target.example/ --os=windows
+python scripts/camoufox_cli.py snapshot                  # 给可交互元素编号 e1/e2…
+python scripts/camoufox_cli.py fill e3 "admin"
+python scripts/camoufox_cli.py fill e5 "password" --submit
+python scripts/camoufox_cli.py snapshot                  # 重新渲染后必须重新 snapshot
+python scripts/camoufox_cli.py eval "document.cookie"
+python scripts/camoufox_cli.py screenshot --full --filename=out/home.png
+python scripts/camoufox_cli.py close
+```
 
 ## 命令速查
 
 | 类别 | 命令 |
 |---|---|
-| 会话 | `open [url] [--headed] [--os=windows\|macos\|linux] [--geoip] [--proxy=http://host:port] [--profile=DIR] [--block-images] [--no-humanize]` |
+| 会话 | `open [url] [选项…]` / `close` / `status` / `doctor` |
 | 导航 | `goto URL` / `url` / `title` / `wait [e3] [--ms=1000]` |
 | 读取 | `snapshot [--limit=N]` / `text [e3] [--whole]` / `eval "js" [e3]` |
 | 交互 | `click e3` / `dblclick` / `fill e5 "文本" [--submit]` / `type "文本"` / `press Enter` / `hover e3` / `select e9 value` / `check e12` / `uncheck e12` |
@@ -67,50 +93,69 @@ camoufox-cli close
 | Cookie | `cookie-list [--domain=x]` / `cookie-set NAME VALUE [--url=...]` / `cookie-clear` |
 | Storage | `localstorage-list` / `localstorage-set K V` / `localstorage-clear` |
 | 登录态 | `state-save [file]` / `state-load file` |
-| 其他 | `status` / `doctor` / `close` |
 
-**元素引用**：`snapshot` 会给页面上可见的 `a/button/input/select/textarea` 等打上
-`e1…eN`，后续 `click e3`、`fill e5` 直接用它。页面重新渲染后引用会失效，**重新
-`snapshot` 一次**再点。也可以直接传 CSS 选择器：`click "#login-btn"`。
+**元素引用**：`snapshot` 给可见的 `a/button/input/select/textarea` 打 `data-cfx-ref="eN"`，
+后续 `click e3`、`fill e5` 直接用它；也接受 CSS 选择器（`click "#login-btn"`）。
+页面重新渲染后引用会失效，**重新 snapshot 一次**。
 
-## 指纹默认值（除非有理由，否则别改）
+## open 参数（按官方 0.5.x 语义）
+
+| 参数 | 语义 | 什么时候用 |
+|---|---|---|
+| `--os=windows\|macos\|linux` | 指纹里的操作系统。不传则三选一随机 | **每个目标固定一个**，别让它随机；本机是 Windows，一般 `--os=windows` |
+| `--geoip` | 用出口 IP 反查经纬度/国家/locale/WebRTC IP | **有代理时必开**。CLI 会额外把解析出的时区显式传给浏览器 context（启动级 `geoip` 只配 locale/坐标/WebRTC，**不会**应用时区，见 camoufox#773） |
+| `--proxy=http://user:pass@host:port` | 出口代理，支持 http/https/socks5 | 抓包/换地域。凭据会被拆成 `username`/`password`——Playwright 的 Firefox 不解析 `server` 里内联的凭据，直接塞会 407 |
+| `--locale=zh-CN` | BCP-47，可写多个（`zh-CN,en-US`） | 想固定语言时；开了 `--geoip` 一般不用 |
+| `--preset` | 用打包的真实设备指纹预设（0.5.x 的 `fingerprint_preset`） | 目标有强一致性校验时；旧版本会自动降级忽略 |
+| `--disable-coop` | 关掉 COOP，跨域 iframe（如 Turnstile 复选框）才点得到 | 遇到 Cloudflare 人机验证时 |
+| `--trust-os-certs` | 打开 `security.enterprise_roots.enabled` | 浏览器要走**抓包代理（MITM）**时，让它信任系统证书库里的 CA |
+| `--virtual` | Linux 用 Xvfb 跑有头模式（`headless="virtual"`） | Linux 服务器上最稳；Windows/macOS 不支持 |
+| `--profile=DIR` | 持久 profile（默认**不落盘**，会话结束即丢） | 需要跨会话保留登录态时才用，且要定期清理 |
+| `--block-images` | 屏蔽图片，省代理流量 | 只抓接口/结构时 |
+| `--no-humanize` | 关掉拟人鼠标轨迹（默认开） | 极少用 |
+| `--headed` | 显示窗口 | 手工过验证码/调试 |
+| `--window=1280x800` | 固定窗口尺寸 | **仅调试**：固定尺寸本身就是指纹 |
+
+## 指纹一致性清单
+
+1. **OS 与 UA 要对得上**：`--os=windows` 生成的就是 Windows 指纹，别再手工改 UA。
+2. **时区要跟出口 IP 一致**：用 `--geoip` + `--proxy`，CLI 会把时区落到 context 上。
+   代理在韩国却报 `Asia/Shanghai` 是最典型的自杀式指纹。
+3. **别固定窗口尺寸**，也**别手工传 `config`** 覆盖指纹字段（会触发一致性告警）。
+4. **每次任务用同一个身份**：一次 `open` 跑完，不要中途 close 重开。
+5. 自检：
 
 ```bash
-camoufox-cli open https://target/ --os=windows --geoip --proxy=http://127.0.0.1:8080
+python scripts/camoufox_cli.py open https://abrowser.camoufox.com --os=windows
+python scripts/camoufox_cli.py open https://bot.sannysoft.com
 ```
 
-- `--os=windows`：指纹里的操作系统要和你声称的 UA 一致；不传则三选一随机。
-- `--humanize`（默认开）：鼠标走贝塞尔曲线，不是瞬移。
-- `--geoip`：有代理时**必开**，让时区/语言/WebRTC 跟随出口 IP。代理在韩国却报
-  `Asia/Shanghai` 是最典型的自杀式指纹。
-- `--profile=DIR`：**默认不落盘**（会话结束即丢）。只有需要跨会话保留登录态时才用，
-  而且要定期清理这个目录，否则会像 Chromium 那样堆到几百 MB。
-- 固定 `--window` 尺寸会削弱指纹一致性，除调试外不要设置。
+重点看 WebGL、`navigator`、时区、字体是否与声明的 `--os` 一致。
 
 ## 常见坑
 
 | 现象 | 原因与处理 |
 |---|---|
-| `未安装 camoufox` | 没执行安装命令；按提示 `pip install -U "camoufox[geoip]"` 后再 `camoufox fetch` |
-| `浏览器会话未启动` | 还没 `open`，或者守护进程因空闲退出了 |
-| 点了没反应 | 元素索引过期；重新 `snapshot` 后再点，或改用 CSS 选择器 |
-| `geoip` 报错 | 没装 `[geoip]` extra，或没配代理 |
-| 想导出 PDF | **不支持**。Firefox 引擎没有 Playwright 的 `page.pdf()`；用 `screenshot --full` 代替 |
-| 需要 CDP 那套能力 | Camoufox 没有 CDP。抓包用 `eval` 挂钩 `fetch`/`XMLHttpRequest`，或用 `api-recon` 技能的 `runtime_harvest.py` |
-| 自签名证书站点 | 浏览器会拦；优先走 `http://`，或先在系统/Firefox 信任该 CA，不要关证书校验来"绕过" |
+| `未安装 camoufox` | 先 `pip install -U "camoufox[geoip]"`，再 `python -m camoufox fetch` |
+| `浏览器会话未启动` | 还没 `open`，或守护进程空闲 45 分钟自动退出了 |
+| 代理连上但全 407/401 | 凭据没拆出来（旧版 CLI 的行为）；新版已按 `user:pass@` 解析，确认密码里的特殊字符做了 URL 编码 |
+| 时区还是本机时区 | `--geoip` 没开、`[geoip]` extra 没装，或用了 `--profile`（持久 context 的时区在创建时已固定，只能靠启动前的 `TZ`） |
+| 点了没反应 | 元素索引过期；重新 `snapshot`，或改用 CSS 选择器 |
+| 想导出 PDF | **不支持**。Firefox 引擎没有 Playwright 的 `page.pdf()`，用 `screenshot --full` |
+| 想要 `go_back()` | 没开页面缓存（Camoufox 默认关，省内存）；本 CLI 不暴露，直接 `goto` 目标地址 |
+| 需要 CDP 抓包/性能追踪 | 没有 CDP。抓接口用 `api-recon` 的 `runtime_harvest.py`（route 拦截 + `add_init_script`） |
+| Linux 上残留 Xvfb 进程 | `headless="virtual"` 的已知缺陷（camoufox#907），启动失败时可能留下；`pgrep -a Xvfb` 清掉，或改用 `headless=True` |
+| 自签名证书站点 | 别关证书校验；把 CA 装进系统信任库后加 `--trust-os-certs`，或先走 `http://` |
 
-## 验证指纹是否真的干净
+## 关于"能不能过 Cloudflare"
 
-```bash
-camoufox-cli open https://abrowser.camoufox.com --os=windows
-camoufox-cli open https://bot.sannysoft.com
-```
-
-`abrowser.camoufox.com` 是 Camoufox 自带的指纹自检页，重点看 WebGL、
-navigator、时区、字体是否与声明的 `--os` 一致。
+Camoufox 不解决 CAPTCHA：它能让你**看起来像真人 Firefox**，不会替你解题。
+遇到 Turnstile 可以试 `--disable-coop` + `--headed` 手工点一次，再 `state-save` 复用登录态。
+另外官方在 2026 年公开说明过维护曾中断、部分一致性校验被新发现，能力会随版本波动——
+**不要承诺"零检测"**，以实测为准。
 
 ## 与 API 侦察的配合
 
-SPA 的接口面通常在运行时才暴露。`api-recon` 技能的 `runtime_harvest.py` 就是基于
-本引擎做的：注入伪造登录态 → 改写鉴权失败码 → 遍历路由 → 记录 API 调用与 WebSocket。
-需要抓接口时**先用那个脚本**，不要自己写一套 Chromium 脚本。
+SPA 的接口面通常在运行时才暴露。`api-recon` 的 `runtime_harvest.py` 就是基于本引擎：
+注入伪造登录态 → 改写鉴权失败码 → 遍历路由 → 记录 API 调用与 WebSocket 帧。
+需要抓接口时**先用那个脚本**，不要自己写一套新脚本。
