@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { useNewFindingsAlert } from "@/components/finding-alert";
 import { FindingRetestDialog } from "@/components/finding-retest-dialog";
+import { FindingVerifyDialog } from "@/components/finding-verify-dialog";
 import { useStaggerOnce } from "@/components/motion";
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
@@ -48,6 +49,7 @@ import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.
 import { SEVERITIES, severityFilterChipClass, severityTextClass } from "@/lib/severity";
 import type {
   ActiveFindingRetest,
+  ActiveFindingVerification,
   Finding,
   FindingAssetNode,
   FindingGroup,
@@ -165,7 +167,9 @@ export default function FindingsPage() {
   const [pageSize, setPageSize] = React.useState(10);
   const [deepenFinding, setDeepenFinding] = React.useState<Finding | null>(null);
   const [retestFinding, setRetestFinding] = React.useState<Finding | null>(null);
+  const [verifyFinding, setVerifyFinding] = React.useState<Finding | null>(null);
   const [activeRetests, setActiveRetests] = React.useState<Record<string, ActiveFindingRetest>>({});
+  const [activeVerifications, setActiveVerifications] = React.useState<Record<string, ActiveFindingVerification>>({});
   const activeRetestFingerprint = Object.values(activeRetests)
     .map((item) => item.id)
     .join(",");
@@ -201,6 +205,29 @@ export default function FindingsPage() {
       clearTimeout(timer);
     };
   }, [t]);
+
+  // 复核的「进行中」状态同样只需要一个轻量请求：列表页一次拿全，按 finding_id 索引。
+  // 与复测轮询分开，是因为两者互不依赖，任何一个失败都不该拖住另一个。
+  React.useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refreshVerifications() {
+      try {
+        const rows = await api.activeFindingVerifications();
+        if (disposed) return;
+        setActiveVerifications(Object.fromEntries(rows.map((item) => [item.finding_id, item])));
+      } catch {
+        // 复核是旁路信息：轮询失败不打扰用户，下一轮自愈。
+      } finally {
+        if (!disposed) timer = setTimeout(() => void refreshVerifications(), 5000);
+      }
+    }
+    void refreshVerifications();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
   React.useEffect(() => {
     const raw = getLocalStorageValue(FINDING_LIST_PREFERENCE_KEY);
@@ -806,6 +833,8 @@ export default function FindingsPage() {
     onStatusChange: updateStatus,
     onRetest: setRetestFinding,
     activeRetests,
+    onVerify: setVerifyFinding,
+    activeVerifications,
     onDeepen: openDeepen,
     onDelete: deleteFinding,
   };
@@ -1185,6 +1214,27 @@ export default function FindingsPage() {
             setActiveRetests((current) => ({ ...current, [findingId]: active }));
           }}
           onClose={() => setRetestFinding(null)}
+        />
+      ) : null}
+
+      {verifyFinding?.finding_id ? (
+        <FindingVerifyDialog
+          key={verifyFinding.finding_id}
+          findingId={verifyFinding.finding_id}
+          findingName={verifyFinding.name || verifyFinding.vulnclass || verifyFinding.summary}
+          onStarted={(verification) => {
+            const findingId = verifyFinding.finding_id;
+            if (!findingId) return;
+            if (verification.conversation_id == null || !["pending", "running"].includes(verification.status)) return;
+            const active: ActiveFindingVerification = {
+              id: verification.id,
+              finding_id: findingId,
+              conversation_id: verification.conversation_id,
+              status: verification.status === "pending" ? "pending" : "running",
+            };
+            setActiveVerifications((current) => ({ ...current, [findingId]: active }));
+          }}
+          onClose={() => setVerifyFinding(null)}
         />
       ) : null}
 

@@ -98,6 +98,15 @@ const finding: Record<string, StatusMeta> = {
   risk_accepted: { tone: "violet" },
 };
 
+// validation 域：独立复核结论（findings.validation）。
+// unverified 用 amber 而不是 neutral：它不是「没有状态」，而是「这条还只是线索」，
+// 需要在界面上持续可见——正是 P2 要区分「上报了多少」与「确认存在多少」。
+const validation: Record<string, StatusMeta> = {
+  unverified: { tone: "amber" },
+  verified: { tone: "green" },
+  refuted: { tone: "slate" },
+};
+
 const engine: Record<string, StatusMeta> = {
   exploring: { tone: "blue" },
   paused: { tone: "amber" },
@@ -137,6 +146,7 @@ const maps = {
   task,
   severity,
   finding,
+  validation,
   engine,
   goal,
   audit,

@@ -508,6 +508,10 @@ export interface FindingAsset {
   label: string;
 }
 
+// 独立复核结论。与 status 正交：status 是「人怎么处置」，validation 是
+// 「这条漏洞本身有没有被独立复核过」；只有 verified 才计入资产真值与报告正文。
+export type FindingValidation = "unverified" | "verified" | "refuted";
+
 export interface Finding {
   traffic_count?: number;
   evidence_version?: number;
@@ -519,6 +523,7 @@ export interface Finding {
   name?: string; // 漏洞名称;为空时展示回退到 vulnclass
   severity: Severity;
   status: FindingStatus;
+  validation?: FindingValidation;
   summary: string;
   evidence: string;
   report?: string; // 详细报告(Markdown);仅详情接口返回,列表为空
@@ -747,6 +752,31 @@ export interface FindingRetest {
   status: "pending" | "running" | "completed" | "failed" | "stopped";
   verdict: "" | "reproduced" | "fixed" | "inconclusive";
   notes: string;
+  summary: string;
+  evidence: string;
+  error: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ActiveFindingVerification {
+  id: number;
+  finding_id: string;
+  conversation_id: number;
+  status: "pending" | "running";
+}
+
+// FindingVerification 是一次独立复核的记录（POST/GET .../verifications）。
+export interface FindingVerification {
+  id: number;
+  finding_id: number;
+  conversation_id: number | null;
+  status: "pending" | "running" | "completed" | "failed" | "stopped";
+  verdict: "" | "verified" | "refuted" | "inconclusive";
+  notes: string;
+  // reason 记录为什么复核：auto:severity=high / auto:sample / manual。
+  reason: string;
   summary: string;
   evidence: string;
   error: string;

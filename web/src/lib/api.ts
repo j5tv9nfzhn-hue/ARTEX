@@ -8,6 +8,7 @@ import { MOCK } from "@/lib/mock/enabled";
 import { mockHandle } from "@/lib/mock/handler";
 import type {
   ActiveFindingRetest,
+  ActiveFindingVerification,
   Activity,
   Agent,
   AgentDetail,
@@ -48,6 +49,7 @@ import type {
   FindingsPage,
   FindingTraffic,
   FindingTrafficDetail,
+  FindingVerification,
   HarnessPlanResult,
   HarnessScan,
   IntentAsset,
@@ -815,6 +817,20 @@ export const api = {
     post<{ retest: FindingRetest; created: boolean }>(`/exploration/findings/${encodeURIComponent(id)}/retests`, {
       notes,
     }),
+  // 独立复核（P2 verifier）：历史列表 / 全局进行中（列表页一次拿全）/ 发起一次复核。
+  findingVerifications: (id: string) =>
+    get<{ verifications: FindingVerification[] }>(`/exploration/findings/${encodeURIComponent(id)}/verifications`).then(
+      (r) => arr(r.verifications),
+    ),
+  activeFindingVerifications: () =>
+    get<{ verifications: ActiveFindingVerification[] }>("/exploration/findings/verifications/active").then((r) =>
+      arr(r.verifications),
+    ),
+  startFindingVerification: (id: string, notes: string) =>
+    post<{ verification: FindingVerification; created: boolean }>(
+      `/exploration/findings/${encodeURIComponent(id)}/verifications`,
+      { notes },
+    ),
   deepenFinding: (id: string, description: string) =>
     post<FindingDeepenResponse>(`/exploration/findings/${id}/deepen`, { description }),
   intents: (task?: string) => get<TaskNode[]>(`/exploration/intents${tq(task)}`).then(arr),

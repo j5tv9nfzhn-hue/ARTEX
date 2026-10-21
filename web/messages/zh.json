@@ -1232,7 +1232,7 @@
     "table": {
       "assetInline": "· 资产：",
       "colActions": "操作",
-    "colHint": "说明",
+      "colHint": "说明",
       "colAsset": "资产",
       "colName": "漏洞名称",
       "colSeverity": "严重度",
@@ -1261,7 +1261,12 @@
       "trafficEvidence": "流量证据 {count} 条",
       "typeInline": "· 类型：",
       "unclassified": "未分类",
-      "viewDetail": "查看发现详情"
+      "viewDetail": "查看发现详情",
+      "verify": "复核",
+      "verifyTitle": "由独立复核员判断这条发现是否成立",
+      "verifying": "复核中",
+      "verifyingTitle": "查看正在进行的复核会话",
+      "validation": "复核"
     },
     "task": {
       "all": "全部任务",
@@ -2853,6 +2858,52 @@
       "viewSession": "查看会话"
     }
   },
+  "verify": {
+    "dialog": {
+      "alreadyRunning": "该漏洞已有进行中的复核，可查看已有会话",
+      "cancel": "取消",
+      "desc": "复核 Agent 是独立角色：只读工具、独立会话、不采信原上报结论。它决定这条发现算「已复核」还是「已推翻」。",
+      "notesDesc": "可补充复现所需的前置条件、账号或范围限制。",
+      "notesLabel": "补充说明（可选）",
+      "notesPlaceholder": "例如：使用同一测试账号复现原接口；目标在本机内网。",
+      "startFailed": "发起复核失败：{message}",
+      "startedNew": "复核已启动，可点击「复核中」查看会话",
+      "submit": "开始复核",
+      "submitting": "正在创建…",
+      "title": "复核漏洞 #{id}"
+    },
+    "panel": {
+      "desc": "由独立的只读会话判断这条发现是否成立；只有「已复核」才计入资产真值与报告正文。",
+      "emptyDesc": "高危发现会自动复核，也可以在这里手动发起一次独立复核。",
+      "emptyTitle": "暂无复核记录",
+      "evidence": "复核证据",
+      "loadError": "加载复核记录失败：{error}",
+      "notes": "补充说明：{notes}",
+      "reason": {
+        "manual": "人工发起",
+        "sample": "抽样复核",
+        "severity": "高危强制复核"
+      },
+      "retry": "重试",
+      "sessionDeleted": "会话已删除",
+      "start": "发起复核",
+      "status": {
+        "completed": "已完成",
+        "failed": "复核失败",
+        "pending": "等待启动",
+        "running": "复核中",
+        "stopped": "已停止"
+      },
+      "title": "独立复核",
+      "verdict": {
+        "inconclusive": "无法确认（仍按未复核计）",
+        "refuted": "已推翻",
+        "verified": "已复核"
+      },
+      "viewRunning": "查看正在进行的复核会话",
+      "viewSession": "查看会话"
+    }
+  },
   "scopeEditor": {
     "defaultDescription": "每行一条，自动识别域名、IP、CIDR、ICP 备案和企业关键词。",
     "defaultLabel": "资产范围",
@@ -3556,6 +3607,11 @@
       "queued": "排队中",
       "running": "运行中",
       "timeout": "已超时"
+    },
+    "validation": {
+      "refuted": "已推翻",
+      "unverified": "未复核",
+      "verified": "已复核"
     }
   },
   "taskDetail": {

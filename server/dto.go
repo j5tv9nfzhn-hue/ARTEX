@@ -338,9 +338,12 @@ type FindingDTO struct {
 	Name      string `json:"name,omitempty"` // 漏洞名称;为空时前端回退展示 vulnclass
 	Severity  string `json:"severity"`       // critical | high | medium | low
 	Status    string `json:"status"`         // pending | in_progress | confirmed | resolved | fixed | false_positive | ignored | duplicate | risk_accepted
-	Summary   string `json:"summary"`
-	Evidence  string `json:"evidence"`
-	Report    string `json:"report,omitempty"` // 详细报告(Markdown);仅详情接口返回,列表为空
+	// Validation 是独立复核态(unverified | verified | refuted)。与 status 正交:
+	// 前者是「人怎么处置」,后者是「有没有被独立确认过」。前端用它区分真值与线索。
+	Validation string `json:"validation"`
+	Summary    string `json:"summary"`
+	Evidence   string `json:"evidence"`
+	Report     string `json:"report,omitempty"` // 详细报告(Markdown);仅详情接口返回,列表为空
 
 	IntentID        string            `json:"intent_id,omitempty"`
 	ParamID         string            `json:"param_id,omitempty"`
@@ -409,9 +412,12 @@ func findingDTO(n *db.Node) FindingDTO {
 		Name:      p.Name,
 		Severity:  p.Severity,
 		Status:    db.FindingPending,
-		Summary:   p.Summary,
-		Evidence:  rawString(p.Evidence),
-		TS:        rfc3339(n.CreatedAt),
+		// 节点级发现没有独立带复核态的来源时一律按未复核展示：把空串漏给前端，
+		// 徽标会退化成英文原值。
+		Validation: db.FindingUnverified,
+		Summary:    p.Summary,
+		Evidence:   rawString(p.Evidence),
+		TS:         rfc3339(n.CreatedAt),
 	}
 	if n.SourceTaskID > 0 {
 		d.SourceTaskID = i64s(n.SourceTaskID)
@@ -439,6 +445,9 @@ func findingDTOsForOwner(taskID, description string, in []*db.Node, meta map[int
 		if m, ok := meta[n.ID]; ok {
 			d.FindingID = i64s(m.ID)
 			d.Status = m.Status
+			// 任务内的「发现」Tab 与全局发现页共用一个 DTO，复核态也要一致：
+			// 否则同一条发现在两个页面会显示成不同的真值口径。
+			d.Validation = findingValidation(m.Validation)
 			d.TrafficCount = m.TrafficCount
 			d.Assets = findingAssetDTOs(m.AssetIDs, assets)
 		}
@@ -459,6 +468,15 @@ func findingAssetDTOs(ids []int64, assets map[int64]*db.Asset) []FindingAssetDTO
 	return out
 }
 
+// findingValidation 归一复核态:空值或未知值一律按 unverified 返回,前端因此永远
+// 拿到三个已知值之一,不必在渲染处再兜一次空串。
+func findingValidation(v string) string {
+	if db.ValidFindingValidation(v) {
+		return v
+	}
+	return db.FindingUnverified
+}
+
 // findingFromDB converts a standalone DBFinding row to a FindingDTO. task_id and
 // task_description are empty when the originating task has been deleted (NULL).
 func findingFromDB(f *db.DBFinding, assets map[int64]*db.Asset) FindingDTO {
@@ -471,14 +489,15 @@ func findingFromDB(f *db.DBFinding, assets map[int64]*db.Asset) FindingDTO {
 		FindingID:    i64s(f.ID),
 		TrafficCount: f.TrafficCount, EvidenceVersion: f.EvidenceVersion, ReportEvidenceVersion: f.ReportEvidenceVersion,
 		ReportStale: f.Report != "" && f.EvidenceVersion != f.ReportEvidenceVersion, TrafficBindings: f.TrafficBindings,
-		VulnClass: f.VulnClass,
-		Name:      f.Name,
-		Severity:  f.Severity,
-		Status:    status,
-		Summary:   f.Summary,
-		Evidence:  f.Evidence,
-		Report:    f.Report,
-		TS:        rfc3339(f.CreatedAt),
+		VulnClass:  f.VulnClass,
+		Name:       f.Name,
+		Severity:   f.Severity,
+		Status:     status,
+		Validation: findingValidation(f.Validation),
+		Summary:    f.Summary,
+		Evidence:   f.Evidence,
+		Report:     f.Report,
+		TS:         rfc3339(f.CreatedAt),
 	}
 	d.Assets = findingAssetDTOs(f.AssetIDs, assets)
 	if f.TaskID != nil {

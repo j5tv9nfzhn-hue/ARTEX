@@ -117,7 +117,7 @@ func (s *Server) runVerificationQueue(ctx context.Context) {
 
 func (s *Server) verifyOne(ctx context.Context, req verifyRequest) {
 	for attempt := 1; attempt <= verifyMaxAttempts; attempt++ {
-		err := s.startVerification(ctx, req.findingID, req.reason, "")
+		_, _, err := s.startVerification(ctx, req.findingID, req.reason, "")
 		switch {
 		case err == nil:
 			return
@@ -145,39 +145,39 @@ func (s *Server) verifyOne(ctx context.Context, req verifyRequest) {
 //
 // 与 startFindingRetest 的差别只有一处：这里不校验「工具是否绑在 agent 上」以外的
 // 前端前置条件（自动复核没有 HTTP 请求可回复），失败一律变成 error 由调用方记录。
-func (s *Server) startVerification(ctx context.Context, findingID int64, reason, notes string) error {
+func (s *Server) startVerification(ctx context.Context, findingID int64, reason, notes string) (*db.FindingVerification, bool, error) {
 	pg := s.m.pg
 	if pg == nil {
-		return errors.New("数据库未就绪")
+		return nil, false, errors.New("数据库未就绪")
 	}
 	a, err := pg.GetAgentByKey(db.VerifierAgentKey)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if a == nil || !a.Enabled {
-		return errors.New(errVerifyAgentMissing)
+		return nil, false, errors.New(errVerifyAgentMissing)
 	}
 	for _, key := range []string{"get_finding_verification_context", "record_finding_verification_result"} {
 		t, err := pg.GetTool(key)
 		if err != nil {
-			return err
+			return nil, false, err
 		}
 		if t == nil || !t.Enabled || !slices.Contains(t.Agents, a.Key) {
-			return errors.New("复核工具未就绪：" + key)
+			return nil, false, errors.New("复核工具未就绪：" + key)
 		}
 	}
 	if s.resolveChatAgent(&db.Conversation{AgentKey: a.Key}) == nil {
-		return errors.New(s.chatUnavailableReason())
+		return nil, false, errors.New(s.chatUnavailableReason())
 	}
 	if ctx.Err() != nil {
-		return errors.New("服务正在停止")
+		return nil, false, errors.New("服务正在停止")
 	}
 	verification, conv, created, err := pg.CreateFindingVerification(ctx, findingID, notes, reason)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if !created {
-		return nil // 已有进行中的复核，去重
+		return verification, false, nil // 已有进行中的复核，去重
 	}
 	busyKey := s.convBusyKey(conv.ID)
 	s.chatMu.Lock()
@@ -190,7 +190,7 @@ func (s *Server) startVerification(ctx context.Context, findingID int64, reason,
 	}
 	s.runConversation(conv, verification.InitialMessage(), busyKey,
 		conversationAttribution{taskID: taskID, worker: db.VerifierAgentKey})
-	return nil
+	return verification, true, nil
 }
 
 // ── HTTP ────────────────────────────────────────────────────────────────────
@@ -221,15 +221,18 @@ func (s *Server) startFindingVerification(w http.ResponseWriter, r *http.Request
 		writeErr(w, 404, "finding not found")
 		return
 	}
-	if err := s.startVerification(r.Context(), id, "manual", strings.TrimSpace(req.Notes)); err != nil {
-		if errors.Is(err, db.ErrVerifySelfClaimed) {
-			writeErr(w, 409, err.Error())
-			return
-		}
-		writeErr(w, 409, err.Error())
+	v, created, err := s.startVerification(r.Context(), id, "manual", strings.TrimSpace(req.Notes))
+	if err != nil {
+		// 409 覆盖三类「现在不能复核」:自身上报、复核 agent/工具未就绪、聊天不可用。
+		// 前端对这三类的处理完全相同(提示原文),所以不细分成 400/503。
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"started": true})
+	code := http.StatusOK
+	if created {
+		code = http.StatusAccepted
+	}
+	writeJSON(w, code, map[string]any{"verification": v, "created": created})
 }
 
 func (s *Server) listFindingVerifications(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +250,7 @@ func (s *Server) listFindingVerifications(w http.ResponseWriter, r *http.Request
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"verifications": items})
 }
 
 func (s *Server) listActiveFindingVerifications(w http.ResponseWriter, r *http.Request) {
@@ -260,7 +263,7 @@ func (s *Server) listActiveFindingVerifications(w http.ResponseWriter, r *http.R
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"verifications": items})
 }
 
 // ── 复核员工具（只读 + 一条写结论）────────────────────────────────────────────
