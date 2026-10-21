@@ -175,3 +175,5 @@ secrets.env
 /GPUPersistentCache/
 /pma_agent/
 /GraphiteDawnCache/
+mcpd.json
+mcpd.lock
