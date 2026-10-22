@@ -221,7 +221,12 @@ export default function LanPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>{t("appTitle")}</CardTitle>
+              <CardTitle>
+                <span className="flex flex-wrap items-center gap-2">
+                  {t("appTitle")}
+                  <Badge variant="outline">{t("appExperimentalTag")}</Badge>
+                </span>
+              </CardTitle>
               <CardDescription>{t("appDesc")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
@@ -229,6 +234,7 @@ export default function LanPage() {
               <InfoRow label={t("appUser")}>{t("appUserValue")}</InfoRow>
               <InfoRow label={t("appPassword")}>{t("appPasswordValue")}</InfoRow>
               <p className="text-sm font-normal leading-relaxed text-muted-foreground">{t("appNote")}</p>
+              <p className="text-muted-foreground text-xs">{t("appExperimental")}</p>
               {info?.password_set ? null : (
                 <p className="text-sm font-normal leading-relaxed text-destructive">{t("passwordNeedInit")}</p>
               )}
