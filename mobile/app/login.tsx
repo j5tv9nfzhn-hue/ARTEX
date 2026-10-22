@@ -80,6 +80,13 @@ export default function LoginScreen() {
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>连接</Text>}
       </Pressable>
 
+      <Pressable
+        onPress={() => router.push("/pair")}
+        style={[styles.secondaryButton, { borderColor: palette.border }]}
+      >
+        <Text style={[styles.secondaryText, { color: palette.text }]}>扫码绑定（扫电脑上的二维码）</Text>
+      </Pressable>
+
       <Text style={{ color: palette.textFaint, fontSize: font.tiny, marginTop: space.md }}>
         外网访问请先配好 TLS 与反向代理；明文 HTTP 只建议在局域网内使用。
       </Text>
@@ -106,4 +113,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   buttonText: { color: "#fff", fontSize: font.body, fontWeight: "600" },
+  secondaryButton: {
+    marginTop: space.sm,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
+    alignItems: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  secondaryText: { fontSize: font.body, fontWeight: "600" },
 });

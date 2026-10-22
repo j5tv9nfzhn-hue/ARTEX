@@ -34,6 +34,7 @@ import { type ChatSendMode, setChatSendMode, useChatSendMode, useChatSendModeOpt
 import type { Settings, VerificationCapabilities } from "@/lib/types";
 
 import { AboutCard } from "./_components/about-card";
+import { PasswordCard } from "./_components/password-card";
 import { UpdateCard } from "./_components/update-card";
 
 export default function SystemSettingsPage() {
@@ -407,6 +408,7 @@ export default function SystemSettingsPage() {
           column-gap 只管列间距，行间距要由子元素自己给。 */}
       <div className="columns-1 gap-4 md:gap-6 lg:columns-2">
         <UpdateCard />
+        <PasswordCard />
         <AboutCard />
 
         <Card className="mb-4 break-inside-avoid md:mb-6">

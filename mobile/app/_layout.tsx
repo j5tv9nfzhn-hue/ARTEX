@@ -26,8 +26,11 @@ function Gate({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (!ready) return;
     const onLogin = segments[0] === "login";
+    // 扫码绑定页也是「还没有会话」时才能到的页面：没 token 的人必须能进得去，
+    // 否则登录页那个「扫码绑定」按钮点了会被这里立刻弹回来。
+    const onPair = segments[0] === "pair";
     const hasToken = Boolean(getSession().token) && Boolean(getSession().baseUrl);
-    if (!hasToken && !onLogin) router.replace("/login");
+    if (!hasToken && !onLogin && !onPair) router.replace("/login");
     if (hasToken && onLogin) router.replace("/(tabs)");
   }, [ready, router, segments]);
 

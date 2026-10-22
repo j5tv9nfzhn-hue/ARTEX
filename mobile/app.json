@@ -20,12 +20,20 @@
       "package": "app.artex.mobile",
       "edgeToEdgeEnabled": true,
       "versionCode": 1,
-      "permissions": []
+      "permissions": [
+        "CAMERA"
+      ]
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "ARTEX 只用相机扫描电脑上的配对二维码，不会拍照或上传。"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false,

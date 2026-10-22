@@ -838,6 +838,8 @@ func (s *Server) Handler() http.Handler {
 	s.registerSideRoutes(mux)
 	s.mobileRoutes(mux)
 	s.lanRoutes(mux)
+	s.pairRoutes(mux)
+	s.passwordResetRoutes(mux)
 
 	// Auth routes — exempt from JWT check (handled in requireAuth)
 	mux.HandleFunc("GET /api/auth/status", s.authStatus)

@@ -13,14 +13,13 @@ import { http } from "@/lib/api";
 
 // 系统 → 局域网连接
 //
-// 这个页面只回答一个问题：手机现在该填什么、扫什么。所以信息全部来自
-// GET /api/lan（server/lan_api.go）——监听地址、可用 URL、二维码。
-// 前端不自己猜 IP：机器有多块网卡时只有后端才拿得准哪一条能用。
+// 这块页面回答两个问题：手机怎么连（二维码/地址）、没开局域网怎么开（按钮）。
 //
-// 「还没开局域网」这一块是按钮，不是让用户去敲命令：
-// POST /api/lan/enable 把 listen 写进 config.json 并让进程自己重启一次
-// （走的就是「更新后重启」那条已有路径），重启回来就是局域网可连状态。
-// 防火墙也会先自动尝试放行，只有系统拦下（没给管理员权限）时才把命令摆出来。
+// 二维码扫出来的是「配对码」而不是网址：手机 App 读到它就能同时拿到地址和登录凭据，
+// 一步完成绑定（接口见 server/pair_api.go）。想让手机浏览器直接用，下面那行 http
+// 地址照样可以复制。
+//
+// 前端不自己猜 IP：机器有多块网卡时，只有后端分得清哪一条能被手机访问。
 
 type LanInfo = {
   version: string;
@@ -30,11 +29,19 @@ type LanInfo = {
   urls: string[];
   primary_url: string;
   password_set: boolean;
-  qr_svg: string;
   restart_cmd: string;
   firewall_cmd: string;
   mobile_hint: string;
   env_override: boolean;
+};
+
+type PairTicket = {
+  code: string;
+  host: string;
+  payload: string;
+  qr_svg: string;
+  lan_open: boolean;
+  expires_at: number;
 };
 
 type LanSwitchResult = {
@@ -64,6 +71,9 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 export default function LanPage() {
   const t = useTranslations("lanPage");
   const [info, setInfo] = React.useState<LanInfo | null>(null);
+  const [pair, setPair] = React.useState<PairTicket | null>(null);
+  const [pairBusy, setPairBusy] = React.useState(false);
+  const [left, setLeft] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   // 正在切监听地址：请求发出后进程会自己重启，这一屏要等它回来。
@@ -85,8 +95,43 @@ export default function LanPage() {
     void load();
   }, [load]);
 
+  // 每张配对码有有效期；过期就自动换一张，别让用户对着一张死图扫。
+  const createPair = React.useCallback(async () => {
+    setPairBusy(true);
+    try {
+      setPair(await http<PairTicket>("/pair/code", { method: "POST" }));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPairBusy(false);
+    }
+  }, []);
+
+  const lanOpen = info !== null && !info.loopback_only;
+
+  React.useEffect(() => {
+    if (!lanOpen) {
+      setPair(null);
+      return;
+    }
+    void createPair();
+  }, [lanOpen, createPair]);
+
+  // 倒计时：每秒刷新剩余秒数，归零就自动换一张。
+  React.useEffect(() => {
+    if (!pair) return;
+    const tick = () => {
+      const rest = pair.expires_at - Math.floor(Date.now() / 1000);
+      setLeft(rest > 0 ? rest : 0);
+      if (rest <= 0) void createPair();
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [pair, createPair]);
+
   // 重启后自动回来：轮询 /api/health，通了就整页刷新。
-  // 不设上限次数——本地重启通常三秒内回来，偶尔被防火墙拦一下也不该让用户手动按 F5。
   React.useEffect(() => {
     if (!switching) return;
     let alive = true;
@@ -134,8 +179,7 @@ export default function LanPage() {
 
   const urls = info?.urls ?? [];
   const primary = info?.primary_url ?? "";
-  const qr = info?.qr_svg ?? "";
-  const lanOpen = info !== null && !info.loopback_only;
+  const qr = pair?.qr_svg ?? "";
 
   return (
     <div className="space-y-3">
@@ -189,18 +233,45 @@ export default function LanPage() {
         <div className="grid gap-3 md:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>{t("qrTitle")}</CardTitle>
-              <CardDescription>{t("qrHint")}</CardDescription>
+              <CardTitle>{t("pairTitle")}</CardTitle>
+              <CardDescription>{t("pairHint")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {qr ? (
                 <img
                   src={svgToDataURL(qr)}
-                  alt={primary}
+                  alt={pair?.payload ?? ""}
                   style={{ width: 200, height: 200 }}
                   className="rounded bg-white p-1"
                 />
               ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-muted-foreground text-xs">{t("pairCodeLabel")}</span>
+                <code className="rounded bg-muted px-2 py-1 font-mono font-semibold text-base tracking-[0.2em]">
+                  {pair?.code ?? "--------"}
+                </code>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={pairBusy}
+                  onClick={() => void createPair()}
+                >
+                  <RefreshCwIcon />
+                  {t("pairRefresh")}
+                </Button>
+              </div>
+              <p className="text-muted-foreground text-xs">{t("pairExpires", { sec: left })}</p>
+              <p className="text-muted-foreground text-xs">{t("pairManual")}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("webEntryTitle")}</CardTitle>
+              <CardDescription>{t("webEntryHint")}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <code className="block select-all break-all rounded bg-muted p-2 text-xs">{primary}</code>
                 <CopyButton text={primary} />
@@ -216,25 +287,9 @@ export default function LanPage() {
                   ))}
                 </div>
               ) : null}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                <span className="flex flex-wrap items-center gap-2">
-                  {t("appTitle")}
-                  <Badge variant="outline">{t("appExperimentalTag")}</Badge>
-                </span>
-              </CardTitle>
-              <CardDescription>{t("appDesc")}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <InfoRow label={t("appServer")}>{info?.mobile_hint ?? "-"}</InfoRow>
               <InfoRow label={t("appUser")}>{t("appUserValue")}</InfoRow>
               <InfoRow label={t("appPassword")}>{t("appPasswordValue")}</InfoRow>
               <p className="text-sm font-normal leading-relaxed text-muted-foreground">{t("appNote")}</p>
-              <p className="text-muted-foreground text-xs">{t("appExperimental")}</p>
               {info?.password_set ? null : (
                 <p className="text-sm font-normal leading-relaxed text-destructive">{t("passwordNeedInit")}</p>
               )}
