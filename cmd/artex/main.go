@@ -26,6 +26,10 @@ import (
 // -ldflags "-X main.version=<tag>". Defaults to "dev" for local builds.
 var version = "dev"
 
+// restartGraceTimeout 是"更新/回滚重启"时留给在跑回合的收尾上限。
+// 普通 Ctrl-C 仍然只等 5s：用户想立刻停下，不该被长任务拖住。
+const restartGraceTimeout = 20 * time.Second
+
 const banner = `
     _    ____ _____ _______  __      ____  _____    _    
    / \  |  _ \_   _| ____\ \/ /     |  _ \| ____|  / \   
@@ -124,7 +128,8 @@ func run() int {
 	action, upState := selfupdate.Bootstrap(version)
 	server.SetBootUpdateState(upState)
 	if action == selfupdate.Restart {
-		return selfupdate.ExitRestart
+		// 写重启意图 + 按托管关系决定：返 75 交给入口/脚本，还是自己拉起自己。
+		return selfupdate.ExitForRestart("bootstrap")
 	}
 
 	// surface which config file the binary reads (absolute, so `go run`'s relative
@@ -208,17 +213,30 @@ func run() int {
 	// or a staged update / rollback (→ exit 75, the script relaunches us and the
 	// bootstrap above installs the new build).
 	code := 0
+	restarting := false
 	select {
 	case <-ctx.Done():
 	case <-server.RestartRequested():
-		code = selfupdate.ExitRestart
+		restarting = true
 		shutdown(agent.AbortShutdown)
 	}
 
+	// 停机顺序是三条不变量，别调换：
+	//   1. 先停止接受新请求（不再有新的 agent 回合）；
+	//   2. 等在跑的回合收尾，超时强断；
+	//   3. 退出时 defer 里的 mgr.Close() 关库，之后才轮到自重启拉起来的新进程开库。
 	log.Println("shutting down...")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	grace := 5 * time.Second
+	if restarting {
+		// 更新/回滚重启给在跑的回合留更长的收尾时间：SSE 与工具调用被硬切会留下半截记录。
+		grace = restartGraceTimeout
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
 	_ = httpSrv.Shutdown(shutdownCtx)
+	cancel()
+	if restarting {
+		return selfupdate.ExitForRestart("apply")
+	}
 	return code
 }
 

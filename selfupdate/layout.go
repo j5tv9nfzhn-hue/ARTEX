@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Autumn-27/artex/config"
 )
@@ -302,18 +303,48 @@ func Handoff() (int, bool) {
 	}
 	target := CorePath(l, ptr.Current)
 	if filepath.Clean(target) == filepath.Clean(exe) {
-		return 0, false // 我自己就是那个核心，不再转发（防递归）
+		return 0, false // 自己就是那个核心，继续转交会递归
 	}
 	if _, err := os.Stat(target); err != nil {
-		logUpdate(l, "指针指向的版本 %s 不存在（%v），按当前可执行文件启动", ptr.Current, err)
+		logUpdate(l, "指针指向的版本 %s 不存在：%v，先按当前可执行文件启动", ptr.Current, err)
 		return 0, false
 	}
-	logUpdate(l, "入口转发：%s → %s", filepath.Base(exe), target)
-	code, err := runHandoff(target, l)
-	if err != nil {
-		logUpdate(l, "转发执行结束（退出码 %d）：%v", code, err)
+	logUpdate(l, "控制权转交：%s → %s", filepath.Base(exe), target)
+
+	// 监护循环：入口 exe 本来就是父进程（在等 core 退出），把"等"改成"等 + 按需重启"，
+	// 就不再需要 start.sh / start.bat 在外面再套一层循环。
+	// 只有"孩子写了重启意图"才重新拉起：用户 Ctrl-C 出去的进程不会被复活。
+	var restarts []time.Time
+	for {
+		code, err := runHandoff(target, l)
+		if err != nil {
+			logUpdate(l, "转交执行结束（退出码 %d）：%v", code, err)
+		}
+		if code != ExitRestart {
+			return code, true
+		}
+		intent, wanted := ConsumeRestartIntent(l)
+		if !wanted {
+			logUpdate(l, "子进程以 %d 退出但没有重启意图（用户中断或崩溃），不再拉起", code)
+			return code, true
+		}
+		if !allowRestart(&restarts) {
+			logUpdate(l, "重启过于频繁（%s 内上限 %d 次），停止自动拉起；详见 logs/update.log",
+				handoffRestartWindow, handoffMaxRestarts)
+			return code, true
+		}
+		// 安装与回滚都只改指针，每一轮都重新读，才能真正"换成新版本"。
+		if next, ok := ReadPointer(l); ok && strings.TrimSpace(next.Current) != "" {
+			candidate := CorePath(l, next.Current)
+			if filepath.Clean(candidate) != filepath.Clean(target) {
+				if _, err := os.Stat(candidate); err == nil {
+					logUpdate(l, "按重启意图（%s）改跑 versions/%s", intent.Reason, versionKey(next.Current))
+					target = candidate
+				}
+			}
+		}
+		logUpdate(l, "按重启意图（%s，目标 %s）重新拉起核心进程", intent.Reason, orUnknown(intent.To))
 	}
-	return code, true
 }
 
 // RefuseUnsafeExecutable 是启动守卫：拒绝从"升级过程中的临时名字"启动。
