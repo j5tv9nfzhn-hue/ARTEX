@@ -26,6 +26,8 @@ import {
   Wrench,
 } from "lucide-react";
 
+import { GlobePhone } from "@/components/icons/globe-phone";
+
 export type NavBadge = "new" | "soon";
 
 export interface NavSubItem {
@@ -107,6 +109,7 @@ export const sidebarItems: NavGroup[] = [
       { id: "logs", title: "日志", url: "/system/logs", icon: ScrollText },
       { id: "retention", title: "数据保留", url: "/system/retention", icon: Database },
       { id: "storage", title: "存储与清理", url: "/system/storage", icon: HardDrive },
+      { id: "lan", title: "局域网连接", url: "/system/lan", icon: GlobePhone as unknown as LucideIcon },
       { id: "settings", title: "系统配置", url: "/system/settings", icon: Settings2 },
     ],
   },

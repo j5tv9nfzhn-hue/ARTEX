@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"runtime"
 	"strings"
 
 	"github.com/Autumn-27/artex/config"
+	"github.com/Autumn-27/artex/server"
 )
 
 // 手机端（App）只能通过局域网访问服务，而服务默认只监听回环地址。
@@ -34,57 +34,12 @@ func resolveListenAddr(flagAddr string, lan bool) string {
 	return config.ListenAddr()
 }
 
-// lanURLs 返回该监听地址在局域网里可访问的 URL。
+// lanURLs 返回该监听地址在局域网里能被访问到的 URL。
 //
-// 回环地址返回空（本机之外没有入口）；
-// 明确绑了某个网卡地址就只报它；
-// 全接口（":8787" / "0.0.0.0:8787" / "[::]:8787"）则枚举网卡上的 IPv4 地址。
+// 真正的实现在 server.LanURLs：「系统 → 局域网连接」页算的是同一份东西，
+// 两边不能各写一遍，否则迟早出现「横幅说能连、页面说连不上」。
 func lanURLs(addr string) []string {
-	host, port, err := net.SplitHostPort(strings.TrimSpace(addr))
-	if err != nil || port == "" {
-		return nil
-	}
-	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
-		if ip.IsLoopback() {
-			return nil
-		}
-		if !ip.IsUnspecified() {
-			return []string{"http://" + net.JoinHostPort(host, port)}
-		}
-	}
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	var out []string
-	seen := map[string]bool{}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			ipnet, ok := a.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			ip4 := ipnet.IP.To4()
-			// 链路本地（169.254.x.x）不是局域网地址，填进 App 只会让人疑惑。
-			if ip4 == nil || ip4.IsLoopback() || ip4.IsLinkLocalUnicast() {
-				continue
-			}
-			u := "http://" + net.JoinHostPort(ip4.String(), port)
-			if seen[u] {
-				continue
-			}
-			seen[u] = true
-			out = append(out, u)
-		}
-	}
-	return out
+	return server.LanURLs(addr)
 }
 
 // printLanHint 把“手机该填什么”直接打在启动横幅下面。
@@ -107,10 +62,7 @@ func printLanHint(addr string) {
 	fmt.Print("  安全：只在可信局域网开放；隔离/公网场景请用 TLS 反向代理，不要把端口直接暴露到互联网。\n\n")
 }
 
-// lanPort 从监听地址中取端口，取不到就用 8787。
+// lanPort 从监听地址里取端口，取不到就用默认的 8787。
 func lanPort(addr string) string {
-	if _, port, err := net.SplitHostPort(strings.TrimSpace(addr)); err == nil && port != "" {
-		return port
-	}
-	return "8787"
+	return server.LanPort(addr)
 }

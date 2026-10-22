@@ -124,6 +124,10 @@ type Server struct {
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
 
+	// listenAddr 是 main 里真正拿去 ListenAndServe 的地址（-addr / -lan / config.json
+	// 压完之后的结果）。「局域网连接」页靠它判断手机现在到底连不连得上，见 lan_api.go。
+	listenAddr string
+
 	// skillGateOverride forces the skill review gate on/off regardless of the
 	// database setting. nil (the normal case) means "follow the database".
 	// See skill_review_tools.go for why this needs to exist at all.
@@ -833,6 +837,7 @@ func (s *Server) Handler() http.Handler {
 	s.storageRoutes(mux)
 	s.registerSideRoutes(mux)
 	s.mobileRoutes(mux)
+	s.lanRoutes(mux)
 
 	// Auth routes — exempt from JWT check (handled in requireAuth)
 	mux.HandleFunc("GET /api/auth/status", s.authStatus)

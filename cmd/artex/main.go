@@ -256,6 +256,7 @@ func run() int {
 	}
 	log.Printf(config.T("[config] skill 目录: %s"), skillDir)
 	srv := server.New(ctx, mgr, skillDir, *dataDir, config.BaseDir())
+	srv.SetListenAddr(listenAddr)
 	srv.WarnIfExposed(listenAddr)
 	httpSrv := &http.Server{
 		Addr:              listenAddr,
