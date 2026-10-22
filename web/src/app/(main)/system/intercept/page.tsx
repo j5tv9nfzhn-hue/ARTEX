@@ -38,7 +38,7 @@ const SDK_EXEC_KEYS = [
   "shell_close",
   "shell_list",
 ] as const;
-const SDK_WRITE_KEYS = ["Write", "Edit", "MultiEdit"] as const;
+const SDK_WRITE_KEYS = ["Write", "Edit", "MultiEdit", "apply_patch"] as const;
 
 const SDK_KEYS = new Set<string>([...SDK_EXEC_KEYS, ...SDK_WRITE_KEYS]);
 

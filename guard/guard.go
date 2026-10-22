@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +82,24 @@ func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 			_ = json.Unmarshal(ev.Input, &in)
 		}
 		cmd = in.Text
+	case "apply_patch":
+		// 多文件补丁的审计面就是它要动的那批文件：记全路径列表，
+		// 否则审计日志里会出现「改了东西但 command 为空」的记录。
+		var in struct {
+			Patches []struct {
+				FilePath string `json:"file_path"`
+			} `json:"patches"`
+		}
+		if len(ev.Input) > 0 {
+			_ = json.Unmarshal(ev.Input, &in)
+		}
+		files := make([]string, 0, len(in.Patches))
+		for _, p := range in.Patches {
+			if p.FilePath != "" {
+				files = append(files, p.FilePath)
+			}
+		}
+		cmd = strings.Join(files, ", ")
 	}
 	// Claim the intercept trace call exactly ONCE, up front, so this audit row and
 	// the intercept record share the same call ID (trace 的 ToolUseID，#15/#17)。

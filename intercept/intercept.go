@@ -160,7 +160,7 @@ func (i *Interceptor) SetReviewer(r Reviewer) {
 var defaultEnabledTools = []string{
 	"Bash", "WebFetch", "web_search",
 	"shell_open", "shell_send",
-	"Write", "Edit", "MultiEdit",
+	"Write", "Edit", "MultiEdit", "apply_patch",
 }
 
 // New creates an Interceptor backed by d. The rule cache is lazy-loaded on
