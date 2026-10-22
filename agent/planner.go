@@ -540,6 +540,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 			emit(r)
 		}
 	}
+	// 上下文窗口随 ctx 下传：usage 活动带上 context_window，会话页的上下文环才有分母。
+	// 与 chat / worker / mainagent 同形；此前 planner 只把窗口喂给压缩器，环拿不到数据。
+	ctx = WithContextWindow(ctx, p.compactionWindow())
 	_, _, err = captureRun(ctx, opts, input, emitPlanner)
 	// 0 意图契约的硬校验。只在「真的没有活可等」时补跑:已经有 open/running 意图在
 	// 推进,本轮不派新方向是合理的;而 0 意图 + 目标未达成 + 无在跑意图 = 任务停摆,

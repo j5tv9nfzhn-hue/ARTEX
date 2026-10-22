@@ -28,6 +28,7 @@ import { Markdown } from "@/components/markdown";
 import { CopyTextButton } from "@/components/transcript/copy-text-button";
 import { LiveToolRow } from "@/components/transcript/live-tool-row";
 import { ToolBody, type ToolSectionModel } from "@/components/transcript/renderers";
+import { StatusRing } from "@/components/transcript/status-ring";
 import { toolKindFor } from "@/components/transcript/tool-kind";
 import { ToolSummaryRow } from "@/components/transcript/tool-summary-row";
 import { Badge } from "@/components/ui/badge";
@@ -1028,18 +1029,16 @@ export function Transcript({
         <LiveStreamMarkdown text={liveDelta.text} className="min-w-0 break-words pl-3" />
       )}
       {liveDelta?.kind === "tool_use" && !!liveDelta.tool && (
-        <div className="flex items-center gap-1.5 pl-3 text-muted-foreground text-xs">
-          <span className="opacity-70">🔧</span>
-          <span className="font-mono">{liveDelta.tool}</span>
-          <span className="opacity-60">…</span>
-        </div>
+        <LiveToolRow args={liveDelta.text ?? ""} tool={liveDelta.tool} />
       )}
       {(liveDelta?.kind === "tool_start" || liveDelta?.kind === "tool_input") && !!liveDelta.tool && (
         <LiveToolRow args={liveDelta.text ?? ""} tool={liveDelta.tool} />
       )}
       {liveDelta?.kind === "progress" && !!liveDelta.text && (
         <div className="flex items-start gap-1.5 pl-3 text-ui-xs text-muted-foreground">
-          <span className="shrink-0 opacity-70">…</span>
+          <span className="mt-0.5 shrink-0">
+            <StatusRing status="running" />
+          </span>
           {liveDelta.tool ? (
             <span className="shrink-0 font-mono opacity-80">{liveDelta.tool}</span>
           ) : null}

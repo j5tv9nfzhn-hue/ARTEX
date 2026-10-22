@@ -34,6 +34,7 @@ import { MessageRollbackDialog } from "@/components/message-rollback-dialog";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
 import { parseUserBody, Transcript } from "@/components/transcript";
+import { ContextUsageRing } from "@/components/transcript/context-usage";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -184,6 +185,7 @@ function Composer({
   onRemoveAttachment,
   uploading,
   allowBtw,
+  contextUsage,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -201,6 +203,8 @@ function Composer({
   onRemoveAttachment?: (path: string) => void;
   uploading?: boolean;
   allowBtw?: boolean;
+  // 上下文环：窗口与已用都取后端数据，缺失时不渲染。
+  contextUsage?: { used: number; size: number } | null;
 }) {
   const t = useTranslations("chat");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -301,6 +305,7 @@ function Composer({
             {bottomSlot}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            {contextUsage && <ContextUsageRing size={contextUsage.size} used={contextUsage.used} />}
             {running && allowBtw && isBtwCommand(value) && (
               <Button
                 size="icon-sm"
@@ -810,6 +815,36 @@ function ChatView({
     return { i: I, o: O, cr: CR, turns, any: I + O + CR > 0 };
   }, [messages]);
 
+  // 上下文窗口：优先用 capture 写入 usage 活动 metadata 的模型窗口；
+  // 老会话（usage 行无 metadata）回退到本会话当前 LLM profile 的
+  // context_window_k（后端 agent/provider.go CompactionWindow 同口径：K → token，
+  // 缺省 200K，夹在 32K–1M）。都是后端配置值，前端不做任何估算。
+  const configuredWindow = React.useMemo(() => {
+    const profile =
+      currentProfileId != null
+        ? profiles.find((item) => Number(item.id) === currentProfileId)
+        : profiles.find((item) => item.is_default);
+    const k = profile?.context_window_k ?? 0;
+    if (k <= 0) return 0;
+    return Math.min(Math.max(k, 32), 1000) * 1000;
+  }, [profiles, currentProfileId]);
+
+  // 已用取最新一条 usage 活动：metadata.context_used 优先，否则用该行自带的
+  // input + cache 写入（与 capture 统计口径一致）。没有 usage 行就不渲染环。
+  const contextUsage = React.useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const item = messages[index];
+      if (item.kind !== "usage") continue;
+      const size = item.metadata?.context_window ?? configuredWindow;
+      if (!size) return null;
+      const used =
+        item.metadata?.context_used ??
+        (item.input_tokens ?? 0) + (item.cache_read_tokens ?? 0) + (item.cache_write_tokens ?? 0);
+      return { size, used };
+    }
+    return null;
+  }, [messages, configuredWindow]);
+
   // 会话预算：上限/模式来自服务端（默认值即可用、无需用户配置）；已用量用本页已算好的
   // tokenTotal 做实时值——轮内的 usage 行还没落成 result 行，服务端汇总会滞后一轮。
   const [budget, setBudget] = React.useState<{ limit: number; mode: string } | null>(null);
@@ -1032,6 +1067,7 @@ function ChatView({
         onPickFiles={pickFiles}
         onRemoveAttachment={(path) => setAttachments((p) => p.filter((x) => x.path !== path))}
         uploading={uploading}
+        contextUsage={contextUsage}
         bottomSlot={
           <LLMProfileRow
             profiles={profiles}

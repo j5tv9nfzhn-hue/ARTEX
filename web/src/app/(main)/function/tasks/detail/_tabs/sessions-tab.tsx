@@ -74,6 +74,7 @@ import type {
   ChatAttachment,
   IntentAsset,
   InterceptApprovalRow,
+  LLMProfile,
   Session,
   SessionStatus,
   SessionTokenUsage,
@@ -683,6 +684,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const [taskTokens, setTaskTokens] = React.useState<TokenTotal | null>(null);
   const [sessionTokens, setSessionTokens] = React.useState<Record<string, SessionTokenUsage>>({});
   const [llmResolutions, setLLMResolutions] = React.useState<TaskLLMResolutions | null>(null);
+  // profile 列表只用于上下文环的窗口回退（老会话 usage 行没 metadata）。
+  const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   // Pending intercept requests for this task — used to show warning icons on sessions.
   const [pendingIntercepts, setPendingIntercepts] = React.useState<InterceptApprovalRow[]>([]);
   // 实时增量（未落库）：新的 activity 一到就清空，避免和已落库的行重复显示。
@@ -858,6 +861,21 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     },
     { intervalMs: 2000, enabled: Boolean(taskId) },
   );
+
+  React.useEffect(() => {
+    let alive = true;
+    api
+      .llmProfiles()
+      .then((rows) => {
+        if (alive) setProfiles(rows);
+      })
+      .catch(() => {
+        // 拿不到 profile 时环不渲染，不影响会话正文。
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   usePolling(
     async () => {
@@ -1491,19 +1509,42 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     [sessionTokens, store],
   );
 
-  // 上下文容量只认「最近一次请求」的口径（input + cache 读写）：累加值会把容量算爆，
-  // 而窗口来自后端写在 usage metadata 里的模型配置。拿不到就整块不显示。
+  // 上下文环只认「最近一条」的口径：input + cache 写入的累计值，不会算爆窗口。
+  // 窗口优先取后端写入的 usage metadata（capture 时按模型窗口写入）；老会话的 usage
+  // 行还没有 metadata（当时该角色未挂 WithContextWindow），回退到该角色解析到的 profile
+  // 的 context_window_k（与 agent/provider.go CompactionWindow 同口径：K → token，
+  // 缺省 200K，夹在 32K–1M）。两者都是后端配置值，前端不估算；都拿不到就不渲染环。
+  const fallbackContextWindow = React.useMemo(() => {
+    const resolved =
+      active.role === "worker"
+        ? llmResolutions?.worker
+        : active.role === "planner"
+          ? llmResolutions?.planner
+          : active.role === "mainagent"
+            ? llmResolutions?.mainagent
+            : undefined;
+    const profileId = resolved?.profile_id;
+    const profile =
+      profileId != null ? profiles.find((item) => Number(item.id) === Number(profileId)) : undefined;
+    const k = profile?.context_window_k ?? 0;
+    if (k <= 0) return 0;
+    return Math.min(Math.max(k, 32), 1000) * 1000;
+  }, [active.role, llmResolutions, profiles]);
+
   const contextUsage = React.useMemo(() => {
     const items = store[activeKey]?.items ?? [];
     for (let index = items.length - 1; index >= 0; index -= 1) {
       const item = items[index];
       if (item.kind !== "usage") continue;
-      const window = item.metadata?.context_window;
-      if (!window) return null;
-      return { size: window, used: item.metadata?.context_used ?? 0 };
+      const size = item.metadata?.context_window ?? fallbackContextWindow;
+      if (!size) return null;
+      const used =
+        item.metadata?.context_used ??
+        (item.input_tokens ?? 0) + (item.cache_read_tokens ?? 0) + (item.cache_write_tokens ?? 0);
+      return { size, used };
     }
     return null;
-  }, [store, activeKey]);
+  }, [store, activeKey, fallbackContextWindow]);
 
   const activeTokens = tokenForSession(activeKey);
   const tokenTotal = {
