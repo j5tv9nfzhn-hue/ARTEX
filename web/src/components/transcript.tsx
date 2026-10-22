@@ -25,6 +25,8 @@ import { toast } from "sonner";
 import { ApprovalDetail } from "@/components/approval-records";
 import { LiveStreamMarkdown } from "@/components/live-markdown";
 import { Markdown } from "@/components/markdown";
+import { CopyTextButton } from "@/components/transcript/copy-text-button";
+import { ToolBody, type ToolSectionModel } from "@/components/transcript/renderers";
 import { toolKindFor } from "@/components/transcript/tool-kind";
 import { ToolSummaryRow } from "@/components/transcript/tool-summary-row";
 import { Badge } from "@/components/ui/badge";
@@ -184,27 +186,6 @@ function ActivityTime({ ts }: { ts: string }) {
         hour12: false,
       })}
     </time>
-  );
-}
-
-// CopyTextButton renders a compact inline copy button with transient check feedback.
-function CopyTextButton({ text }: { text: string }) {
-  const [copied, setCopied] = React.useState(false);
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!text) return;
-        void navigator.clipboard?.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }}
-      className="inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      aria-label="Copy"
-    >
-      {copied ? <CheckIcon className="size-3 text-emerald-500" /> : <CopyIcon className="size-3" />}
-    </button>
   );
 }
 
@@ -481,9 +462,7 @@ function ToolBlock({
   const [open, setOpen] = React.useState(focused);
   const [wrapLines, setWrapLines] = React.useState(true);
   const targetRef = React.useRef<HTMLElement>(null);
-  const [sections, setSections] = React.useState<
-    { label: string; content: string; isCmd?: boolean; isError?: boolean }[] | null
-  >(null);
+  const [sections, setSections] = React.useState<ToolSectionModel[] | null>(null);
   const loadedKey = React.useRef<string | null>(null);
   const { use, result } = group;
   const toolName = use?.tool || result?.tool || t("tool.name");
@@ -609,48 +588,13 @@ function ToolBlock({
           {!sections ? (
             <div className="p-3 font-mono text-[11px] text-muted-foreground">{t("loading")}</div>
           ) : (
-            <div className="divide-y divide-border/70">
-              {sections.map((sec) => (
-                <div key={sec.label} className="flex flex-col">
-                  <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-1 text-[10px]">
-                    <span
-                      className={cn(
-                        "font-semibold uppercase tracking-wide",
-                        sec.isError ? "text-red-500" : "text-muted-foreground",
-                      )}
-                    >
-                      {sec.label}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setWrapLines((w) => !w);
-                        }}
-                        className={cn(
-                          "inline-flex size-5 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground",
-                          wrapLines ? "text-primary" : "text-muted-foreground",
-                        )}
-                        title="Toggle line wrap"
-                      >
-                        <WrapTextIcon className="size-3" />
-                      </button>
-                      <CopyTextButton text={sec.content} />
-                    </div>
-                  </div>
-                  <pre
-                    className={cn(
-                      "max-h-72 overflow-auto p-2.5 font-mono text-[11px] leading-relaxed",
-                      wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre",
-                      sec.isCmd ? "text-sky-700 dark:text-sky-300" : "text-foreground/90",
-                    )}
-                  >
-                    {sec.content}
-                  </pre>
-                </div>
-              ))}
-            </div>
+            <ToolBody
+              onToggleWrap={() => setWrapLines((w) => !w)}
+              sections={sections}
+              status={status}
+              tool={toolName}
+              wrapLines={wrapLines}
+            />
           )}
         </div>
       )}

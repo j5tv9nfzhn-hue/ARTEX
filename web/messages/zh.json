@@ -4762,6 +4762,10 @@
       "retry": "重试详情",
       "timeout": "已超时"
     },
+    "diff": {
+      "collapse": "收起未变更行",
+      "expandHidden": "展开 {count} 行未变更"
+    },
     "kind": {
       "note": "说明",
       "result": "总结",
@@ -4773,10 +4777,12 @@
     "tool": {
       "allSteps": "全部步骤",
       "collapseAll": "收起全部",
+      "collapseCommand": "收起命令",
       "command": "调用入参 / 命令",
       "empty": "（空）",
       "errorsOnly": "仅异常 ({count})",
       "expandAll": "展开全部",
+      "expandCommand": "展开命令",
       "failed": "✕ 失败",
       "formatJson": "格式化 JSON",
       "loadFailed": "（加载失败）",
