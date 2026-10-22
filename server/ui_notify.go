@@ -86,6 +86,9 @@ func (h *uiNotifyHubT) emit(ev UIEvent) {
 		}
 	}
 	h.mu.Unlock()
+
+	// 手机端收件箱要能回溯，事件同时落库；失败只影响回溯，不影响通知本身。
+	go persistUIEvent(ev)
 }
 
 // recent 返回 id > since 的事件与当前游标。
