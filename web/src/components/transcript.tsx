@@ -3,7 +3,6 @@
 import * as React from "react";
 
 import {
-  BookOpenIcon,
   BrainCircuitIcon,
   CheckIcon,
   ChevronDown,
@@ -11,17 +10,12 @@ import {
   CopyIcon,
   CrosshairIcon,
   Flag,
-  GlobeIcon,
-  KeyRoundIcon,
   MessageSquare,
   PaperclipIcon,
-  RadarIcon,
   ShieldAlertIcon,
-  Terminal,
   Undo2Icon,
   UserIcon,
   WrapTextIcon,
-  Wrench,
   XIcon,
   ZapIcon,
 } from "lucide-react";
@@ -31,11 +25,14 @@ import { toast } from "sonner";
 import { ApprovalDetail } from "@/components/approval-records";
 import { LiveStreamMarkdown } from "@/components/live-markdown";
 import { Markdown } from "@/components/markdown";
+import { toolKindFor } from "@/components/transcript/tool-kind";
+import { ToolSummaryRow } from "@/components/transcript/tool-summary-row";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { api } from "@/lib/api";
 import { parseApprovalSummary } from "@/lib/approval-summary";
+import { resolveToolStatus, TOOL_STATUS_LABEL_KEY, type ToolStatus } from "@/lib/tool-status";
 import type { Activity, InterceptPending } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -52,57 +49,8 @@ function workerColor(name: string): string {
 const chip = (worker: string) =>
   `mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium text-white ${workerColor(worker)}`;
 
-// Semantic tool category metadata for progressive disclosure trace rows.
-function getToolCategoryMeta(toolName: string) {
-  if (toolName === "http_request" || toolName === "http_fuzz" || toolName === "http_sequence") {
-    return {
-      tag: "HTTP",
-      Icon: GlobeIcon,
-      pillClass: "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400",
-    };
-  }
-  if (toolName === "web_recon" || toolName === "dns_probe" || toolName === "net_probe") {
-    return {
-      tag: "RECON",
-      Icon: RadarIcon,
-      pillClass: "border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
-    };
-  }
-  if (toolName === "tactical_kb" || toolName === "Skill") {
-    return {
-      tag: "KB",
-      Icon: BookOpenIcon,
-      pillClass: "border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400",
-    };
-  }
-  if (toolName === "codec_crypto" || toolName === "extract_data") {
-    return {
-      tag: "CRYPTO",
-      Icon: KeyRoundIcon,
-      pillClass: "border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-400",
-    };
-  }
-  if (
-    toolName === "Bash" ||
-    toolName === "Glob" ||
-    toolName === "Grep" ||
-    toolName === "Read" ||
-    toolName === "Write" ||
-    toolName === "Edit"
-  ) {
-    return {
-      tag: "EXEC",
-      Icon: Terminal,
-      pillClass: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-    };
-  }
-  return {
-    tag: "TOOL",
-    Icon: Wrench,
-    pillClass: "border-border bg-muted/60 text-muted-foreground",
-  };
-}
-
+// 工具分类已移到 components/transcript/tool-kind.ts：分类只决定行首图标与类别文案，
+// 不再携带彩色胶囊样式——行的层级交给状态圈 + 文案表达，颜色只留给失败/拦截。
 // useInView latches true when the ref'd element first comes within `rootMargin` of
 // the enclosing scroll viewport. Blocks that always show their full body (user
 // bubbles, answers) use it to defer fetching that body until they're about to be
@@ -539,16 +487,9 @@ function ToolBlock({
   const loadedKey = React.useRef<string | null>(null);
   const { use, result } = group;
   const toolName = use?.tool || result?.tool || t("tool.name");
-  const cat = getToolCategoryMeta(toolName);
-  const ToolIcon = cat.Icon;
-  const running = !result;
-  const ok = !!result && !result.is_error;
-  let statusPillClass = "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400";
-  if (running) {
-    statusPillClass = "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 animate-pulse";
-  } else if (ok) {
-    statusPillClass = "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
-  }
+  // 六态统一由 lib/tool-status.ts 判定：显式 metadata 优先，老数据退回文案标记。
+  const kind = toolKindFor(toolName);
+  const status: ToolStatus = resolveToolStatus({ result });
 
   const rawCmd = use?.summary.startsWith(toolName)
     ? use.summary.slice(toolName.length).trimStart()
@@ -557,13 +498,7 @@ function ToolBlock({
   const loopTripped = Boolean(
     result?.summary?.includes("专家战术熔断提醒") || sections?.some((s) => s.content.includes("专家战术熔断提醒")),
   );
-  if (loopTripped) {
-    statusPillClass = "border-amber-500/45 bg-amber-500/15 text-amber-600 dark:text-amber-300";
-  }
-
-  let statusText = ok ? "✓" : t("tool.failed");
-  if (loopTripped) statusText = "⚡ 3-Strike";
-  if (running) statusText = t("tool.running");
+  const statusLabel = loopTripped ? "⚡ 3-Strike" : t(TOOL_STATUS_LABEL_KEY[status]);
 
   const detailKey = `${use?.seq ?? ""}:${result?.seq ?? ""}`;
   React.useEffect(() => {
@@ -654,39 +589,20 @@ function ToolBlock({
         focused && "my-1 rounded-xl border-2 border-primary bg-primary/5 p-2.5 before:hidden",
       )}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-          loopTripped && "border border-amber-500/35 bg-amber-500/8 hover:bg-amber-500/15",
-          !loopTripped && (open ? "bg-secondary/60 text-foreground" : "hover:bg-muted/50"),
-        )}
-      >
-        <span className="shrink-0 text-muted-foreground">
-          {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        </span>
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 font-mono font-semibold text-[10px] tracking-tight",
-            cat.pillClass,
-          )}
-        >
-          <ToolIcon className="size-3" />
-          {cat.tag}
-        </span>
-        {showWorker && <span className={chip(group.worker)}>{group.worker}</span>}
-        <span className="shrink-0 font-medium font-mono text-[11.5px] text-foreground">{toolName}</span>
-        {cmd && <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{cmd}</span>}
-        <span
-          className={cn(
-            "ml-auto shrink-0 rounded-md border px-1.5 py-0.5 font-medium font-mono text-[10px]",
-            statusPillClass,
-          )}
-        >
-          {statusText}
-        </span>
-      </button>
+      <ToolSummaryRow
+        alert={loopTripped}
+        endedAt={result?.ts}
+        kind={kind}
+        onToggle={() => setOpen((o) => !o)}
+        open={open}
+        startedAt={use?.ts}
+        status={status}
+        statusLabel={statusLabel}
+        target={cmd}
+        tool={toolName}
+        worker={showWorker ? group.worker : undefined}
+        workerChipClass={showWorker ? chip(group.worker) : undefined}
+      />
 
       {open && (
         <div className="mt-1.5 mb-2 ml-2 overflow-hidden rounded-lg border border-border/80 bg-secondary/30 shadow-2xs">

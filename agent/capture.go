@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -14,6 +15,11 @@ import (
 	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
 )
+
+// stoppedToolSummary 是「调用还没拿到结果，会话就结束了」这一行的文案。
+// 与前端 transcript.toolStatus.stopped 对应；metadata.tool_status 才是判定依据，
+// 文案只负责给人看。
+const stoppedToolSummary = "已停止：会话结束，未收到执行结果"
 
 // captureRun drives one agent turn-to-completion over Session.Prompt and emits a
 // coalesced ActivityRecord per execution step (tool_use / tool_result / text /
@@ -52,8 +58,22 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 	// （中断或事件丢失），经 defer 统一计入协议防御计数（#14）。
 	awaiting := map[string]string{}
 	defer func() {
-		for range awaiting {
+		// 会话结束时仍未收到结果的调用（用户中断 / 事件丢失）：除了计入协议防御计数，
+		// 还要补一条终止行 —— 否则界面上那一行会一直转圈，分不清「还在跑」和「已停止」。
+		// tool_status 走 metadata：中断这类结构性结论只有后端知道，前端不该靠文案猜。
+		for id, name := range awaiting {
 			metrics.ObserveToolResultMissing()
+			if ctx.Err() == nil {
+				continue
+			}
+			rec(db.Activity{
+				Kind:      "tool_result",
+				Tool:      name,
+				ToolUseID: id,
+				IsError:   true,
+				Summary:   stoppedToolSummary,
+				Metadata:  json.RawMessage(`{"tool_status":"stopped"}`),
+			})
 		}
 	}()
 

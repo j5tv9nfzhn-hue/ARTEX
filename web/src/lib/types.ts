@@ -675,6 +675,9 @@ export interface Activity {
   detail?: string;
   metadata?: {
     llm_transition?: LLMTransition;
+    // 工具行的结构性结论。中断、拦截这类状态只有后端知道，前端不再靠文案猜；
+    // 老数据没有这个字段，前端退回文案标记匹配（见 lib/tool-status.ts）。
+    tool_status?: "completed" | "failed" | "denied" | "stopped";
   };
   source_task_id?: string;
   inherited?: boolean;

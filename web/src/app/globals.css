@@ -243,6 +243,25 @@ These serve as the fallback; there is no separate default.css file. */
   .animate-glow-once {
     animation: glow-once var(--dur-slow) var(--ease-brand) both;
   }
+
+  /* 运行中文案扫光:工具行/思考行还在跑的时候,让文字本身带一条移动高光。
+     只动 background-position(合成期),不触发布局;颜色取 currentColor,主题与状态色
+     都不用再定义一套 token。reduced-motion 下退化为普通文字(见文末)。 */
+  .text-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      currentColor 0%,
+      currentColor 35%,
+      color-mix(in oklab, currentColor 45%, transparent) 50%,
+      currentColor 65%,
+      currentColor 100%
+    );
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: text-shimmer 1.6s linear infinite;
+  }
 }
 
 /* ── 动效 keyframes(主题重塑第 8 项)─────────────────────────────────────────
@@ -290,6 +309,17 @@ These serve as the fallback; there is no separate default.css file. */
   }
 }
 
+/* text-shimmer:高光带从右向左扫过文字(背景图整体平移),线性循环、无缓动 ——
+   匀速扫光读起来像「处理中」而不是「闪一下」。 */
+@keyframes text-shimmer {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -30% 0;
+  }
+}
+
 /* 统一 reduced-motion:关闭本批品牌动画的"运动"部分。
    - scale-in / pulse-soft / glow-once 完全停用(缩放、循环呼吸、高亮扫过);
    - fade-up 去掉 translateY 位移,只保留 opacity 淡入 —— 产品明确要求
@@ -307,6 +337,14 @@ These serve as the fallback; there is no separate default.css file. */
   .animate-glow-once {
     animation: none;
     opacity: 0;
+  }
+
+  /* 扫光在 reduced-motion 下完全退化成普通文字:去掉动画、去掉渐变背景,
+     并把被 background-clip 掏空的文字颜色还原,否则字会整段消失。 */
+  .text-shimmer {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
   }
 
   .animate-fade-up {

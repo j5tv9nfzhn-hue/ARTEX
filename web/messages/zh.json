@@ -4793,6 +4793,27 @@
       "toolsOnly": "仅看工具 ({count})",
       "wrapLines": "自动换行"
     },
+    "toolKind": {
+      "crypto": "编解码",
+      "edit": "编辑",
+      "exec": "执行",
+      "http": "请求",
+      "kb": "知识库",
+      "mcp": "MCP",
+      "read": "读取",
+      "recon": "侦察",
+      "search": "搜索",
+      "skill": "技能",
+      "todo": "计划",
+      "tool": "工具"
+    },
+    "toolStatus": {
+      "completed": "已执行",
+      "denied": "已拒绝",
+      "failed": "执行失败",
+      "running": "执行中…",
+      "stopped": "已停止"
+    },
     "withThinking": "含推理"
   },
   "userMenu": {
