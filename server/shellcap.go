@@ -72,7 +72,8 @@ func platformShellNote() string {
 // 常见错误」而不是罗列完整语法——一句话说明执行器、一组高频对应关系、一条禁用清单。
 const windowsShellGuidance = "当前平台为 Windows：Bash 工具实际以 PowerShell 执行（powershell -NoProfile -NonInteractive -Command），不是 bash。" +
 	"常规 HTTP 请求、并发目录/参数 Fuzz、编解码/哈希/加解密/JWT、正则/JSON/HTML/JS 提取、端口探测及文件检索，请优先直接调用跨平台内置 Go 原生工具（http_request / http_fuzz / codec_crypto / extract_data / net_probe / Grep / Glob / Read），无需经过 PowerShell，也不要为此编写临时 .py 脚本。" +
-	"确需通过 Bash 调用外部命令行工具时请按 PowerShell 语法书写：环境变量用 $env:NAME；调用 curl 必须写 curl.exe（PowerShell 中 curl 是 Invoke-WebRequest 别名）且含 & 的 URL 必须加双引号；不要使用 grep / sed / awk / export / head / tail 等 Unix 专属命令；PowerShell 5.1 不支持 &&，需要串联时用 ; 或分行执行。"
+	"确需通过 Bash 调用外部命令行工具时请按 PowerShell 语法书写：环境变量用 $env:NAME；调用 curl 必须写 curl.exe（PowerShell 中 curl 是 Invoke-WebRequest 别名）且含 & 的 URL 必须加双引号；不要使用 grep / sed / awk / export / head / tail 等 Unix 专属命令；PowerShell 5.1 不支持 &&，需要串联时用 ; 或分行执行。" +
+	"编码：平台已把命令管道强制为 UTF-8，写文件请显式指定 UTF-8；输出若出现乱码，按编码问题处理（换读法/换工具），不要当成命令失败反复重试。"
 
 // darwinShellGuidance 是 macOS (darwin) 的 BSD 用户态语法引导，避免模型混用 GNU 专属参数。
 const darwinShellGuidance = "当前平台为 macOS (darwin)：Bash 工具使用 POSIX/bash 执行，但系统内置命令行工具为 BSD 变体而非 GNU。" +

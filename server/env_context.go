@@ -273,7 +273,13 @@ func renderEnvBrief(env envSnapshot, warnings []string) string {
 		fmt.Fprintf(&b, "\n- PATH 上探测到的工具：%s", strings.Join(parts, "；"))
 	}
 	if env.Executor != "bash" {
-		fmt.Fprintf(&b, "\n- 命令按 %s 语法书写（不要用 Unix 专属命令/写法）。", env.Executor)
+		// 只说「按 X 语法」模型还是会凭 Unix 直觉写：这里把最高频的三个写法差异和
+		// 编码口径写死，和 Bash 工具描述里的契约保持一致（两处说的是同一件事）。
+		fmt.Fprintf(&b, "\n- Bash 工具执行器：%s（不是 bash）。命令必须按它的语法写：重定向 2>/dev/null 用 2>$null、"+
+			"设置环境变量 export X=1 用 $env:X='1'、串联 && 用 ; 或 if ($?)；grep/sed/awk/head/tail 用内置 Grep/Read 或对应 cmdlet。"+
+			"拿不准写法时优先用内置原生工具或 python -c \"...\"，不要靠换写法反复猜。", env.Executor)
+		b.WriteString("\n- 编码：命令管道已由平台强制为 UTF-8；写文件显式指定 UTF-8 编码。若输出出现乱码，按编码问题处理并换一种读法，" +
+			"不要当成命令失败反复重试。")
 	}
 	// CPU 治理：任务里的穷举/爆破/大规模 fuzz 脚本曾把本机 CPU 打满，连带平台服务与
 	// SQLite 写入一起变慢。这里给出可执行的硬约束，避免模型写出无上限的并发脚本。

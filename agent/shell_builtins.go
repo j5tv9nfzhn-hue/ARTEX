@@ -56,17 +56,36 @@ func WrapCrossPlatformBash(tools []actool.CoreTool, workDir string, extraEnv []s
 	return out
 }
 
-// Call 在原行为之上追加一条「逃生通道转向」：一旦模型在 Bash 里写/跑 Python 脚本，
-// 就在同一次工具结果里点名可替代的原生工具。回归证据：某安装 http_request 占全部
-// 调用的 49.4%，而写脚本正是绕开专用工具的主要路径（见 agent/tool_steering.go）。
+// Description/Prompt 追加「本机执行器」契约（见 shell_platform.go）。
+//
+// 为什么不只靠系统提示里的环境块：模型写命令时看的是这条工具的 schema 与描述，
+// 提示词末尾的一段环境说明经常被它的「Unix 直觉」盖过。把执行器、语法对照和编码
+// 口径写在工具自己身上，是成本最低、覆盖最全的一次校正（planner/worker/chat 共用）。
+func (b *crossPlatformBashTool) Description() string {
+	return strings.TrimSpace(b.CoreTool.Description() + " " + shellContractLine())
+}
+
+func (b *crossPlatformBashTool) Prompt() string {
+	return b.CoreTool.Prompt() + "\n\n" + shellContractBlock()
+}
+
+// Call 在原行为之上做三件事，都不改命令语义：
+//   - 输出统一转成合法 UTF-8（GBK/UTF-16LE 兜底解码），避免乱码被模型当成执行失败；
+//   - 写法不对导致的失败追加一条「正确写法」提示（见 windowsDialectHint）；
+//   - 逃生通道转向：模型在 Bash 里写/跑 Python 脚本时点名可替代的原生工具
+//     （回归证据：某安装 http_request 占全部调用的 49.4%，见 agent/tool_steering.go）。
 func (b *crossPlatformBashTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 	res, err := b.call(ctx, in, tc)
 	if err != nil {
 		return res, err
 	}
+	res = utf8Result(res)
 	if note := pythonScriptSteer(bashCommandOf(in)); note != "" {
 		// 追加一个 text block；保留既有 text/非 text block、IsError 与 Extra。
 		res.Content = append(append([]llm.ContentBlock(nil), res.Content...), llm.TextBlock(note))
+	}
+	if hint := windowsDialectHint(resultText(res), res.IsError); hint != "" {
+		res.Content = append(append([]llm.ContentBlock(nil), res.Content...), llm.TextBlock(hint))
 	}
 	return res, nil
 }
@@ -90,14 +109,18 @@ func (b *crossPlatformBashTool) call(ctx context.Context, in json.RawMessage, tc
 	if cmdTrimmed == "" {
 		return b.CoreTool.Call(ctx, in, tc)
 	}
+	// 子进程 UTF-8 环境：中文 Windows 默认按本地代码页读写 stdio（Python 系最常踩）。
+	// tc.Env 来自会话级的 BashEnv（共享切片），先复制再追加，避免写到别人的底层数组。
+	if tc != nil {
+		tc.Env = mergeChildUTF8Env(append([]string(nil), tc.Env...))
+	}
 	runBg, _ := payload["run_in_background"].(bool)
 	if runBg {
 		if runtime.GOOS == "windows" {
-			if norm := normalizeWindowsShellCommand(cmdTrimmed); norm != cmdTrimmed {
-				payload["command"] = norm
-				if nb, err := json.Marshal(payload); err == nil {
-					in = nb
-				}
+			cmd := normalizeWindowsShellCommand(cmdTrimmed)
+			payload["command"] = wrapWindowsCommand(cmd)
+			if nb, err := json.Marshal(payload); err == nil {
+				in = nb
 			}
 		}
 		return b.CoreTool.Call(ctx, in, tc)
@@ -120,11 +143,8 @@ func (b *crossPlatformBashTool) call(ctx context.Context, in json.RawMessage, tc
 
 	// 3. 回退底层 Shell 执行器（附带 Windows POSIX 兼容归一化与全局外部进程并发信号量保护）
 	if runtime.GOOS == "windows" {
-		cmd := cmdTrimmed
-		if norm := normalizeWindowsShellCommand(cmdTrimmed); norm != cmdTrimmed {
-			cmd = norm
-		}
-		payload["command"] = wrapWindowsExitCode(cmd)
+		// 归一化（bash 写法 → PowerShell）+ UTF-8 前导 + 真实退出码收尾。
+		payload["command"] = wrapWindowsCommand(normalizeWindowsShellCommand(cmdTrimmed))
 		if nb, err := json.Marshal(payload); err == nil {
 			in = nb
 		}
