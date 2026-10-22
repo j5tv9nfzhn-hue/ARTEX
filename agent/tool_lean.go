@@ -342,7 +342,7 @@ func ToolSchemaSizes() []ToolSchemaSize {
 	sets := builtinToolsByAgent()
 	var out []ToolSchemaSize
 	for _, name := range []string{"mainagent", "planner", "worker"} {
-		tools := append(append([]actool.CoreTool{}, sets[name]...), actool.DefaultTools()...)
+		tools := append(append([]actool.CoreTool{}, sets[name]...), SDKDefaultTools()...)
 		size := ToolSchemaSize{Agent: name, Tools: len(tools) + 1} // +1：常驻的 get_tool_help
 		for _, t := range tools {
 			size.Before += schemaOneBytes(t)

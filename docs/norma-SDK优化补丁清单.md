@@ -16,6 +16,7 @@
 | 5 | OpenAI prompt_cache_key | 中 | OpenAI 格式请求缺 prompt_cache_key 字段 |
 | 6 | TokenBudget 语义评价 | 低 | 是「续跑激励」不是硬上限，不建议宿主当成本闸 |
 | 7 | 压缩触发比例不可配 | 中 | 触发点由 ContextWindow 反推，同一套默认值在 128K/1M 上差 18 个百分点 |
+| 8 | 文件工具的并发调度 | 高 | 路径感知并发接口 + 去掉队头阻塞；宿主侧已先落 workaround |
 
 ## 1. messages / tools 级缓存断点
 
@@ -93,3 +94,30 @@
 副作用是 micro 清退线与预测线随等效窗口一起小幅前移（≤3%），且宿主需复刻阈值算法做自检。
 
 **优先级：中。**
+
+## 8. 文件工具的并发调度（路径感知 + 队头阻塞）
+
+**现状：**
+
+- `tool/tool.go`：`CoreTool.IsConcurrencySafe(input) bool` 只能回答「安全 / 不安全」，无法表达「只与同路径的调用互斥」。
+- `tool/files.go`：`Write` / `Edit` 与 `tool/multiedit.go` 的 `MultiEdit` 都**没有声明** `Concurrent`，`Build` 的 fail-closed 默认使它们独占执行。
+- `harness/streaming.go`：`canStartLocked` 在存在执行中的不安全工具时拒绝**所有**工具；`processQueue` 遇到起不来的不安全工具直接 `break`（队头阻塞）；`drain` 遇到第一个未完成的不安全工具即停止放行。
+- 没有多文件编辑原语：`MultiEdit` 只作用于单文件，`Read` 只吃一个 `file_path`。
+
+**建议改动：**
+
+1. `CoreTool` 增加可选接口（与 `AcceptsRawInput` 同一套类型断言发现机制，不破坏既有实现）：
+   `Resources(input) []Access`，`Access{Key string; Mode Read|Write}`；`Write` / `Edit` / `MultiEdit` 声明 `file:<规范化绝对路径>`（`Abs` + `Clean` + 软链接归一，Windows 不区分大小写）。
+2. 调度器把「全局独占」换成「按资源键的读写锁」：同键 FIFO、跨键并行、多键按字典序加锁；`processQueue` 不再 `break`，改为「键冲突就跳过、继续看后面的调用」。
+3. 新增多文件补丁工具（V4A 或 JSON 形态皆可）：一次调用 N 个 FileOp，两阶段（全部解析校验 → 全部落盘），任一失败回滚。
+4. 写工具内部改成原子写（同目录临时文件 + `rename`，Windows 对 `EBUSY/EPERM/EACCES` 重试）。
+
+**宿主侧临时方案（已在 ARTEX 落地，见 [工具并发与多文件补丁-落地说明](工具并发与多文件补丁-落地说明.md)）：**
+
+用宿主包装层实现同样的语义——把 `Read/Write/Edit/MultiEdit` 包成「按路径分片加读写锁、并对外声明并发安全」的工具，全部装配点改走 `agent.SDKDefaultTools()`；再在宿主侧新增 `apply_patch` 多文件原子补丁工具与「批量调用」提示词尾段。
+
+代价是仍停在 SDK 的「安全 / 不安全」二值语义上：同路径 FIFO 依旧是竞态（锁的获取顺序不等于队列顺序），`Grep/Glob/LS` 这类目录级只读工具无法参与路径锁。
+
+**收益：** 不同文件的写/读不再互相阻塞；多文件改动从 N 次模型往返降到 1 次。
+
+**优先级：高。**

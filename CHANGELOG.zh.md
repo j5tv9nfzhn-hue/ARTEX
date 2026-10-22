@@ -15,6 +15,13 @@
 #### 新增的功能
 
 - **新增内置拦截规则「删除类接口路径」**：此前内置的 HTTP 破坏性规则只认 DELETE **方法**（`curl -X DELETE`、`requests.delete(`、`method:'DELETE'`），路径类规则的词表又只有 `/clear /wipe /flush /purge /truncate /drop /destroy /factory-reset /reset-all`——而多数应用的删除接口用 GET/POST 就能触发，于是 `curl 'http://t/api/user/delete?id=1'` 这类调用不命中任何内置规则，会真实删掉目标数据。现补一条 `deny` 规则覆盖 `/delete /del /remove /unlink /erase /destroy`（允许 `/deleteAll`、`/delete_user`、`/delete-user` 这类后缀形式），动词后必须跟分隔符，`/delivery`、`/details`、`/delta`、`/delegate` 不会被误拦。规则走独立的种子标记位，**已有实例升级后也会拿到**；和其余内置规则一样可在「系统 → 命令拦截」里停用或删除。
+### 工具
+
+#### 新增的功能
+
+- **工具调用按资源粒度并发（同路径互斥、跨路径并行）**：此前 agent 的工具批量执行只有「整批串行」与「整批并行」两种口径，一旦并行，两个 `Edit` 打同一个文件就会基于同一份旧内容各自落盘，后写者静默覆盖前者的修改，而模型看到的是两条成功回执。现改为按资源键调度：每个工具调用先被解析成一组读键 / 写键（全局键、探索图键、文件路径键、MCP 服务器键），键集合不相交的调用可以并行，写者与任何同键的读或写互斥，键集合为空的工具（`Bash`、浏览器、子 agent 等）退化为全局互斥，与原串行语义逐条一致。文件路径键经 `WorkingDir` 归一后走 `Clean`/`Abs`/`EvalSymlinks`，Windows 下统一小写，`a/../b.txt` 与 `b.txt` 会落到同一把锁上；锁对象按引用计数回收，不随调用量增长。实现见 `agent/tools_concurrency.go`，在 `agent/assembly.go` 的 `AugmentTools` 处统一包裹，故对**全部内置工具**一并生效，而不只是文件类工具；并发上限沿用 norma 的 `MaxConcurrency`（默认 10），并发不改变结果顺序与工具结果消息的装配方式。
+- **新增 `apply_patch` 多文件补丁工具**：一次调用携带多个文件的 `old_string`/`new_string` 编辑，先对**全部**文件在内存中做匹配校验（任何一处匹配失败则整批一件也不落盘，并逐条回报失败原因），再逐个文件以「临时文件 + 原子 rename」写盘，写失败按已完成清单回滚。同一文件的多处编辑按调用顺序合并，上限 40 个文件 / 200 处编辑。这样「改 5 个文件」从 5 次调用收敛为 1 次，既省一轮往返，也不会留下「改了 3 个、第 4 个失败」的半成品状态。工具说明与前端工具名文案（`interceptPage.toolDesc.apply_patch`）同步补齐。
+
 ### 漏洞推送
 
 #### 新增的功能

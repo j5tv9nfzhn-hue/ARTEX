@@ -378,7 +378,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 func plannerSystem(goal, dataDir, workDir string) string {
 	body := renderSystem("planner", plannerDefaultTmpl, PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()})
-	return body + artifactSpec(workDir) + langDirective(resolveOutputLang())
+	return body + artifactSpec(workDir) + toolBatchSpec() + langDirective(resolveOutputLang())
 }
 
 // Plan runs one planning round. emit, if non-nil, receives the planner's execution
@@ -412,7 +412,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	// 领域工具 + 基础默认工具集（Read/Write/Edit/MultiEdit/LS/Glob/Grep/Bash）
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
-	base := append(tsx.DropCoverageTools(tsx.PlannerTools()), actool.DefaultTools()...)
+	base := append(tsx.DropCoverageTools(tsx.PlannerTools()), SDKDefaultTools()...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
 	isRE := softwareRE(ts)
 	tools, def, cleanup := AugmentTools(ctx, "planner", base)
@@ -436,7 +436,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	ctx = intercept.WithReviewContext(ctx, taskDir, intercept.ReviewBackground{})
 	sysBody := plannerSystem(goal, p.workDir, taskDir)
 	if isRE {
-		sysBody = softwareREPlanner + "\n\n任务目标：" + goal + softwareREArtifactSpec(taskDir) + langDirective(resolveOutputLang())
+		sysBody = softwareREPlanner + "\n\n任务目标：" + goal + softwareREArtifactSpec(taskDir) + toolBatchSpec() + langDirective(resolveOutputLang())
 	}
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界

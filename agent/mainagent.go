@@ -117,7 +117,7 @@ const mainAgentDefaultTmpl = `你是一个授权渗透测试系统的"主 agent"
 
 func mainAgentSystem(goal, dataDir, workDir string) string {
 	body := renderSystem("mainagent", mainAgentDefaultTmpl, MainVars{Goal: goal, DataDir: dataDir, Now: nowStr()})
-	return body + artifactSpec(workDir) + langDirective(resolveOutputLang())
+	return body + artifactSpec(workDir) + toolBatchSpec() + langDirective(resolveOutputLang())
 }
 
 // Chat handles one human message and returns the assistant reply. emit, if
@@ -141,7 +141,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	tsx.SetDirectionGate(nil, m.dirAck) // 人直投不受代际门控；派发成功解冻派发闸
 	// 领域工具 + 基础默认工具集（Read/Write/Edit/MultiEdit/LS/Glob/Grep/Bash）
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
-	base := append(tsx.DropCoverageTools(tsx.MainAgentTools()), actool.DefaultTools()...)
+	base := append(tsx.DropCoverageTools(tsx.MainAgentTools()), SDKDefaultTools()...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
 	isRE := softwareRE(ts)
 	tools, def, cleanup := AugmentTools(ctx, "mainagent", base)
@@ -154,7 +154,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
 	mainSys := mainAgentSystem(goal, m.workDir, mainDir)
 	if isRE {
-		mainSys = softwareREMain + "\n\n任务目标：" + goal + softwareREArtifactSpec(mainDir) + langDirective(resolveOutputLang())
+		mainSys = softwareREMain + "\n\n任务目标：" + goal + softwareREArtifactSpec(mainDir) + toolBatchSpec() + langDirective(resolveOutputLang())
 	}
 	if hint := func() string {
 		tactical := BuildTacticalRoutingHint(goal+"\n"+message, tools, def)

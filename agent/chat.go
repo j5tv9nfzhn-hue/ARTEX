@@ -84,7 +84,7 @@ func chatWorkDirSpec(workDir string) string {
 // chatSystem renders the DB-managed prompt body for agentKey. Custom agents have
 // no per-key in-code default, so DefaultAssistantPrompt is the render fallback.
 func chatSystem(agentKey, dataDir, workDir string) string {
-	return renderSystem(agentKey, DefaultAssistantPrompt, chatVars{DataDir: dataDir, Now: nowStr()}) + chatWorkDirSpec(workDir) + langDirective(resolveOutputLang())
+	return renderSystem(agentKey, DefaultAssistantPrompt, chatVars{DataDir: dataDir, Now: nowStr()}) + chatWorkDirSpec(workDir) + toolBatchSpec() + langDirective(resolveOutputLang())
 }
 
 // chatVars carries the runtime variables a custom agent's prompt may reference.
@@ -115,10 +115,10 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	_ = os.MkdirAll(sessionWorkDir, 0o755)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, sessionWorkDir)
 
-	// Pure assistant: DefaultTools as the base; AugmentTools layers in the key's
+	// Pure assistant: SDKDefaultTools as the base; AugmentTools layers in the key's
 	// visible skills/MCP and lets the DB tools table filter/override. DefaultTools
 	// have no tools-table rows, so they always pass through.
-	base := actool.DefaultTools()
+	base := SDKDefaultTools()
 	ctx = WithRunInfo(ctx, RunInfo{SessionID: sessionID})
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()

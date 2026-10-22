@@ -77,7 +77,9 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 	}
 	lb := newLoopBreaker()
 	for i, t := range out {
-		out[i] = guardPanicWithBreaker(t, lb)
+		// 最内层先套「按资源键串行」：工具因此不再需要全局独占——同一个文件、同一张
+		// 图、同一个 MCP 服务之外的调用可以真并行（见 tools_concurrency.go）。
+		out[i] = guardPanicWithBreaker(lockResources(t), lb)
 	}
 	return out, def, cleanup
 }

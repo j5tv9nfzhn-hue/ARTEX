@@ -190,7 +190,7 @@ func defaultToolsExcept(exclude ...string) []actool.CoreTool {
 	for _, n := range exclude {
 		drop[n] = true
 	}
-	all := actool.DefaultTools()
+	all := SDKDefaultTools()
 	out := make([]actool.CoreTool, 0, len(all))
 	for _, t := range all {
 		if !drop[t.Name()] {
@@ -335,7 +335,7 @@ func workerSystem(proxyAddr, caCert, dataDir, runDir string) string {
 	// caCert is present only when the recording MITM is on, which is exactly when
 	// the traffic_* tools are registered — so it gates the traffic-tool note.
 	// Optional finding guidance is added for every role after tool resolution.
-	return body + workerTrafficBlock(caCert != "") + workerArtifactSpec(runDir) + langDirective(resolveOutputLang())
+	return body + workerTrafficBlock(caCert != "") + workerArtifactSpec(runDir) + toolBatchSpec() + langDirective(resolveOutputLang())
 }
 
 // renderIntentTask formats the claimed intent for the worker's launch USER message:
@@ -497,7 +497,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 一个不动——病根是通用工具吞掉专用工具，不是工具太多。
 	trimSDK := []string{"MultiEdit", "LS", "Sleep"}
 	if !softwareRE(ts) {
-		trimSDK = append(trimSDK, "Write", "Edit")
+		// apply_patch 与 Write/Edit 是同一份能力，软逆 worker 需要它落分析产物，
+		// 其余 worker 一并裁掉（否则等于给它们留了后门）。
+		trimSDK = append(trimSDK, "Write", "Edit", "apply_patch")
 	}
 	defTools := WrapCrossPlatformBash(defaultToolsExcept(trimSDK...), runDir, proxyEnv(w.proxyAddr, w.proxyCACert))
 	base = append(base, defTools...)
@@ -514,7 +516,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	overview := renderWorkerGraphOverview(tsx.graphOverviewForPrompt(workerPromptCaps))
 	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
 	if isRE {
-		sysBody = softwareREWorker + softwareREArtifactSpec(runDir) + langDirective(resolveOutputLang())
+		sysBody = softwareREWorker + softwareREArtifactSpec(runDir) + toolBatchSpec() + langDirective(resolveOutputLang())
 	}
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守

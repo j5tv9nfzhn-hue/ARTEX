@@ -1465,6 +1465,7 @@
       "MultiEdit": "批量编辑文件",
       "WebFetch": "发起 HTTP/HTTPS 请求（含代理支持）",
       "Write": "写入文件",
+      "apply_patch": "一次修改多个文件（多文件补丁）",
       "shell_close": "关闭交互会话",
       "shell_list": "列出所有交互会话",
       "shell_open": "开启持久 PTY 交互会话",
