@@ -154,3 +154,48 @@ func TestLocalPathErrorFallsBackToWorkdir(t *testing.T) {
 		t.Fatalf("应回落到工作目录列表：\n%s", msg)
 	}
 }
+
+// TestElementErrorHint 校验错误指向数组元素时，必须带上该元素级别的字段清单。
+func TestElementErrorHint(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"assets": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":     "object",
+					"required": []any{"type"},
+					"properties": map[string]any{
+						"type": map[string]any{
+							"type":        "string",
+							"enum":        []string{"root_domain", "ip", "subdomain", "app", "service", "endpoint"},
+							"description": "资产类型",
+						},
+						"url":    map[string]any{"type": "string", "description": "完整 URL"},
+						"method": map[string]any{"type": "string", "description": "HTTP 方法"},
+					},
+				},
+			},
+		},
+	}
+	in := []byte(`{"assets":[{"url":"https://a/b","method":"POST","description":"x"}]}`)
+	got := inputErrorHint("insert_assets", schema, in, &fakeErr{`assets[0]: missing required property "type"`})
+	for _, want := range []string{
+		"第 1 个元素实际收到字段：description, method, url",
+		"该元素必填：type",
+		"endpoint",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("元素级提示缺少 %q，实际：\n%s", want, got)
+		}
+	}
+
+	// 顶层字段错误（不指向元素）时不叠加元素提示。
+	if hint := elementErrorHint(nil, in, &fakeErr{`input: missing required property "assets"`}); hint != "" {
+		t.Fatalf("无 props 时不该生成元素提示：%q", hint)
+	}
+	// 越界索引不 panic、不生成提示。
+	if hint := elementErrorHint(schema["properties"].(map[string]any), in, &fakeErr{`assets[7]: missing required property "type"`}); hint != "" {
+		t.Fatalf("越界索引不该生成提示：%q", hint)
+	}
+}

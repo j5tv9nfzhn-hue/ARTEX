@@ -100,6 +100,10 @@ func inputErrorHint(toolName string, schema map[string]any, in json.RawMessage, 
 		fmt.Fprintf(&b, "本次实际收到字段：%s。", strings.Join(got, ", "))
 	}
 
+	if eh := elementErrorHint(props, in, verr); eh != "" {
+		b.WriteString(eh)
+	}
+
 	if len(required) > 0 {
 		var missing []string
 		for _, r := range required {
@@ -136,6 +140,71 @@ func inputErrorHint(toolName string, schema map[string]any, in json.RawMessage, 
 	}
 
 	b.WriteString("请按上述说明修正后重新调用，不要原样重试。")
+	return b.String()
+}
+
+// elementErrorPathRe 匹配校验错误里的数组元素路径，如 assets[0]。
+var elementErrorPathRe = regexp.MustCompile(`([A-Za-z0-9_]+)\[(\d+)\]`)
+
+// elementErrorHint 当校验失败指向数组的某个元素时，补上「该元素实际收到了哪些字段」
+// 与「该元素自己的必填项」。
+//
+// 为什么单独做：顶层字段清单（"本次实际收到字段：assets"）对模型毫无信息量——它当然
+// 知道自己在写 assets，缺的是元素内部的字段。实测 insert_assets 的两次失败正是这样：
+// 模型发出 {"assets":[{"url":…,"method":…,"description":…}]}，元素漏了 type，而报错只
+// 回了顶层字段 assets，于是它照原样重试。这是 Anthropic「让错误自己带着修复方法」的
+// 具体落地：不降级校验，只把错误讲清楚。
+func elementErrorHint(props map[string]any, in json.RawMessage, verr error) string {
+	if verr == nil || props == nil {
+		return ""
+	}
+	m := elementErrorPathRe.FindStringSubmatch(verr.Error())
+	if m == nil {
+		return ""
+	}
+	field, idxStr := m[1], m[2]
+	pm, ok := props[field].(map[string]any)
+	if !ok {
+		return ""
+	}
+	items, _ := pm["items"].(map[string]any)
+	itemProps, _ := items["properties"].(map[string]any)
+	if len(itemProps) == 0 {
+		return ""
+	}
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(in, &obj) != nil {
+		return ""
+	}
+	var elems []json.RawMessage
+	if json.Unmarshal(obj[field], &elems) != nil || idx < 0 || idx >= len(elems) {
+		return ""
+	}
+	got := receivedKeys(elems[idx])
+	if len(got) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "第 %d 个元素实际收到字段：%s。", idx+1, strings.Join(got, ", "))
+	itemRequired := toStrings(items["required"])
+	var missing []string
+	for _, r := range itemRequired {
+		if !containsString(got, r) {
+			missing = append(missing, r)
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(&b, "该元素必填：%s。", strings.Join(missing, ", "))
+		for _, f := range missing {
+			if brief := schemaPropBrief(itemProps, f); brief != "" {
+				fmt.Fprintf(&b, " [%s] %s；", f, brief)
+			}
+		}
+	}
 	return b.String()
 }
 
