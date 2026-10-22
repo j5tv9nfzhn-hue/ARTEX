@@ -22,7 +22,12 @@ const (
 	StageParse    = "parse"    // 入参不是合法 JSON（协议层）
 	StageValidate = "validate" // 入参结构不符合 schema 粗校验
 	StageExec     = "exec"     // 工具执行返回错误
-	StageTimeout  = "timeout"  // 工具执行超时
+	StageTimeout  = "timeout"  // 工具执行超时/被取消（非工具缺陷）
+	// StageTransport 是网络/代理层失败：请求根本没走到目标，或链路在握手/读取时断掉
+	// （EOF、schannel 握手失败、连接被拒、代理未监听）。它既不是工具缺陷，也不是模型
+	// 选错工具或参数，混进「工具错误率」会让指标失真——实测 131 条失败里有 29% 属此类。
+	// 与 OpenTelemetry GenAI 语义约定把 error.type 做成低基数分类同一思路。
+	StageTransport = "transport"
 )
 
 const (
@@ -215,21 +220,31 @@ func IntentSettled(intentID int64, state string) {
 
 // --- 快照 ---
 
-// ToolStat 是单个工具的调用/错误统计。
+// ToolStat 是单个工具的调用/错误统计。Errors 只算「自致失败」（不含 transport）。
 type ToolStat struct {
-	Tool   string           `json:"tool"`
-	Calls  int64            `json:"calls"`
-	Errors int64            `json:"errors"`
-	Stages map[string]int64 `json:"stages,omitempty"`
+	Tool   string `json:"tool"`
+	Calls  int64  `json:"calls"`
+	Errors int64  `json:"errors"`
+	// Transport 是其中的网络/代理层失败数，已从 Errors 中剔除，单独列出。
+	Transport int64            `json:"transport,omitempty"`
+	Stages    map[string]int64 `json:"stages,omitempty"`
 }
 
 // ToolMetrics 是工具调用维度的聚合。
+//
+// 口径（重要）：ErrorRate 是【自致失败率】——只把平台/模型能控制的失败算进分子
+// （parse/validate/hook/exec/timeout），transport（网络、代理、TLS）单列。仪表盘上
+// 「工具错误率」看这个数才有行动含义；含环境的旧口径见 RawErrorRate。
 type ToolMetrics struct {
-	Calls     int64            `json:"calls"`
-	Errors    int64            `json:"errors"`
-	ErrorRate float64          `json:"error_rate"` // 错误/调用；无调用时为 0
-	ByStage   map[string]int64 `json:"by_stage"`
-	TopTools  []ToolStat       `json:"top_tools"`
+	Calls     int64   `json:"calls"`
+	Errors    int64   `json:"errors"`     // 自致失败数
+	ErrorRate float64 `json:"error_rate"` // 自致失败/调用；无调用时为 0
+	// RawErrors/RawErrorRate 是含 transport 的历史口径，保留用于对比与回归。
+	RawErrors       int64            `json:"raw_errors"`
+	RawErrorRate    float64          `json:"raw_error_rate"`
+	TransportErrors int64            `json:"transport_errors"`
+	ByStage         map[string]int64 `json:"by_stage"`
+	TopTools        []ToolStat       `json:"top_tools"`
 }
 
 // RecoveryMetrics 是重放/中断两张恢复表的统一形状。
@@ -265,16 +280,26 @@ func TakeSnapshot() Snapshot {
 	snap := Snapshot{Since: since.Unix()}
 	snap.Tools.ByStage = map[string]int64{}
 	top := make([]ToolStat, 0, len(tools))
+	var rawErrors int64
 	for name, c := range tools {
+		transport := c.stages[StageTransport]
+		own := c.errors - transport
+		if own < 0 {
+			own = 0
+		}
 		snap.Tools.Calls += c.calls
-		snap.Tools.Errors += c.errors
+		snap.Tools.Errors += own
+		snap.Tools.TransportErrors += transport
+		rawErrors += c.errors
 		for stage, n := range c.stages {
 			snap.Tools.ByStage[stage] += n
 		}
-		top = append(top, ToolStat{Tool: name, Calls: c.calls, Errors: c.errors, Stages: copyStages(c.stages)})
+		top = append(top, ToolStat{Tool: name, Calls: c.calls, Errors: own, Transport: transport, Stages: copyStages(c.stages)})
 	}
+	snap.Tools.RawErrors = rawErrors
 	if snap.Tools.Calls > 0 {
 		snap.Tools.ErrorRate = float64(snap.Tools.Errors) / float64(snap.Tools.Calls)
+		snap.Tools.RawErrorRate = float64(rawErrors) / float64(snap.Tools.Calls)
 	}
 	sort.Slice(top, func(i, j int) bool {
 		if top[i].Errors != top[j].Errors {

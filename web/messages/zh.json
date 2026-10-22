@@ -1035,6 +1035,7 @@
       "hook": "拦截",
       "parse": "解析",
       "timeout": "超时",
+      "transport": "网络",
       "validate": "校验"
     },
     "statDone": "完成",

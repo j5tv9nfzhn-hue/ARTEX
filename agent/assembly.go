@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"runtime/debug"
 	"strconv"
@@ -170,11 +169,9 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 	defer release()
 	res, err = g.CoreTool.Call(callCtx, in, tc)
 	if err != nil || res.IsError {
-		stage := metrics.StageExec
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-			stage = metrics.StageTimeout
-		}
-		metrics.ObserveToolError(name, stage)
+		// 失败按「记在谁头上」分档（timeout / transport / exec，见 tool_failure_class.go）：
+		// 网络与超时不该算进工具自身的错误率。
+		metrics.ObserveToolError(name, classifyToolFailure(res, err, callCtx))
 	}
 	if g.breaker != nil {
 		res = g.breaker.inspect(name, in, res, err)
