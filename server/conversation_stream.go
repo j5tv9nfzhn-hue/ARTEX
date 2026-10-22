@@ -58,6 +58,11 @@ func (s *Server) streamConversation(w http.ResponseWriter, r *http.Request) {
 
 	tick := time.NewTicker(convStreamTick)
 	defer tick.Stop()
+	// 实时帧与任务侧共用同一个 Broadcaster，只是键换成会话 busy 键。
+	// 下面的 700ms 轮询保留作为兜底：实时帧不落库、不可续传，
+	// 断线重连后靠落库活动补齐。
+	liveCh, liveUnsub := s.engine.Broadcaster().SubscribeLive(s.convBusyKey(c.ID))
+	defer liveUnsub()
 	ping := time.NewTicker(20 * time.Second)
 	defer ping.Stop()
 
@@ -68,6 +73,17 @@ func (s *Server) streamConversation(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-ping.C:
 			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case f, ok := <-liveCh:
+			if !ok {
+				return
+			}
+			b, err := json.Marshal(f)
+			if err != nil {
+				continue
+			}
+			// 不写 `id:` 行：实时帧没有游标，Text 是累计全文，客户端整体替换。
+			fmt.Fprintf(w, "event: live\ndata: %s\n\n", b)
 			flusher.Flush()
 		case <-tick.C:
 			items, cursor, err := pg.ConvActivityList(c.ID, since, 200)

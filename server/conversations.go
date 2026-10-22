@@ -628,6 +628,11 @@ func transcriptErrorSummary(label, errMsg string) string {
 }
 
 func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelCauseFunc, c *db.Conversation, msg, busyKey string) {
+	// 对话链路此前没有任何实时帧：前端只能等活动落库后轮询，
+	// 所以推理总是“推理结束后一次性全量出现”（Memo 03）。
+	// 这里挂与任务侧完全相同的 liveEmitter：worker 固定 "chat"，
+	// 键用会话 busy 键 conv-<id>（db.Conversation 没有 task 关联，不能用 task.ID）。
+	ctx = agent.WithLiveDelta(ctx, newLiveEmitter(s.engine.Broadcaster(), busyKey, "chat", 0))
 	defer func() {
 		cancel(agent.AbortChatTurnFinished)
 		s.chatMu.Lock()
