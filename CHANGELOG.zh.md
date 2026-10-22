@@ -10,6 +10,7 @@
 
 - **修掉 `UnknownServiceException: CLEARTEXT communication to 192.168.x.x not permitted by network security policy`**：手机 App 连的是电脑上的 `http://192.168.x.x:8787`，而 Android 9 起默认禁止明文 HTTP，请求在 native 层就被拦下，界面上只剩一句 Java 异常。现在 `mobile/plugins/with-cleartext-lan.js` 在 prebuild 阶段把 `android:usesCleartextTraffic="true"` 写进 AndroidManifest；iOS 侧只给 `NSAllowsLocalNetworking`（放开本网络，不整体关掉 ATS）。**已经装着的旧安装包不会因此变好，必须装新的 APK。** 以后手机端走 HTTPS + 反向代理时，删掉这个插件与 `app.json` 里那一行即可。
 - **版本号**：`1.0.0 → 1.0.1`、`versionCode 1 → 2`，方便一眼区分装机包。
+- **失败提示改成人话**：新增 `mobile/src/api/net-error.ts`，把「明文被拦」和「连不上」分开说——前者提示换安装包或改用 https，后者提示同一 Wi-Fi / 服务是否在跑 / 端口是否 8787；登录页与扫码绑定页都走这一个出口。
 
 #### 局域网连接
 

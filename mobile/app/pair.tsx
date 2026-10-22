@@ -4,6 +4,7 @@ import * as React from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { friendlyNetError } from "@/api/net-error";
 import { claimPair, parsePairPayload } from "@/api/pair";
 import { normalizeBaseUrl, saveSession } from "@/api/session";
 import { useTheme } from "@/theme/provider";
@@ -44,7 +45,7 @@ export default function PairScreen() {
       } catch (e) {
         locked.current = false;
         setPhase("idle");
-        setError(e instanceof Error ? e.message : "绑定失败，请重新生成配对码");
+        setError(friendlyNetError(e, "绑定失败，请重新生成配对码"));
       }
     },
     [router],

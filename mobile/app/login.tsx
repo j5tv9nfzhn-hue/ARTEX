@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { mobileApi } from "@/api/mobile";
+import { friendlyNetError } from "@/api/net-error";
 import { normalizeBaseUrl, saveSession } from "@/api/session";
 import { useTheme } from "@/theme/provider";
 import { font, radius, space } from "@/theme/tokens";
@@ -31,7 +32,7 @@ export default function LoginScreen() {
       await saveSession({ token: res.token });
       router.replace("/(tabs)");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      setError(friendlyNetError(err, "登录失败"));
     } finally {
       setBusy(false);
     }
