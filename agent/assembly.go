@@ -68,6 +68,14 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 		out = ToolResolve(ctx, agentKey, out)
 	}
 	out, def.FindingGuidance = findingWorkflowTools(agentKey, out)
+	// 工具面瘦身放在最后一步（ToolResolve 之后、guardPanic 之前）：
+	//   - 之后：库里人工改过的说明也一视同仁地被瘦身，否则「代码默认被压、人工改的
+	//     不压」会让体积随谁改过而漂移；
+	//   - 之前：guardPanic 仍是最外层，入参纠偏/超时/计数这些边界行为不变。
+	// 瘦身只改 Description/InputSchema，并在末尾追加常驻的 get_tool_help 兜底。
+	if leanEnabled() {
+		out = leanToolList(out)
+	}
 	lb := newLoopBreaker()
 	for i, t := range out {
 		out[i] = guardPanicWithBreaker(t, lb)

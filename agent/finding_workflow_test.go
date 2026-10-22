@@ -38,9 +38,15 @@ func TestFindingWorkflowSharedAssemblyAndSwitch(t *testing.T) {
 			if on && (!strings.Contains(system[0], "TCP") || !strings.Contains(system[0], "evidence_hint_id")) {
 				t.Fatal("missing optional/handoff contract")
 			}
+			sawHelp := false
 			for _, tool := range out {
+				if tool.Name() == ToolHelpToolName {
+					// 常驻的「按需取完整说明」工具由装配层追加，不属于 DB 覆盖的对象。
+					sawHelp = true
+					continue
+				}
 				if !strings.HasPrefix(tool.Description(), "CUSTOM DESCRIPTION") {
-					t.Fatal("custom description replaced")
+					t.Fatalf("custom description replaced: %q", tool.Description())
 				}
 				raw, _ := json.Marshal(tool.InputSchema())
 				var schema map[string]any
@@ -55,6 +61,9 @@ func TestFindingWorkflowSharedAssemblyAndSwitch(t *testing.T) {
 						t.Fatal("nested hint schema ignored switch")
 					}
 				}
+			}
+			if !sawHelp {
+				t.Fatalf("%s: 装配结果缺少常驻的 %s", role, ToolHelpToolName)
 			}
 		}
 	}

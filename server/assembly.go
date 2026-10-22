@@ -600,6 +600,18 @@ func seedPrompts(pg *db.DB) {
 // and 缺省入参 get injected. MCP/skill/host tools have no row and pass through.
 func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 	agent.FindingTrafficBindingEnabled = func() bool { return pg.GetBool(settingAgentTrafficBinding, false) }
+	// 工具面瘦身的实测口径（P3 验收：单轮 schema 体积下降 40%）。开机打一行，
+	// 让人在日志里就能看到「这一版到底省了多少」，而不是靠读代码估。
+	// 数值来自 agent.ToolSchemaSizes()，与单测断言用的是同一个函数——日志与测试
+	// 不会各说各话。
+	if agent.LeanSchemaEnabled() {
+		for _, sz := range agent.ToolSchemaSizes() {
+			log.Printf("[tools] 工具面瘦身 %s：%d 个工具，%d → %d 字节（-%.1f%%）",
+				sz.Agent, sz.Tools, sz.Before, sz.After, sz.SavedPercent())
+		}
+	} else {
+		log.Printf("[tools] 工具面瘦身已通过 %s 关闭", "ARTEX_TOOL_SCHEMA_LEAN")
+	}
 	for _, s := range agent.BuiltinToolSeeds() {
 		schema, _ := json.Marshal(s.Schema)
 		agents, _ := json.Marshal(s.Agents)
