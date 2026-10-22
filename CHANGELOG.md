@@ -53,6 +53,8 @@
 - **失败步骤改单句提示。** Worker/主 Agent 运行失败不再在时间线铺开「终态 / 底层错误 / 已执行 / 耗时 / 工具调用」整段红色详情，只显示一句失败摘要（如「执行失败（model_error）：模型调用失败（网络、鉴权、限流或供应商错误）。」），也不再为失败行拉取详情；完整详情继续保留在活动记录里供排障与审计。
 - **Windows 进程树收口（Job Object）。** ARTEX 启动即把自己放进「最后一个句柄关闭时终止全部成员」的 Job Object，此后 Bash 工具派生的 powershell/python（含 multiprocessing、ThreadPoolExecutor 的子进程）、rg、npx 等全部随 ARTEX 同生共死：控制台关闭、任务管理器强杀、进程崩溃，以及新实例自举 `TerminateProcess` 掉持端口的老实例（自更新换装、重复启动都会走到），都不再留下继续占满 CPU（而且继续打目标）的孤儿脚本。创建/赋值失败只降级并在日志说明原因，绝不阻断启动；启动日志给出「已启用/未启用」结论。`cmd/artex/jobobject_{windows,other}.go`，Windows 侧回归测试覆盖「孙进程继承 Job」「关闭句柄即终止整树」「父进程被强杀后孙进程随之消失」。
 - **CPU 饱和提示与命令自限约束。** `workers` 超过本机逻辑 CPU 数时启动日志给出明确告警（只提示、不擅自改设置）；任务环境简报（注入 planner/worker 提示词）新增一条 CPU 治理约束：穷举/爆破/大规模 fuzz 命令自限并发（进程/线程 ≤ min(逻辑核数, 4)，禁止无上限 multiprocessing），预计超过 1 分钟的命令用 `run_in_background`、不再需要时立即 `TaskStop`，避免多个 worker 同时打满 CPU 拖慢平台服务与 SQLite 写入。
+- **自动更新不再依赖启动脚本。** 双击 exe 就能完成一次完整更新：退出前先写 `updates/restart.request` 意图，入口按指针把新版本拉起来，`start.bat` / `start.sh` 降级为可选兜底；Ctrl-C 正常停止不会被自动拉起，自拉频率超过 5 次/5 分钟就停手并写日志。
+- **单实例锁与跨进程安装锁。** Windows 命名互斥量 / Unix `flock`：先拿锁再绑端口，第二个实例只打印地址并退出，不再杀掉正在服务的进程；并发 `POST /api/update/apply` 只有一个能进入安装阶段，另一个直接 409。
 
 ### 防御与检测资料
 
