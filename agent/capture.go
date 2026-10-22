@@ -21,9 +21,8 @@ import (
 // 文案只负责给人看。
 const stoppedToolSummary = "已停止：会话结束，未收到执行结果"
 
-// 平台管控拦截在 norma harness 里落地成一条 tool_result（文案前缀由 harness 生成）：
-//   - PreToolUse 钩子拦截（ARTEX 的拦截规则 / 人工审批拒绝）
-//   - 权限层拒绝
+// 平台管控拦截在 norma harness 里落地成一条 tool_result，文案前缀由 harness 生成：
+// PreToolUse 钩子拦截（ARTEX 的拦截规则 / 人工审批拒绝）与权限层拒绝都在此列。
 // 这两种都是「根本没执行」，不是「执行了但失败」。前端据此画成 denied 而不是 failed——
 // 红叉会让人以为工具跑过并出错，实际是策略拦下的。前缀是 harness 的公开契约，跟版本一致。
 const (
