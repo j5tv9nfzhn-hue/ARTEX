@@ -25,10 +25,10 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { AgentPhaseBadge } from "@/components/agent-phase-badge";
 import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/components/approval-execution-focus";
 import { CheckpointTimelineButton } from "@/components/checkpoint-timeline";
 import { EmptyState } from "@/components/empty-state";
-import { LiveDot } from "@/components/live-dot";
 import { MentionTextarea } from "@/components/mention-textarea";
 import { MessageRollbackDialog } from "@/components/message-rollback-dialog";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
@@ -62,12 +62,24 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Spinner } from "@/components/ui/spinner";
 import { useSideQuestions } from "@/hooks/use-side-questions";
 import { mergeActivities } from "@/lib/activity-merge";
+import { deriveAgentPhase } from "@/lib/agent-phase";
 import { api } from "@/lib/api";
 import { shouldSubmitOnKey, useChatSendMode } from "@/lib/chat-send-mode";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
 import { isBtwCommand } from "@/lib/side-questions";
 import type { Activity, Agent, ChatAttachment, Conversation, LLMProfile } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+// settledBy 判定一块实时内容是否已被落库活动接管：接管后就撤掉实时块，
+// 交给同一套回放组件渲染——两边长得一样，所以不会跳样式。
+function settledBy(liveKind: string, activityKind: string): boolean {
+  if (liveKind === "thinking") return activityKind === "thinking" || activityKind === "result";
+  if (liveKind === "text") return activityKind === "text" || activityKind === "result";
+  if (liveKind === "tool_use" || liveKind === "tool_start" || liveKind === "tool_input") {
+    return activityKind === "tool_use";
+  }
+  return false;
+}
 
 // fmtBytes renders a human file size for attachment chips (mirrors transcript.tsx).
 function fmtBytes(n: number): string {
@@ -137,17 +149,6 @@ function groupByAgent(conversations: Conversation[], agentByKey: Map<string, Age
     if (conversation.running) group.runningCount++;
   }
   return [...groups.values()];
-}
-
-// LiveBadge 复用任务主 Agent 控制台的“实时”动态标签，在轮次流式生成时显示。
-function LiveBadge() {
-  const t = useTranslations("chat");
-  return (
-    <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400">
-      <LiveDot className="size-1" />
-      {t("live")}
-    </span>
-  );
 }
 
 // pastedImageFile 把剪贴板里的图片重新命名成一个稳定、可辨识的文件。
@@ -588,6 +589,8 @@ function ChatView({
   const approvalFocus = useApprovalFocus({ conversationId: conv.id });
   const [messages, setMessages] = React.useState<Activity[]>([]);
   const [running, setRunning] = React.useState(false);
+  // 实时帧：Text 是累计全文，渲染时整体替换（不拼接）。
+  const [liveDelta, setLiveDelta] = React.useState<{ kind: string; text?: string; tool?: string } | null>(null);
   const [input, setInput] = React.useState(initial?.input ?? "");
   const [sending, setSending] = React.useState(false);
   const [stopping, setStopping] = React.useState(false);
@@ -646,6 +649,7 @@ function ChatView({
     setMessages([]);
     setHistoryLoaded(false);
     setRunning(false);
+    setLiveDelta(null);
     let live = true;
     api
       .conversationHistory(conv.id, 0, HISTORY_PAGE)
@@ -705,6 +709,49 @@ function ChatView({
       clearTimeout(timer);
     };
   }, [running, conv.id, onTitleMaybeChanged]);
+
+  // 对话实时流：推理/输出此前要等落库后轮询才整段出现（Memo 03）。
+  // 这里订阅 /api/conversations/{id}/events：`live` 帧是 40ms 累计全文，普通 message
+  // 帧是已落库活动（按 seq 去重合并）。下面的 1s 轮询保留作兜底：
+  // 实时帧不落库、不可续传，断线后靠轮询把落库活动补齐。
+  React.useEffect(() => {
+    if (!historyLoaded) return;
+    const es = new EventSource(`/api/conversations/${conv.id}/events?since=${cursorRef.current}`);
+    es.addEventListener("live", (event) => {
+      const frame = JSON.parse((event as MessageEvent<string>).data) as {
+        kind: string;
+        text?: string;
+        tool?: string;
+        worker?: string;
+      };
+      // 只认对话主 Agent 的帧（worker 固定 chat）；progress 是工具内部进度，
+      // 工具行已由 tool_input 帧带参数，这里不接。
+      if (frame.worker && frame.worker !== "chat") return;
+      if (frame.kind === "progress") return;
+      setLiveDelta({ kind: frame.kind, text: frame.text, tool: frame.tool });
+    });
+    es.onmessage = (event) => {
+      const step = JSON.parse(event.data) as Activity;
+      if (typeof step.seq !== "number") return;
+      setMessages((prev) => mergeActivities(prev, [step]));
+      cursorRef.current = Math.max(cursorRef.current, step.seq);
+      // 这段内容已落库，撤掉实时块，否则会与刚落库的那条重复显示。
+      setLiveDelta((prev) => (prev && settledBy(prev.kind, step.kind) ? null : prev));
+    };
+    es.onerror = () => {
+      // 浏览器自动重连（带 Last-Event-ID）；运行态的 1s 轮询仍在兜底。
+    };
+    return () => es.close();
+  }, [conv.id, historyLoaded]);
+
+  // 统一状态机：实时帧优先于落库活动，避免“推理 / 正文”互相抢。
+  const phase = deriveAgentPhase({
+    running,
+    liveKind: liveDelta?.kind,
+    lastKind: messages.length ? messages[messages.length - 1].kind : undefined,
+    waitingApproval: messages.length ? messages[messages.length - 1].kind === "intercept_request" : false,
+    lastIsError: messages.length ? messages[messages.length - 1].is_error : false,
+  });
 
   const loadFocusPage = React.useCallback(
     (before: number) => api.conversationHistory(conv.id, before, HISTORY_PAGE),
@@ -959,7 +1006,7 @@ function ChatView({
         {agent?.description && (
           <span className="min-w-0 truncate text-muted-foreground text-xs">{agent.description}</span>
         )}
-        {running && <LiveBadge />}
+        {running && <AgentPhaseBadge phase={phase} />}
         <SideQuestionButton side={side} />
         <CheckpointTimelineButton
           scope="conversation"
@@ -1040,6 +1087,7 @@ function ChatView({
               <Transcript
                 activity={messages}
                 live={running}
+                liveDelta={liveDelta ?? undefined}
                 chat
                 fetchDetail={fetchDetail}
                 focusedSeq={focusHistory.ready ? approvalFocus.state?.source?.seq : undefined}

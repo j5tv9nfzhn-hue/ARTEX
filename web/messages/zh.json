@@ -4826,7 +4826,15 @@
       "running": "执行中…",
       "stopped": "已停止"
     },
-    "withThinking": "含推理"
+    "withThinking": "含推理",
+    "phase": {
+      "idle": "空闲",
+      "thinking": "推理中…",
+      "writing": "输出中…",
+      "tool": "调用工具中…",
+      "waiting": "等待确认",
+      "error": "出错了"
+    }
   },
   "userMenu": {
     "changePassword": "修改密码",

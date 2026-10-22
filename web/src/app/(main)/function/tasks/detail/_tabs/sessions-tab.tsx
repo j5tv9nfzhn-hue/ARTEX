@@ -29,6 +29,7 @@ import {
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
+import { AgentPhaseBadge } from "@/components/agent-phase-badge";
 import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/components/approval-execution-focus";
 import { EmptyState } from "@/components/empty-state";
 import { LiveDot } from "@/components/live-dot";
@@ -65,6 +66,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePolling } from "@/hooks/use-polling";
 import { useSideQuestions } from "@/hooks/use-side-questions";
+import { deriveAgentPhase } from "@/lib/agent-phase";
 import { api, sseUrl } from "@/lib/api";
 import { shouldSubmitOnKey, useChatSendMode } from "@/lib/chat-send-mode";
 import { MOCK } from "@/lib/mock/enabled";
@@ -1388,6 +1390,15 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const activeSettled =
     !!activeLast && (activeLast.kind === "result" || (activeLast.kind === "text" && activeLast.is_error));
   const mainBusy = isMain && (sending || (!activeSettled && (mainChatRunning ?? recentLive(activeKey))));
+  // 统一状态机（与对话页同一份 deriveAgentPhase）：实时帧优先于已落库活动，
+  // 避免“推理 → 正文 → 又回到推理”的来回跳（Memo 01）。
+  const livePhase = deriveAgentPhase({
+    running: active.live,
+    liveKind: liveDeltaForActive?.kind,
+    lastKind: activeLast?.kind,
+    lastIsError: activeLast?.is_error,
+    waitingApproval: activeLast?.kind === "intercept_request",
+  });
   // 折叠态（手机端）标题栏要替代整张列表：显示当前会话名 + 其它会话的未读合计，
   // 否则收起后既不知道自己在看哪个会话，也看不到别处有新消息。
   const activeDisplayTitle = (active.role === "worker" ? sessionMeta.get(active.id)?.title : "") || active.title;
@@ -2029,12 +2040,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               {active.inherited && active.source_task_id && (
                 <Badge variant="outline">{t("header.sourceTask", { id: active.source_task_id })}</Badge>
               )}
-              {active.live && (
-                <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400">
-                  <LiveDot className="size-1" />
-                  {t("sse.live")}
-                </span>
-              )}
+              {active.live && <AgentPhaseBadge phase={livePhase} />}
               {activeState?.hasMore && (
                 <span className="text-[10px] text-muted-foreground" title={t("header.olderHistoryTitle")}>
                   {t("header.olderHistoryLabel")}
