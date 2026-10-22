@@ -12,6 +12,12 @@ import (
 	"syscall"
 )
 
+// spawnDetachedConsole 在 Unix 上与 spawnDetached 等价：setsid 已经把子进程
+// 放进新会话，不会因为终端关闭而被带走。
+func spawnDetachedConsole(exe string, args []string, env []string, dir string) error {
+	return spawnDetached(exe, args, env, dir)
+}
+
 func spawnDetached(exe string, args []string, env []string, dir string) error {
 	cmd := exec.Command(exe, args...)
 	cmd.Dir = dir

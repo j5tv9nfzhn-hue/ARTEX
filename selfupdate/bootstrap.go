@@ -57,6 +57,9 @@ func Bootstrap(version string) (Action, State) {
 	l, lerr := ResolveLayout()
 	if lerr == nil {
 		_ = EnsureLayoutDirs(l)
+		// 用旧 zip 装出来的环境，根目录的引导程序永远不会随 in-app 更新变新，
+		// 而老引导程序没有“退出 75 后重启”的托管循环。先把它刷成当前版本。
+		RefreshOuter(l)
 		adoptBundledCore(l, version)
 		EnsurePointer(l, version)
 	}

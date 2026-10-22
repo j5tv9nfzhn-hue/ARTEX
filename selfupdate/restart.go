@@ -105,6 +105,18 @@ func ExitForRestart(reason string) int {
 	}
 	WriteRestartIntent(l, reason)
 	if HandoffChild() || Supervised() {
+		// 引导程序只有自己带托管循环时才会把新版本拉起来。用旧版 zip 装出来的引导程序
+		// 没有这个循环，它收到 75 会跟着退出，于是用户看到的就是“更新完成、窗口消失、什么都不打开”。
+		// Bootstrap 里的 RefreshOuter 已把根目录的引导程序换成当前版本：动过它
+		// 就说明正在跑的那个是旧版，这里主动把新的拉起来。
+		if OuterRefreshed() && !Supervised() {
+			if err := relaunchOuter(l); err != nil {
+				logUpdate(l, "旧引导程序不会托管重启，主动拉起也失败：%v（reason=%s）", err, reason)
+			} else {
+				logUpdate(l, "旧引导程序不会托管重启，已主动拉起新引导程序后退出（reason=%s）", reason)
+				return ExitRestart
+			}
+		}
 		logUpdate(l, "以退出码 %d 把重启交给上层（reason=%s）", ExitRestart, reason)
 		return ExitRestart
 	}
@@ -134,6 +146,16 @@ func Relaunch() error {
 	}
 	env := append(os.Environ(), relaunchEnv+"=1", InstallRootEnv+"="+l.Root)
 	return spawnDetached(exe, os.Args[1:], env, l.Root)
+}
+
+// relaunchOuter 把根目录的引导程序以独立控制台拉起来（带着原样的命令行参数）。
+func relaunchOuter(l Layout) error {
+	outer := OuterPath(l)
+	if _, err := os.Stat(outer); err != nil {
+		return err
+	}
+	env := append(os.Environ(), InstallRootEnv+"="+l.Root, relaunchEnv+"=1")
+	return spawnDetachedConsole(outer, os.Args[1:], env, l.Root)
 }
 
 // allowRestart 做滑动窗口防抖：窗口内达到上限就返回 false。

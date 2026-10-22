@@ -19,6 +19,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// spawnDetachedConsole 与 spawnDetached 同意，但给子进程开一个新的控制台窗口。
+//
+// 为什么不能用 spawnDetached：它把子进程的 stdio 接到当前控制台，
+// 而下面的 relaunchOuter 是在“本进程马上就退出”的前提下跑的：
+// 父进程一退，那个控制台就跟着消失，子进程会收到 CTRL_CLOSE_EVENT 而被带走。
+// 独立控制台同时也是双击启动时用户期望看到的样子。
+func spawnDetachedConsole(exe string, args []string, env []string, dir string) error {
+	cmd := exec.Command(exe, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NEW_CONSOLE,
+	}
+	return cmd.Start()
+}
+
 func spawnDetached(exe string, args []string, env []string, dir string) error {
 	cmd := exec.Command(exe, args...)
 	cmd.Dir = dir
