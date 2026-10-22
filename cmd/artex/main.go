@@ -148,6 +148,10 @@ func run() int {
 	if rootDir, rootErr := selfupdate.InstallRoot(); rootErr != nil {
 		log.Printf("[boot] 安装目录未知（%v），跳过单实例锁", rootErr)
 	} else {
+		// 显式带上 -lan / -addr，意味着用户要的就是「用这个监听地址起来」，
+		// 那就不能因为旧实例还在就静默退出。这也是 start-lan.bat 能「双击就生效」
+		// 的前提：否则它只会打印一句「已在运行」就退出，看起来像什么都没发生。
+		takeoverWanted := *takeover || *lan || strings.TrimSpace(*addr) != ""
 		lockWait := instanceLockWait
 		if selfupdate.RelaunchedChild() {
 			lockWait = relaunchLockWait
@@ -157,12 +161,12 @@ func run() int {
 		case lockErr != nil:
 			// 锁机制本身不可用（目录只读、权限不足等）：退回旧行为，靠端口自举兜底。
 			log.Printf("[boot] 单实例锁不可用（%v），退回端口自举", lockErr)
-		case state == selfupdate.LockBusy && !*takeover:
+		case state == selfupdate.LockBusy && !takeoverWanted:
 			// 已经有一个 ARTEX 在服务：不再抢占、不再杀进程，直接退出。
 			reportRunningElsewhere(listenAddr)
 			return 0
-		case state == selfupdate.LockBusy && *takeover:
-			log.Printf("[boot] -takeover：先接管被占用的端口，再接手单实例锁")
+		case state == selfupdate.LockBusy && takeoverWanted:
+			log.Printf("[boot] 接管模式（-takeover / -lan / -addr）：先接管被占用的端口，再接手单实例锁")
 			if err := bootBeforeStart(listenAddr, *proxy, exeDir, true); err != nil {
 				log.Fatalf("接管失败：%v", err)
 			}

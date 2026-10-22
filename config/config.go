@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -177,6 +178,54 @@ func Load() Config {
 	}
 	_ = json.Unmarshal(b, &c)
 	return c
+}
+
+// SetListen 把「监听地址」写进配置文件，保留文件里其它键（包括本包不认识的），
+// 写完返回实际写入的路径。
+//
+// 为什么不是整体反序列化再写回：config.json 里有历史键，用结构体往返会静默丢掉它们。
+// 所以这里只按 map 取一份原始 JSON、改 listen 一项、再缩进写回；先写临时文件再改名，
+// 避免写到一半断电留下半截配置（那会让下次启动直接退回默认值）。
+func SetListen(addr string) (string, error) {
+	path := Path()
+	fields := map[string]json.RawMessage{}
+	raw, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if len(bytes.TrimSpace(raw)) > 0 {
+			if uerr := json.Unmarshal(raw, &fields); uerr != nil {
+				return path, fmt.Errorf("%s 不是合法的 JSON，未做改动：%w", path, uerr)
+			}
+		}
+	case os.IsNotExist(err):
+		// 没有配置文件就新建一份，只写 listen。
+	default:
+		return path, err
+	}
+	val, merr := json.Marshal(addr)
+	if merr != nil {
+		return path, merr
+	}
+	fields["listen"] = val
+	out, merr := json.MarshalIndent(fields, "", "  ")
+	if merr != nil {
+		return path, merr
+	}
+	out = append(out, '\n')
+	if dir := filepath.Dir(path); dir != "" {
+		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+			return path, mkErr
+		}
+	}
+	tmp := path + ".tmp"
+	if werr := os.WriteFile(tmp, out, 0o644); werr != nil {
+		return path, werr
+	}
+	if rerr := os.Rename(tmp, path); rerr != nil {
+		_ = os.Remove(tmp)
+		return path, rerr
+	}
+	return path, nil
 }
 
 // ListenAddr 解析 HTTP 监听地址，优先级：

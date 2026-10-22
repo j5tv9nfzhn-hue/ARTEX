@@ -197,10 +197,10 @@ package_binary() {
   # 启动监护脚本是正式入口；页面一键更新需要进程退出后由脚本重启。
   # 直接运行 artex-rea 不会自动重启，发布包仅包含对应系统的启动脚本。
   if [ "$goos" = "windows" ]; then
-    cp start.bat "$package_root/"
+    cp start.bat start-lan.bat "$package_root/"
   else
-    cp start.sh "$package_root/"
-    chmod +x "$package_root/start.sh"
+    cp start.sh start-lan.sh "$package_root/"
+    chmod +x "$package_root/start.sh" "$package_root/start-lan.sh"
   fi
   cp -R skills "$package_root/"
   rm -f "$package_root/skills/embed.go"
