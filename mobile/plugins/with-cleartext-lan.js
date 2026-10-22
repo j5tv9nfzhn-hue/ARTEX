@@ -12,14 +12,23 @@
 //
 // CI 的 `npx expo prebuild --platform android` 会自动执行本插件（见 app.json 的 plugins）。
 // 以后手机端改走 HTTPS + 反向代理时，删掉这个插件和 app.json 里那一行即可。
-const { withAndroidManifest } = (() => {
-  try {
-    return require("expo/config-plugins");
-  } catch {
-    // 老版本 Expo 只暴露 @expo/config-plugins（它是 expo 的传递依赖）。
-    return require("@expo/config-plugins");
+//
+// 入口的选择：expo 的 exports 表在 SDK 58 里并没有 `./config-plugins` 子路径，
+// 而 @expo/config-plugins 是 expo 的直接依赖（一定在 node_modules 里）。
+// 两个都试、按「有没有 withAndroidManifest」判断，避免 prebuild 在 CI 上硬失败。
+function loadConfigPlugins() {
+  for (const id of ["@expo/config-plugins", "expo/config-plugins"]) {
+    try {
+      const mod = require(id);
+      if (mod && typeof mod.withAndroidManifest === "function") return mod;
+    } catch {
+      // 换下一个入口
+    }
   }
-})();
+  throw new Error("with-cleartext-lan: 找不到 @expo/config-plugins，请先 npm install");
+}
+
+const { withAndroidManifest } = loadConfigPlugins();
 
 module.exports = function withCleartextLan(config) {
   return withAndroidManifest(config, (cfg) => {
