@@ -122,10 +122,12 @@ export interface PatchFileDiff {
 
 export function parsePatchDocument(text: string): PatchFileDiff[] {
   const files: PatchFileDiff[] = [];
-  let current: PatchFileDiff | null = null;
+  // 用「当前文件下标」而不是一个可为 null 的变量：push 在闭包里改状态，
+  // TS 的控制流分析看不到闭包里的赋值，会把 current 一路窄化成 never。
+  let currentIndex = -1;
   const push = (path: string) => {
-    current = { path, lines: [], added: 0, removed: 0 };
-    files.push(current);
+    files.push({ path, lines: [], added: 0, removed: 0 });
+    currentIndex = files.length - 1;
   };
   for (const raw of text.split("\n")) {
     const line = raw.replace(/\r$/, "");
@@ -135,7 +137,8 @@ export function parsePatchDocument(text: string): PatchFileDiff[] {
       if (rest !== line) push(rest.trim());
       continue;
     }
-    if (!current) continue;
+    if (currentIndex < 0) continue;
+    const current = files[currentIndex];
     if (line.startsWith("@@")) {
       current.lines.push({ kind: "ctx", text: line, oldNo: null, newNo: null });
       continue;
