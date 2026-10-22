@@ -37,12 +37,12 @@ func logf(format string, args ...any) { log.Printf("[boot] "+format, args...) }
 //  2. 再处理代理端口。
 //
 // 数据库不在其中：SQLite 是进程内打开一个文件，没有可等待的就绪状态。
-func bootBeforeStart(addr, proxy, exeDir string) error {
-	if err := ensurePortFree(addr, exeDir, "HTTP/API"); err != nil {
+func bootBeforeStart(addr, proxy, exeDir string, takeover bool) error {
+	if err := ensurePortFree(addr, exeDir, "HTTP/API", takeover); err != nil {
 		return err
 	}
 	if proxy != "" {
-		if err := ensurePortFree(proxy, exeDir, "流量记录代理"); err != nil {
+		if err := ensurePortFree(proxy, exeDir, "流量记录代理", takeover); err != nil {
 			return err
 		}
 	}
@@ -95,7 +95,7 @@ func portOwnerPID(address string) uint32 {
 }
 
 // ensurePortFree 保证监听地址可用。
-func ensurePortFree(address, exeDir, label string) error {
+func ensurePortFree(address, exeDir, label string, takeover bool) error {
 	pid := portOwnerPID(address)
 	if pid == 0 {
 		return nil
@@ -107,6 +107,14 @@ func ensurePortFree(address, exeDir, label string) error {
 			"%s 端口 %s 已被无关进程（PID %d）占用，为避免误杀已中止启动。\n"+
 				"请先结束该进程，或用 -addr / -proxy 换用其他端口。",
 			label, address, pid)
+	}
+	if !takeover {
+		// 默认不抢占：另一个实例正在服务（或正在更新），杀掉它只会让用户看到
+		// "进程莫名消失 + 正在跑的会话被打断"。要夺取必须显式 -takeover。
+		return fmt.Errorf(
+			"%s 端口 %s 上有另一个 ARTEX 实例在运行（PID %d，%s），本次启动不再抢占；\n"+
+				"请回到那个实例的控制台按 Ctrl-C 停止它；确认要夺取时再加 -takeover。",
+			label, address, pid, filepath.Base(image))
 	}
 
 	logf("%s 端口 %s 被上一轮进程占用（PID %d，%s），正在结束",

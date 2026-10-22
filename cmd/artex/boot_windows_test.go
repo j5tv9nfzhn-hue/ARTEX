@@ -126,7 +126,7 @@ func TestBootBeforeStartSkipsDatabase(t *testing.T) {
 	addr := l.Addr().String()
 	l.Close()
 
-	if err := bootBeforeStart(addr, "", t.TempDir()); err != nil {
+	if err := bootBeforeStart(addr, "", t.TempDir(), false); err != nil {
 		t.Fatalf("端口空闲时，bootBeforeStart 应成功：%v", err)
 	}
 }
@@ -141,7 +141,7 @@ func TestBootBeforeStartRejectsForeignPort(t *testing.T) {
 	defer l.Close()
 
 	// exeDir 指向一个与测试进程无关的目录，因此监听者会被判为无关进程
-	err = bootBeforeStart(l.Addr().String(), "", t.TempDir())
+	err = bootBeforeStart(l.Addr().String(), "", t.TempDir(), false)
 	if err == nil {
 		t.Fatal("端口被无关进程占用时应报错，而不是静默继续")
 	}
@@ -160,7 +160,7 @@ func TestEnsurePortFreeOnFreeAddress(t *testing.T) {
 	addr := l.Addr().String()
 	l.Close()
 
-	if err := ensurePortFree(addr, t.TempDir(), "测试"); err != nil {
+	if err := ensurePortFree(addr, t.TempDir(), "测试", false); err != nil {
 		t.Fatalf("空闲端口不应报错：%v", err)
 	}
 }

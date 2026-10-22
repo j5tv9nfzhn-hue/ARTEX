@@ -28,19 +28,19 @@ const (
 //   - 当目标端口被占用时，在 Linux 下尝试通过 /proc 识别是否为同目录上一轮残留的
 //     artex 进程并自动回收；若为无关进程或无法在当前系统/权限下确认归属，绝不误杀，
 //     交由后续或直接返回明确诊断。
-func bootBeforeStart(addr, proxy, exeDir string) error {
-	if err := ensureUnixPortFree(addr, exeDir, "HTTP/API"); err != nil {
+func bootBeforeStart(addr, proxy, exeDir string, takeover bool) error {
+	if err := ensureUnixPortFree(addr, exeDir, "HTTP/API", takeover); err != nil {
 		return err
 	}
 	if proxy != "" {
-		if err := ensureUnixPortFree(proxy, exeDir, "流量记录代理"); err != nil {
+		if err := ensureUnixPortFree(proxy, exeDir, "流量记录代理", takeover); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func ensureUnixPortFree(address, exeDir, label string) error {
+func ensureUnixPortFree(address, exeDir, label string, takeover bool) error {
 	if strings.TrimSpace(address) == "" {
 		return nil
 	}
@@ -61,6 +61,13 @@ func ensureUnixPortFree(address, exeDir, label string) error {
 			"%s 端口 %s 已被无关进程（PID %d）占用，为避免误杀已中止启动。\n"+
 				"请先结束该进程，或用 -addr / -proxy 换用其他端口。",
 			label, address, pid)
+	}
+	if !takeover {
+		// 默认不抢占：另一个实例正在服务（或正在更新）就不再动它。
+		return fmt.Errorf(
+			"%s 端口 %s 上有另一个 ARTEX 实例在运行（PID %d，%s），本次启动不再抢占；\n"+
+				"请回到那个实例的控制台按 Ctrl-C 停止它；确认要夺取时再加 -takeover。",
+			label, address, pid, filepath.Base(image))
 	}
 	log.Printf("[boot] %s 端口 %s 被上一轮进程占用（PID %d，%s），正在结束",
 		label, address, pid, filepath.Base(image))

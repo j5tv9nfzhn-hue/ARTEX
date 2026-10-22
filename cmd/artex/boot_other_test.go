@@ -17,7 +17,7 @@ func TestUnixBootBeforeStartOnFreeAddress(t *testing.T) {
 	addr := l.Addr().String()
 	_ = l.Close()
 
-	if err := bootBeforeStart(addr, "", t.TempDir()); err != nil {
+	if err := bootBeforeStart(addr, "", t.TempDir(), false); err != nil {
 		t.Fatalf("端口空闲时 bootBeforeStart 应成功：%v", err)
 	}
 }
@@ -41,7 +41,7 @@ func TestUnixBootBeforeStartRejectsForeignPortOnLinux(t *testing.T) {
 	if pid := lookupLinuxListeningPID(l.Addr().String()); pid == 0 {
 		t.Skip("当前容器/内核环境无法从 /proc 反查监听套接字归属")
 	}
-	if err := bootBeforeStart(l.Addr().String(), "", t.TempDir()); err == nil {
+	if err := bootBeforeStart(l.Addr().String(), "", t.TempDir(), false); err == nil {
 		t.Fatal("端口被无关目录进程占用时应拒绝并报错")
 	}
 }

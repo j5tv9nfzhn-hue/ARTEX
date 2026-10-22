@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +30,13 @@ var version = "dev"
 // restartGraceTimeout 是"更新/回滚重启"时留给在跑回合的收尾上限。
 // 普通 Ctrl-C 仍然只等 5s：用户想立刻停下，不该被长任务拖住。
 const restartGraceTimeout = 20 * time.Second
+
+// 单实例锁的等待上限。正常退出与更新握手都在毫秒级；只有"想抢占一个正在服务的
+// 实例"才会等到超时 —— 而那时的默认行为是报告并退出，不抢占（见 -takeover）。
+const (
+	instanceLockWait = 3 * time.Second
+	takeoverLockWait = 30 * time.Second
+)
 
 const banner = `
     _    ____ _____ _______  __      ____  _____    _    
@@ -70,6 +78,7 @@ func run() int {
 		dataDir   = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
 		proxy     = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
 		resetPass = flag.Bool("reset-password", false, "重置 ARTEX-REA 管理员密码后退出；新密码取自 ARTEX_RESET_NEWPASS，未设置则交互输入")
+		takeover  = flag.Bool("takeover", false, "端口被另一个 ARTEX 实例占用时夺取它（默认不抢占，直接退出）")
 		selfTest  = flag.Bool("self-test", false, "仅做启动自检并退出（升级流程的冒烟测试入口，不占端口/不开库/不出网）")
 	)
 	flag.Parse()
@@ -121,6 +130,42 @@ func run() int {
 	// 失败只降级：退回「子进程可能残留」的旧行为，日志里会说明原因。
 	_ = guardProcessTree()
 
+	// 单实例仲裁：同一安装目录只允许一个"真正对外服务"的进程。
+	//
+	// 顺序是刻意的 —— 先拿锁，再谈端口：锁是唯一仲裁者，端口探测只是二次保险。
+	// 顺序固定就不存在"两个进程都绑成功"的竞态，也不需要"谁占了端口就杀谁"。
+	bootDone := false
+	if rootDir, rootErr := selfupdate.InstallRoot(); rootErr != nil {
+		log.Printf("[boot] 安装目录未知（%v），跳过单实例锁", rootErr)
+	} else {
+		release, state, lockErr := selfupdate.AcquireInstance(rootDir, instanceLockWait)
+		switch {
+		case lockErr != nil:
+			// 锁机制本身不可用（目录只读、权限不足等）：退回旧行为，靠端口自举兜底。
+			log.Printf("[boot] 单实例锁不可用（%v），退回端口自举", lockErr)
+		case state == selfupdate.LockBusy && !*takeover:
+			// 已经有一个 ARTEX 在服务：不再抢占、不再杀进程，直接退出。
+			reportRunningElsewhere(*addr)
+			return 0
+		case state == selfupdate.LockBusy && *takeover:
+			log.Printf("[boot] -takeover：先接管被占用的端口，再接手单实例锁")
+			if err := bootBeforeStart(*addr, *proxy, exeDir, true); err != nil {
+				log.Fatalf("接管失败：%v", err)
+			}
+			bootDone = true
+			release, state, lockErr = selfupdate.AcquireInstance(rootDir, takeoverLockWait)
+			if lockErr != nil || state == selfupdate.LockBusy {
+				log.Fatalf("接管失败：旧实例仍持有单实例锁（%v）", lockErr)
+			}
+			defer release()
+		default:
+			defer release()
+			if state == selfupdate.LockAbandoned {
+				log.Printf("[boot] 上一个实例未正常退出（锁已被内核回收），本次接管")
+			}
+		}
+	}
+
 	// Self-update bootstrap: swap in a staged binary, or count a post-swap boot
 	// attempt and roll back if the new build keeps dying. Must run before we open
 	// the stores or bind a port — this may end with "exit and let the start script
@@ -147,8 +192,10 @@ func run() int {
 	// 自举：先解决端口占用，再打开任何存储。
 	// 位置在 selfupdate 之后——自举会真正开始接管端口，
 	// 不应与更新的换装流程交错。数据库是进程内打开的文件，无需自举。
-	if err := bootBeforeStart(*addr, *proxy, exeDir); err != nil {
-		log.Fatalf("自举启动失败：%v", err)
+	if !bootDone {
+		if err := bootBeforeStart(*addr, *proxy, exeDir, *takeover); err != nil {
+			log.Fatalf("自举启动失败：%v", err)
+		}
 	}
 
 	// 凭据主密钥必须先于任何存储读写装好：llm_profiles.api_key 等加密字段
@@ -238,6 +285,30 @@ func run() int {
 		return selfupdate.ExitForRestart("apply")
 	}
 	return code
+}
+
+// reportRunningElsewhere 处理"已经有一个 ARTEX 在跑"：只报告地址，不抢占、不杀进程。
+// 这是双击第二次、或更新后旧实例还在收尾时的正常路径，不是错误。
+func reportRunningElsewhere(addr string) {
+	fmt.Printf("\n  ARTEX-REA 已在运行：http://%s\n", displayAddr(addr))
+	fmt.Println("  本次启动直接退出，没有动那个实例；要停止它请回到它的控制台按 Ctrl-C。")
+}
+
+// displayAddr 把监听地址转成浏览器能点的形式（0.0.0.0 / :: 换成 127.0.0.1）。
+func displayAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	switch {
+	case addr == "":
+		return "127.0.0.1:8787"
+	case strings.HasPrefix(addr, ":"):
+		return "127.0.0.1" + addr
+	case strings.HasPrefix(addr, "0.0.0.0:"):
+		return "127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	case strings.HasPrefix(addr, "[::]:"):
+		return "127.0.0.1:" + strings.TrimPrefix(addr, "[::]:")
+	default:
+		return addr
+	}
 }
 
 // shutdownContext deliberately does not derive from signalCtx. If it did, the
