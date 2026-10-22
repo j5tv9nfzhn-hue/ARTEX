@@ -1,9 +1,8 @@
 name: mobile-build
 
-# 手机端第一版打包：Android APK 与 iOS 模拟器包。
-# 仓库铁律是不在本机构建，所以这里全部在云端完成，产物作为 artifact 上传。
-# iOS 真机/上架需要 Apple 开发者账号与证书，本工作流只做「不签名构建」，
-# 产出的是模拟器可运行的 .app；要装真机请配置签名后改用 EAS Build。
+# 手机端的一次性打包：Android APK 与 iOS 模拟器 .app。
+# 仓库设定是不在本地构建，产物全部由这里构建并作为 artifact 上传。
+# iOS 真机/上架需要 Apple 开发者账号与证书，此处只构建未签名的模拟器产物。
 on:
   workflow_dispatch:
   push:
@@ -33,6 +32,16 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Gradle 依赖缓存：首次构建 25 分钟大多花在下载上，缓存后稳定在几分钟。
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/package-lock.json') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
       - name: install deps
         run: npm install --no-audit --no-fund
 
@@ -45,11 +54,14 @@ jobs:
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon
 
+      # 工作目录是 mobile，所以产物落在 mobile/dist。
+      # 之前写的 ../dist 落到了仓库根目录，而 upload 取的是 mobile/dist，
+      # 于是打包成功却报 "No files were found" 而整个 job 失败。
       - name: collect apk
         run: |
-          mkdir -p ../dist
-          find android/app/build/outputs/apk -name "*.apk" -exec cp {} ../dist/ \;
-          ls -lh ../dist
+          mkdir -p dist
+          find android/app/build/outputs/apk -name "*.apk" -exec cp {} dist/ \;
+          ls -lh dist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -74,36 +86,59 @@ jobs:
       - name: install deps
         run: npm install --no-audit --no-fund
 
+      # 不能带 --no-install：prebuild 不跑 pod install 就只有 .xcodeproj、没有
+      # .xcworkspace，而 RN/Expo 的原生依赖全在 Pods 里，后面的 xcodebuild 必定失败。
       - name: expo prebuild (ios)
-        run: npx expo prebuild --platform ios --no-install
+        run: npx expo prebuild --platform ios
 
-      - name: detect scheme
+      # 先认 .xcworkspace（有 Pods 时的正常形态），没有就回退到 .xcodeproj；
+      # 两个都拿不到时直接报错，而不是拿空字符串去跑 xcodebuild（旧版本就是这样
+      # 报了 `'' is not a workspace file`，exit 66）。
+      - name: detect project + scheme
         working-directory: mobile/ios
         run: |
-          WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
-          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/{flag=1;next} flag && NF {print $1; exit}')
-          echo "WORKSPACE=$WORKSPACE" >> "$GITHUB_ENV"
-          echo "SCHEME=$SCHEME" >> "$GITHUB_ENV"
-          echo "detected workspace=$WORKSPACE scheme=$SCHEME"
+          set -euo pipefail
+          if ls -d *.xcworkspace >/dev/null 2>&1; then
+            KIND=workspace
+            PROJ=$(ls -d *.xcworkspace | head -n 1)
+          elif ls -d *.xcodeproj >/dev/null 2>&1; then
+            KIND=project
+            PROJ=$(ls -d *.xcodeproj | head -n 1)
+          else
+            echo "::error::prebuild 没有生成任何 Xcode 工程"
+            exit 1
+          fi
+          SCHEME=$(xcodebuild -list -"$KIND" "$PROJ" | awk '/Schemes:/{flag=1;next} flag && NF {print $1; exit}')
+          if [ -z "$SCHEME" ]; then
+            echo "::error::没有解析到 scheme"
+            xcodebuild -list -"$KIND" "$PROJ"
+            exit 1
+          fi
+          echo "IOS_KIND=$KIND" >> "$GITHUB_ENV"
+          echo "IOS_PROJ=$PROJ" >> "$GITHUB_ENV"
+          echo "IOS_SCHEME=$SCHEME" >> "$GITHUB_ENV"
+          echo "detected $KIND=$PROJ scheme=$SCHEME"
 
       - name: xcodebuild (no signing, simulator)
         working-directory: mobile/ios
         run: |
+          set -euo pipefail
           xcodebuild \
-            -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
+            -"$IOS_KIND" "$IOS_PROJ" \
+            -scheme "$IOS_SCHEME" \
             -configuration Release \
             -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             build
 
       - name: collect app
         run: |
-          mkdir -p ../dist
-          cd ios/build/Build/Products/Release-iphonesimulator
-          zip -qry ../../../../dist/artex-mobile-ios-simulator.zip ./*.app
-          ls -lh ../../../../dist
+          mkdir -p dist
+          SRC=ios/build/Build/Products/Release-iphonesimulator
+          zip -qry dist/artex-mobile-ios-simulator.zip "$SRC"/*.app
+          ls -lh dist
 
       - uses: actions/upload-artifact@v4
         with:
