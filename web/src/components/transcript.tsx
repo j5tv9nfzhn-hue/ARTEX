@@ -3,7 +3,6 @@
 import * as React from "react";
 
 import {
-  BrainCircuitIcon,
   CheckIcon,
   ChevronDown,
   ChevronRight,
@@ -29,6 +28,7 @@ import { CopyTextButton } from "@/components/transcript/copy-text-button";
 import { LiveToolRow } from "@/components/transcript/live-tool-row";
 import { ToolBody, type ToolSectionModel } from "@/components/transcript/renderers";
 import { StatusRing } from "@/components/transcript/status-ring";
+import { ThinkingRow } from "@/components/transcript/thinking-row";
 import { toolKindFor } from "@/components/transcript/tool-kind";
 import { ToolSummaryRow } from "@/components/transcript/tool-summary-row";
 import { Badge } from "@/components/ui/badge";
@@ -625,15 +625,23 @@ function MessageBlock({
   const [stepDetails, setStepDetails] = React.useState<{ kind: string; text: string }[] | null>(null);
   const loadedKey = React.useRef<string | null>(null);
   const speak = group.steps.filter((s) => s.kind !== "thinking");
-  const hasThinking = group.steps.some((s) => s.kind === "thinking");
+  const thinkingSteps = group.steps.filter((s) => s.kind === "thinking");
+  const hasThinking = thinkingSteps.length > 0;
   const onlyThinking = speak.length === 0 && hasThinking;
+  // 历史推理与实时推理共用 ThinkingRow：折叠时用摘要预览，展开时再取全文。
+  const thinkingText = thinkingSteps.map((s) => s.summary).filter(Boolean).join("\n\n");
+  const loadThinking = React.useCallback(
+    () =>
+      Promise.all(
+        thinkingSteps.map((s) => getDetail(s.seq).then((d) => d || s.summary).catch(() => s.summary)),
+      ).then((parts) => parts.join("\n\n")),
+    [thinkingSteps, getDetail],
+  );
   const isError = group.steps.some((s) => s.is_error);
   const body = (speak.length ? speak : group.steps).map((s) => s.summary).join("  ") || "…";
   let Icon = MessageSquare;
   if (isError) {
     Icon = Flag;
-  } else if (onlyThinking || hasThinking) {
-    Icon = BrainCircuitIcon;
   }
 
   let tone = "text-foreground";
@@ -668,8 +676,27 @@ function MessageBlock({
     };
   }, [open, detailKey, group.steps, getDetail, t]);
 
+  if (onlyThinking && thinkingText) {
+    return (
+      <ThinkingRow
+        className="-ml-3"
+        fetchDetail={loadThinking}
+        label={t("kind.thinking")}
+        text={thinkingText}
+      />
+    );
+  }
+
   return (
     <div className="relative pl-3 text-xs before:absolute before:top-0 before:bottom-0 before:left-1 before:w-px before:bg-border/70">
+      {hasThinking && thinkingText && (
+        <ThinkingRow
+          className="-ml-3 mb-1"
+          fetchDetail={loadThinking}
+          label={t("kind.thinking")}
+          text={thinkingText}
+        />
+      )}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -685,15 +712,10 @@ function MessageBlock({
           className={cn(
             "size-3.5 shrink-0",
             isError && "text-red-500",
-            !isError && (hasThinking ? "text-violet-500 dark:text-violet-400" : "text-primary/80"),
+            !isError && "text-primary/80",
           )}
         />
         {showWorker && <span className={chip(group.worker)}>{group.worker}</span>}
-        {hasThinking && (
-          <span className="shrink-0 rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 font-medium text-ui-2xs text-violet-600 dark:text-violet-300">
-            {t("kind.thinking")}
-          </span>
-        )}
         <span className={cn("min-w-0 flex-1 truncate", tone)}>{body}</span>
       </button>
       {open && (
@@ -945,34 +967,6 @@ function ExecView({
   );
 }
 
-// LiveThinking 是「默认不展开、但单行实时滚动」的思考块：
-// 折叠时只显示最后一行（跟 ZCode 的做法一致——过程占一行，需要时再展开看全文）。
-function LiveThinking({ text }: { text: string }) {
-  const [open, setOpen] = React.useState(false);
-  const t = useTranslations("transcript");
-  const flat = text.replace(/\s+/g, " ").trim();
-  const tail = flat.length > 200 ? "…" + flat.slice(-200) : flat;
-  return (
-    <div className="pl-3">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full min-w-0 items-center gap-1.5 text-left text-muted-foreground text-xs hover:text-foreground"
-      >
-        <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-violet-500" />
-        <span className="shrink-0 font-medium">{t("kind.thinking")}</span>
-        {!open && <span className="min-w-0 truncate opacity-70">{tail}</span>}
-        <span className="shrink-0 opacity-60">{open ? "▾" : "▸"}</span>
-      </button>
-      {open && (
-        <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-ui-xs leading-relaxed">
-          {text}
-        </pre>
-      )}
-    </div>
-  );
-}
-
 // Transcript renders a session's activity as a compact grouped execution replay.
 export function Transcript({
   activity,
@@ -1024,7 +1018,9 @@ export function Transcript({
         focusedSeq={focusedSeq}
         rollback={rollback}
       />
-      {liveDelta?.kind === "thinking" && !!liveDelta.text && <LiveThinking text={liveDelta.text} />}
+      {liveDelta?.kind === "thinking" && !!liveDelta.text && (
+        <ThinkingRow text={liveDelta.text} label={t("kind.thinking")} live />
+      )}
       {liveDelta?.kind === "text" && !!liveDelta.text && (
         <LiveStreamMarkdown text={liveDelta.text} className="min-w-0 break-words pl-3" />
       )}
