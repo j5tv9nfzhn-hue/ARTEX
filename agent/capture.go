@@ -21,6 +21,16 @@ import (
 // 文案只负责给人看。
 const stoppedToolSummary = "已停止：会话结束，未收到执行结果"
 
+// 平台管控拦截在 norma harness 里落地成一条 tool_result（文案前缀由 harness 生成）：
+//   - PreToolUse 钩子拦截（ARTEX 的拦截规则 / 人工审批拒绝）
+//   - 权限层拒绝
+// 这两种都是「根本没执行」，不是「执行了但失败」。前端据此画成 denied 而不是 failed——
+// 红叉会让人以为工具跑过并出错，实际是策略拦下的。前缀是 harness 的公开契约，跟版本一致。
+const (
+	hookBlockPrefix      = "Blocked by hook: "
+	permissionDenyPrefix = "Tool call was not permitted: "
+)
+
 // captureRun drives one agent turn-to-completion over Session.Prompt and emits a
 // coalesced ActivityRecord per execution step (tool_use / tool_result / text /
 // thinking / result). It is shared by every LLM agent in the system (worker,
@@ -54,6 +64,9 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 		}
 	}
 	toolNames := map[string]string{} // tool_use id -> name, to label results
+	// lastUseID 记住最近一次 tool_use：harness 的进度事件只带一行文字、不带 ID，
+	// 只能归到「最近启动且还没拿到结果」的那次调用上。
+	lastUseID := ""
 	// awaiting 记录尚未收到结果的 tool_use；会话结束时残留 = 执行结束未收到结果的调用
 	// （中断或事件丢失），经 defer 统一计入协议防御计数（#14）。
 	awaiting := map[string]string{}
@@ -130,6 +143,7 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			emitLive(ctx, LiveDelta{Kind: "tool_use", Tool: ev.ToolUse.Name, ToolUseID: ev.ToolUse.ID})
 			toolNames[ev.ToolUse.ID] = ev.ToolUse.Name
 			awaiting[ev.ToolUse.ID] = ev.ToolUse.Name
+			lastUseID = ev.ToolUse.ID
 			in := string(ev.ToolUse.Input)
 			lastTool.start(ev.ToolUse.ID, ev.ToolUse.Name, in)
 			auditTrace.Start(ev.ToolUse.ID, ev.ToolUse.Name, ev.ToolUse.Input)
@@ -156,7 +170,20 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			lastTool.done(ev.ToolResult.ToolUseID)
 			auditTrace.Complete(ev.ToolResult.ToolUseID, out, ev.ToolResult.IsError)
 			rec(db.Activity{Kind: "tool_result", Tool: toolNames[ev.ToolResult.ToolUseID], ToolUseID: ev.ToolResult.ToolUseID,
-				IsError: ev.ToolResult.IsError, Summary: firstLine(out, 200), Detail: out})
+				IsError: ev.ToolResult.IsError, Summary: firstLine(out, 200), Detail: out,
+				Metadata: toolStatusMetadata(out)})
+		case harness.KindProgress:
+			// 工具跑到一半的进度（tool.ProgressInfo，只有文字没有 ID）。只走实时通道，让
+			// 界面那行有东西在动；落库口径不变——进度是观感，不是执行结论。找不到对应
+			// 调用（例如刚拿到结果又来了一帧）就丢掉，别让它冒充某次调用的输出。
+			if ev.Text == "" {
+				continue
+			}
+			name, ok := awaiting[lastUseID]
+			if !ok {
+				continue
+			}
+			emitLive(ctx, LiveDelta{Kind: "progress", Tool: name, ToolUseID: lastUseID, Text: ev.Text})
 		case harness.KindText:
 			addDelta("text", ev.Text)
 		case harness.KindThinking:
@@ -231,6 +258,15 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 	}
 	flush() // safety: any unflushed text if the stream ended without KindResult
 	return finalText, reason, rerr
+}
+
+// toolStatusMetadata 把「未执行」的结论写进 tool_result 行的 metadata：
+// tool_status 是结构化判定，前端不靠文案猜。命中拦截/拒绝返回 denied，其余返回 nil。
+func toolStatusMetadata(out string) json.RawMessage {
+	if strings.HasPrefix(out, hookBlockPrefix) || strings.HasPrefix(out, permissionDenyPrefix) {
+		return json.RawMessage(`{"tool_status":"denied"}`)
+	}
+	return nil
 }
 
 func activityWithUsage(activity db.Activity, usage *llm.Usage) db.Activity {

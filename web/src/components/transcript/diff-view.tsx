@@ -9,10 +9,11 @@ import type { DiffLine, DiffModel, PatchFileDiff } from "@/lib/hunks";
 import { cn } from "@/lib/utils";
 
 // 变更行的配色只做底色 + 标记两件事：行号、标记列宽度固定，正文按需换行。
-// 颜色用 emerald/red 的低透明度底，暗色主题下不刺眼，也不与状态圈的红绿撞色。
+// 颜色取 --diff-added / --diff-removed（globals.css）：低透明度底 + 同色字，
+// 亮暗各一档由令牌决定，主题预设不会把红绿改成品牌色，改动方向不会被误读。
 const LINE_TONE: Record<DiffLine["kind"], string> = {
-  add: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  del: "bg-red-500/10 text-red-700 dark:text-red-300",
+  add: "bg-diff-added/10 text-diff-added",
+  del: "bg-diff-removed/10 text-diff-removed",
   ctx: "text-muted-foreground",
   skip: "",
 };
@@ -21,7 +22,7 @@ const MARKER: Record<DiffLine["kind"], string> = { add: "+", del: "-", ctx: " ",
 
 function Row({ line }: { line: DiffLine }) {
   return (
-    <div className={cn("flex items-start font-mono text-[11px] leading-relaxed", LINE_TONE[line.kind])}>
+    <div className={cn("flex items-start font-mono text-ui-xs leading-relaxed", LINE_TONE[line.kind])}>
       <span className="w-8 shrink-0 select-none pr-2 text-right text-muted-foreground/60 tabular-nums">
         {line.oldNo ?? ""}
       </span>
@@ -46,7 +47,7 @@ function SkipRow({ line }: { line: DiffLine }) {
           <Row key={`${item.oldNo}:${item.newNo}`} line={item} />
         ))}
         <button
-          className="flex w-full items-center justify-center gap-1 bg-muted/30 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+          className="flex w-full items-center justify-center gap-1 bg-muted/30 py-0.5 text-ui-2xs text-muted-foreground hover:text-foreground"
           onClick={() => setOpen(false)}
           type="button"
         >
@@ -58,7 +59,7 @@ function SkipRow({ line }: { line: DiffLine }) {
   }
   return (
     <button
-      className="flex w-full items-center justify-center gap-1 bg-muted/30 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+      className="flex w-full items-center justify-center gap-1 bg-muted/30 py-0.5 text-ui-2xs text-muted-foreground hover:text-foreground"
       onClick={() => setOpen(true)}
       type="button"
     >
@@ -76,7 +77,7 @@ export function DiffView({ model, className }: { model: DiffModel; className?: s
       {model.hunks.map((hunk) => (
         <div key={hunk.key}>
           {model.hunks.length > 1 ? (
-            <div className="bg-muted/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">{hunk.header}</div>
+            <div className="bg-muted/30 px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground">{hunk.header}</div>
           ) : null}
           {hunk.lines.map((line, index) =>
             line.kind === "skip" ? (
@@ -97,13 +98,13 @@ export function DiffView({ model, className }: { model: DiffModel; className?: s
 export function PatchFileView({ file }: { file: PatchFileDiff }) {
   return (
     <div>
-      <div className="flex items-center gap-2 bg-muted/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+      <div className="flex items-center gap-2 bg-muted/30 px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground">
         <span className="min-w-0 truncate">{file.path}</span>
         <DiffStat added={file.added} removed={file.removed} className="ml-auto" />
       </div>
       {file.lines.map((line, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: 补丁行顺序固定
-        <div className="flex items-start font-mono text-[11px] leading-relaxed" key={index}>
+        <div className="flex items-start font-mono text-ui-xs leading-relaxed" key={index}>
           <span className={cn("min-w-0 flex-1 whitespace-pre-wrap break-all px-2", LINE_TONE[line.kind])}>
             {line.kind === "ctx" ? null : MARKER[line.kind]}
             {line.text || " "}
@@ -117,9 +118,9 @@ export function PatchFileView({ file }: { file: PatchFileDiff }) {
 // DiffStat 同时给摘要行和补丁头用：+N −N，两个数各自着色。
 export function DiffStat({ added, removed, className }: { added: number; removed: number; className?: string }) {
   return (
-    <span className={cn("shrink-0 font-mono text-[10px] tabular-nums", className)}>
-      <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>{" "}
-      <span className="text-red-600 dark:text-red-400">-{removed}</span>
+    <span className={cn("shrink-0 font-mono text-ui-2xs tabular-nums", className)}>
+      <span className="text-diff-added">+{added}</span>{" "}
+      <span className="text-diff-removed">-{removed}</span>
     </span>
   );
 }

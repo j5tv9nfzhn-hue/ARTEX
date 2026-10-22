@@ -7,7 +7,17 @@ export type ToolStatus = "running" | "completed" | "failed" | "denied" | "stoppe
 // 历史行没有 metadata，只能靠文案回退。这两组标记和后端产出的原文一一对应：
 //   intercept.defaultMessage → 「拦截规则 [名字] 不允许执行此工具」
 //   capture 的停止兜底      → 「已停止：会话结束，未收到执行结果」
-const DENIED_MARKERS = ["拦截规则 [", "不允许执行此工具", "要求用户审批，请稍候", "已拒绝"];
+//   norma harness 的拦截包装  → 「Blocked by hook: 【ARTEX 平台管控…】」/「Tool call was not permitted: …」
+//   后两条只有新数据才带 metadata.tool_status=denied，老行靠这里认出来。
+const DENIED_MARKERS = [
+  "拦截规则 [",
+  "不允许执行此工具",
+  "要求用户审批，请稍候",
+  "已拒绝",
+  "Blocked by hook:",
+  "Tool call was not permitted",
+  "【ARTEX 平台管控",
+];
 const STOPPED_MARKERS = ["已停止", "未收到执行结果", "执行前被取消"];
 
 export interface ToolStatusInput {

@@ -98,7 +98,7 @@ export function ContextUsageRing({
         >
           <div className="mb-2 flex items-baseline gap-2">
             <span className="font-medium text-xs">{t("context.title")}</span>
-            <span className="ml-auto font-mono text-[10px] text-muted-foreground tabular-nums">
+            <span className="ml-auto font-mono text-ui-2xs text-muted-foreground tabular-nums">
               {formatTokens(used)} / {formatTokens(size)} ({percent.toFixed(1)}%)
             </span>
           </div>
@@ -111,7 +111,7 @@ export function ContextUsageRing({
               style={{ width: `${Math.max(percent, 1)}%` }}
             />
           </div>
-          <p className="mt-2 text-[10px] text-muted-foreground leading-relaxed">{t("context.hint")}</p>
+          <p className="mt-2 text-ui-2xs text-muted-foreground leading-relaxed">{t("context.hint")}</p>
         </div>
       )}
     </div>

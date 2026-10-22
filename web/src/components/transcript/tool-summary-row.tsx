@@ -80,23 +80,23 @@ export function ToolSummaryRow({
       type="button"
     >
       <StatusRing status={status} />
-      <span className={cn("shrink-0 font-medium text-[10px] text-muted-foreground", running && "text-shimmer")}>
+      <span className={cn("shrink-0 font-medium text-ui-2xs text-muted-foreground", running && "text-shimmer")}>
         {t(kind.labelKey)}
       </span>
       {worker ? <span className={workerChipClass}>{worker}</span> : null}
       <span className="shrink-0 font-mono font-medium text-[11.5px] text-foreground">{tool}</span>
       {target ? (
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{target}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-ui-xs text-muted-foreground">{target}</span>
       ) : (
         <span className="flex-1" />
       )}
       {elapsed ? (
-        <span className="shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums" suppressHydrationWarning>
+        <span className="shrink-0 font-mono text-ui-2xs text-muted-foreground tabular-nums" suppressHydrationWarning>
           {elapsed}
         </span>
       ) : null}
       <span
-        className={cn("shrink-0 font-medium text-[10px]", STATUS_TEXT_TONE[status], running && "text-shimmer")}
+        className={cn("shrink-0 font-medium text-ui-2xs", STATUS_TEXT_TONE[status], running && "text-shimmer")}
         suppressHydrationWarning
       >
         {statusLabel}

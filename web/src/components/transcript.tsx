@@ -175,7 +175,7 @@ function ActivityTime({ ts }: { ts: string }) {
     <time
       dateTime={date.toISOString()}
       title={date.toLocaleString("zh-CN")}
-      className="text-[10px] text-muted-foreground tabular-nums"
+      className="text-ui-2xs text-muted-foreground tabular-nums"
       suppressHydrationWarning
     >
       {date.toLocaleString("zh-CN", {
@@ -381,7 +381,7 @@ function InterceptCard({ step, getDetail }: { step: Activity; getDetail: (seq: n
         {step.inherited ? (
           <Badge variant="outline">{t("approval.historyReadonly")}</Badge>
         ) : decided ? (
-          <span className={cn("shrink-0 rounded-md px-2 py-0.5 font-medium text-[11px]", decidedBadgeClass)}>
+          <span className={cn("shrink-0 rounded-md px-2 py-0.5 font-medium text-ui-xs", decidedBadgeClass)}>
             {decidedLabel}
           </span>
         ) : (
@@ -586,7 +586,7 @@ function ToolBlock({
       {open && (
         <div className="mt-1.5 mb-2 ml-2 overflow-hidden rounded-lg border border-border/80 bg-secondary/30 shadow-2xs">
           {!sections ? (
-            <div className="p-3 font-mono text-[11px] text-muted-foreground">{t("loading")}</div>
+            <div className="p-3 font-mono text-ui-xs text-muted-foreground">{t("loading")}</div>
           ) : (
             <ToolBody
               onToggleWrap={() => setWrapLines((w) => !w)}
@@ -683,7 +683,7 @@ function MessageBlock({
         />
         {showWorker && <span className={chip(group.worker)}>{group.worker}</span>}
         {hasThinking && (
-          <span className="shrink-0 rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 font-medium text-[10px] text-violet-600 dark:text-violet-300">
+          <span className="shrink-0 rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 font-medium text-ui-2xs text-violet-600 dark:text-violet-300">
             {t("kind.thinking")}
           </span>
         )}
@@ -692,17 +692,17 @@ function MessageBlock({
       {open && (
         <div className="mt-1.5 mb-2 ml-2 overflow-hidden rounded-lg border border-border/80 bg-secondary/30 shadow-2xs">
           {!stepDetails ? (
-            <div className="p-3 font-mono text-[11px] text-muted-foreground">{t("loading")}</div>
+            <div className="p-3 font-mono text-ui-xs text-muted-foreground">{t("loading")}</div>
           ) : (
             <div className="divide-y divide-border/70">
               {stepDetails.map((item, idx) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: coalesced steps are static per detailKey
                 <div key={idx} className="flex flex-col">
-                  <div className="flex items-center justify-between bg-muted/40 px-3 py-1 text-[10px]">
+                  <div className="flex items-center justify-between bg-muted/40 px-3 py-1 text-ui-2xs">
                     <span className="font-semibold text-muted-foreground uppercase">{item.kind}</span>
                     <CopyTextButton text={item.text} />
                   </div>
-                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words p-2.5 font-mono text-[11px] text-foreground/90 leading-relaxed">
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words p-2.5 font-mono text-ui-xs text-foreground/90 leading-relaxed">
                     {item.text}
                   </pre>
                 </div>
@@ -899,7 +899,7 @@ function ExecView({
           return (
             <div
               key={`r${g.key}`}
-              className="my-3 flex items-center gap-2.5 font-semibold text-[10px] text-muted-foreground uppercase tracking-wider"
+              className="my-3 flex items-center gap-2.5 font-semibold text-ui-2xs text-muted-foreground uppercase tracking-wider"
             >
               <span className="h-px flex-1 bg-border/80" />
               <span className="inline-flex items-center gap-1 rounded-full border bg-muted/60 px-2.5 py-0.5">
@@ -958,7 +958,7 @@ function LiveThinking({ text }: { text: string }) {
         <span className="shrink-0 opacity-60">{open ? "▾" : "▸"}</span>
       </button>
       {open && (
-        <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-[11px] leading-relaxed">
+        <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-ui-xs leading-relaxed">
           {text}
         </pre>
       )}
@@ -1026,6 +1026,15 @@ export function Transcript({
           <span className="opacity-70">🔧</span>
           <span className="font-mono">{liveDelta.tool}</span>
           <span className="opacity-60">…</span>
+        </div>
+      )}
+      {liveDelta?.kind === "progress" && !!liveDelta.text && (
+        <div className="flex items-start gap-1.5 pl-3 text-ui-xs text-muted-foreground">
+          <span className="shrink-0 opacity-70">…</span>
+          {liveDelta.tool ? (
+            <span className="shrink-0 font-mono opacity-80">{liveDelta.tool}</span>
+          ) : null}
+          <span className="min-w-0 truncate">{liveDelta.text}</span>
         </div>
       )}
       {live && !liveDelta && (

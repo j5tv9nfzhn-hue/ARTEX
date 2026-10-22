@@ -40,7 +40,7 @@ function SectionBlock({
   const t = useTranslations("transcript");
   return (
     <div className="flex flex-col">
-      <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-1 text-[10px]">
+      <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-1 text-ui-2xs">
         <span
           className={cn(
             "font-semibold uppercase tracking-wide",
@@ -53,7 +53,7 @@ function SectionBlock({
           <button
             aria-label={t("tool.wrapLines")}
             className={cn(
-              "inline-flex size-5 items-center justify-center rounded text-[10px] transition-colors hover:bg-accent hover:text-foreground",
+              "inline-flex size-5 items-center justify-center rounded text-ui-2xs transition-colors hover:bg-accent hover:text-foreground",
               wrapLines ? "text-primary" : "text-muted-foreground",
             )}
             onClick={(event) => {
@@ -70,7 +70,7 @@ function SectionBlock({
       </div>
       <pre
         className={cn(
-          "max-h-72 overflow-auto p-2.5 font-mono text-[11px] leading-relaxed",
+          "max-h-72 overflow-auto p-2.5 font-mono text-ui-xs leading-relaxed",
           wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre",
           section.isCmd ? "text-sky-700 dark:text-sky-300" : "text-foreground/90",
         )}
@@ -113,12 +113,12 @@ function CommandBody({ sections, wrapLines, onToggleWrap }: ToolBodyProps) {
   return (
     <div className="divide-y divide-border/70">
       <div className="flex flex-col">
-        <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-1 text-[10px]">
+        <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-1 text-ui-2xs">
           <span className="font-semibold text-muted-foreground uppercase tracking-wide">{sections[0]?.label ?? ""}</span>
           <div className="flex items-center gap-1">
             {long ? (
               <button
-                className="rounded px-1 text-[10px] text-muted-foreground hover:text-foreground"
+                className="rounded px-1 text-ui-2xs text-muted-foreground hover:text-foreground"
                 onClick={(event) => {
                   event.stopPropagation();
                   setExpanded((value) => !value);
@@ -133,7 +133,7 @@ function CommandBody({ sections, wrapLines, onToggleWrap }: ToolBodyProps) {
         </div>
         <div
           className={cn(
-            "overflow-auto p-2.5 font-mono text-[11px] leading-relaxed",
+            "overflow-auto p-2.5 font-mono text-ui-xs leading-relaxed",
             wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre",
             expanded ? "max-h-72" : "max-h-16",
           )}
@@ -165,7 +165,7 @@ function InputBody({ tool, sections, wrapLines, onToggleWrap }: ToolBodyProps) {
   return (
     <div className="divide-y divide-border/70">
       {input ? (
-        <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 font-mono text-[11px]">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 font-mono text-ui-xs">
           {path ? <span className="min-w-0 break-all text-foreground/90">{path}</span> : null}
           {detail ? <span className="text-muted-foreground">{detail}</span> : null}
           <span className="ml-auto flex items-center gap-1">
@@ -189,10 +189,10 @@ function HttpBody({ sections, wrapLines, onToggleWrap }: ToolBodyProps) {
     <div className="divide-y divide-border/70">
       {input && url ? (
         <div className="flex items-center gap-2 px-3 py-1.5">
-          <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-mono font-semibold text-[10px] text-sky-600 dark:text-sky-400">
+          <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-mono font-semibold text-ui-2xs text-sky-600 dark:text-sky-400">
             {method}
           </span>
-          <span className="min-w-0 flex-1 break-all font-mono text-[11px] text-foreground/90">{url}</span>
+          <span className="min-w-0 flex-1 break-all font-mono text-ui-xs text-foreground/90">{url}</span>
           <CopyTextButton text={url} />
         </div>
       ) : (
@@ -219,7 +219,7 @@ function TodoBody({ sections, wrapLines, onToggleWrap }: ToolBodyProps) {
           const done = str(todo.status) === "completed" || str(todo.status) === "done";
           return (
             // biome-ignore lint/suspicious/noArrayIndexKey: 计划项按行序展示，内容本身可能重复
-            <div className={cn("flex items-start gap-2 text-[11px]", done && "text-muted-foreground")} key={index}>
+            <div className={cn("flex items-start gap-2 text-ui-xs", done && "text-muted-foreground")} key={index}>
               <span
                 className={cn(
                   "mt-0.5 flex size-3 shrink-0 items-center justify-center rounded-[3px] border",
@@ -286,7 +286,7 @@ function DiffJobView({ job }: { job: DiffJob }) {
   const model: DiffModel = React.useMemo(() => buildDiff(job.oldText, job.newText), [job.oldText, job.newText]);
   return (
     <div>
-      <div className="flex items-center gap-2 bg-muted/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+      <div className="flex items-center gap-2 bg-muted/30 px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground">
         <span className="min-w-0 truncate">{job.path}</span>
         <DiffStat added={model.added} className="ml-auto" removed={model.removed} />
       </div>

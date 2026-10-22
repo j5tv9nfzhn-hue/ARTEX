@@ -51,6 +51,16 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  /* 差异视图两档色：与主题色板解耦（红绿是语义色，不随预设偏转），
+     亮/暗各一份在文件末尾定义；diff-view.tsx 只用 text-diff-added / bg-diff-removed 这类工具类 */
+  --color-diff-added: var(--diff-added);
+  --color-diff-removed: var(--diff-removed);
+  /* 对话区微型字号：把散落的 text-[10px] / text-[11px] 收敛成两支令牌，
+     行高随字号一起给出，避免每个组件各写一个像素值 */
+  --text-ui-2xs: 10px;
+  --text-ui-2xs--line-height: 1.5;
+  --text-ui-xs: 11px;
+  --text-ui-xs--line-height: 1.6;
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
   /* 与 --font-sans 同样的映射方式:让 Tailwind 的 font-mono 工具类实际消费运行时 --font-mono 变量 */
@@ -412,4 +422,17 @@ html {
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
+}
+
+/* 差异视图配色（transcript/diff-view.tsx）：绿色=新增、红色=删除。
+   亮暗各一档，色相固定为翠绿/正红，随主题预设不变——红绿是语义色，
+   被预设改成品牌色反而会让人误读改动方向。 */
+:root {
+  --diff-added: oklch(0.596 0.145 163);
+  --diff-removed: oklch(0.577 0.245 27);
+}
+
+.dark {
+  --diff-added: oklch(0.765 0.177 163);
+  --diff-removed: oklch(0.704 0.191 22);
 }

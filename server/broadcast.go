@@ -131,6 +131,11 @@ func (l *liveEmitter) emit(d agent.LiveDelta) {
 		l.last = now
 		l.mu.Unlock()
 		l.bc.PublishLive(l.task, LiveFrame{Kind: d.Kind, Tool: d.Tool, ToolUseID: d.ToolUseID, Worker: l.worker, IntentID: l.intentID})
+	case "progress":
+		// 工具执行中的进度：不是累计文本，原样转发一行。进度帧本来就稀疏（工具自己决定
+		// 什么时候报），不需要像 text/thinking 那样节流，也不清空文本缓冲。
+		l.mu.Unlock()
+		l.bc.PublishLive(l.task, LiveFrame{Kind: d.Kind, Tool: d.Tool, ToolUseID: d.ToolUseID, Text: d.Text, Worker: l.worker, IntentID: l.intentID})
 	default:
 		l.mu.Unlock() // 未知 kind：解锁后忽略，绝不能让锁漏出去
 	}
