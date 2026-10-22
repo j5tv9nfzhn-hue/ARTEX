@@ -28,7 +28,8 @@
       "expo-notifications"
     ],
     "experiments": {
-      "typedRoutes": false
+      "typedRoutes": false,
+      "tsconfigPaths": true
     }
   }
 }

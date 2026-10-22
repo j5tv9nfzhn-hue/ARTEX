@@ -83,7 +83,7 @@ export default function OverviewScreen() {
                 {data.active_task.goal || "（无目标描述）"}
               </Text>
             </View>
-            <ProgressRing ratio={(data?.active_task as { progress?: number } | undefined)?.progress ?? null} size={40} stroke={4} />
+            <ProgressRing ratio={null} size={40} stroke={4} />
           </Pressable>
         ) : (
           <Text style={{ color: palette.textFaint, fontSize: font.small }}>当前没有活跃任务</Text>
