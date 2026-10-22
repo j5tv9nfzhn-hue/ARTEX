@@ -1023,6 +1023,12 @@ export interface TrafficHost {
 export interface Settings {
   traffic_capture: boolean;
   agent_traffic_binding: boolean; // Agent 自动绑定流量证据，默认关闭；不影响人工绑定
+  // 复核成本闸门(见 server/verify_policy.go)：severity 达到 verify_auto_threshold 的发现
+  // 入库即自动派发独立复核；低于阈值的按 verify_sample_percent 抽查(0-100,0=不抽查)。
+  // 阈值枚举 off | critical | high | medium | low，默认 high(=critical/high 强制)。
+  // 选 off 则只保留在漏洞详情里手动发起复核。改完对之后入库的发现立即生效。
+  verify_auto_threshold: string;
+  verify_sample_percent: number;
   llm_record: boolean; // LLM 录制开关（默认关）；关闭时不记录任何 LLM 调用
   // Web search. brave_key_set / tavily_key_set reflect whether a key is stored
   // (the values are never returned). On PUT, send the corresponding field to set/clear.

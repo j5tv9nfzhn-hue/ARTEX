@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 复核
+
+#### 新增的功能
+
+- **自动复核的成本闸门改为用户可配（系统设置 → 自动复核闸门）**：此前触发口径硬编码在 `shouldAutoVerify` 里——`critical`/`high` 一律复核、`medium`/`low` 按 `ARTEX_VERIFY_SAMPLE_RATE` 采样 25%，界面上看不到「这条发现为什么会被复核」，用户也没法按预算收紧。现在改为两项系统设置：`verify_auto_threshold`（`off` / `critical` / `high` / `medium` / `low`，**等级达到该档入库即强制复核**）与 `verify_sample_percent`（低于阈值时的抽查比例 0–100，0 = 不抽查）。默认 `high` + 25%，与旧口径逐条对应，升级后行为不变；选「关闭」则只保留人工发起。两项在「发现入库」那一刻读取，改完对之后入库的发现立即生效，不必重建 Agent，已进队列的按原口径跑完。实现见 `server/verify_policy.go`（判定为纯函数，`server/verify_policy_test.go` 钉住阈值/抽查/关闭三段口径），接口在 `/api/settings` 的 `verify_auto_threshold` / `verify_sample_percent` 两个字段上收发。
+
 ### 拦截
 
 #### 新增的功能

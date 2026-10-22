@@ -74,6 +74,10 @@ export default function SystemSettingsPage() {
   const [injectWorker, setInjectWorker] = React.useState(true);
   // 实验功能:noa 上下文压缩(默认关)。
   const [noaCompaction, setNoaCompaction] = React.useState(false);
+  // 复核成本闸门：等级达到阈值自动复核，低于阈值按比例抽查（见 server/verify_policy.go）。
+  const [verifyThreshold, setVerifyThreshold] = React.useState("high");
+  const [verifySamplePercent, setVerifySamplePercent] = React.useState("25");
+  const [savingVerifyGate, setSavingVerifyGate] = React.useState(false);
   // AI 自我进化沉淀：任务完成/删除时自动生成技能；审阅门控默认开启。
   const [skillReviewGate, setSkillReviewGate] = React.useState(true);
   const [skillAutoDistill, setSkillAutoDistill] = React.useState(true);
@@ -104,6 +108,8 @@ export default function SystemSettingsPage() {
     setSkillReviewGate(s.skill_review_gate !== false);
     setSkillAutoDistill(s.skill_auto_distill !== false);
     setSkillAutoDistillApply(!!s.skill_auto_distill_apply);
+    setVerifyThreshold(s.verify_auto_threshold || "high");
+    setVerifySamplePercent(String(s.verify_sample_percent ?? 25));
   }, []);
 
   const saveWorkers = () => {
@@ -139,6 +145,25 @@ export default function SystemSettingsPage() {
       })
       .catch((e) => toast.error(t("toast.saveFailed", { error: (e as Error).message })))
       .finally(() => setSavingTokenBudget(false));
+  };
+
+  // 复核闸门：阈值走下拉框、采样比例是整数百分比。校验只做本地能确定的
+  // （整数、0–100）；阈值枚举的合法性由后端再校验一次，非法值返回中文 400。
+  const saveVerifyGate = () => {
+    const percent = Number(verifySamplePercent);
+    if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
+      toast.error(t("toast.verifyGateInvalid"));
+      return;
+    }
+    setSavingVerifyGate(true);
+    api
+      .setSettings({ verify_auto_threshold: verifyThreshold, verify_sample_percent: percent })
+      .then((s) => {
+        apply(s);
+        toast.success(t("toast.verifyGateSaved"));
+      })
+      .catch((e) => toast.error(t("toast.saveFailed", { error: (e as Error).message })))
+      .finally(() => setSavingVerifyGate(false));
   };
 
   const savePriceTable = () => {
@@ -426,6 +451,74 @@ export default function SystemSettingsPage() {
               disabled={!loaded || saving}
               onCheckedChange={toggleAgentTrafficBinding}
             />
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldCheckIcon className="size-4" />
+              {t("verifyGate.title")}
+            </CardTitle>
+            <CardDescription id="verify-gate-description">
+              {t.rich("verifyGate.desc", richTags)}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label
+                htmlFor="verify-gate-threshold"
+                className="text-sm font-normal text-muted-foreground"
+              >
+                {t("verifyGate.thresholdLabel")}
+              </Label>
+              <Select
+                value={verifyThreshold}
+                disabled={!loaded || savingVerifyGate}
+                onValueChange={setVerifyThreshold}
+              >
+                <SelectTrigger
+                  id="verify-gate-threshold"
+                  aria-describedby="verify-gate-description"
+                  className="w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">{t("verifyGate.threshold.off")}</SelectItem>
+                  <SelectItem value="critical">{t("verifyGate.threshold.critical")}</SelectItem>
+                  <SelectItem value="high">{t("verifyGate.threshold.high")}</SelectItem>
+                  <SelectItem value="medium">{t("verifyGate.threshold.medium")}</SelectItem>
+                  <SelectItem value="low">{t("verifyGate.threshold.low")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label
+                htmlFor="verify-gate-sample"
+                className="text-sm font-normal text-muted-foreground"
+              >
+                {t("verifyGate.sampleLabel")}
+              </Label>
+              <Input
+                id="verify-gate-sample"
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                className="w-24 font-mono text-sm"
+                value={verifySamplePercent}
+                disabled={!loaded || savingVerifyGate || verifyThreshold === "off"}
+                onChange={(e) => setVerifySamplePercent(e.target.value)}
+              />
+              <span className="text-sm text-muted-foreground">%</span>
+            </div>
+            <p className="text-muted-foreground text-xs">{t("verifyGate.sampleHint")}</p>
+            <div className="flex items-center justify-end">
+              <Button onClick={saveVerifyGate} disabled={!loaded || savingVerifyGate}>
+                {t("save")}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

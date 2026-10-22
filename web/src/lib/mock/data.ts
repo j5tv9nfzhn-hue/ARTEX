@@ -3501,6 +3501,9 @@ export const tools: Tool[] = [
 export const settings: Settings = {
   traffic_capture: true,
   agent_traffic_binding: false,
+  // 复核成本闸门：高危起强制复核，低于阈值抽 25%（与后端默认口径一致）。
+  verify_auto_threshold: "high",
+  verify_sample_percent: 25,
   llm_record: false,
   web_search_enabled: true,
   web_search_backend: "ddgs",

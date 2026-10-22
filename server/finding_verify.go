@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"slices"
@@ -35,6 +34,9 @@ import (
 //  2. 只有结论才改状态：会话中断/异常/无结论 ⇒ 保持 unverified，绝不当成通过。
 //  3. 有成本上限：并发 1、队列有界，超出就丢弃并留日志——宁可少复核一条，
 //     也不能让复核把正常任务挤掉。
+//
+// 触发闸门（阈值 + 采样）由系统设置页配置，判定逻辑见 server/verify_policy.go：
+// 等级达到阈值强制复核、低于阈值按比例抽查、也可以整体关闭（只保留人工发起）。
 
 const (
 	// verifySeedFlag 是「复核员已播种」的一次性标记（与 retester 的 flag 同构）。
@@ -43,7 +45,7 @@ const (
 	verifyQueueCap = 64
 	// verifyMaxAttempts 是「聊天不可用（模型未配好/服务停止中）」时的重试次数。
 	verifyMaxAttempts = 3
-	// verifySampleRateEnv 允许运维调整中低危的采样率（0–1），默认 0.25。
+	// verifySampleRateEnv 在系统设置未配置采样比例时生效（0–1），默认 0.25。
 	verifySampleRateEnv = "ARTEX_VERIFY_SAMPLE_RATE"
 )
 
@@ -54,26 +56,6 @@ var errVerifyAgentMissing = "复核 Agent 未启用：请在 Agent 页面启用 
 type verifyRequest struct {
 	findingID int64
 	reason    string
-}
-
-// shouldAutoVerify 决定一条新发现是否自动复核。
-//
-// 口径（与验收对齐）：critical/high 一律复核，不采样——高危漏一条的代价远大于
-// 复核一次的成本；medium/low 按键值采样，避免每条低危都开一个会话把预算烧光。
-// 返回的第二个值是写进 finding_verifications.reason 的原因，事后可核对。
-func shouldAutoVerify(severity string) (bool, string) {
-	switch strings.ToLower(strings.TrimSpace(severity)) {
-	case "critical", "high":
-		return true, "auto:severity=" + severity
-	case "medium", "low":
-		if rand.Float64() < verifySampleRate() {
-			return true, "auto:sample"
-		}
-		return false, ""
-	default:
-		// 未知严重度按最保守处理：不自动复核（严重度字段本身有问题，先别扩大消耗）。
-		return false, ""
-	}
 }
 
 func verifySampleRate() float64 {

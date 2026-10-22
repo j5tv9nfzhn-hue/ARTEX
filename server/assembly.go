@@ -600,6 +600,10 @@ func seedPrompts(pg *db.DB) {
 // and 缺省入参 get injected. MCP/skill/host tools have no row and pass through.
 func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 	agent.FindingTrafficBindingEnabled = func() bool { return pg.GetBool(settingAgentTrafficBinding, false) }
+	// 复核成本闸门：阈值与采样比例由系统设置页配置，未配置时回退默认口径
+	// （critical/high 强制 + 25% 采样，见 server/verify_policy.go）。
+	// 发现入库那一刻读一次库，所以改完设置对之后入库的发现立即生效，不必重建 agent。
+	VerifyPolicy = func() (string, int, bool) { return verifyAutoPolicy(pg) }
 	// 工具面瘦身的实测口径（P3 验收：单轮 schema 体积下降 40%）。开机打一行，
 	// 让人在日志里就能看到「这一版到底省了多少」，而不是靠读代码估。
 	// 数值来自 agent.ToolSchemaSizes()，与单测断言用的是同一个函数——日志与测试

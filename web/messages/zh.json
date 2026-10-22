@@ -2875,7 +2875,7 @@
     },
     "panel": {
       "desc": "由独立的只读会话判断这条发现是否成立；只有「已复核」才计入资产真值与报告正文。",
-      "emptyDesc": "高危发现会自动复核，也可以在这里手动发起一次独立复核。",
+      "emptyDesc": "等级达到系统设置「自动复核闸门」阈值的发现会自动复核，也可以在这里手动发起一次独立复核。",
       "emptyTitle": "暂无复核记录",
       "evidence": "复核证据",
       "loadError": "加载复核记录失败：{error}",
@@ -2883,7 +2883,7 @@
       "reason": {
         "manual": "人工发起",
         "sample": "抽样复核",
-        "severity": "高危强制复核"
+        "severity": "达到阈值强制复核"
       },
       "retry": "重试",
       "sessionDeleted": "会话已删除",
@@ -3154,6 +3154,20 @@
       "stateNotInstalled": "未安装（仅用原生协议栈）",
       "title": "人机验证工具链就绪状态"
     },
+    "verifyGate": {
+      "desc": "漏洞入库时，<b>等级达到所设阈值</b>的发现会自动派给「独立复核」Agent（只读工具、独立会话、不采信原上报结论）；低于阈值的按下方比例抽查。<br></br>每一次复核都是一次独立的模型会话，<b>阈值越低、抽查比例越高，Token 消耗越大</b>。选「关闭」后只保留在漏洞详情里手动发起复核。改完对之后入库的发现立即生效，已进队列的按原口径跑完。",
+      "sampleHint": "低于阈值时的抽查比例；0 = 不抽查（只做达到阈值的强制复核）。",
+      "sampleLabel": "抽查比例",
+      "threshold": {
+        "critical": "仅严重（critical）",
+        "high": "严重 + 高危（critical / high）",
+        "low": "全部等级（含低危）",
+        "medium": "严重 + 高危 + 中危",
+        "off": "关闭 · 只手动发起"
+      },
+      "thresholdLabel": "强制复核的最低等级",
+      "title": "自动复核闸门"
+    },
     "globalProxy": {
       "addrLabel": "代理地址",
       "configured": "已配置 · 所有目标流量经此代理出网",
@@ -3207,6 +3221,8 @@
       "testFailed": "搜索测试失败：{error}",
       "testSuccess": "搜索测试成功 · {backend} 返回 {count} 条结果",
       "testUnknownError": "未知错误",
+      "verifyGateInvalid": "抽查比例必须是 0–100 的整数",
+      "verifyGateSaved": "已保存自动复核闸门（对之后入库的发现生效）",
       "webSearchSaved": "已保存网络搜索配置",
       "workersInvalid": "并发数必须是大于 0 的整数",
       "workersSaved": "已保存并发工作 agent 数（对之后启动的任务生效）"

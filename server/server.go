@@ -3623,7 +3623,7 @@ func (s *Server) settingsPayload() map[string]any {
 	}
 	// 用户输出语言：运行时设置 > config.Language()（环境变量、文件配置、默认简体中文）。
 	outputLang := s.outputLanguage()
-	return map[string]any{
+	payload := map[string]any{
 		"output_language":           outputLang, // 用户输出语言 zh/en/es；旧 ko 值兼容归一为 zh。
 		"traffic_capture":           s.m.TrafficEnabled(),
 		"agent_traffic_binding":     s.m.pg.GetBool(settingAgentTrafficBinding, false),
@@ -3666,6 +3666,12 @@ func (s *Server) settingsPayload() map[string]any {
 		"update_auto_check": s.updateAutoCheck(),
 		"update_auto_apply": s.updateAutoApply(),
 	}
+	// 复核成本闸门：回显「当前真正生效」的阈值与采样比例（含默认值与环境变量覆盖），
+	// 否则选择框会显示 high、实际却在按环境变量跑。见 server/verify_policy.go。
+	verifyThreshold, verifySamplePercent := verifyAutoSettings(s.m.pg)
+	payload["verify_auto_threshold"] = verifyThreshold
+	payload["verify_sample_percent"] = verifySamplePercent
+	return payload
 }
 
 // notifyPublicBaseURL 读推送回链用的外部地址。
@@ -3755,6 +3761,11 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		//   update_auto_apply  检测到后自动下载并校验，下次启动生效（默认关）
 		UpdateAutoCheck *bool `json:"update_auto_check"`
 		UpdateAutoApply *bool `json:"update_auto_apply"`
+		// 自动复核成本闸门（见 server/verify_policy.go）：阈值
+		// off|critical|high|medium|low，以及低于阈值时的抽查比例（0–100）。
+		// 两项都在发现入库时读取，改完即对之后入库的发现生效，不需要重建 agent。
+		VerifyAutoThreshold *string `json:"verify_auto_threshold"`
+		VerifySamplePercent *int    `json:"verify_sample_percent"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -3921,6 +3932,30 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if req.LLMRecord != nil {
 		// 录制器每次调用读取该标志，切换即时生效，无需 applyLLM 重建。
 		if err := s.m.SetLLMRecordEnabled(*req.LLMRecord); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.VerifyAutoThreshold != nil {
+		threshold := strings.ToLower(strings.TrimSpace(*req.VerifyAutoThreshold))
+		if threshold != verifyThresholdOff {
+			if _, ok := verifyThresholdRank(threshold); !ok {
+				writeErr(w, 400, "自动复核阈值无效：可选 off / critical / high / medium / low")
+				return
+			}
+		}
+		if err := s.m.pg.SetSetting(settingVerifyAutoThreshold, threshold); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.VerifySamplePercent != nil {
+		percent := *req.VerifySamplePercent
+		if percent < 0 || percent > 100 {
+			writeErr(w, 400, "自动复核采样比例必须在 0–100 之间（0 = 不抽查）")
+			return
+		}
+		if err := s.m.pg.SetSetting(settingVerifySamplePercent, strconv.Itoa(percent)); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
