@@ -22,8 +22,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { ApprovalDetail } from "@/components/approval-records";
-import { LiveStreamMarkdown } from "@/components/live-markdown";
-import { Markdown } from "@/components/markdown";
+import { AnswerText } from "@/components/transcript/answer-text";
 import { CopyTextButton } from "@/components/transcript/copy-text-button";
 import { LiveToolRow } from "@/components/transcript/live-tool-row";
 import { ToolBody, type ToolSectionModel } from "@/components/transcript/renderers";
@@ -880,16 +879,7 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
   const contentText = step.is_error ? step.summary.split("\n")[0] : (full ?? step.summary);
   return (
     <div ref={ref} className="mt-2 mb-3 flex min-w-0 flex-col gap-1">
-      <div
-        className={cn(
-          "min-w-0 flex-1 break-words rounded-xl border px-4 py-3 shadow-2xs",
-          step.is_error
-            ? "border-red-500/35 bg-red-500/8 text-red-600 text-sm dark:text-red-400"
-            : "border-border/80 border-l-2 border-l-primary bg-muted/45",
-        )}
-      >
-        {step.is_error ? <span>{contentText}</span> : <Markdown text={contentText} />}
-      </div>
+      <AnswerText isError={step.is_error} text={contentText} />
       <div className="flex items-center justify-between px-1">
         <ActivityTime ts={step.ts} />
         {!step.is_error && contentText && <CopyTextButton text={contentText} />}
@@ -1022,7 +1012,7 @@ export function Transcript({
         <ThinkingRow text={liveDelta.text} label={t("kind.thinking")} live />
       )}
       {liveDelta?.kind === "text" && !!liveDelta.text && (
-        <LiveStreamMarkdown text={liveDelta.text} className="min-w-0 break-words pl-3" />
+        <AnswerText className="mt-2 mb-3 ml-3" streaming text={liveDelta.text} />
       )}
       {liveDelta?.kind === "tool_use" && !!liveDelta.tool && (
         <LiveToolRow args={liveDelta.text ?? ""} tool={liveDelta.tool} />

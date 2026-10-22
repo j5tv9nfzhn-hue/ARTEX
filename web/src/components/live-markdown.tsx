@@ -1,9 +1,3 @@
-"use client";
-
-import * as React from "react";
-
-import { Markdown } from "@/components/markdown";
-
 // 流式正文的 markdown 渲染。要同时解决两件事：
 //
 //   1) **语法只写到一半**。模型一次只吐几个字，任何时刻的文本都可能停在
@@ -12,10 +6,8 @@ import { Markdown } from "@/components/markdown";
 //      所以渲染前先把「看起来还没写完」的部分补齐；等真正的闭合符到达时，
 //      补出来的形状自然被替换掉，已渲染的内容不会跳变。
 //
-//   2) **帧率**。增量是 40ms 一帧（约 25fps），而一次 markdown 解析是整棵树
-//      重建。这里用 120ms 的节流窗口（约 8fps）渲染：文字仍在滚，重排次数降到 1/3。
-const RENDER_EVERY_MS = 120;
-
+//   帧率节流不在这里：同一份正文渲染（components/transcript/answer-text.tsx）
+//   自己做 120ms 节流，这个文件只负责把“写了一半”的语法补齐。
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 
 function count(hay: string, needle: string): number {
@@ -80,62 +72,4 @@ export function repairStreamMarkdown(src: string): string {
   const parens = count(prose, "](") - count(prose, ")");
   if (parens > 0) out += ")".repeat(parens);
   return out;
-}
-
-/**
- * 把高频文本压到 ms 一档：首次立即生效（leading），之后每 ms 最多一次，
- * 且在窗口结束时取当时最新的值（trailing）——不会因为一直在变而永远不渲染。
- */
-function useThrottledText(text: string, ms: number): string {
-  const [shown, setShown] = React.useState(text);
-  const latest = React.useRef(text);
-  const lastAt = React.useRef(0);
-  const timer = React.useRef<number | null>(null);
-  latest.current = text;
-
-  React.useEffect(() => {
-    if (shown === text) return;
-    const wait = Math.max(0, ms - (Date.now() - lastAt.current));
-    if (wait === 0) {
-      lastAt.current = Date.now();
-      setShown(text);
-      return;
-    }
-    if (timer.current !== null) return; // 已有定时器在等，到点会取最新值
-    timer.current = window.setTimeout(() => {
-      timer.current = null;
-      lastAt.current = Date.now();
-      setShown(latest.current);
-    }, wait);
-  }, [text, shown, ms]);
-
-  React.useEffect(
-    () => () => {
-      if (timer.current !== null) window.clearTimeout(timer.current);
-    },
-    [],
-  );
-
-  return shown;
-}
-
-/**
- * 运行中的正文：markdown 实时渲染 + 行尾光标。
- *
- * 落库之后同一条消息会换成 Transcript 里的 AnswerBlock（同样是 Markdown），
- * 所以两者的排版是一致的——切换时不会出现「流式时是素文本、结束后突然变成
- * 标题/列表」的跳变。
- */
-export function LiveStreamMarkdown({ text, className }: { text: string; className?: string }) {
-  const shown = useThrottledText(text, RENDER_EVERY_MS);
-  const repaired = React.useMemo(() => repairStreamMarkdown(shown), [shown]);
-  return (
-    <div className={className}>
-      <Markdown text={repaired} />
-      <span
-        aria-hidden
-        className="mt-0.5 inline-block h-3 w-1 animate-pulse rounded-xs bg-primary align-middle"
-      />
-    </div>
-  );
 }
