@@ -1,20 +1,19 @@
 @echo off
 rem 将控制台切换为 UTF-8，避免中文在其他代码页下乱码。
 chcp 65001 >nul 2>&1
-rem ARTEX-REA 启动监护脚本，Windows 版本。
+rem ARTEX-REA 启动脚本（Windows，现在是可选兜底）
+rem
+rem 不装这个脚本也能用：artex-rea.exe 自己会做单实例仲裁，更新装好后也会自己
+rem 拉起新进程重启。只有想让它崩溃后也自动重开时才需要这个脚本。
 rem
 rem 用法：
 rem   start.bat                  前台运行，Ctrl-C 停止
-rem   start.bat -addr :9000      其他参数原样传给 artex-rea
+rem   start.bat -addr :9000      命令行原样传给 artex-rea
 rem
-rem 启动 artex-rea.exe，进程退出后按退出码决定是否重启。
-rem
-rem   0      正常停止，结束循环
-rem   75     请求重启，立即再运行，用于页面的一键更新或回滚
-rem   其他   异常退出，退避重启，1、2、4 秒递增，最多 60 秒
-rem
-rem 下载、SHA256 校验和版本替换由 artex-rea 启动时自行执行，不放入本脚本。
-rem 对应 selfupdate 包；保持脚本简单，详情见 start.sh。
+rem 退出码约定：
+rem   0      正常停止，脚本退出（不再循环）
+rem   75     请求重启（例如网页上点了"立即更新"），脚本立刻重启进程
+rem   其它   异常退出：按 1/2/4 秒递增等待后重试，最多 60 秒
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0"

@@ -27,11 +27,7 @@ const (
 	updateErrAlreadyLatestFmt   = "已是最新版本 (%s)"
 	updateErrInProgress         = "已有更新正在进行"
 	updateErrRollbackInProgress = "正在更新，无法回滚"
-	// 换装要重启进程，重启由 start.sh / start.bat 的守护循环完成。
-	// 没有守护者时点"立即更新"= 下载成功后进程退出再没人拉起 = 直接停服，
-	// 所以这里必须拦在服务端，而不是只在前端把按钮置灰。
-	updateErrUnsupervised   = "当前进程不是由 start.sh / start.bat 启动，换装后没有人把它重新拉起，会直接停服。请改用启动脚本运行，或手动停止服务后用脚本重启完成升级。"
-	updateErrDockerOneClick = "容器内不支持一键换装（只改容器可写层，重建容器即回退），请拉取新镜像后重建容器。"
+	updateErrDockerOneClick     = "容器内不支持一键换装（只改容器可写层，重建容器即回退），请拉取新镜像后重建容器。"
 )
 
 // 更新偏好的设置键。两个开关都存在 settings 表里（而不是浏览器 localStorage）：
@@ -259,8 +255,9 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		"repo":        selfupdate.Repo,
 		"boot_notice": boot.Detail,
 		"rolled_back": boot.RolledBack,
-		// 自动更新只在"有守护脚本"的部署里生效：没有守护者时换装后没人拉起进程。
-		"supervised": selfupdate.Supervised(),
+		// supervised 的历史语义是"由 start.sh / start.bat 监护"。现在进程自己会
+		// 拉新进程重开，脚本只是可选兜底，所以这里回答的是"当前环境能否自动重启"。
+		"supervised": selfupdate.CanRestartSelf(),
 		// 已下载待重启的版本；非空时前端应提示"重启后生效"，而不是再让用户点更新。
 		"staged_version": selfupdate.StagedVersion(),
 		"auto_check":     s.updateAutoCheck(),
@@ -330,13 +327,10 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 	current := BuildVersion
 
-	// 能力门控（服务端强制，不依赖前端置灰）：
-	// 换装之后进程要以 ExitRestart 退出，由守护脚本重新拉起；容器内换装只作用于
-	// 容器可写层。两者都不该走到下载，否则用户会得到"更新成功但服务没了"。
-	if !selfupdate.Supervised() {
-		writeErr(w, 400, updateErrUnsupervised)
-		return
-	}
+	// 流程闸门：容器内不能一键换装（换完没人拉起，只会在原地打转），直接拒绝，
+	// 把选择权交给用户看到的"更新成功但没换掉"提示。
+	//
+	// 这里不再要求"有脚本监护"：进程自己会拉新进程重开，start.sh / start.bat 只是可选兜底。
 	if selfupdate.InDocker() {
 		writeErr(w, 400, updateErrDockerOneClick)
 		return
@@ -358,13 +352,23 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Sprintf(updateErrAlreadyLatestFmt, current))
 		return
 	}
+	// 跨进程安装锁：同一安装目录只允许一个进程真正进入安装阶段。
+	// 进程内的 updHub.running 管不到另一个 exe（双击两次、两个控制台各起一个），
+	// 这把锁把"并发 apply"收敛成"一个成功、一个 409"。
+	release, locked := s.lockInstall()
+	if !locked {
+		writeErr(w, 409, updateErrInProgress)
+		return
+	}
 	if !updHub.begin(rel.TagName) {
+		release()
 		writeErr(w, 409, updateErrInProgress)
 		return
 	}
 
 	// 自动更新可能已经把它下好并校验过了：直接重启生效，不重复下载。
 	if stagedMatches(rel) {
+		release()
 		updHub.finish(nil)
 		go func() {
 			time.Sleep(1200 * time.Millisecond)
@@ -374,7 +378,7 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.stageUpdate(client, rel, current, true)
+	go s.stageUpdate(client, rel, current, true, release)
 
 	writeJSON(w, 202, map[string]any{"ok": true, "target": rel.TagName})
 }
@@ -388,10 +392,13 @@ func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 回滚同样是"换装 + 退出 75"，前提条件与一键更新完全一致。
-	if !selfupdate.Supervised() {
-		writeErr(w, 400, updateErrUnsupervised)
+	// 回滚同样是"改磁盘上的指针"，必须和安装互斥；拿不到锁说明另一个进程在装。
+	release, locked := s.lockInstall()
+	if !locked {
+		writeErr(w, 409, updateErrRollbackInProgress)
 		return
 	}
+	defer release()
 	if selfupdate.InDocker() {
 		writeErr(w, 400, updateErrDockerOneClick)
 		return
@@ -413,7 +420,8 @@ func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
 // restart=true：用户点了「立即更新」，暂存完就退出换装（由守护脚本拉起新版本）。
 // restart=false：自动更新，只把包下好、校验好放在磁盘上，换装留到下次启动——
 // 渗透任务可能正跑到一半，自动更新绝不能替用户决定"现在就重启"。
-func (s *Server) stageUpdate(client *http.Client, rel *selfupdate.Release, current string, restart bool) {
+func (s *Server) stageUpdate(client *http.Client, rel *selfupdate.Release, current string, restart bool, release func()) {
+	defer release()
 	// 刻意用 s.ctx 而不是某次请求的 ctx：HTTP 响应一返回请求就结束了，
 	// 挂在它上面下载会立刻被取消。
 	err := selfupdate.Stage(s.ctx, client, rel, current, func(ph selfupdate.Phase, pct int, msg string) {
@@ -438,6 +446,27 @@ func (s *Server) stageUpdate(client *http.Client, rel *selfupdate.Release, curre
 	// 留一点时间把最后一条进度推给前端，再触发退出。
 	time.Sleep(1500 * time.Millisecond)
 	requestRestart()
+}
+
+// lockInstall 拿"同一安装目录只有一个更新安装者"的跨进程锁。
+//
+// 拿不到（另一个进程正在装/回滚）返回 nil, false，由调用方回 409；
+// 锁机制本身不可用（目录只读、权限不足）时退回进程内闸并返回空释放函数 ——
+// 不能因为锁不可用就把更新整个禁用掉。
+func (s *Server) lockInstall() (func(), bool) {
+	root, err := selfupdate.InstallRoot()
+	if err != nil {
+		return func() {}, true
+	}
+	release, state, err := selfupdate.TryAcquireInstall(root)
+	if err != nil {
+		log.Printf("[update] 安装锁不可用（%v），退回进程内闸", err)
+		return func() {}, true
+	}
+	if state == selfupdate.LockBusy {
+		return nil, false
+	}
+	return release, true
 }
 
 // stagedMatches 报告磁盘上的暂存件是不是 rel 这个版本。
@@ -524,10 +553,16 @@ func (s *Server) updateTick() {
 	if stagedMatches(rel) {
 		return
 	}
-	if !updHub.begin(rel.TagName) {
+	release, locked := s.lockInstall()
+	if !locked {
+		log.Printf("[update] 另一个进程正在安装更新，本次自动暂存跳过")
 		return
 	}
-	go s.stageUpdate(client, rel, current, false)
+	if !updHub.begin(rel.TagName) {
+		release()
+		return
+	}
+	go s.stageUpdate(client, rel, current, false, release)
 }
 
 // updateStatus 只读缓存，绝不发网络请求。

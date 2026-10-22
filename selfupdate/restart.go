@@ -84,6 +84,13 @@ func HandoffChild() bool { return os.Getenv(handoffEnv) != "" }
 // RelaunchedChild 判断当前进程是不是自重启拉起来的（诊断用）。
 func RelaunchedChild() bool { return os.Getenv(relaunchEnv) != "" }
 
+// CanRestartSelf 报告"装完之后进程能不能自己回到运行态"。
+//
+// 以前这件事等同于"有没有 start.sh / start.bat 在监护"，于是没有脚本的用户
+// 会被直接挡住 400。现在进程自己会拉起新进程重开（ExitForRestart → Relaunch），
+// 脚本降级为可选兜底；唯一确实不能自拉的是容器内 —— 那由 InDocker 单独判断。
+func CanRestartSelf() bool { return !InDocker() }
+
 // ExitForRestart 写重启意图，然后按"谁在托管我"选择重启方式：
 //
 //   - 入口监护循环带起来的（HandoffChild）或 start.sh / start.bat 带起来的（Supervised）

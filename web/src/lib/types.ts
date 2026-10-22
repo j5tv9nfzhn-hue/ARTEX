@@ -1897,6 +1897,7 @@ export interface UpdateCheck {
   /** comparable 为 false 时的说明。 */
   reason?: string;
   /** 是否由守护脚本（start.sh / start.bat）启动；false 时自动更新无法自动重启。 */
+  /** 当前环境能否自动重启（进程内置自拉；以前等同于是否有 start.sh/start.bat 监护） */
   supervised?: boolean;
   /** 已下载并校验、等待下次启动生效的版本；空 = 没有暂存件。 */
   staged_version?: string;

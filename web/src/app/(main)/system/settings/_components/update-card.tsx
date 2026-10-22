@@ -208,7 +208,9 @@ export function UpdateCard() {
   };
 
   const docker = check?.mode === "docker";
-  const supervised = check?.supervised !== false;
+  // canRestart：后端回答的是"当前环境能否自动重启"（以前问的是"有没有 start.sh /
+  // start.bat 监护"）。进程现在会自己拉起新进程重开，脚本只是可选兜底。
+  const canRestart = check?.supervised !== false;
   const staged = check?.staged_version && check.staged_version !== check.current ? check.staged_version : "";
   const canApply =
     !!check?.has_update &&
@@ -300,9 +302,9 @@ export function UpdateCard() {
           <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
             <div className="font-medium">v{staged.replace(/^v(?=\d)/, "")} 已下载并校验完成</div>
             <p className="mt-1 text-muted-foreground text-xs">
-              {supervised
-                ? "下次启动服务时自动生效；也可以现在点「立即更新」直接重启换装。"
-                : "当前不是由 start.sh / start.bat 启动的，无法自动重启，请手动重启服务完成换装。"}
+              {canRestart
+                ? "装好后进程会自己重启并切到新版本，不需要手动重启，也不需要 start.bat。"
+                : "当前环境不能自动重启（例如容器内），更新无法在这里一键生效。"}
             </p>
           </div>
         )}
@@ -405,14 +407,14 @@ export function UpdateCard() {
             <div>
               <div className="text-sm">自动下载新版本</div>
               <p className="text-muted-foreground text-xs">
-                {supervised
-                  ? "检测到新版后自动下载并校验，下次启动服务时生效——不会打断正在跑的任务。"
-                  : "当前不是由 start.sh / start.bat 启动，自动下载后无法自动重启，只能手动重启生效。"}
+                {canRestart
+                  ? "检测到新版本会自动下载并校验；装好后进程自己重启生效，不必守着控制台。"
+                  : "当前环境不能自动重启（例如容器内），自动下载后无法自动生效。"}
               </p>
             </div>
             <Switch
               checked={autoApply}
-              disabled={savingPref || loading || !supervised || docker}
+              disabled={savingPref || loading || !canRestart || docker}
               onCheckedChange={(v) => savePref("update_auto_apply", v)}
             />
           </div>

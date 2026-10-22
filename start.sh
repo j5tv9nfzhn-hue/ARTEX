@@ -1,21 +1,21 @@
 #!/bin/sh
-# ARTEX-REA 启动监护脚本，适用于 Linux、macOS 与 Docker ENTRYPOINT。
+# ARTEX-REA 启动脚本（Unix / Docker ENTRYPOINT，现在是可选兜底）
+#
+# 不装这个脚本也能用：artex-rea 自己会做单实例仲裁，更新装好后也会自己拉起
+# 新进程重启。只有想让它崩溃后也自动重开时才需要这个脚本。
 #
 # 用法：
-# ./start.sh                           前台运行，Ctrl-C 停止
-# nohup ./start.sh >artex-rea.log 2>&1 & 后台运行
-# ./start.sh -addr :9000               其他参数原样传给 artex-rea
+# ./start.sh                    前台运行，Ctrl-C 停止
+# nohup ./start.sh >artex-rea.log 2>&1 &   后台运行
+# ./start.sh -addr :9000        命令行原样传给 artex-rea
 #
-# 启动 artex-rea，并在进程退出后按退出码决定是否重启。
+# 退出码约定：
+# 0     正常停止，脚本退出（不再循环）
+# 75    请求重启（例如网页上点了"立即更新"），脚本立刻重启进程
+# 其它  异常退出：按 1/2/4 秒递增等待后重试，最多 60 秒
 #
-# 0：用户正常停止，结束循环。
-# 75：请求重启，立即重新运行，用于页面的一键更新或回滚。
-# 其他：异常退出，1、2、4 秒退避递增，最多 60 秒。
-#
-# 下载、SHA256 校验、版本替换不在脚本中重复实现。
-# 若替换为无法运行的二进制，简单重启会反复失败，只能人工恢复。
-# 因此关键校验与切换统一在 Go selfupdate 包中实现。
-# artex-rea 启动时自行处理，sh 与 bat 保持简单。
+# 下载、SHA256 校验、版本切换全部在 Go 的 selfupdate 包里实现，这里只负责
+# "进程死了要不要再起一个"。
 set -u
 
 cd "$(dirname "$0")" || exit 1

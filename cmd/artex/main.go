@@ -35,6 +35,9 @@ const restartGraceTimeout = 20 * time.Second
 // 实例"才会等到超时 —— 而那时的默认行为是报告并退出，不抢占（见 -takeover）。
 const (
 	instanceLockWait = 3 * time.Second
+	// relaunchLockWait 给"自拉起来的新进程"用：旧进程可能还在 defer 里关库、
+	// 释放锁，等它让出要比普通双击宽容得多。
+	relaunchLockWait = 20 * time.Second
 	takeoverLockWait = 30 * time.Second
 )
 
@@ -138,7 +141,11 @@ func run() int {
 	if rootDir, rootErr := selfupdate.InstallRoot(); rootErr != nil {
 		log.Printf("[boot] 安装目录未知（%v），跳过单实例锁", rootErr)
 	} else {
-		release, state, lockErr := selfupdate.AcquireInstance(rootDir, instanceLockWait)
+		lockWait := instanceLockWait
+		if selfupdate.RelaunchedChild() {
+			lockWait = relaunchLockWait
+		}
+		release, state, lockErr := selfupdate.AcquireInstance(rootDir, lockWait)
 		switch {
 		case lockErr != nil:
 			// 锁机制本身不可用（目录只读、权限不足等）：退回旧行为，靠端口自举兜底。
