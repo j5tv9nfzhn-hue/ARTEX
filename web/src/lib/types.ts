@@ -678,6 +678,10 @@ export interface Activity {
     // 工具行的结构性结论。中断、拦截这类状态只有后端知道，前端不再靠文案猜；
     // 老数据没有这个字段，前端退回文案标记匹配（见 lib/tool-status.ts）。
     tool_status?: "completed" | "failed" | "denied" | "stopped";
+    // usage 行上的上下文容量：窗口是模型属性（后端在 capture 时写入），
+    // 已用是本轮输入口径（input + cache 读写）。缺失则前端不显示容量环。
+    context_window?: number;
+    context_used?: number;
   };
   source_task_id?: string;
   inherited?: boolean;

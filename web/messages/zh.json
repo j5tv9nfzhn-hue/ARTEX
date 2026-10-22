@@ -4762,6 +4762,11 @@
       "retry": "重试详情",
       "timeout": "已超时"
     },
+    "context": {
+      "ariaLabel": "上下文容量 {percent}%",
+      "hint": "窗口由模型配置决定，已用取最近一次请求的输入 + 缓存读写。",
+      "title": "上下文容量"
+    },
     "diff": {
       "collapse": "收起未变更行",
       "expandHidden": "展开 {count} 行未变更"

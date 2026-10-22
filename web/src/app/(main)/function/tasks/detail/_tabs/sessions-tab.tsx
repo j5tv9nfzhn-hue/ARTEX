@@ -36,6 +36,7 @@ import { MentionTextarea } from "@/components/mention-textarea";
 import { MessageRollbackDialog } from "@/components/message-rollback-dialog";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
+import { ContextUsageRing } from "@/components/transcript/context-usage";
 import { parseUserBody, Transcript } from "@/components/transcript";
 import {
   AlertDialog,
@@ -1490,6 +1491,20 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     [sessionTokens, store],
   );
 
+  // 上下文容量只认「最近一次请求」的口径（input + cache 读写）：累加值会把容量算爆，
+  // 而窗口来自后端写在 usage metadata 里的模型配置。拿不到就整块不显示。
+  const contextUsage = React.useMemo(() => {
+    const items = store[activeKey]?.items ?? [];
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item.kind !== "usage") continue;
+      const window = item.metadata?.context_window;
+      if (!window) return null;
+      return { size: window, used: item.metadata?.context_used ?? 0 };
+    }
+    return null;
+  }, [store, activeKey]);
+
   const activeTokens = tokenForSession(activeKey);
   const tokenTotal = {
     i: activeTokens.input_tokens,
@@ -2175,9 +2190,15 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                           <ArrowUpIcon />
                         </InputGroupButton>
                       )}
+                      {contextUsage && (
+                        <ContextUsageRing
+                          className="ml-auto"
+                          size={contextUsage.size}
+                          used={contextUsage.used}
+                        />
+                      )}
                       {mainBusy ? (
                         <InputGroupButton
-                          className="ml-auto"
                           size="icon-xs"
                           variant="destructive"
                           onClick={stop}
@@ -2189,7 +2210,6 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         </InputGroupButton>
                       ) : (
                         <InputGroupButton
-                          className="ml-auto"
                           size="icon-xs"
                           variant="default"
                           onClick={send}

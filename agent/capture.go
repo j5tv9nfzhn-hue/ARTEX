@@ -172,9 +172,20 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 				// 会话预算：每收到一条用量事件就地结算（事件是本轮累计值，账本内部取最大）。
 				// 没挂账本时是 nil 接收者调用，方法内已做保护 → no-op。
 				ConvLedgerFrom(ctx).Observe(u.InputTokens, u.OutputTokens)
-				rec(db.Activity{Kind: "usage",
+				row := db.Activity{Kind: "usage",
 					InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens,
-					CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
+					CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens}
+				// 上下文容量：窗口来自 ctx（模型配置），已用按本轮输入口径（input + cache 读写）。
+				// 只落 metadata，不动表结构；前端读不到就退化成不显示容量环。
+				if window := contextWindowFrom(ctx); window > 0 {
+					if meta, err := json.Marshal(map[string]int{
+						"context_window": window,
+						"context_used":   u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens,
+					}); err == nil {
+						row.Metadata = meta
+					}
+				}
+				rec(row)
 			}
 		case harness.KindResult:
 			if ev.Terminal != nil {
