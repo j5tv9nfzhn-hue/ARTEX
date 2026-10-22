@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown, ChevronRight } from "lucide-react";
 import * as React from "react";
 
 import { DiffStat } from "@/components/transcript/diff-view";
@@ -60,7 +61,10 @@ function liveItems(entries: PartialEntry[], skipKey: string): PartialEntry[] {
 //
 // 计数只做行数（写入 N 行 / 改 +A −D），不在这里算 diff：参数还是半成品，逐帧跑
 // jsdiff 既慢又会在末尾给出会变的噪声数字；定稿后的真实红绿差异仍由 DiffBody 画。
+// 工具调用默认折叠（Memo 02 ②）：平时只占一行，左侧图标就是实时圆圈，
+// 参数流式增量只在展开后才逐行出现。
 export function LiveToolRow({ tool, args }: { tool: string; args: string }) {
+  const [open, setOpen] = React.useState(false);
   const fields = React.useMemo(() => parsePartialJson(args), [args]);
   const entries = React.useMemo(() => scanToolInput(args).entries, [args]);
   const target = React.useMemo(() => liveTarget(tool, fields), [tool, fields]);
@@ -77,8 +81,16 @@ export function LiveToolRow({ tool, args }: { tool: string; args: string }) {
 
   return (
     <div className="flex flex-col gap-1 py-0.5 pr-2 pl-3">
-      <div className="flex items-center gap-2 text-ui-xs">
+      <button
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 text-left text-ui-xs"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
         <StatusRing status="running" />
+        <span className="shrink-0 text-muted-foreground">
+          {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        </span>
         <span className="shrink-0 font-medium text-muted-foreground text-shimmer">{tool}</span>
         {target.text ? (
           <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{target.text}</span>
@@ -86,8 +98,8 @@ export function LiveToolRow({ tool, args }: { tool: string; args: string }) {
           <span className="flex-1 text-muted-foreground/60">…</span>
         )}
         {added > 0 || removed > 0 ? <DiffStat added={added} removed={removed} /> : null}
-      </div>
-      {items.length > 0 ? (
+      </button>
+      {open && items.length > 0 ? (
         <ul className="ml-5 flex flex-col gap-0.5 border-border/60 border-l pl-3 font-mono text-ui-2xs">
           {items.map((item) => {
             const leaf = item.key.slice(item.key.lastIndexOf(".") + 1);
