@@ -65,3 +65,49 @@ mobile/
 （见《移动端UI独立设计》）。
 **T1–T6（服务端与数据）**：只读总览 → 通知接口 → 进度接口 → 推送注册 → 消耗口径 → 令牌与设备管理
 （见《移动端总控台》）。
+
+---
+
+## 已落地（2026-10-22 · 提交 `8ea4432`）
+
+**后端（Go）**
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/mobile/overview` | 总览一次拉全：引擎状态、运行/排队/暂停、未读告警（含按级别）、今日 token、资产与流量 |
+| `GET /api/mobile/alerts?limit&since_id&level&unread` | 分级收件箱，附未读总数与按级别分布 |
+| `POST /api/mobile/alerts/read` `{ids}` | 标记已读 |
+| `POST /api/mobile/alerts/read-all` | 清空未读 |
+| `GET /api/mobile/usage?days=7` | 近 N 天 token 曲线 + 按配置档分布（金额口径仍在 web） |
+| `POST /api/mobile/push/register` `{platform,token,device}` | 设备推送凭据注册 |
+| `DELETE /api/mobile/push/register?token=` | 注销设备 |
+
+- 新增表：`mobile_alerts`（收件箱，含 `read_at`）、`mobile_push_tokens`（设备凭据）。
+- `server/ui_notify.go` 的 UI 事件现在**异步落库**，手机端收件箱因此可回溯、可统计未读；落库失败不影响原内存通知。
+- 任务控制复用 `POST /api/tasks/control/batch`（只支持 `pause` / `resume`；ARTEX 的「停止」即暂停）。
+
+**前端（Expo + React Native + TypeScript）**
+
+- 明暗**双色系统**：`src/theme/tokens.ts` 两套完整 token，`ThemeProvider` 支持「跟随系统 / 浅色 / 深色」并持久化。
+- 四屏：总览 / 任务 / 通知 / 消耗；另有登录（服务器地址 + 密码）、设置、任务详情。
+- 数据层：`usePoll` 轮询（前台 8–10s，后台不请求），Bearer 鉴权，令牌存 `expo-secure-store`。
+- 组件全部自写（Card / StatNumber / StatusDot / ProgressRing / Bars / Chip / Empty / Screen），**与 `web/` 零复用**。
+
+**CI**：新增 `.github/workflows/mobile.yml`（`npm install` + `tsc --noEmit`）。
+首轮是**软门禁**（`continue-on-error`）：用来确认 Expo SDK / RN 版本能实际解析，绿过一次后应收紧并提交 lock 文件。
+
+### 待办 / 未验证
+
+- [ ] 依赖版本（`expo@^55` / `react-native@0.83` 等）尚未在云上解析过，以 Actions 首次运行为准。
+- [ ] 推送真正发送（APNs / FCM 发送端）未实现：目前只做设备注册，未接发送。
+- [ ] 审批卡片（`/api/intercept/pending` 的批准/拒绝）未接入移动端界面。
+- [ ] 离线缓存（最后状态 + 时间戳）未实现，目前断网只显示错误条。
+- [ ] 任务进度环暂用「未知比例 + 灰环」占位，等后端暴露阶段进度字段后接真实值。
+
+### 本地怎么跑（不在 CI 里）
+
+```bash
+cd mobile && npm install && npx expo start
+```
+
+仓库铁律：这台机器不跑构建，上面这条只写在这里备查。
