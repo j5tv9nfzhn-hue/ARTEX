@@ -22,10 +22,20 @@ type Database struct {
 	Path string `json:"path"`
 }
 
+// DefaultListenAddr 是未配置时的监听地址：只接受本机连接。
+// 手机端要连得上，这个地址必须改成 ":8787" 之类的全接口形式。
+const DefaultListenAddr = "127.0.0.1:8787"
+
+// ListenEnv 为临时覆盖监听地址的环境变量，优先级高于配置文件。
+const ListenEnv = "ARTEX_LISTEN"
+
 // Config is the on-disk config file shape.
 type Config struct {
 	Database Database `json:"database"`
 	SkillDir string   `json:"skill_dir"`
+	// Listen 是 HTTP 监听地址("例如 ":8787" 或 "192.168.1.61:8787")。
+	// 空 = 只接受本机连接。改完需重启服务生效。
+	Listen string `json:"listen,omitempty"`
 	// Language 是默认输出语言，运行时数据库设置可覆盖它。
 	Language string `json:"language"`
 }
@@ -167,6 +177,22 @@ func Load() Config {
 	}
 	_ = json.Unmarshal(b, &c)
 	return c
+}
+
+// ListenAddr 解析 HTTP 监听地址，优先级：
+//
+//	env ARTEX_LISTEN  >  config file (listen)  >  DefaultListenAddr
+//
+// 命令行 -addr / -lan 的优先级在上面三层之上（见 cmd/artex）。
+// 这里不做校验：写错的地址会在 net.Listen 时报错，而不会被静默忽略。
+func ListenAddr() string {
+	if v := strings.TrimSpace(os.Getenv(ListenEnv)); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(Load().Listen); v != "" {
+		return v
+	}
+	return DefaultListenAddr
 }
 
 // SkillDir returns the skill root directory with precedence:

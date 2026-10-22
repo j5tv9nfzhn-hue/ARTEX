@@ -77,7 +77,10 @@ func run() int {
 	}
 
 	var (
-		addr      = flag.String("addr", "127.0.0.1:8787", "HTTP listen address (default accepts local connections only; use :8787 to serve other hosts)")
+		// 监听地址的优先级：-addr > -lan > config.json/env(ARTEX_LISTEN) > 127.0.0.1:8787。
+		// 手机端要连得上，必须绑到局域网网卡，回环地址是连不通的。
+		addr      = flag.String("addr", "", "HTTP 监听地址（空：取 config.json 的 listen / ARTEX_LISTEN，再空则 127.0.0.1:8787；:8787 表示开放局域网）")
+		lan       = flag.Bool("lan", false, "开放局域网访问（等于 -addr :8787），供手机端 App 连接")
 		dataDir   = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
 		proxy     = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
 		resetPass = flag.Bool("reset-password", false, "重置 ARTEX-REA 管理员密码后退出；新密码取自 ARTEX_RESET_NEWPASS，未设置则交互输入")
@@ -85,6 +88,9 @@ func run() int {
 		selfTest  = flag.Bool("self-test", false, "仅做启动自检并退出（升级流程的冒烟测试入口，不占端口/不开库/不出网）")
 	)
 	flag.Parse()
+	// 四层优先级压成一个监听地址，后面所有地方（横幅、端口偿用、自更新健康探测、
+	// http.Server、暴露警告）都用同一个值，避免“日志写 A、实际听 B”。
+	listenAddr := resolveListenAddr(*addr, *lan)
 
 	// 冒烟测试专用出口：什么都不做、什么也不碰（不占端口、不开库、不出网），
 	// 立刻退出。升级流程用它在真实系统上确认新二进制能执行。
@@ -121,7 +127,8 @@ func run() int {
 	// to the frontend top bar.
 	server.BuildVersion = version
 
-	printBanner(*addr)
+	printBanner(listenAddr)
+	printLanHint(listenAddr)
 
 	// capture backend logs into the in-memory sink (still to stderr) so the /logs
 	// page can show a live log stream. Do this first, to catch startup logs too.
@@ -152,11 +159,11 @@ func run() int {
 			log.Printf("[boot] 单实例锁不可用（%v），退回端口自举", lockErr)
 		case state == selfupdate.LockBusy && !*takeover:
 			// 已经有一个 ARTEX 在服务：不再抢占、不再杀进程，直接退出。
-			reportRunningElsewhere(*addr)
+			reportRunningElsewhere(listenAddr)
 			return 0
 		case state == selfupdate.LockBusy && *takeover:
 			log.Printf("[boot] -takeover：先接管被占用的端口，再接手单实例锁")
-			if err := bootBeforeStart(*addr, *proxy, exeDir, true); err != nil {
+			if err := bootBeforeStart(listenAddr, *proxy, exeDir, true); err != nil {
 				log.Fatalf("接管失败：%v", err)
 			}
 			bootDone = true
@@ -200,7 +207,7 @@ func run() int {
 	// 位置在 selfupdate 之后——自举会真正开始接管端口，
 	// 不应与更新的换装流程交错。数据库是进程内打开的文件，无需自举。
 	if !bootDone {
-		if err := bootBeforeStart(*addr, *proxy, exeDir, *takeover); err != nil {
+		if err := bootBeforeStart(listenAddr, *proxy, exeDir, *takeover); err != nil {
 			log.Fatalf("自举启动失败：%v", err)
 		}
 	}
@@ -237,7 +244,7 @@ func run() int {
 	// 新版本"活下来"的判定不只看进程还活着：还要核对运行版本号与 /api/health，
 	// 不通过就把台账置为 failed，由下一次启动的 Bootstrap 累计失败次数并回滚。
 	settle := time.AfterFunc(selfupdate.SettleDelay, func() {
-		if err := selfupdate.Settle(version, *addr); err != nil {
+		if err := selfupdate.Settle(version, listenAddr); err != nil {
 			log.Printf("[update] %v", err)
 		}
 	})
@@ -249,15 +256,15 @@ func run() int {
 	}
 	log.Printf(config.T("[config] skill 目录: %s"), skillDir)
 	srv := server.New(ctx, mgr, skillDir, *dataDir, config.BaseDir())
-	srv.WarnIfExposed(*addr)
+	srv.WarnIfExposed(listenAddr)
 	httpSrv := &http.Server{
-		Addr:              *addr,
+		Addr:              listenAddr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
-		log.Printf("ARTEX-REA %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
+		log.Printf("ARTEX-REA %s backend listening on %s (data=%s, workers=%d)", version, listenAddr, *dataDir, mgr.Workers())
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("serve: %v", err)
 		}
