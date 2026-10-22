@@ -19,7 +19,7 @@ function compact(n: number): string {
 
 export default function UsageScreen() {
   const { palette } = useTheme();
-  const { data, error, loading, refresh } = usePoll(() => mobileApi.usage(7), 30000);
+  const { data, error, loading, refresh } = usePoll(() => mobileApi.usage(7), 30000, "usage");
 
   const total = data?.total;
   const sum = (total?.input ?? 0) + (total?.output ?? 0) + (total?.cache_read ?? 0) || 1;

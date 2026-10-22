@@ -1,8 +1,8 @@
 import * as React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { mobileApi } from "@/api/mobile";
-import type { MobileAlert } from "@/api/types";
+import type { Approval, MobileAlert } from "@/api/types";
 import { usePoll } from "@/hooks/use-poll";
 import { useTheme } from "@/theme/provider";
 import { font, radius, space } from "@/theme/tokens";
@@ -28,30 +28,84 @@ function timeOf(ts: number): string {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function previewToolInput(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  try {
+    const text = typeof input === "string" ? input : JSON.stringify(input);
+    return text.length > 180 ? `${text.slice(0, 180)}…` : text;
+  } catch {
+    return "";
+  }
+}
+
 export default function AlertsScreen() {
   const { palette } = useTheme();
   const [level, setLevel] = React.useState<Level>("all");
-  const { data, error, loading, refresh } = usePoll(() => mobileApi.alerts({ limit: 80 }), 10000);
+  const alerts = usePoll(() => mobileApi.alerts({ limit: 80 }), 10000, "alerts");
+  const approvals = usePoll(() => mobileApi.approvals(), 8000, "approvals");
+  const [busy, setBusy] = React.useState<number | null>(null);
 
-  const items = (data?.items ?? []).filter((a: MobileAlert) =>
+  const items = (alerts.data?.items ?? []).filter((a: MobileAlert) =>
     level === "all" ? true : a.level === level,
   );
+  const pending = approvals.data ?? [];
 
   const markAll = React.useCallback(async () => {
     await mobileApi.readAllAlerts().catch(() => {});
-    await refresh();
-  }, [refresh]);
+    await alerts.refresh();
+  }, [alerts]);
 
   const markOne = React.useCallback(
     async (id: number) => {
       await mobileApi.readAlerts([id]).catch(() => {});
-      await refresh();
+      await alerts.refresh();
     },
-    [refresh],
+    [alerts],
+  );
+
+  const decide = React.useCallback(
+    (item: Approval, decision: "allowed" | "denied") => {
+      const what = item.tool_name || "该工具调用";
+      Alert.alert(
+        decision === "allowed" ? "批准执行" : "拒绝执行",
+        `${item.agent_name ? `${item.agent_name} · ` : ""}${what}\n\n${
+          item.reason ? `原因：${item.reason}\n` : ""
+        }${previewToolInput(item.tool_input)}`,
+        [
+          { text: "取消", style: "cancel" },
+          {
+            text: decision === "allowed" ? "批准" : "拒绝",
+            style: decision === "allowed" ? "default" : "destructive",
+            onPress: () => {
+              setBusy(item.id);
+              void mobileApi
+                .decide(item.id, decision)
+                .catch((err: unknown) => {
+                  Alert.alert("操作失败", err instanceof Error ? err.message : "未知错误");
+                })
+                .finally(() => {
+                  setBusy(null);
+                  void approvals.refresh();
+                  void alerts.refresh();
+                });
+            },
+          },
+        ],
+      );
+    },
+    [alerts, approvals],
   );
 
   return (
-    <Screen refreshing={loading} onRefresh={() => void refresh()} error={error}>
+    <Screen
+      refreshing={alerts.loading || approvals.loading}
+      onRefresh={() => {
+        void alerts.refresh();
+        void approvals.refresh();
+      }}
+      error={alerts.error ?? approvals.error}
+      footer={alerts.stale ? "当前显示本地缓存，恢复连接后会自动刷新" : undefined}
+    >
       <View style={styles.head}>
         <Text style={[styles.h1, { color: palette.text }]}>通知</Text>
         <Pressable onPress={() => void markAll()}>
@@ -59,14 +113,58 @@ export default function AlertsScreen() {
         </Pressable>
       </View>
 
+      <Card title={`待审批 · ${pending.length}`}>
+        {pending.length === 0 ? (
+          <Text style={{ color: palette.textFaint, fontSize: font.small }}>没有待审批的调用</Text>
+        ) : (
+          pending.map((item) => (
+            <View key={item.id} style={[styles.approval, { borderColor: palette.warn }]}>
+              <Text style={{ color: palette.text, fontSize: font.body }}>
+                {item.tool_name || `工具调用 #${item.id}`}
+              </Text>
+              <Text style={{ color: palette.textMuted, fontSize: font.small }}>
+                {item.agent_name ? `${item.agent_name} · ` : ""}
+                {item.task_id ? `任务 ${item.task_id}` : "无任务归属"}
+              </Text>
+              {item.reason ? (
+                <Text style={{ color: palette.textFaint, fontSize: font.tiny }} numberOfLines={2}>
+                  {item.reason}
+                </Text>
+              ) : null}
+              <Text style={{ color: palette.textFaint, fontSize: font.tiny }} numberOfLines={3}>
+                {previewToolInput(item.tool_input)}
+              </Text>
+              <View style={styles.approvalActions}>
+                <Pressable
+                  disabled={busy === item.id}
+                  onPress={() => decide(item, "allowed")}
+                  style={[styles.actBtn, { borderColor: palette.ok }]}
+                >
+                  <Text style={{ color: palette.ok, fontSize: font.small }}>
+                    {busy === item.id ? "处理中…" : "批准"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={busy === item.id}
+                  onPress={() => decide(item, "denied")}
+                  style={[styles.actBtn, { borderColor: palette.danger }]}
+                >
+                  <Text style={{ color: palette.danger, fontSize: font.small }}>拒绝</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
+      </Card>
+
       <View style={styles.chips}>
         {(["all", "error", "warn", "info"] as Level[]).map((l) => (
           <Chip
             key={l}
-            label={l === "all" ? `全部 ${data?.items.length ?? 0}` : LEVEL_LABEL[l]}
+            label={l === "all" ? `全部 ${alerts.data?.items.length ?? 0}` : LEVEL_LABEL[l]}
             active={level === l}
             onPress={() => setLevel(l)}
-            badge={l === "all" ? data?.unread : data?.by_level?.[l]}
+            badge={l === "all" ? alerts.data?.unread : alerts.data?.by_level?.[l]}
           />
         ))}
       </View>
@@ -118,4 +216,18 @@ const styles = StyleSheet.create({
   chips: { flexDirection: "row", gap: space.sm, flexWrap: "wrap" },
   row: { flexDirection: "row", alignItems: "flex-start", gap: space.sm },
   meta: { flexDirection: "row", gap: space.md, alignItems: "center", marginTop: space.xs },
+  approval: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.md,
+    padding: space.md,
+    gap: space.xs,
+    marginTop: space.sm,
+  },
+  approvalActions: { flexDirection: "row", gap: space.sm, marginTop: space.xs },
+  actBtn: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.xs + 2,
+  },
 });

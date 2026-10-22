@@ -32,11 +32,9 @@ jobs:
       # 首轮软门禁：Expo SDK 与 RN 的版本号由这里实际解析得到，
       # 等 ci 绿过一次后把 continue-on-error 去掉、并提交生成的 lock 文件。
       - name: install
-        continue-on-error: true
         run: npm install --no-audit --no-fund --no-package-lock
 
       - name: typecheck
-        continue-on-error: true
         run: npx tsc --noEmit
 
       - name: summary

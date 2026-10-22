@@ -1,13 +1,15 @@
 {
   "name": "artex-mobile",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:android": "expo prebuild --platform android --no-install && cd android && ./gradlew assembleRelease",
+    "build:ios:sim": "expo prebuild --platform ios --no-install && xcodebuild -workspace ios/*.xcworkspace -scheme $(ls ios | head -1) -sdk iphonesimulator -configuration Release build"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.0",

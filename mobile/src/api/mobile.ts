@@ -1,7 +1,9 @@
 import { apiFetch } from "./client";
 import type {
+  Approval,
   MobileAlertsPage,
   MobileOverview,
+  MobileTask,
   MobileUsage,
   TaskItem,
 } from "./types";
@@ -26,14 +28,26 @@ export const mobileApi = {
 
   usage: (days = 7) => apiFetch<MobileUsage>(`/api/mobile/usage?days=${days}`),
 
-  /** 桌面端 /api/tasks 的响应形状历来在数组与 {tasks:[…]} 之间摇摆，这里统一抹平。 */
-  tasks: async (): Promise<TaskItem[]> => {
-    const raw = await apiFetch<TaskItem[] | { tasks?: TaskItem[] }>("/api/tasks");
+  /** 服务端聚合版任务列表：已带完成度，手机端不再自己算。 */
+  tasks: async (): Promise<MobileTask[]> => {
+    const raw = await apiFetch<{ tasks?: MobileTask[] } | MobileTask[]>("/api/mobile/tasks");
     if (Array.isArray(raw)) return raw;
     return raw.tasks ?? [];
   },
 
   task: (id: string) => apiFetch<TaskItem>(`/api/tasks/${encodeURIComponent(id)}`),
+
+  /** 审批复用桌面端拦截待办接口：列表与裁决都是现成的。 */
+  approvals: async (): Promise<Approval[]> => {
+    const raw = await apiFetch<{ pending?: Approval[] }>("/api/intercept/pending");
+    return raw.pending ?? [];
+  },
+
+  decide: (id: number, decision: "allowed" | "denied") =>
+    apiFetch<{ ok: boolean }>(`/api/intercept/pending/${id}/decide`, {
+      method: "POST",
+      body: { decision },
+    }),
 
   /** 任务控制复用桌面端批量接口（只支持 pause / resume），手机端通常只传一条。
    *  注意：ARTEX 没有独立的 "stop"，暂停即停止继续执行——按钮文案与注释必须一致。 */

@@ -1,0 +1,113 @@
+name: mobile-build
+
+# 手机端第一版打包：Android APK 与 iOS 模拟器包。
+# 仓库铁律是不在本机构建，所以这里全部在云端完成，产物作为 artifact 上传。
+# iOS 真机/上架需要 Apple 开发者账号与证书，本工作流只做「不签名构建」，
+# 产出的是模拟器可运行的 .app；要装真机请配置签名后改用 EAS Build。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "mobile-v*"
+
+concurrency:
+  group: mobile-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: android-apk
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: install deps
+        run: npm install --no-audit --no-fund
+
+      - name: expo prebuild (android)
+        run: npx expo prebuild --platform android --no-install
+
+      - name: gradle assembleRelease
+        working-directory: mobile/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: collect apk
+        run: |
+          mkdir -p ../dist
+          find android/app/build/outputs/apk -name "*.apk" -exec cp {} ../dist/ \;
+          ls -lh ../dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artex-mobile-android
+          path: mobile/dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    name: ios-simulator-app
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: install deps
+        run: npm install --no-audit --no-fund
+
+      - name: expo prebuild (ios)
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: detect scheme
+        working-directory: mobile/ios
+        run: |
+          WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
+          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/{flag=1;next} flag && NF {print $1; exit}')
+          echo "WORKSPACE=$WORKSPACE" >> "$GITHUB_ENV"
+          echo "SCHEME=$SCHEME" >> "$GITHUB_ENV"
+          echo "detected workspace=$WORKSPACE scheme=$SCHEME"
+
+      - name: xcodebuild (no signing, simulator)
+        working-directory: mobile/ios
+        run: |
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: collect app
+        run: |
+          mkdir -p ../dist
+          cd ios/build/Build/Products/Release-iphonesimulator
+          zip -qry ../../../../dist/artex-mobile-ios-simulator.zip ./*.app
+          ls -lh ../../../../dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artex-mobile-ios
+          path: mobile/dist/*.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -28,6 +28,33 @@ export type MobileOverview = {
   tokens_today: MobileTokenTotals;
   assets: number;
   traffic: number;
+  approvals: number;
+};
+
+export type MobileTask = {
+  id: string;
+  name?: string;
+  goal?: string;
+  description?: string;
+  paused: boolean;
+  queued: boolean;
+  completed: boolean;
+  created_at?: number;
+  completed_at?: number;
+  goals_total: number;
+  goals_met: number;
+  /** 0..1；-1 表示后端没有可用的完成度（画灰环，不要假装 0%）。 */
+  progress: number;
+};
+
+export type Approval = {
+  id: number;
+  agent_name?: string;
+  tool_name?: string;
+  tool_input?: unknown;
+  reason?: string;
+  task_id?: string | null;
+  created_at?: string;
 };
 
 export type MobileAlert = {

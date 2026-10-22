@@ -93,16 +93,20 @@ mobile/
 - 数据层：`usePoll` 轮询（前台 8–10s，后台不请求），Bearer 鉴权，令牌存 `expo-secure-store`。
 - 组件全部自写（Card / StatNumber / StatusDot / ProgressRing / Bars / Chip / Empty / Screen），**与 `web/` 零复用**。
 
-**CI**：新增 `.github/workflows/mobile.yml`（`npm install` + `tsc --noEmit`）。
-首轮是**软门禁**（`continue-on-error`）：用来确认 Expo SDK / RN 版本能实际解析，绿过一次后应收紧并提交 lock 文件。
+**CI**：`.github/workflows/mobile.yml`（`npm install` + `tsc --noEmit`）自 v1.0.0 起为**硬门禁**——版本已在云端解析通过，不再 `continue-on-error`。
 
-### 待办 / 未验证
+### 第一版补齐（提交 `mobile-v1.0.0`）
 
-- [ ] 依赖版本（`expo@^55` / `react-native@0.83` 等）尚未在云上解析过，以 Actions 首次运行为准。
-- [ ] 推送真正发送（APNs / FCM 发送端）未实现：目前只做设备注册，未接发送。
-- [ ] 审批卡片（`/api/intercept/pending` 的批准/拒绝）未接入移动端界面。
-- [ ] 离线缓存（最后状态 + 时间戳）未实现，目前断网只显示错误条。
-- [ ] 任务进度环暂用「未知比例 + 灰环」占位，等后端暴露阶段进度字段后接真实值。
+- **审批**：通知页顶部「待审批」区，展示工具名/调用方/原因/入参预览，批准或拒绝都需二次确认（复用 `GET /api/intercept/pending` 与 `POST /api/intercept/pending/{id}/decide`）。
+- **任务进度**：新增 `GET /api/mobile/tasks`，按目标达成率给出 0..1 的完成度；没有目标时返回 `-1`，界面画灰环而不是假装 0%。列表与详情都用真实比例。
+- **离线兜底**：`usePoll` 支持缓存键，请求失败时回落到上次成功的载荷，并在页脚标注「缓存数据 · 更新时间」。
+- **打包**：`.github/workflows/mobile-build.yml` —— Android `assembleRelease` 出 APK，iOS 在 macOS runner 上不签名构建出模拟器 `.app`，两者都作为 artifact 上传（保留 14 天）。
+
+### 仍未做（明确不假装完成）
+
+- [ ] **推送发送端**：只做了设备令牌注册与表结构，没有实现 APNs/FCM 发送。要真正弹通知，需 Apple/Google 凭据，或改用 Bark/ntfy 这类转发。
+- [ ] **iOS 真机/上架**：工作流产出的 `.app` 只能装模拟器；真机需要 Apple 开发者账号与证书（建议届时走 EAS Build）。
+- [ ] **金额口径**：token 与 PC 同源，但价格折算仍在 web。
 
 ### 本地怎么跑（不在 CI 里）
 

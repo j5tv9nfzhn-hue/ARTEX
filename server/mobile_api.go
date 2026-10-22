@@ -85,6 +85,7 @@ type mobileOverviewDTO struct {
 	TokensToday   mobileTokenTotals `json:"tokens_today"`
 	Assets        int               `json:"assets"`
 	Traffic       int               `json:"traffic"`
+	Approvals     int               `json:"approvals"`
 }
 
 type mobileAlertsDTO struct {
@@ -107,6 +108,7 @@ func (s *Server) mobileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/alerts", s.mobileListAlerts)
 	mux.HandleFunc("POST /api/mobile/alerts/read", s.mobileReadAlerts)
 	mux.HandleFunc("POST /api/mobile/alerts/read-all", s.mobileReadAllAlerts)
+	mux.HandleFunc("GET /api/mobile/tasks", s.mobileTasks)
 	mux.HandleFunc("GET /api/mobile/usage", s.mobileUsage)
 	mux.HandleFunc("POST /api/mobile/push/register", s.mobilePushRegister)
 	mux.HandleFunc("DELETE /api/mobile/push/register", s.mobilePushDelete)
@@ -189,6 +191,9 @@ func (s *Server) mobileOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if pg := s.m.PG(); pg != nil {
+		if pending, err := pg.ListPendingIntercepts(); err == nil {
+			out.Approvals = len(pending)
+		}
 		if total, byLevel, err := pg.MobileAlertUnread(); err == nil {
 			out.AlertsUnread = total
 			if byLevel != nil {
@@ -272,6 +277,61 @@ func (s *Server) mobileReadAllAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// mobileTaskItem 是手机端任务列表的一项：桌面端任务字段 + 一个可用的完成度。
+// 完成度按目标(goal)达成比例计算；没有目标时给 -1，界面画灰环而不是假装 0%。
+type mobileTaskItem struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name,omitempty"`
+	Goal        string  `json:"goal,omitempty"`
+	Description string  `json:"description,omitempty"`
+	Paused      bool    `json:"paused"`
+	Queued      bool    `json:"queued"`
+	Completed   bool    `json:"completed"`
+	CreatedAt   int64   `json:"created_at,omitempty"`
+	CompletedAt int64   `json:"completed_at,omitempty"`
+	GoalsTotal  int     `json:"goals_total"`
+	GoalsMet    int     `json:"goals_met"`
+	Progress    float64 `json:"progress"`
+}
+
+// mobileTasks 返回任务列表与完成度。手机端只做「看进度 + 启停」，
+// 因此不返回工具调用、日志与 diff，避免把 PC 的细节搬到小屏上。
+func (s *Server) mobileTasks(w http.ResponseWriter, r *http.Request) {
+	out := []mobileTaskItem{}
+	for _, t := range s.m.List() {
+		if t == nil {
+			continue
+		}
+		item := mobileTaskItem{
+			ID:          t.ID,
+			Name:        t.Name,
+			Goal:        t.Goal,
+			Description: t.Description,
+			Paused:      t.Paused,
+			Queued:      t.Queued,
+			Completed:   t.CompletedAt > 0,
+			CreatedAt:   t.CreatedAt,
+			CompletedAt: t.CompletedAt,
+			Progress:    -1,
+		}
+		if t.Store != nil {
+			if goals, err := t.Store.ListByKind(pgdb.KindGoal, 10000); err == nil {
+				item.GoalsTotal = len(goals)
+				for _, g := range goals {
+					if g.State == "met" {
+						item.GoalsMet++
+					}
+				}
+				if item.GoalsTotal > 0 {
+					item.Progress = float64(item.GoalsMet) / float64(item.GoalsTotal)
+				}
+			}
+		}
+		out = append(out, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tasks": out})
 }
 
 // mobileUsage 返回近 N 天的 token 曲线与按配置档的分布（不含金额，金额口径仍以 web 为准）。

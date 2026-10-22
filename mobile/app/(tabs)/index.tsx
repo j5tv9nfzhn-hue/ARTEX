@@ -29,7 +29,7 @@ function relative(ms: number): string {
 export default function OverviewScreen() {
   const { palette } = useTheme();
   const router = useRouter();
-  const { data, error, loading, updatedAt, refresh } = usePoll(() => mobileApi.overview(), 8000);
+  const { data, error, loading, updatedAt, stale, refresh } = usePoll(() => mobileApi.overview(), 8000, "overview");
 
   const unread = data?.alerts_unread ?? 0;
   const danger = (data?.alerts_by_level?.error ?? 0) + (data?.alerts_by_level?.warn ?? 0);
@@ -41,7 +41,7 @@ export default function OverviewScreen() {
       refreshing={loading}
       onRefresh={() => void refresh()}
       error={error}
-      footer={updatedAt ? `更新于 ${relative(updatedAt)}` : undefined}
+      footer={updatedAt ? `${stale ? "缓存数据（连不上服务器） · " : ""}更新于 ${relative(updatedAt)}` : undefined}
     >
       <View style={styles.headerRow}>
         <View>
@@ -83,7 +83,7 @@ export default function OverviewScreen() {
                 {data.active_task.goal || "（无目标描述）"}
               </Text>
             </View>
-            <ProgressRing ratio={null} size={40} stroke={4} />
+            <ProgressRing ratio={(data?.active_task as { progress?: number } | undefined)?.progress ?? null} size={40} stroke={4} />
           </Pressable>
         ) : (
           <Text style={{ color: palette.textFaint, fontSize: font.small }}>当前没有活跃任务</Text>
@@ -104,6 +104,25 @@ export default function OverviewScreen() {
           <StatNumber label="今日 token" value={compact(totalTokens)} tone="accent" />
         </Card>
       </View>
+
+      <Card title="待审批">
+        <View style={styles.approvalRow}>
+          <StatNumber
+            label="等待决定"
+            value={data?.approvals ?? 0}
+            tone={(data?.approvals ?? 0) > 0 ? "warn" : "ok"}
+          />
+          <Pressable
+            onPress={() => router.push("/(tabs)/alerts")}
+            style={[styles.approvalBtn, { borderColor: palette.border }]}
+          >
+            <Text style={{ color: palette.accent, fontSize: font.small }}>去处理</Text>
+          </Pressable>
+        </View>
+        <Text style={{ color: palette.textFaint, fontSize: font.tiny }}>
+          审批会阻塞 PC 上的任务，手机上批准或拒绝都要二次确认。
+        </Text>
+      </Card>
 
       <Card title="情报与流量">
         <View style={styles.kvRow}>
@@ -136,6 +155,13 @@ const styles = StyleSheet.create({
   cell: { flexBasis: "47%", flexGrow: 1 },
   activeRow: { flexDirection: "row", alignItems: "center", gap: space.md, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: space.md },
   kvRow: { flexDirection: "row", gap: space.xl },
+  approvalRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  approvalBtn: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+  },
   quickRow: { flexDirection: "row", gap: space.md },
   quick: { flex: 1, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, padding: space.md, gap: 2 },
 });

@@ -2,7 +2,7 @@
   "expo": {
     "name": "ARTEX 总控台",
     "slug": "artex-mobile",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "scheme": "artex",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
@@ -13,13 +13,20 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.artex.mobile"
+      "bundleIdentifier": "app.artex.mobile",
+      "buildNumber": "1"
     },
     "android": {
       "package": "app.artex.mobile",
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "versionCode": 1,
+      "permissions": []
     },
-    "plugins": ["expo-router", "expo-secure-store", "expo-notifications"],
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-notifications"
+    ],
     "experiments": {
       "typedRoutes": false
     }
