@@ -71,7 +71,7 @@ func newKillOnCloseJob() (windows.Handle, error) {
 	}
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	// BREAKAWAY_OK 是给自更新用的：退出前要 CreateProcess 一个"不属于本 Job"的新进程
-		// （见 selfupdate/relaunch_windows.go），否则父进程退出时它会被 Job 一起杀掉。
+	// （见 selfupdate/relaunch_windows.go），否则父进程退出时它会被 Job 一起杀掉。
 	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
 		windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK |
 		jobObjectLimitDieOnUnhandledException | jobObjectLimitPriorityClass
