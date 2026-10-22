@@ -120,11 +120,13 @@ func (b *crossPlatformBashTool) call(ctx context.Context, in json.RawMessage, tc
 
 	// 3. 回退底层 Shell 执行器（附带 Windows POSIX 兼容归一化与全局外部进程并发信号量保护）
 	if runtime.GOOS == "windows" {
+		cmd := cmdTrimmed
 		if norm := normalizeWindowsShellCommand(cmdTrimmed); norm != cmdTrimmed {
-			payload["command"] = norm
-			if nb, err := json.Marshal(payload); err == nil {
-				in = nb
-			}
+			cmd = norm
+		}
+		payload["command"] = wrapWindowsExitCode(cmd)
+		if nb, err := json.Marshal(payload); err == nil {
+			in = nb
 		}
 	}
 	release, err := AcquireExternalProc(ctx)
@@ -133,6 +135,36 @@ func (b *crossPlatformBashTool) call(ctx context.Context, in json.RawMessage, tc
 	}
 	defer release()
 	return b.CoreTool.Call(ctx, in, tc)
+}
+
+// windowsExitWrapEnabled 是 wrapWindowsExitCode 的开关（默认开）。设
+// ARTEX_WINDOWS_EXIT_WRAP=0 可关闭，用于线上回退。
+func windowsExitWrapEnabled() bool {
+	return strings.TrimSpace(os.Getenv("ARTEX_WINDOWS_EXIT_WRAP")) != "0"
+}
+
+// wrapWindowsExitCode 让 Windows 上的 PowerShell 以【底层原生命令的真实退出码】结束。
+//
+// 为什么需要：Bash 在 Windows 上由 `powershell -NoProfile -NonInteractive -Command <cmd>`
+// 执行。PS 5.1 的 -Command 语义是「脚本没写出错误记录就返回 0，写出任何错误记录就返回 1」，
+// 而原生命令（curl.exe 等）往 stderr 写的每一行都会被包成 NativeCommandError 记录
+// （见 PowerShell PR #13361、about_Preference_Variables）。于是 curl 明明 HTTP=200、
+// $LASTEXITCODE=0，进程却以 1 退出，被 normo 的 bash 工具判成 IsError —— 实测这类
+// 「命令成功却标红」在 511 次 Bash 调用里有 9 次（`curl.exe : …NativeCommandError`）。
+//
+// 修法（微软文档给的标准做法）：在脚本末尾显式 `exit $LASTEXITCODE`，让进程退出码只由
+// 最后一条原生命令的真实退出码决定；没有原生命令（$LASTEXITCODE 为 $null）则退 0。
+// 只影响退出码的判定口径，不改命令本身、不改输出。
+func wrapWindowsExitCode(cmd string) string {
+	if !windowsExitWrapEnabled() {
+		return cmd
+	}
+	body := strings.TrimRight(cmd, " \t\r\n")
+	if body == "" || strings.HasSuffix(body, "`") {
+		// 空命令或显式续行结尾：拼上去会破坏语法，原样返回。
+		return cmd
+	}
+	return body + "\nif ($null -eq $LASTEXITCODE) { exit 0 } else { exit $LASTEXITCODE }"
 }
 
 func hasShellMeta(cmd string) bool {
