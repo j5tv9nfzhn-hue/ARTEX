@@ -149,6 +149,7 @@ function CommandBody({ sections, wrapLines, onToggleWrap }: ToolBodyProps) {
 
 // ---------- 读文件 / 搜索：把 JSON 入参折成「目标 + 条件」一行，正文仍是原文 ----------
 function InputBody({ tool, sections, wrapLines, onToggleWrap }: ToolBodyProps) {
+  const t = useTranslations("transcript");
   const input = safeJson(sections[0]?.content ?? "");
   const path = input ? firstString(input, ["file_path", "path", "pattern"]) : "";
   const detail = input
@@ -162,12 +163,16 @@ function InputBody({ tool, sections, wrapLines, onToggleWrap }: ToolBodyProps) {
         .filter(Boolean)
         .join("  ")
     : "";
+  // 读文件的行数只有结果回来才知道；有的版本把行号写进正文，所以这里数的是正文行数。
+  const output = sections[1]?.content ?? "";
+  const readLines = tool === "Read" && output ? output.replace(/\n+$/, "").split("\n").length : 0;
   return (
     <div className="divide-y divide-border/70">
       {input ? (
         <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 font-mono text-ui-xs">
           {path ? <span className="min-w-0 break-all text-foreground/90">{path}</span> : null}
           {detail ? <span className="text-muted-foreground">{detail}</span> : null}
+          {readLines > 0 ? <span className="text-muted-foreground tabular-nums">{t("tool.lines", { count: readLines })}</span> : null}
           <span className="ml-auto flex items-center gap-1">
             <CopyTextButton text={JSON.stringify(input, null, 2)} />
           </span>

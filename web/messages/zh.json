@@ -4790,6 +4790,7 @@
       "expandCommand": "展开命令",
       "failed": "✕ 失败",
       "formatJson": "格式化 JSON",
+      "lines": "{count} 行",
       "loadFailed": "（加载失败）",
       "metaStats": "{lines} 行 · {chars} 字符",
       "name": "工具",

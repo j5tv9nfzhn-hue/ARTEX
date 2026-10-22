@@ -131,6 +131,15 @@ func (l *liveEmitter) emit(d agent.LiveDelta) {
 		l.last = now
 		l.mu.Unlock()
 		l.bc.PublishLive(l.task, LiveFrame{Kind: d.Kind, Tool: d.Tool, ToolUseID: d.ToolUseID, Worker: l.worker, IntentID: l.intentID})
+	case "tool_start", "tool_input":
+		// 工具入参流：帧里带的已经是「截至目前的完整参数」，不需要再攒，直接转发。
+		// tool_start 是这段输出的边界，顺带清空文本缓冲（与 tool_use 同理）。
+		if d.Kind == "tool_start" {
+			l.buf = map[string]*strings.Builder{}
+			l.last = now
+		}
+		l.mu.Unlock()
+		l.bc.PublishLive(l.task, LiveFrame{Kind: d.Kind, Tool: d.Tool, ToolUseID: d.ToolUseID, Text: d.Text, Worker: l.worker, IntentID: l.intentID})
 	case "progress":
 		// 工具执行中的进度：不是累计文本，原样转发一行。进度帧本来就稀疏（工具自己决定
 		// 什么时候报），不需要像 text/thinking 那样节流，也不清空文本缓冲。

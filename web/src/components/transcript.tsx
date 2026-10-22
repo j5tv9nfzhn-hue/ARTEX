@@ -26,6 +26,7 @@ import { ApprovalDetail } from "@/components/approval-records";
 import { LiveStreamMarkdown } from "@/components/live-markdown";
 import { Markdown } from "@/components/markdown";
 import { CopyTextButton } from "@/components/transcript/copy-text-button";
+import { LiveToolRow } from "@/components/transcript/live-tool-row";
 import { ToolBody, type ToolSectionModel } from "@/components/transcript/renderers";
 import { toolKindFor } from "@/components/transcript/tool-kind";
 import { ToolSummaryRow } from "@/components/transcript/tool-summary-row";
@@ -479,9 +480,14 @@ function ToolBlock({
   );
   const statusLabel = loopTripped ? "⚡ 3-Strike" : t(TOOL_STATUS_LABEL_KEY[status]);
 
+  // 运行中的工具行默认展开：ZCode 的做法是「干活的时候看得见」，参数一落地就先把
+  // 差异/命令画出来（写文件的 +N、改文件的红绿），而不是等执行完才一次性出现。
+  // 结束（完成/失败/拦截/停止）后回落到折叠态，可以在不展开的情况下扫完整条时间线。
+  const expanded = open || status === "running";
+
   const detailKey = `${use?.seq ?? ""}:${result?.seq ?? ""}`;
   React.useEffect(() => {
-    if (!open || loadedKey.current === detailKey) return;
+    if (!expanded || loadedKey.current === detailKey) return;
     let live = true;
     const segs: {
       label: string;
@@ -518,7 +524,7 @@ function ToolBlock({
     return () => {
       live = false;
     };
-  }, [open, detailKey, use, result, getDetail, toolName, t]);
+  }, [expanded, detailKey, use, result, getDetail, toolName, t]);
 
   const scrolledRef = React.useRef(false);
   React.useEffect(() => {
@@ -573,7 +579,7 @@ function ToolBlock({
         endedAt={result?.ts}
         kind={kind}
         onToggle={() => setOpen((o) => !o)}
-        open={open}
+        open={expanded}
         startedAt={use?.ts}
         status={status}
         statusLabel={statusLabel}
@@ -583,7 +589,7 @@ function ToolBlock({
         workerChipClass={showWorker ? chip(group.worker) : undefined}
       />
 
-      {open && (
+      {expanded && (
         <div className="mt-1.5 mb-2 ml-2 overflow-hidden rounded-lg border border-border/80 bg-secondary/30 shadow-2xs">
           {!sections ? (
             <div className="p-3 font-mono text-ui-xs text-muted-foreground">{t("loading")}</div>
@@ -1027,6 +1033,9 @@ export function Transcript({
           <span className="font-mono">{liveDelta.tool}</span>
           <span className="opacity-60">…</span>
         </div>
+      )}
+      {(liveDelta?.kind === "tool_start" || liveDelta?.kind === "tool_input") && !!liveDelta.tool && (
+        <LiveToolRow args={liveDelta.text ?? ""} tool={liveDelta.tool} />
       )}
       {liveDelta?.kind === "progress" && !!liveDelta.text && (
         <div className="flex items-start gap-1.5 pl-3 text-ui-xs text-muted-foreground">

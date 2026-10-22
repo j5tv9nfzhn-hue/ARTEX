@@ -4187,6 +4187,10 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	s.chatBusy[t.ID] = true
 	s.chatCancel[t.ID] = cancel
 	s.chatMu.Unlock()
+	// 聊天泳道也挂实时增量：thinking / text / tool_start / tool_input 不落库，直接推给
+	// 订阅了任务 SSE 的界面。worker 固定写 "chat" —— 前端对「没有 intent_id 的主会话」
+	// 要求 worker === "chat" 才归属，这里必须和它对上（sessions-tab 的 liveBelongs）。
+	ctx = agent.WithLiveDelta(ctx, newLiveEmitter(s.engine.Broadcaster(), t.ID, "chat", 0))
 
 	// The turn belongs to whichever main-agent segment the user is chatting in (any
 	// segment is interactive, like the top-level chat conversations). Stamp every
