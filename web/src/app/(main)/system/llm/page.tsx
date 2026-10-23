@@ -703,6 +703,29 @@ function ProfileSheet({
                 onChange={(e) => setCw(e.target.value)}
                 placeholder="200"
               />
+              {profile?.caps?.context_tokens ? (
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  {t("profile.caps.detected")}：
+                  {Math.round((profile?.caps?.context_tokens ?? 0) / 1000)}K
+                  {profile?.caps?.max_output_tokens
+                    ? ` · ${t("profile.caps.output")} ${profile?.caps?.max_output_tokens}`
+                    : ""}
+                  {profile?.caps?.input_modalities?.length
+                    ? ` · ${t("profile.caps.modalities")} ${profile?.caps?.input_modalities?.join(" / ")}`
+                    : ""}
+                  {profile?.caps?.reasoning
+                    ? ` · ${t("profile.caps.reasoning")}${
+                        profile?.caps?.reasoning_efforts?.length
+                          ? " " + profile?.caps?.reasoning_efforts?.join(" / ")
+                          : ""
+                      }`
+                    : ""}
+                  {profile?.caps?.source ? ` · ${profile?.caps?.source}` : ""}
+                  {profile?.effective_context_window_k
+                    ? ` · ${t("profile.caps.effective")} ${profile?.effective_context_window_k}K`
+                    : ""}
+                </p>
+              ) : null}
             </div>
           </div>
           <p className="-mt-2 text-muted-foreground text-xs">{t("profile.rateHint")}</p>

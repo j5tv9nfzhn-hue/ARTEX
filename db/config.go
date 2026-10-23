@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Autumn-27/artex/llmprobe"
 )
 
 // ---------- LLM profiles ----------
@@ -76,6 +78,10 @@ type LLMProfile struct {
 	CredentialID *int64 `json:"credential_id"`
 	// CredentialName 是绑定凭据的展示名(只读,由读路径回填)。
 	CredentialName string `json:"credential_name,omitempty"`
+	// Caps 是最近一次能力探测的结果(窗口/输出/模态/推理档位)。它不是
+	// llm_profiles 的列:探测缓存走 settings(llm_caps:<id>),由
+	// db/capabilities.go 在读取时旁挂上来。零值 = 没探测过。
+	Caps llmprobe.Capabilities `json:"caps,omitempty"`
 }
 
 // RetryOverride is one profile's optional override of the three retry layers
@@ -159,6 +165,7 @@ func (d *DB) ListProfiles() ([]*LLMProfile, error) {
 		if err := scanProfile(rows, &p.APIKeyHint, &p); err != nil {
 			return nil, err
 		}
+		d.attachCaps(&p)
 		out = append(out, &p)
 	}
 	return out, rows.Err()
@@ -171,7 +178,11 @@ func (d *DB) ActiveProfile() (*LLMProfile, error) {
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return &p, err
+	if err != nil {
+		return nil, err
+	}
+	d.attachCaps(&p)
+	return &p, nil
 }
 
 // ProfileByID returns one profile with its api key by id, or nil if not found.
@@ -182,7 +193,11 @@ func (d *DB) ProfileByID(id int64) (*LLMProfile, error) {
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return &p, err
+	if err != nil {
+		return nil, err
+	}
+	d.attachCaps(&p)
+	return &p, nil
 }
 
 // PoolProfiles returns the failover chain in run order, api keys included: the
@@ -205,6 +220,7 @@ ORDER BY is_default DESC, priority DESC, id ASC`)
 		if err := scanProfile(rows, &p.APIKey, &p); err != nil {
 			return nil, err
 		}
+		d.attachCaps(&p)
 		out = append(out, &p)
 	}
 	return out, rows.Err()

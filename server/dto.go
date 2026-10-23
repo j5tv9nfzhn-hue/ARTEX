@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/llmprobe"
 	"github.com/Autumn-27/artex/traffic"
 )
 
@@ -669,6 +670,15 @@ type LLMProfileDTO struct {
 	// 来自该凭据）。credential_name 只读，供界面显示「Key 来自凭据 X」。
 	CredentialID   string `json:"credential_id,omitempty"`
 	CredentialName string `json:"credential_name,omitempty"`
+	// ---- 能力探测（llmprobe）----
+	// Caps 是最近一次探测到的模型能力（窗口/输出/模态/推理档位）；
+	// 零值 = 没探测过，前端不显示徽章。
+	Caps llmprobe.Capabilities `json:"caps,omitempty"`
+	// EffectiveContextWindowK 是压缩与用量展示实际使用的窗口（K）：
+	// 实测值优先，与用户声明取小。和 context_window_k（用户声明）分开显示，
+	// 才能一眼看出「填的数」和「实际用的数」不是一回事。
+	EffectiveContextWindowK int  `json:"effective_context_window_k"`
+	ContextWindowDetected   bool `json:"context_window_detected"`
 }
 
 func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
@@ -702,6 +712,10 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 		EffectiveInputModalities: p.EffectiveInputModalities(),
 		CredentialID:             credID,
 		CredentialName:           p.CredentialName,
+
+		Caps:                    p.Caps,
+		EffectiveContextWindowK: p.EffectiveContextWindowK(),
+		ContextWindowDetected:   p.ContextWindowDetected(),
 	}
 }
 

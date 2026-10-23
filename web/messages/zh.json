@@ -2161,6 +2161,13 @@
         "inline": "内联 Key（本配置自带）",
         "label": "API Key 来源"
       },
+      "caps": {
+        "detected": "实测窗口",
+        "output": "最大输出",
+        "modalities": "输入模态",
+        "reasoning": "推理档位",
+        "effective": "实际按此压缩"
+      },
       "cw": "上下文窗口(K)",
       "descEdit": "修改后点击保存；激活配置保存后对全部 Agent 立即生效。",
       "descNew": "新建后不会自动激活，请在卡片上「设为激活」以启用。",

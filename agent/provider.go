@@ -43,9 +43,13 @@ type Config struct {
 	// using the provider (0 = that window unlimited).
 	RatePerSecond float64
 	RatePerMinute float64
-	// ContextWindowK is the model's context window in K tokens (user-configured),
-	// used to size compaction thresholds. 0 = default; see CompactionWindow.
+	// ContextWindowK is the model's context window in K tokens, used to size
+	// compaction thresholds. 0 = default; see CompactionWindow.
 	ContextWindowK int
+	// ContextWindowDetected 表示 ContextWindowK 来自实测（供应商端点上报，
+	// 见 llmprobe 包），而不是用户手填。实测值不受 200K 信任上限约束——
+	// 需要怀疑的是手填值（线上真实事故：声明 1000K、实际 128K，压缩永不触发）。
+	ContextWindowDetected bool
 	// ThinkingType 独立控制思考「开关」字段(thinking.type):
 	//   "" = 不发送(默认,兼容不支持该字段的模型); "disabled" = 显式关闭;
 	//   "enabled" = 开启. 与 ReasoningEffort 完全解耦——有些接口没有 thinking 字段、
@@ -114,6 +118,19 @@ const (
 // thresholds, resolved from the user-configured size (ContextWindowK). 0/unset →
 // a 200K default; otherwise clamped to [32K, 1M] so compaction stays effective.
 func (c Config) CompactionWindow() int {
+	// 实测窗口：供应商自己报的数，直接采信，只做 [32K, 1M] 的物理区间夹取。
+	// 这一支存在的原因很具体——1M 窗口的模型不该被 200K 的「防手滑上限」
+	// 压成 1/5，那会让压缩提前到 20% 使用率。
+	if c.ContextWindowDetected && c.ContextWindowK > 0 {
+		k := c.ContextWindowK
+		if k < minWindowK {
+			k = minWindowK
+		}
+		if k > maxWindowK {
+			k = maxWindowK
+		}
+		return k * 1000
+	}
 	tokens, clamped := ResolveContextWindowTokens(c.ContextWindowK)
 	if clamped {
 		warnWindowClamped(c.ContextWindowK, tokens)
