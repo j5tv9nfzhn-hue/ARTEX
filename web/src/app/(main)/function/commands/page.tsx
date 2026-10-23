@@ -330,7 +330,7 @@ export default function CommandsPage() {
           </DialogHeader>
 
           {/* 错误归因：只看 errors 总数无法回答「为什么失败」，这里按 error_class 拆开。 */}
-          {classTotals.length > 0 && (
+          {statsErrors > 0 && (
             <div className="rounded-md border bg-muted/30 p-3">
               <div className="mb-2 flex items-center justify-between text-xs font-medium">
                 <span>{t("classTitle")}</span>
@@ -338,6 +338,11 @@ export default function CommandsPage() {
                   {statsErrors} {t("failed")}
                 </span>
               </div>
+              {classTotals.length === 0 ? (
+                // 旧账本行没有 error_class（归因上线前写入）：有失败但拆不开，
+                // 明说一句，别让人以为归因坏了。
+                <div className="text-[11px] text-muted-foreground">{t("classEmpty")}</div>
+              ) : (
               <div className="flex flex-wrap gap-1.5">
                 {classTotals.map(([cls, n]) => (
                   <span
@@ -352,6 +357,7 @@ export default function CommandsPage() {
                   </span>
                 ))}
               </div>
+              )}
             </div>
           )}
 
