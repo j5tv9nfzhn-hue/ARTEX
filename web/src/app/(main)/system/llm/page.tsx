@@ -338,9 +338,12 @@ function ProviderSheet({
   }, [open, provider]);
 
   const providerId = provider ? Number(provider.id) : undefined;
-  // 名下第一条模型：测试时把它的 id 递过去，后端据此取到「这条供应商的 Key」
-  // （读路径本来就是 COALESCE(供应商, 模型)）。
-  const sampleProfileId = provider?.models?.length ? Number(provider.models[0].id) : undefined;
+  // 测试的对象是「这家供应商」，Key 就在供应商行上，所以直接把 supplier id 递过去。
+  //
+  // 旧实现退而求其次去指「名下第一条模型」：新供应商还没建模型时它取不到，
+  // 只能落到全局配置——用户明明在供应商里填了 Key，界面却报「未提供 API Key」，
+  // 或者更糟：拿另一家供应商的 Key 去测，返回一个指向错误对象的 401。
+  const savedProviderId = providerId;
 
   async function testConnection() {
     if (testing) return;
@@ -362,7 +365,8 @@ function ProviderSheet({
         proxy,
         "",
         "",
-        sampleProfileId,
+        undefined,
+        savedProviderId,
         sessionHeaderKey.trim(),
       );
       const keyLine = r.key_source ? t("profile.toast.testKey", { source: r.key_source, hint: r.key_hint ?? "" }) : "";
@@ -658,6 +662,7 @@ function ModelSheet({
         "",
         endpoint?.proxy ?? "",
         profileId,
+        endpoint ? Number(endpoint.id) : undefined,
       );
       if (r.ok && r.models && r.models.length > 0) {
         setModels(r.models);

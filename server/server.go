@@ -1698,6 +1698,7 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 		ThinkingType     string `json:"thinking_type"`
 		ReasoningEffort  string `json:"reasoning_effort"`
 		ProfileID        *int64 `json:"profile_id"`         // 测已存 profile 时传入：api_key 为空则用它存的 key
+		ProviderID       *int64 `json:"provider_id"`        // 测供应商时传入：没有模型可指（新建供应商）也能拿到它的 Key
 		SessionHeaderKey string `json:"session_header_key"` // 非空=测试时也带该自定义会话头，值为一次性随机 session id
 		// 旧前端仍会夹带 "streaming" 字段；独立探测恒为非流式（不携带 stream，
 		// #70），该字段被忽略。
@@ -1710,7 +1711,7 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 	// 关键差别是失败不再静默降级——指定了配置却读不出来就直接说明原因，
 	// 绝不能拿另一把 Key 去替它发请求：那会让供应商的 401 指向错误的对象，
 	// 用户看到的「Key 错误」实际是「根本没读到这把 Key」。
-	src, keyErr := s.resolveLLMKey(req.APIKey, req.ProfileID)
+	src, keyErr := s.resolveLLMKey(req.APIKey, req.ProfileID, req.ProviderID)
 	if keyErr != nil {
 		writeJSON(w, 200, map[string]any{"ok": false, "error": keyErr.Error()})
 		return
@@ -1718,9 +1719,19 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 	apiKey := src.Key
 	// 会话头名只是个头「名字」，不含密钥；取不到顶多少一个头，可以静默降级。
 	sessionHeaderKey := strings.TrimSpace(req.SessionHeaderKey)
-	if req.ProfileID != nil && sessionHeaderKey == "" && s.m != nil && s.m.pg != nil {
-		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
-			sessionHeaderKey = p.SessionHeaderKey
+	if sessionHeaderKey == "" && s.m != nil && s.m.pg != nil {
+		// 配置与供应商都存了会话头（供应商是事实来源，模型行只是它的镜像）；
+		// 只给了供应商时也必须读到，否则「新建供应商 → 测连接」会少这个头，
+		// 对需要会话头的端点表现为莫名其妙的 401。
+		if req.ProfileID != nil {
+			if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
+				sessionHeaderKey = p.SessionHeaderKey
+			}
+		}
+		if sessionHeaderKey == "" && req.ProviderID != nil {
+			if v, err := s.m.pg.ProviderByID(*req.ProviderID); err == nil && v != nil {
+				sessionHeaderKey = v.SessionHeaderKey
+			}
 		}
 	}
 	// 测试失败时，用户最先要回答的问题是「你用的到底是谁的 Key」。日志里留一行，

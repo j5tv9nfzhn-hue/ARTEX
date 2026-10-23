@@ -2475,18 +2475,19 @@ func (s *Server) pgLLMPoolReset(w http.ResponseWriter, r *http.Request) {
 // 反之探测也不会拉模型列表。失败诊断即时回传 HTTP 状态码与供应商原文 (#42)。
 func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider  string `json:"provider"` // "openai" | "anthropic"
-		BaseURL   string `json:"base_url"`
-		APIKey    string `json:"api_key"`
-		Proxy     string `json:"proxy"`
-		ProfileID *int64 `json:"profile_id"` // fallback: use stored key from this profile
+		Provider   string `json:"provider"` // "openai" | "anthropic"
+		BaseURL    string `json:"base_url"`
+		APIKey     string `json:"api_key"`
+		Proxy      string `json:"proxy"`
+		ProfileID  *int64 `json:"profile_id"`  // fallback: use stored key from this profile
+		ProviderID *int64 `json:"provider_id"` // fallback: use the key of this provider (no model needed)
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
 	// Key 解析与「测试连接」共用同一套规则（来源、掩码/空白校验、失败不降级）。
-	src, keyErr := s.resolveLLMKey(req.APIKey, req.ProfileID)
+	src, keyErr := s.resolveLLMKey(req.APIKey, req.ProfileID, req.ProviderID)
 	if keyErr != nil {
 		writeJSON(w, 200, map[string]any{"ok": false, "error": keyErr.Error()})
 		return

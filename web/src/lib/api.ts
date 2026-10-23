@@ -1123,6 +1123,7 @@ export const api = {
     thinking_type = "",
     reasoning_effort = "",
     profile_id?: number,
+    provider_id?: number,
     session_header_key = "", // 非空=测试请求也带该自定义会话头（值为一次性 session id）
   ) =>
     // 独立轻量探测固定非流式（不发送 stream）；reply = 模型实际回复(已截断);一个字都不回的配置后端直接判失败
@@ -1145,6 +1146,7 @@ export const api = {
       thinking_type,
       reasoning_effort,
       profile_id,
+      provider_id,
       session_header_key,
     }),
   llmProfiles: () => get<{ profiles: LLMProfile[] }>("/llm/profiles").then((r) => arr(r.profiles)),
@@ -1212,13 +1214,21 @@ export const api = {
   // 全局重试策略（五层各自的次数+间隔）。全 0 = 全部走内置默认。
   llmRetryPolicy: () => get<LLMRetryPolicy>("/llm/retry-policy"),
   saveLLMRetryPolicy: (p: LLMRetryPolicy) => post<LLMRetryPolicy>("/llm/retry-policy", p),
-  fetchLLMModels: (provider: string, base_url: string, api_key: string, proxy = "", profile_id?: number) =>
+  fetchLLMModels: (
+    provider: string,
+    base_url: string,
+    api_key: string,
+    proxy = "",
+    profile_id?: number,
+    provider_id?: number,
+  ) =>
     post<{ ok: boolean; error?: string; models?: string[] }>("/llm/models", {
       provider,
       base_url,
       api_key,
       proxy,
       profile_id,
+      provider_id,
     }),
 
   // ---- agents ----

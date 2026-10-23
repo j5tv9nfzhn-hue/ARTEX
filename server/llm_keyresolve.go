@@ -75,10 +75,13 @@ func normalizeLLMKey(raw string) (string, error) {
 
 // resolveLLMKey 决定这次请求用哪把 Key，并把「用的是谁的」一起带出去。
 //
-// 优先级与用户预期一致：表单输入 > 指定配置（含其绑定的凭据）> 全局配置。
+// 优先级与用户预期一致：表单输入 > 指定配置 > 指定供应商 > 全局配置。
+//
+// 「指定供应商」是本次补的一档：Key 属于供应商，模型只是它的使用者。测试连接
+// 在没有模型可指（刚建好供应商、还没建模型）时，只能靠这一档拿到 Key。
 // 与旧实现的关键差别是**失败不再回落到下一级**：指定了 profile_id 却读不出来，
 // 就带着原因返回，绝不用另一把 Key 去替它发请求。
-func (s *Server) resolveLLMKey(formKey string, profileID *int64) (llmKeySource, error) {
+func (s *Server) resolveLLMKey(formKey string, profileID *int64, providerID *int64) (llmKeySource, error) {
 	if k, err := normalizeLLMKey(formKey); err != nil {
 		return llmKeySource{}, err
 	} else if k != "" {
@@ -105,6 +108,31 @@ func (s *Server) resolveLLMKey(formKey string, profileID *int64) (llmKeySource, 
 		}
 		if k == "" {
 			return llmKeySource{}, fmt.Errorf("%s 没有可用的 API Key：请到它所属的供应商里补全后再测", src)
+		}
+		return llmKeySource{Key: k, Source: src, Hint: llmKeyHint(k)}, nil
+	}
+
+	// 供应商：Key 的唯一事实来源。这条分支是「测试连接」在还没有任何模型时
+	// 唯一能拿到 Key 的路——旧实现只认 profile，供应商下没有模型就只能去撞
+	// 全局配置，于是用户明明在供应商里填了 Key，界面却报「未提供 API Key」。
+	if providerID != nil {
+		if s.m == nil || s.m.pg == nil {
+			return llmKeySource{}, errors.New("数据库未就绪，无法读取已保存供应商的 Key")
+		}
+		v, err := s.m.pg.ProviderByID(*providerID)
+		if err != nil {
+			return llmKeySource{}, fmt.Errorf("读取供应商 #%d 的 Key 失败：%w", *providerID, err)
+		}
+		if v == nil {
+			return llmKeySource{}, fmt.Errorf("供应商 #%d 不存在（可能已被删除），请重新选择", *providerID)
+		}
+		src := fmt.Sprintf("供应商 #%d「%s」", v.ID, v.Name)
+		k, err := normalizeLLMKey(v.APIKey)
+		if err != nil {
+			return llmKeySource{}, fmt.Errorf("%s 里保存的 Key 不可用：%w", src, err)
+		}
+		if k == "" {
+			return llmKeySource{}, fmt.Errorf("%s 没有填写 API Key：请在这家供应商里补全后再测", src)
 		}
 		return llmKeySource{Key: k, Source: src, Hint: llmKeyHint(k)}, nil
 	}
