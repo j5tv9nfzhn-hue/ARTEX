@@ -768,6 +768,10 @@ Linux：`sudo ufw allow 8787/tcp`；macOS 首次运行会弹系统提示，点�
 - 排查顺序：`netstat -ano | findstr :8787` 应出现 `0.0.0.0:8787` 或 `[::]:8787` → 手机浏览器访问 `http://<局域网IP>:8787/api/health` 能出 JSON → 再回 App 登录。
 - 已知限制：Android 9+ 默认禁止明文 HTTP（`android:usesCleartextTraffic`），iOS ATS 默认拦非 localhost 的 `http://`（`NSAppTransportSecurity`）。两者属 `mobile/app.json` 原生配置；debug 包通常已放开，release 包可能需要补配置。
 
+手机端的**产品范围（五块功能）、四屏信息架构、设计 token、三通道策略、U/T/M 轮次、Go/gomobile 否决证据与已落地接口清单**见 [`mobile/README.md`](mobile/README.md)。
+
+旁路提问（`/btw`）的实现边界、HTTP 契约、上下文预算与验证记录见 [`sidequestion/README.md`](sidequestion/README.md)。
+
 ### 安全设计要点
 
 1. **首次初始化防抢占**：`POST /api/auth/init` 必须提供仅服务端控制台显示的 `setup_token`，错误尝试有速率限制（`ARTEX_SETUP_TOKEN` / `ARTEX_ADMIN_PASSWORD`）。
@@ -836,6 +840,13 @@ Linux：`sudo ufw allow 8787/tcp`；macOS 首次运行会弹系统提示，点�
 | `AI自我进化沉淀机制.md` | 任务终态/删除/手动提炼的沉淀触发、写入门控与审阅 API、脱敏 | 已落地 |
 | `website-maintenance.md` | 官网从独立目录迁入 `website/`、无构建静态化、Cloudflare 发布边界 | 已并入「独立官网」 |
 | `手机端局域网连接-2026-10-22.md` | App 连不上的根因、四种开放方式、防火墙、已知明文限制 | 已全文并入「移动端 App 与局域网连接」 |
+| `mobile/docs/移动端总控台-范围与轮次-2026-10-22.md` | 五块功能、数据来源映射、通知分级、四屏 IA、T1–T6 | 已并入 [`mobile/README.md`](mobile/README.md) |
+| `mobile/docs/移动端UI独立设计-2026-10-22.md` | 网页给不了的 7 件事、RN+Expo 选型对比、深色驾驶舱 token、四屏 IA、U1–U6 | 已并入 [`mobile/README.md`](mobile/README.md) |
+| `mobile/docs/移动端策略-三通道-2026-10-22.md` | 不做双端 App 的决策依据、面板/Bot/远程桌面三通道、M1–M7 | 已并入 [`mobile/README.md`](mobile/README.md) |
+| `mobile/docs/Go与移动端适配度调研-2026-10-22.md` | gomobile 类型裁剪、体积、构建与 iOS 后台限制（否决证据） | 已并入 [`mobile/README.md`](mobile/README.md)「Go 与移动端适配度」 |
+| `mobile/docs/archive/双端APP-多轮计划-已驳回.md` | 被驳回的旧方案（把 PC 功能搬上手机） | 决策理由已保留，原文见 git 历史 |
+| `sidequestion/CONTEXT_BUDGET.md` | 旁路请求预算、滚动摘要、溢出恢复、开源实现核对 | 已并入 [`sidequestion/README.md`](sidequestion/README.md) |
+| `sidequestion/VALIDATION.md` | 工程检查矩阵、真实模型对话、第三方审查、复现命令 | 已并入 [`sidequestion/README.md`](sidequestion/README.md) |
 
 ## 开发
 
