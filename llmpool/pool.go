@@ -82,6 +82,10 @@ func (p *Pool) Head() *Member { return p.members[0] }
 func (p *Pool) Stream(ctx context.Context, req llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error] {
 	order := p.order(req)
 	return func(yield func(llm.StreamEvent, error) bool) {
+		if len(order) == 0 {
+			yield(llm.StreamEvent{}, fmt.Errorf("%w: 所有配置都在熔断冷却中（上次是额度/鉴权类失败，未再发请求）", ErrExhausted))
+			return
+		}
 		var lastErr error
 		for i, m := range order {
 			emitted := false
@@ -129,6 +133,9 @@ func (p *Pool) Stream(ctx context.Context, req llm.CompletionRequest) iter.Seq2[
 // chain-exhaustion behavior.
 func (p *Pool) Complete(ctx context.Context, req llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
 	order := p.order(req)
+	if len(order) == 0 {
+		return llm.Message{}, "", llm.Usage{}, fmt.Errorf("%w: 所有配置都在熔断冷却中（上次是额度/鉴权类失败，未再发请求）", ErrExhausted)
+	}
 	var lastErr error
 	for i, m := range order {
 		msg, sr, usage, err := m.Prov.Complete(ctx, req)
@@ -167,20 +174,38 @@ func (p *Pool) Complete(ctx context.Context, req llm.CompletionRequest) (llm.Mes
 // anyway, since stalling the engine is worse than one more failed request.
 func (p *Pool) order(req llm.CompletionRequest) []*Member {
 	est := estimateTokens(req)
-	var open []*Member
+	var open, fits []*Member
 	for _, m := range p.members {
-		if p.health.IsOpen(m.ID) {
-			continue
-		}
 		if m.WindowTokens > 0 && est > m.WindowTokens {
 			continue // would 400 on length — not a useful failover target
 		}
+		fits = append(fits, m)
+		if p.health.IsOpen(m.ID) {
+			continue
+		}
 		open = append(open, m)
 	}
-	if len(open) == 0 {
-		return p.members[:1] // last resort: probe the head rather than stall
+	if len(open) > 0 {
+		return rotateGroups(open, p.rr.Add(1)-1)
 	}
-	return rotateGroups(open, p.rr.Add(1)-1)
+	if len(fits) == 0 {
+		return p.members[:1] // nothing fits: probe the head rather than stall
+	}
+	// 全部在冷却中：探「最快到期」的那个，而不是永远拿链头去撞——链头可能恰好是
+	// 冷却最久的那个（上一次硬失败）。
+	best := fits[0]
+	for _, m := range fits[1:] {
+		if p.health.Get(m.ID).OpenUntil.Before(p.health.Get(best.ID).OpenUntil) {
+			best = m
+		}
+	}
+	if p.health.Get(best.ID).Hard {
+		// 确定性失败（402 额度/401 密钥/404 模型）不会自己好。再发一次只会把
+		// 「再等 50 秒拿同一个错误」重演一遍——线上 718 次失败里正是这一类在烧时间。
+		// 返回空链，让调用方立刻拿到 ErrExhausted，由上层决定等待或换配置。
+		return nil
+	}
+	return []*Member{best}
 }
 
 // rotateGroups rotates each run of equal-ranked members by n, so profiles sharing

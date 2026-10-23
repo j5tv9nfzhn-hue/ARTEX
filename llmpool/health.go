@@ -20,6 +20,12 @@ import (
 // stops being probed every round.
 var backoff = []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute}
 
+// hardCooldown 是确定性失败(402 额度/401 密钥/404 模型不存在)的最短冷却。
+// 阶梯的第一档只有 1 分钟:对 429 是对的(限流会过去),对 402 是错的——一分钟后
+// 再去撞,只是把「再等 50 秒拿同一个 402」重复一遍。这里把硬失败直接摁到 30 分钟,
+// 用户充值后可以在界面上「立即恢复」,不必等它自然到期。
+const hardCooldown = 30 * time.Minute
+
 // State is one profile's circuit-breaker state.
 type State struct {
 	Fails     int       // consecutive failures; reset by a success
@@ -27,6 +33,9 @@ type State struct {
 	OpenUntil time.Time // zero / past = closed (usable)
 	LastError string
 	LastAt    time.Time
+	// Hard 表示最近一次失败是确定性的(额度耗尽/密钥失效/模型不存在)——重试同一份
+	// 请求不可能改变结果。Pool 用它决定「全部冷却中时要不要再探一次」。
+	Hard bool
 }
 
 // Open reports whether the breaker is currently open (profile should be skipped).
@@ -148,9 +157,16 @@ func (r *Registry) Trip(id int64, errMsg string, hard bool) (tripped bool) {
 	softTrip := r.tripAfter()
 	if hard || (softTrip > 0 && st.Fails >= softTrip) {
 		st.Trips++
-		st.OpenUntil = time.Now().Add(r.coolFor(st.Trips))
+		cool := r.coolFor(st.Trips)
+		if hard && cool < hardCooldown {
+			cool = hardCooldown
+		}
+		st.OpenUntil = time.Now().Add(cool)
 		st.Fails = 0 // counted into this trip; start fresh for the half-open probe
+		st.Hard = hard
 		tripped = true
+	} else {
+		st.Hard = false // 这次只是普通的瞬时失败,别把「确定性」的结论留着
 	}
 	snap := *st
 	persist := r.persist

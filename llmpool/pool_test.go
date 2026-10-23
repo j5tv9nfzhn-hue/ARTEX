@@ -164,12 +164,14 @@ func TestPassResetsCounters(t *testing.T) {
 
 func TestBackoffLadderGrows(t *testing.T) {
 	reg := NewRegistry(nil, nil)
+	// 阶梯只对瞬时失败(429/5xx)生效；确定性失败固定 30 分钟(见 TestHardFailureCoolsLong)。
+	reg.SetPolicy(1, 0)
 	var prev time.Duration
 	for i := range 4 {
 		reg.Reset(1)
 		st := State{Trips: i}
 		reg.Restore(1, st)
-		reg.Trip(1, "402", true)
+		reg.Trip(1, "429", false)
 		d := time.Until(reg.Get(1).OpenUntil)
 		// Non-decreasing, with a second of slack: the ladder plateaus at its last
 		// rung, and each Trip stamps its own time.Now().
@@ -180,6 +182,26 @@ func TestBackoffLadderGrows(t *testing.T) {
 	}
 	if prev < 25*time.Minute {
 		t.Fatalf("ladder tops out at %v, want ~30m", prev)
+	}
+}
+
+// 402/401 这类确定性失败不给「一分钟后重试」的机会：阶梯第一档是 1 分钟，
+// 对限流是对的，对欠费就是白白再撞一次。
+func TestHardFailureCoolsLong(t *testing.T) {
+	reg := NewRegistry(nil, nil)
+	if !reg.Trip(1, "status 402: insufficient credit", true) {
+		t.Fatal("hard failure should trip immediately")
+	}
+	if d := time.Until(reg.Get(1).OpenUntil); d < hardCooldown-time.Minute {
+		t.Fatalf("hard failure cools for %v, want ~%v", d, hardCooldown)
+	}
+	// 瞬时失败(429)仍然走短冷却：它确实会自己好，不该被摁 30 分钟。
+	reg.SetPolicy(1, 0)
+	if !reg.Trip(2, "status 429", false) {
+		t.Fatal("429 with softTrip=1 should trip")
+	}
+	if d := time.Until(reg.Get(2).OpenUntil); d > 2*time.Minute {
+		t.Fatalf("429 cooled for %v, want the short ladder rung", d)
 	}
 }
 
@@ -286,20 +308,41 @@ func TestSkipsMembersTooSmallForRequest(t *testing.T) {
 	}
 }
 
-// Everything tripped: probing the head beats stalling the engine outright.
-func TestAllTrippedStillProbesHead(t *testing.T) {
+// 全部熔断且上次都是确定性失败(402/401)：一个请求都不要发。
+// 以前这里会拿链头再撞一次，线上表现为「再等 50 秒拿同一个 402」——718 次失败
+// 里有相当一部分就是这种白等。现在直接把 ErrExhausted 交给上层。
+func TestAllTrippedHardFailsFast(t *testing.T) {
 	a, b := okProv("a", "a"), okProv("b", "b")
 	reg := NewRegistry(nil, nil)
-	reg.Trip(1, "402", true)
-	reg.Trip(2, "402", true)
+	reg.Trip(1, "status 402: no credit", true)
+	reg.Trip(2, "status 402: no credit", true)
+	p := New([]*Member{member(1, "a", 10, a), member(2, "b", 5, b)}, reg)
+
+	_, err := drain(p.Stream(context.Background(), llm.CompletionRequest{}))
+	if !errors.Is(err, ErrExhausted) {
+		t.Fatalf("err = %v, want ErrExhausted", err)
+	}
+	if a.calls != 0 || b.calls != 0 {
+		t.Fatalf("a.calls=%d b.calls=%d — 确定性失败期间不该再发请求", a.calls, b.calls)
+	}
+}
+
+// 全部熔断但只是软失败(429/5xx)：值得再探一次，而且探「最快到期」的那个，
+// 不是永远拿链头去撞（链头可能正是冷却最久的）。
+func TestAllTrippedSoftProbesEarliestExpiry(t *testing.T) {
+	a, b := okProv("a", "a"), okProv("b", "b")
+	reg := NewRegistry(nil, nil)
+	now := time.Now()
+	reg.Restore(1, State{Fails: 3, Trips: 1, OpenUntil: now.Add(10 * time.Minute), LastError: "status 429"})
+	reg.Restore(2, State{Fails: 3, Trips: 1, OpenUntil: now.Add(time.Minute), LastError: "status 429"})
 	p := New([]*Member{member(1, "a", 10, a), member(2, "b", 5, b)}, reg)
 
 	got, err := drain(p.Stream(context.Background(), llm.CompletionRequest{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "a" || a.calls != 1 {
-		t.Fatalf("text=%q a.calls=%d — want the head probed as a last resort", got, a.calls)
+	if got != "b" || b.calls != 1 || a.calls != 0 {
+		t.Fatalf("text=%q a.calls=%d b.calls=%d — want the earliest-expiring member probed", got, a.calls, b.calls)
 	}
 }
 

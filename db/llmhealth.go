@@ -39,10 +39,16 @@ FROM llm_profile_health WHERE open_until IS NOT NULL AND open_until > now()`)
 }
 
 // SaveLLMHealth upserts one profile's circuit-breaker state.
+//
+// 写入用 INSERT ... SELECT ... WHERE EXISTS，不要退回直接 INSERT:
+// 这条写发生在失败路径上、而且是异步的，ProfileID 可能来自一个「配置刚被删掉」的
+// 旧轮询链快照。直接 INSERT 会撞 llm_profile_health.profile_id 的外键，日志里刷
+// 「熔断状态落库失败」(线上 8 次)，而那条状态对已删除的配置本来也没有意义。
+// EXISTS 把「存在性检查」和「写入」放进同一条语句，不会与删除竞争。
 func (d *DB) SaveLLMHealth(h LLMHealth) error {
 	_, err := d.Exec(`
 INSERT INTO llm_profile_health(profile_id,fails,trips,open_until,last_error,last_at)
-VALUES ($1,$2,$3,$4,$5,now())
+SELECT $1,$2,$3,$4,$5,now() WHERE EXISTS (SELECT 1 FROM llm_profiles WHERE id=$1)
 ON CONFLICT (profile_id) DO UPDATE SET
   fails=EXCLUDED.fails, trips=EXCLUDED.trips, open_until=EXCLUDED.open_until,
   last_error=EXCLUDED.last_error, last_at=now()`,
