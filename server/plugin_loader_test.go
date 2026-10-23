@@ -121,6 +121,10 @@ func TestExternalProcessLifecycle(t *testing.T) {
 
 	reg := NewPluginRegistry()
 	reg.SetRoot(root)
+	// helper 是本测试亲手拉起的外部进程，最后一步 Reload 还会再起一个。
+	// 不在收尾时停掉，Windows 上 TempDir 清理会因为进程仍占着插件目录而失败
+	// （表现为 cleanup unlinkat ...: 文件被另一进程使用），与插件逻辑无关。
+	t.Cleanup(func() { _ = reg.Disable("helper") })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	loaded, failed, err := reg.Scan(ctx)

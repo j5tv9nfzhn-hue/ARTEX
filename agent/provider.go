@@ -114,17 +114,11 @@ const (
 // thresholds, resolved from the user-configured size (ContextWindowK). 0/unset →
 // a 200K default; otherwise clamped to [32K, 1M] so compaction stays effective.
 func (c Config) CompactionWindow() int {
-	k := c.ContextWindowK
-	if k <= 0 {
-		k = defaultWindowK
+	tokens, clamped := ResolveContextWindowTokens(c.ContextWindowK)
+	if clamped {
+		warnWindowClamped(c.ContextWindowK, tokens)
 	}
-	if k < minWindowK {
-		k = minWindowK
-	}
-	if k > maxWindowK {
-		k = maxWindowK
-	}
-	return k * 1000
+	return tokens
 }
 
 // 上下文压缩的触发比例：默认在模型窗口用掉 80% 时压缩（黄金比例）。
@@ -273,7 +267,19 @@ func compactionTriggerWindow(realWindow int, ratio float64) int {
 	if realWindow <= 0 {
 		realWindow = defaultWindowK * 1000
 	}
-	target := int(float64(realWindow) * ratio)
+	return compactionTriggerWindowForTarget(realWindow, int(float64(realWindow)*ratio))
+}
+
+// compactionTriggerWindowForTarget 是上面那条规则的目标值版本：直接给定
+// 「希望在第几个 token 触发」，反解出要交给 SDK 的等效窗口。
+// 触发点由 CompactionTriggerTokens 决定（80% 与「窗口 − 预留」取更早者）。
+func compactionTriggerWindowForTarget(realWindow, target int) int {
+	if realWindow <= 0 {
+		realWindow = defaultWindowK * 1000
+	}
+	if target <= 0 || target > realWindow {
+		target = realWindow
+	}
 	reserve := compactionReserve(realWindow)
 	growth := compactionMaxTurnGrowth(reserve)
 	// 触发点 = 等效窗口 − 预留 − max(缓冲, 一轮增长)；反解时把预留与余量加回去。
@@ -303,8 +309,9 @@ func compactionConfig(windowTokens int) *compaction.Config {
 	if windowTokens <= 0 {
 		windowTokens = defaultWindowK * 1000
 	}
+	target := CompactionTriggerTokens(windowTokens)
 	return &compaction.Config{
-		ContextWindow:   compactionTriggerWindow(windowTokens, CompactionRatio()),
+		ContextWindow:   compactionTriggerWindowForTarget(windowTokens, target),
 		MaxOutputTokens: compactionReserve(windowTokens), // 预留别让 SDK 默认值漂移
 	}
 }

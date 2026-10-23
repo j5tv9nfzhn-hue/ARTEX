@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Autumn-27/artex/agent"
@@ -99,6 +100,15 @@ type taskLLMStreamHooks struct {
 	current    func() (taskLLMSelection, error)
 	exhaust    func(taskLLMSelection, error) (db.TaskLLMTransition, error)
 	transition func(taskLLMSelection, db.TaskLLMTransition, error)
+	// overflow 在"请求太长"类失败时触发（可空，测试里通常不设）。
+	overflow func(error, int64)
+}
+
+// contextOverflow 把一次上下文超限失败交给 runtime 记录；hooks 由测试直接构造时为空。
+func (h taskLLMStreamHooks) contextOverflow(err error, profileID int64) {
+	if h.overflow != nil && agent.IsContextOverflowError(err) {
+		h.overflow(err, profileID)
+	}
 }
 
 // current resolves the provider this role runs on, by precedence:
@@ -201,7 +211,8 @@ func parseTaskID(id string) (int64, error) {
 // exhausted, and how to emit a failover transition.
 func (r *taskLLMRuntime) streamHooks() taskLLMStreamHooks {
 	return taskLLMStreamHooks{
-		current: r.current,
+		current:  r.current,
+		overflow: r.noteContextOverflow,
 		exhaust: func(selection taskLLMSelection, cause error) (db.TaskLLMTransition, error) {
 			taskNum, _ := parseTaskID(r.taskID)
 			transition, err := r.s.m.pg.MarkTaskLLMProfileQuotaExhaustedAtRevision(taskNum, selection.profileID, selection.revision, cause.Error())
@@ -266,6 +277,7 @@ func completeTaskLLM(ctx context.Context, taskID string, req llm.CompletionReque
 		if callErr == nil {
 			return msg, sr, usage, nil
 		}
+		hooks.contextOverflow(callErr, selection.profileID)
 		// profileID=0: 显式链已被清空;非额度错误:透传。二者都不改任务 failover 状态。
 		if selection.profileID == 0 || !isQuotaExhaustedError(callErr) {
 			return llm.Message{}, "", llm.Usage{}, callErr
@@ -345,6 +357,7 @@ func streamTaskLLM(ctx context.Context, taskID string, req llm.CompletionRequest
 				}
 				return
 			}
+			hooks.contextOverflow(streamErr, selection.profileID)
 			// profileID=0 means the explicit chain was cleared while this stable task
 			// bundle was still in use. Agent/global fallback errors follow the legacy
 			// behavior and never mutate task failover state.
@@ -451,6 +464,88 @@ func isRetryableStreamError(err error) bool {
 	return true
 }
 
+// ---- 上下文超限：把供应商的真实窗口记下来 ----
+//
+// 用户手填的 context_window_k 只当「上限的参考」，真实窗口以供应商的报错为准：
+// 报错里通常带着 "maximum context length is 131072" 这类数字，捞到就把它按 95%
+// 记成该 profile 的观测上限（留 5% 给输出），后续压缩阈值按它算。
+// 捞不到数字时先把窗口砍半，宁可多压一次，也不能再让请求被静默截断。
+//
+// 这条链路的价值：8 天实测里 Qwen3.8-Flash-Next 被声明成 1000K，压缩阈值被算成
+// 800K，一次都没触发；而真实请求最高已经打到 37 万 token。有了观测上限，
+// 下一次溢出就会把窗口钉回真实值，不再依赖用户填对。
+
+var ctxCeilingCache sync.Map // profileID(int64) → tokens(int)
+
+func ctxCeilingKey(profileID int64) string { return "llm_ctx_ceiling:" + strconv.FormatInt(profileID, 10) }
+
+// cachedCeiling 返回该 profile 的观测上限（0 = 还没有观测）。
+func (r *taskLLMRuntime) cachedCeiling(profileID int64) int {
+	if profileID <= 0 {
+		return 0
+	}
+	if v, ok := ctxCeilingCache.Load(profileID); ok {
+		if n, ok := v.(int); ok {
+			return n
+		}
+	}
+	if r.s == nil || r.s.m == nil || r.s.m.pg == nil {
+		return 0
+	}
+	raw, ok, err := r.s.m.pg.GetSetting(ctxCeilingKey(profileID))
+	if err != nil || !ok {
+		return 0
+	}
+	n, convErr := strconv.Atoi(strings.TrimSpace(raw))
+	if convErr != nil || n <= 0 {
+		return 0
+	}
+	ctxCeilingCache.Store(profileID, n)
+	return n
+}
+
+// cappedWindow 用观测上限压低声明窗口（只会变小，不会变大）。
+func (r *taskLLMRuntime) cappedWindow(profileID int64, window int) int {
+	if ceiling := r.cachedCeiling(profileID); ceiling > 0 && ceiling < window {
+		return ceiling
+	}
+	return window
+}
+
+// noteContextOverflow 处理一次「请求太长」的失败：记日志 + 落库观测上限。
+func (r *taskLLMRuntime) noteContextOverflow(err error, profileID int64) {
+	declared := agent.ProviderContextLimit(err)
+	if profileID <= 0 {
+		log.Printf("[task-llm] task %s 上下文超限（无法归属到具体配置，请检查 agent/全局配置的窗口：provider 声明=%d）: %v",
+			r.taskID, declared, err)
+		return
+	}
+	cur := r.cachedCeiling(profileID)
+	next := declared * 95 / 100 // 留 5% 给输出与下一轮增长
+	if next <= 0 {
+		if cur > 0 {
+			next = cur / 2
+		} else {
+			next = 96000
+		}
+	}
+	if cur > 0 && next > cur {
+		next = cur
+	}
+	// 别把窗口压到自己都不够用的地步。
+	if floor := agent.MinContextWindowTokens(); next < floor {
+		next = floor
+	}
+	ctxCeilingCache.Store(profileID, next)
+	if r.s != nil && r.s.m != nil && r.s.m.pg != nil {
+		if setErr := r.s.m.pg.SetSetting(ctxCeilingKey(profileID), strconv.Itoa(next)); setErr != nil {
+			log.Printf("[task-llm] 观测窗口落库失败 profile #%d: %v", profileID, setErr)
+		}
+	}
+	log.Printf("[task-llm] task %s 上下文超限：provider 声明=%d，profile #%d 的压缩窗口下调为 %d",
+		r.taskID, declared, profileID, next)
+}
+
 // CompactionWindow mirrors current()'s precedence so the context window always
 // matches the provider the role will actually stream on. A role fallback chain can
 // switch profiles on any call, so the window is the MINIMUM across the whole chain:
@@ -458,13 +553,13 @@ func isRetryableStreamError(err error) bool {
 // failover might pick.
 func (r *taskLLMRuntime) CompactionWindow() int {
 	if binding, ok := r.s.resolveAgentBinding(r.agentKey); ok {
-		minimum := binding.headCfg.CompactionWindow()
+		minimum := r.cappedWindow(binding.headID, binding.headCfg.CompactionWindow())
 		for _, id := range binding.fallbackIDs {
 			if id == binding.headID {
 				continue
 			}
 			if cfg, ok := r.s.loadProfileConfig(id); ok {
-				if window := cfg.CompactionWindow(); window < minimum {
+				if window := r.cappedWindow(id, cfg.CompactionWindow()); window < minimum {
 					minimum = window
 				}
 			}
@@ -488,7 +583,7 @@ func (r *taskLLMRuntime) CompactionWindow() int {
 	minimum := 0
 	for _, entry := range chain {
 		if cfg, ok := r.s.loadProfileConfig(entry.ProfileID); ok {
-			window := cfg.CompactionWindow()
+			window := r.cappedWindow(entry.ProfileID, cfg.CompactionWindow())
 			if minimum == 0 || window < minimum {
 				minimum = window
 			}

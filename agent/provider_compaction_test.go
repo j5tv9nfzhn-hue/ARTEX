@@ -9,23 +9,36 @@ import (
 	"github.com/Autumn-27/norma/llm"
 )
 
-// 上下文压缩的验收口径：触发点 = 用户设置的上下文窗口 × 80%（ARTEX_COMPACT_RATIO 可调）。
+// 上下文压缩的验收口径（对齐 Codex / OpenCode / ZCode 的共识）：
+//
+//	触发点 = min(ratio × 窗口, 窗口 − 输出预留)
+//
+// 也就是「默认 80%，但当窗口不够大、80% 留不下输出与下一轮增长时，按预留反推」。
+// ZCode 的 200K → 83%、128K → 73% 就是这条规则的产物；Codex 用 90% 上限做同样的事。
 //
 // 反解只影响"交给 SDK 的等效窗口"，所以断言直接打在实际交给 SDK 的 Config 上；
 // 另外再用真正的 compaction.Compactor 跑一遍 Pre（见 TestBuiltinCompactionFiresAtTrigger），
 // 确认镜像函数算出来的数不是纸上谈兵。
 func TestCompactionTriggerHitsGoldenRatio(t *testing.T) {
-	for _, window := range []int{160000, 200000, 400000, 1000000} {
-		cfg := compactionConfig(window)
+	cases := []struct {
+		window int
+		want   int // min(80%, 窗口-34000)；窗口的 1/4 起步
+	}{
+		{160000, 126000},  // 80% = 128000 但只留得下 126000（160000-34000）
+		{200000, 160000},  // 80%，预留 34000 仍够
+		{400000, 320000},  // 80%
+		{1000000, 800000}, // 80%
+	}
+	for _, c := range cases {
+		cfg := compactionConfig(c.window)
 		got := compactionTrigger(cfg)
-		want := int(float64(window) * defaultCompactRatio)
-		if got != want {
+		if got != c.want {
 			t.Errorf("窗口 %d：触发点 %d，期望 %d（实际比例 %.1f%%）",
-				window, got, want, float64(got)*100/float64(window))
+				c.window, got, c.want, float64(got)*100/float64(c.window))
 		}
 		// 虚报窗口会让压缩永远来不及（只能等 API 返 413），这里钉死不许超。
-		if cfg.ContextWindow > window {
-			t.Errorf("窗口 %d：等效窗口 %d 大于真实窗口", window, cfg.ContextWindow)
+		if cfg.ContextWindow > c.window {
+			t.Errorf("窗口 %d：等效窗口 %d 大于真实窗口", c.window, cfg.ContextWindow)
 		}
 	}
 }

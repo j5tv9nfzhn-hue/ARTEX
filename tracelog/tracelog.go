@@ -105,16 +105,17 @@ func (s *Store) Emit(ev Event) {
 	if s.dead {
 		return
 	}
-	f := s.fileFor(ev.Thread)
-	if f == nil {
+	// 每次写完即关，不缓存句柄。Windows 上长期持有的句柄会挡住目录删除：
+	// 测试里 38 个用例因此在 TempDir cleanup 阶段判失败，运行期也会让
+	// "删除任务 / 导出任务包"这类要动 traces 目录的操作失败。追踪写入是低频
+	// 事件，省下的几次 open 不值得换一个被锁住的文件。
+	f, err := os.OpenFile(filepath.Join(s.dir, ev.Thread+".jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		// 打开失败按契约静默丢弃，不影响控制流。
 		return
 	}
-	if _, err := f.Write(line); err != nil {
-		// One bad handle should not poison later writes of other threads;
-		// drop this handle and continue silently.
-		_ = f.Close()
-		delete(s.files, ev.Thread)
-	}
+	_, _ = f.Write(line)
+	_ = f.Close()
 }
 
 func (s *Store) fileFor(name string) *os.File {

@@ -841,6 +841,17 @@ func (e *Engine) KillWork(intentID int64) error {
 // Broadcaster exposes the engine's live activity pub/sub (used by the SSE handler).
 func (e *Engine) Broadcaster() *Broadcaster { return e.bc }
 
+// liveBroadcaster 返回实时帧广播器；engine 还没装配时给 nil。
+// newLiveEmitter 对 nil 广播器是静默丢弃，所以这条路径在无 LLM 配置、
+// 或单元测试只起了 Server 的情况下不会再把整个进程打挂（历史上 chat 链路
+// 就因为这个 nil 解引用 panic 掉过测试进程）。
+func (s *Server) liveBroadcaster() *Broadcaster {
+	if s == nil || s.engine == nil {
+		return nil
+	}
+	return s.engine.Broadcaster()
+}
+
 // emitActivity 从一个入口持久化捕获步骤并分发给 SSE 订阅者，避免数据库与流不同步。
 // 以下任务级摘要没有 node_id，只显示于活动转录。planner.workerOutput 与
 // get_worker_output 仅按 intent node_id 读取 result、text，因此不会回读这些摘要。
