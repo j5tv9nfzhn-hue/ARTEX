@@ -196,6 +196,9 @@ package_binary() {
   cp "$binary" "$package_root/artex-rea-core${core_ext}"
   # 启动监护脚本是正式入口；页面一键更新需要进程退出后由脚本重启。
   # 直接运行 artex-rea 不会自动重启，发布包仅包含对应系统的启动脚本。
+  # 启动脚本必须真的能执行：start-lan.* 曾被 base64 文本覆盖，双击只会报
+  # “不是内部或外部命令”，而且一路进了发布包。坏脚本不允许打包。
+  python3 -I scripts/check-start-scripts.py || exit 1
   if [ "$goos" = "windows" ]; then
     cp start.bat start-lan.bat "$package_root/"
   else

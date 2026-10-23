@@ -336,3 +336,6 @@ jobs:
       - name: 文档内部链接、图片与锚点
         if: always()
         run: python3 -I scripts/check-doc-links.py
+      - name: 启动脚本未被写坏（编码/换行/首行/chcp 位置）
+        if: always()
+        run: python3 -I scripts/check-start-scripts.py

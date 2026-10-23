@@ -1,6 +1,6 @@
 @echo off
-rem 将控制台切换为 UTF-8，避免中文在其他代码页下乱码。
 chcp 65001 >nul 2>&1
+rem 将控制台切换为 UTF-8，避免中文在其他代码页下乱码。
 rem ARTEX-REA 启动脚本（Windows，现在是可选兜底）
 rem
 rem 不装这个脚本也能用：artex-rea.exe 自己会做单实例仲裁，更新装好后也会自己
