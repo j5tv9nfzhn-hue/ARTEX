@@ -260,8 +260,9 @@ func HasBackup() bool {
 //   - updates/staging/<ver>/  —— 其它版本的暂存目录；
 //   - updates/*.staged.*      —— 散落在 updates 根下的安装包与校验文件。
 //
-// 第二类原先没人管：它们不是目录，也不是旧协议名单里的 .new/.failed/.swap，
-// 于是从旧协议时代留到今天的 artex-rea.staged.exe（约 40MB）一直躺在那里。
+// 第二类只在"旧协议遗留 / 手工放置"时出现（安装流程自身写的是 staging/<ver>/）：
+// 它们既不是目录，也不在旧协议名单（.new / .failed / .swap / .upgrade.json）里，
+// 原先没有任何一条清理逻辑会碰它们，放进去就永远留在盘上。
 func CleanupStaging(l Layout) {
 	ptr, _ := ReadPointer(l)
 	if entries, err := os.ReadDir(l.Staging); err == nil {
