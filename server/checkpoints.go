@@ -13,10 +13,12 @@ package server
 //         压缩被中断/重启恢复（interrupt / compaction_recover）、主 Agent 用户消息（user_message）
 //
 // 消息级回滚（pgRollbackConversationMessage / rollbackTaskMessage，气泡下方的回滚
-// 箭头）：隐藏该用户消息及之后的全部步骤、transcript 截断回该回合之前、后续检查点
+// 箭头）：隐藏该用户消息及其之后的对话步骤、transcript 截断回该回合之前、后续检查点
 // 作废，消息原文由前端回填输入框（本体不删）。边界取「该消息之前最后一个可见活动」
 // 而非「上一个检查点」，因此首条消息也能一路回滚到空时间线，且与被跳过的失败回合
-// 无关。
+// 无关。两者的范围都只是「对话」：会话回滚只动 conversation_activities，任务里的
+// 主 Agent 回滚只动 worker=mainagent 的行 —— 任务进度、意图状态与 Worker/规划器
+// 记录一律不回退，所以也不需要先暂停任务。
 //
 // 压缩联动（#27/#28/#37）：平台内可触及的压缩是 agent.Compactor（冷节点 digest）。
 // 任务暂停时显式打断在跑的压缩；中断/重启后的恢复校验利用「AddDigest 事务原子」
@@ -663,16 +665,17 @@ func (s *Server) revertTaskCheckpoint(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// rollbackTaskMessage rolls a task's timeline back to the state just before one
-// user message of the main-agent console: hide every step from that message on
-// (worker/planner lanes included — the task-wide "back to this point" the
-// timeline tab performs), reopen unfinished intents so a resume re-claims them,
-// truncate the MAIN agent transcript back to the size recorded before that turn
-// (so the orchestrator no longer sees the retracted message), supersede the
-// checkpoints pointing into the hidden region and append a revert marker.
-// Requires the task not be running and no main-agent turn in flight. Tool side
-// effects, the planner's transcript memory and graph products are NOT rolled
-// back (the confirm dialog states this).
+// rollbackTaskMessage rolls one task's MAIN-AGENT CONVERSATION back to the state
+// just before one user message: hide that message and the main-agent steps after
+// it, truncate the main agent transcript back to the size recorded before that
+// turn (so the orchestrator no longer sees the retracted message), supersede the
+// checkpoints captured at or after it and append a revert marker.
+//
+// Scope is the conversation and nothing else: worker/planner lanes keep their
+// rows, intents keep their state, and the task's progress is NOT rewound —— 回退
+// 只作用于消息与对话。正因如此它也不要求先暂停任务，唯一的前提是主 Agent 没有
+// 进行中的回合（那一段正写着这同一条对话）。Tool side effects and graph products
+// are not rolled back (the confirm dialog states this).
 func (s *Server) rollbackTaskMessage(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.taskByPath(w, r)
 	if !ok {
@@ -683,7 +686,7 @@ func (s *Server) rollbackTaskMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad seq")
 		return
 	}
-	kind, _, reverted, found, err := t.Store.ActivityMeta(seq)
+	kind, worker, reverted, found, err := t.Store.ActivityMeta(seq)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -692,19 +695,18 @@ func (s *Server) rollbackTaskMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "消息不存在或已被回滚隐藏")
 		return
 	}
-	if kind != "user" {
-		writeErr(w, 400, "只能回滚用户消息")
+	// 只认主 Agent 的用户消息：这是「这段对话」的锚点，不是任务时间线的锚点。
+	if kind != "user" || worker != db.MainAgentWorker {
+		writeErr(w, 400, "只能回滚主 Agent 的用户消息")
 		return
 	}
 	if s.isChatKeyBusy(t.ID) {
 		writeErr(w, 409, "主 Agent 正在运行，请先停止再回滚")
 		return
 	}
-	if s.taskActivelyExecuting(t) {
-		writeErr(w, 409, "任务正在运行，请先暂停后再回滚")
-		return
-	}
-	boundary, err := s.m.pg.MaxVisibleExplorationActivityBefore(r.Context(), t.ExpID, seq)
+	// 不再要求任务暂停（taskActivelyExecuting）：回退只动这段对话，worker/规划器
+	// 正在做的事与意图状态一概不碰，隐藏范围也被限定在主 Agent 自己的泳道里。
+	boundary, err := s.m.pg.MaxVisibleMainAgentActivityBefore(r.Context(), t.ExpID, seq)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -714,20 +716,14 @@ func (s *Server) rollbackTaskMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	hidden, err := s.m.pg.HideExplorationActivitiesAfter(r.Context(), t.ExpID, boundary)
+	hidden, err := s.m.pg.HideMainAgentActivitiesAfter(r.Context(), t.ExpID, boundary)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	reopened, err := s.m.pg.ReopenInterruptedIntents(r.Context(), t.ExpID)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	if len(reopened) > 0 && !t.lifecycleSnapshot().Paused && !s.engine.IsPaused(t.ID) && !isTerminalStatus(t.lifecycleSnapshot().Status) {
-		_, _ = s.applyTaskControlWithCause(t, "pause", agent.AbortPausedByUser)
-	}
-	superseded, err := s.supersedeCheckpointsInRegion(r.Context(), checkpoints, boundary)
+	// 作废判定按消息本身（seq）而不是按主 Agent 泳道的边界：worker/规划器的记录没有
+	// 被隐藏，落在 boundary 与 seq 之间的检查点仍然描述可见状态，不该被连坐。
+	superseded, err := s.supersedeCheckpointsInRegion(r.Context(), checkpoints, seq-1)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -738,17 +734,16 @@ func (s *Server) rollbackTaskMessage(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Printf("[checkpoints] task %s 消息 #%d 缺少主 Agent 消息检查点，跳过 transcript 截断", t.ID, seq)
 	}
-	if hidden > 0 || len(reopened) > 0 {
+	if hidden > 0 {
 		s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
-			Summary: fmt.Sprintf("时间线已回滚到消息 #%d 之前：隐藏 %d 个步骤，重排 %d 条未完成意图（恢复任务后继续执行）。",
-				seq, hidden, len(reopened))})
+			Summary: fmt.Sprintf("会话已回滚到消息 #%d 之前：隐藏 %d 个主 Agent 步骤（任务进度与 Worker/规划器记录不受影响）。", seq, hidden)})
 	}
 	marker := s.captureTaskCheckpoint(t, db.CheckpointReasonRevert,
 		fmt.Sprintf("回滚到消息 #%d 之前（隐藏 %d 步）", seq, hidden), false)
-	log.Printf("[checkpoints] task %s 回滚消息 #%d：隐藏 %d 步，重排 %d 条意图，作废 %d 个检查点",
-		t.ID, seq, hidden, len(reopened), superseded)
+	log.Printf("[checkpoints] task %s 回滚消息 #%d：隐藏 %d 个主 Agent 步骤，作废 %d 个检查点",
+		t.ID, seq, hidden, superseded)
 	writeJSON(w, 200, map[string]any{
-		"status": "reverted", "hidden": hidden, "reopened": reopened,
+		"status": "reverted", "hidden": hidden,
 		"superseded": superseded, "transcript_truncated": truncated, "checkpoint": marker,
 	})
 }

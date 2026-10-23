@@ -166,7 +166,6 @@ function mockRollbackMessage(scope: string, seq: number) {
     superseded,
     transcript_truncated: true,
     checkpoint: marker,
-    ...(scope.startsWith("task-") ? { reopened: [4, 5] } : {}),
   };
 }
 

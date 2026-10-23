@@ -395,8 +395,9 @@ export const api = {
     get<{ checkpoints: Checkpoint[] }>(`/tasks/${id}/checkpoints`).then((r) => arr(r.checkpoints)),
   revertTaskCheckpoint: (id: string, checkpointId: number) =>
     post<CheckpointRevertResult>(`/tasks/${id}/checkpoints/${checkpointId}/revert`, {}),
-  // 消息级回滚（气泡箭头）：隐藏该用户消息及之后的全部步骤，消息原文由界面回填
-  // 输入框。要求任务未在运行且主 Agent 无进行中回合。
+  // 消息级回滚（气泡箭头）：只回退主 Agent 这段对话（该消息及之后的主 Agent 步骤），
+  // 任务进度、意图状态与 Worker/规划器记录都不动，因此不要求先暂停任务；唯一前提是
+  // 主 Agent 没有进行中的回合。
   rollbackTaskMessage: (id: string, seq: number) =>
     post<CheckpointRevertResult>(`/tasks/${id}/messages/${seq}/rollback`, {}),
   archiveTasks: (taskIds: string[]) =>

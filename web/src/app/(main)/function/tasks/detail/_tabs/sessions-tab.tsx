@@ -1680,9 +1680,10 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       .finally(() => setSending(false));
   }
 
-  // confirmMessageRollback 执行消息级回滚（总 AGENT 气泡箭头）：后端整任务回滚到
-  // 该消息之前（隐藏主 Agent/Worker/规划器步骤、重排未完成意图），这里把消息原文
-  // 连同附件回填输入框，丢弃会话缓存并按当前会话重载，被回滚内容从列表消失。
+  // confirmMessageRollback 执行消息级回滚（总 AGENT 气泡箭头）：后端只回退这段
+  // 对话到该消息之前（隐藏主 Agent 步骤；任务进度、意图状态与 Worker/规划器记录
+  // 都不动），这里把消息原文连同附件回填输入框，丢弃会话缓存并按当前会话重载，
+  // 被回滚的对话内容从列表消失。
   async function confirmMessageRollback() {
     const step = rollbackTarget;
     if (!step || rollbackBusy) return;
@@ -1699,7 +1700,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       // 卡在「加载活动流…」，因此演示态保留原列表。
       if (!MOCK) setStore({});
       loadSession(activeKey);
-      toast.success(tc("msgRollback.doneTask", { hidden: result.hidden, reopened: result.reopened?.length ?? 0 }));
+      toast.success(tc("msgRollback.doneTask", { hidden: result.hidden }));
     } catch (e) {
       toast.error(tc("msgRollback.failed", { msg: (e as Error).message }));
     } finally {

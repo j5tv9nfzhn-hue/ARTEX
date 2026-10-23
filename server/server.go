@@ -947,7 +947,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tasks/{id}/intents/rerun-blocked", s.rerunBlocked)            // 批量重跑本任务全部 blocked 意图
 	mux.HandleFunc("GET /api/tasks/{id}/checkpoints", s.taskCheckpoints)                    // 检查点:列出任务时间线检查点
 	mux.HandleFunc("POST /api/tasks/{id}/checkpoints/{cid}/revert", s.revertTaskCheckpoint) // 检查点:回滚任务时间线
-	mux.HandleFunc("POST /api/tasks/{id}/messages/{seq}/rollback", s.rollbackTaskMessage)   // 时间线:回滚到主 Agent 某条消息之前(气泡箭头)
+	mux.HandleFunc("POST /api/tasks/{id}/messages/{seq}/rollback", s.rollbackTaskMessage)   // 对话:回滚主 Agent 某条消息之前(气泡箭头，只动对话不动任务)
 	mux.HandleFunc("POST /api/active", s.setActive)
 
 	mux.HandleFunc("GET /api/llm", s.getLLM)
@@ -4223,8 +4223,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	if settled.ID > 0 {
 		// 时间线检查点（批次 6）：主 Agent 用户轮落盘后、回合开始前——与顶层会话
 		// 的 user_message 检查点对齐。快照记录主 Agent 转录大小 + 该轮活动 id，
-		// 「回滚到消息前」= 隐藏 id ≥ 本轮的活动（见 rollbackTaskMessage）；截图
-		// 时 transcript 还没写入本轮消息，截断目标即「本轮之前的上下文」。
+		// 「回滚到消息前」= 隐藏主 Agent 泳道里 id ≥ 本轮的活动（见
+		// rollbackTaskMessage）；截图时 transcript 还没写入本轮消息，截断目标即
+		// 「本轮之前的上下文」。
 		s.captureTaskMainMessageCheckpoint(t, mainSeg, "用户消息："+firstLine(req.Message, 60), settled.ID)
 	}
 	var ma *agent.MainAgent

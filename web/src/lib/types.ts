@@ -842,7 +842,7 @@ export interface CheckpointRevertResult {
   superseded: number; // 作废的后续检查点数
   transcript_truncated: boolean;
   checkpoint?: Checkpoint | null; // 回滚标记检查点
-  reopened?: number[]; // 任务回滚重排为待执行的意图 id
+  reopened?: number[]; // 检查点回滚重排为待执行的意图 id（消息级回滚不返回）
 }
 
 // ---- Backend logs (/logs page) ----

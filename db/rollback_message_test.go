@@ -135,3 +135,68 @@ func TestMessageRollbackPrimitives(t *testing.T) {
 		t.Fatalf("boundary before first activity = %d (want 0) err=%v", max, err)
 	}
 }
+
+// 任务面板的「主 Agent 消息回滚」只回退这段对话：边界落在主 Agent 自己的上一步上，
+// 隐藏也只动 worker=mainagent 的行 —— 同一区间里的 Worker 执行记录属于任务进度，
+// 必须留在时间线上（见 server/checkpoints.go 的 rollbackTaskMessage）。
+func TestMainAgentScopedRollbackKeepsWorkerRows(t *testing.T) {
+	ctx := context.Background()
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	expID, err := d.CreateExploration("mainagent-scoped-rollback", "目标")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Exec(`DELETE FROM explorations WHERE id=$1`, expID)
+	es := d.Exploration(expID)
+
+	u1, err := es.AppendActivity(Activity{Worker: MainAgentWorker, Kind: "user", Summary: "第一条"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w1, err := es.AppendActivity(Activity{Worker: "work#1", Kind: "tool_use", Tool: "Bash", Summary: "跑了命令"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u2, err := es.AppendActivity(Activity{Worker: MainAgentWorker, Kind: "user", Summary: "改一下"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w2, err := es.AppendActivity(Activity{Worker: "work#1", Kind: "tool_use", Tool: "Bash", Summary: "又跑了一条"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 边界是主 Agent 的上一条消息，而不是同一区间里更近的 Worker 记录。
+	boundary, err := d.MaxVisibleMainAgentActivityBefore(ctx, expID, u2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boundary != u1 {
+		t.Fatalf("main-agent boundary before u2 = %d (want %d) err=%v", boundary, u1, err)
+	}
+
+	// 只隐藏主 Agent 的行：Worker 的 w1/w2 是任务已经做过的事，不属于这段对话。
+	hidden, err := d.HideMainAgentActivitiesAfter(ctx, expID, boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hidden != 1 {
+		t.Fatalf("hidden = %d (want 1: only u2)", hidden)
+	}
+	if _, _, reverted, found, err := es.ActivityMeta(u2); err != nil || !found || !reverted {
+		t.Fatalf("u2 should be hidden: reverted=%v found=%v err=%v", reverted, found, err)
+	}
+	for name, id := range map[string]int64{"w1": w1, "w2": w2} {
+		if _, _, reverted, found, err := es.ActivityMeta(id); err != nil || !found || reverted {
+			t.Fatalf("%s 是 Worker 记录，不该被回滚隐藏: reverted=%v found=%v err=%v", name, reverted, found, err)
+		}
+	}
+	if max, err := d.MaxExplorationActivityID(ctx, expID); err != nil || max != w2 {
+		t.Fatalf("max visible = %d (want %d, Worker 记录仍在) err=%v", max, w2, err)
+	}
+}

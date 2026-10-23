@@ -216,6 +216,26 @@ WHERE exploration_id=$1 AND id>$2 AND reverted_at IS NULL`, explorationID, bound
 	return n, nil
 }
 
+// MainAgentWorker 是主 Agent 在 activity.worker 上的取值。消息级回滚只回退这一段
+// 对话，因此边界与隐藏都必须按它过滤：同一区间里的 worker/规划器记录属于任务进度，
+// 不能被一并卷入（它们是任务已经做过的事，不是这段对话的一部分）。
+const MainAgentWorker = "mainagent"
+
+// HideMainAgentActivitiesAfter is HideExplorationActivitiesAfter restricted to the
+// main agent's lane. Worker/planner rows after the boundary stay visible: 回退只作用于
+// 消息与对话，不回退任务与进度。
+func (d *DB) HideMainAgentActivitiesAfter(ctx context.Context, explorationID, boundaryID int64) (int64, error) {
+	res, err := d.ExecContext(ctx, `
+UPDATE activity SET reverted_at=(strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
+WHERE exploration_id=$1 AND id>$2 AND reverted_at IS NULL AND worker=$3`,
+		explorationID, boundaryID, MainAgentWorker)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ReopenInterruptedIntents flips intents stuck in running/paused back to open so a
 // {@code resume} re-claims them (task rollback: 重置状态 + 重新入队). Unlike
 // ResetRunningIntents this is not a crash replay (no replay metric) — the caller
@@ -339,6 +359,17 @@ func (d *DB) MaxVisibleExplorationActivityBefore(ctx context.Context, exploratio
 	err := d.QueryRowContext(ctx,
 		`SELECT MAX(id) FROM activity WHERE exploration_id=$1 AND id<$2 AND reverted_at IS NULL`,
 		explorationID, beforeID).Scan(&id)
+	return id.Int64, err
+}
+
+// MaxVisibleMainAgentActivityBefore is MaxVisibleExplorationActivityBefore
+// restricted to the main agent's lane: 消息级回滚的边界就落在主 Agent 自己的上一步上，
+// 于是"回退到该消息之前"只截断这段对话，不牵动任务时间线里的执行记录。
+func (d *DB) MaxVisibleMainAgentActivityBefore(ctx context.Context, explorationID, beforeID int64) (int64, error) {
+	var id sql.NullInt64
+	err := d.QueryRowContext(ctx,
+		`SELECT MAX(id) FROM activity WHERE exploration_id=$1 AND id<$2 AND reverted_at IS NULL AND worker=$3`,
+		explorationID, beforeID, MainAgentWorker).Scan(&id)
 	return id.Int64, err
 }
 
