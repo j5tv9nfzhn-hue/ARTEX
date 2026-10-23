@@ -643,6 +643,9 @@ func splitLines(s string) []string {
 // SetPhase 设置本 run 的阶段(recon/verify/exploit;其它值视为不限制)。
 func (t *ToolSet) SetPhase(phase string) { t.phase = normalizeWorkerPhase(phase) }
 
+// SetIntentHint 传入本 run 对应意图的可读文字(小写)，供阶段内的专用工具裁剪使用。
+func (t *ToolSet) SetIntentHint(text string) { t.intentHint = text }
+
 // normalizeWorkerPhase 把外部传入的阶段名收敛到三个合法值,未知值一律当「不限制」——
 // 阶段只用来裁工具面,拼错一个词不该让 worker 少一半能力。
 func normalizeWorkerPhase(phase string) string {
@@ -687,13 +690,17 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
 		}
 	case workerPhaseExploit:
-		return []actool.CoreTool{
+		// 利用阶段是工具面最胖的一档（18.1 KB）。这里再按意图文字摘掉「只服务
+		// 单一能力」的专用工具：意图没提 fuzz/加解密/结构化提取/二进制，就不挂
+		// 对应工具——通用替代品（http_sequence / http_request / bash）都还在，
+		// 写入与回报类工具一个不动。判断不了（hint 为空）时原样全给。
+		return pruneSpecialistTools([]actool.CoreTool{
 			t.httpFuzzTool(), t.httpSequenceTool(), t.httpRequestTool(),
 			t.codecCryptoTool(), t.extractDataTool(), t.binaryInspectTool(),
 			t.insertAssets(), t.listAssets(),
 			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(), t.nodeDetail(),
 			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
-		}
+		}, t.intentHint)
 	}
 	return t.allWorkerTools()
 }

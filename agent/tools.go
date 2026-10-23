@@ -81,6 +81,10 @@ type ToolSet struct {
 	// phase 是本条意图声明的执行阶段(recon/verify/exploit;空 = 不限制)。只影响
 	// worker 注入哪些工具(见 WorkerTools)，不影响权限与审批。
 	phase string
+	// intentHint 是本条意图的可读文字(summary + expected_evidence，小写)。exploit
+	// 阶段内部再按它裁剪「只服务单一能力」的专用工具(fuzz/crypto/extract/binary)，
+	// 见 intent_phase.go。空 = 不裁剪。
+	intentHint string
 	// intentsAdded 记录本 ToolSet 生命周期内成功派发的意图数(planner 一轮一实例)。
 	// planner.Plan 用它做 0 意图契约的硬校验:0 意图 + 目标未达成 + 无在跑意图 =
 	// 协议违规,立刻补跑一轮把方向补上或把缺口写出来。

@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 工具面与上下文预算（第四阶段）
+
+#### 修复的问题
+
+- **阶段声明不填就退回全量工具面**：worker 的工具面按阶段裁剪的机制早就有（`WorkerTools` 的 recon/verify/exploit 三档），但它只读 `add_intent` 的 `phase` 字段——那是可选字段，模型基本不填，于是绝大多数 run 走 `allWorkerTools()`。实测（`ARTEX_TOOL_SCHEMA_LEAN` 默认开）全量面 24,763 B 工具 + 3,633 B SDK 工具 + 8,459 B 系统提示 ≈ 11.4K token，而按阶段裁剪后只要 7.9–9.3K。现在 `intentPhase` 在 planner 没声明时从意图自身文字（`summary` + `expected_evidence`）推断阶段，推断优先级 exploit > recon > verify——exploit 面是能力超集，猜错最多多花 token；verify 面最窄，猜错会真的少工具。**完全判不出（含糊/无文字）时返回空、保持全量面**，与改造前逐字节一致。
+- **exploit 面里的专用工具按需挂载**：`http_fuzz` / `codec_crypto` / `extract_data` / `binary_inspect` 只在意图提到对应能力（爆破字典、加解密签名、提取解析、二进制逆向）时才下发；通用替代品 `http_sequence` / `http_request` / `bash` 与全部写入类工具（`record_fact` / `report_finding` / `handoff_patch` / `list_findings`）永远保留。**没有动任何一个工具的 Description / InputSchema，也没有改 System Prompt。**
+
 ### 模型与成本
 
 #### 修复的问题

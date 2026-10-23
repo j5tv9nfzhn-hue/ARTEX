@@ -480,7 +480,12 @@ func intentPhase(n *db.Node) string {
 		Phase string `json:"phase"`
 	}
 	_ = json.Unmarshal(n.Payload, &p)
-	return normalizeWorkerPhase(p.Phase)
+	if ph := normalizeWorkerPhase(p.Phase); ph != "" {
+		return ph
+	}
+	// planner 没声明阶段（可选字段，模型大多不填）时从意图文字推断。
+	// 推断不出返回空串 = 全量工具面，与改造前完全一致（见 intent_phase.go）。
+	return inferIntentPhase(n)
 }
 
 func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
@@ -488,7 +493,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 同 planner：态势/digest 注入预算要按窗口推导，opts 与首条 user 消息之前挂上。
 	ctx = WithContextWindow(ctx, w.compactionWindow())
 	tsx := NewToolSet(ts, name)
-	tsx.SetPhase(intentPhase(intent)) // 意图声明了阶段 → worker 只注入该阶段工具面
+	tsx.SetPhase(intentPhase(intent))           // 意图声明了阶段（或推断出阶段）→ 只注入该阶段工具面
+	tsx.SetIntentHint(intentSignalText(intent)) // 阶段内部的专用工具按意图文字二次裁剪
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)
 	tsx.SetProxy(w.proxyAddr, w.proxyCACert)
@@ -531,6 +537,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		tools, def = softwareRETools(tools, def)
 	}
 	defer cleanup()
+	logToolFace(tsx.phase, tools) // 每个不同的工具面只打一次，便于对账实际下发体积
 	// The run-wide intent is not the current tool action. Do not forward it or
 	// inherit a parent run's background into the action reviewer.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
