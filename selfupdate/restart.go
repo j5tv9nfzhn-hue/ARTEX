@@ -114,7 +114,9 @@ func ExitForRestart(reason string) int {
 				logUpdate(l, "旧引导程序不会托管重启，主动拉起也失败：%v（reason=%s）", err, reason)
 			} else {
 				logUpdate(l, "旧引导程序不会托管重启，已主动拉起新引导程序后退出（reason=%s）", reason)
-				return ExitRestart
+				// 新窗口已经起来了，这里必须返回 0：再回 75 等于告诉启动脚本
+				// 「再拉我一次」，而脚本若照做就会和刚拉起的那个抢同一把单实例锁。
+				return 0
 			}
 		}
 		logUpdate(l, "以退出码 %d 把重启交给上层（reason=%s）", ExitRestart, reason)

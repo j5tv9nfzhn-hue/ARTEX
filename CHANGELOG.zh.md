@@ -147,6 +147,17 @@
 
 - **修复「按资产」视图资产列表溢出后没有滚动条**：左侧资产树本已套了滚动容器，但外层卡片只给了 `max-height` 而没有确定高度，滚动视口靠 `height:100%` 解析不出高度（CSS 中只设 `max-height`、`height` 仍为 `auto` 时百分比高度不生效），于是资产多时列表要么撑破卡片、要么被截断且无法滚动。现将高度上限直接落到资产树的原生滚动容器上（`overflow-y-auto` + `max-h`，随窗口高度自适应），资产少时卡片随内容收缩、资产多时封顶并出滚动条。
 
+### 启动脚本（Windows）
+
+#### 修复的问题
+
+- **`start.bat` 里套着的重启循环（同时是 Ctrl-C 询问与无限重启的根因）**：脚本按退出码自己 `goto :loop`，既没有次数上限，也没有「这一类错误不该重试」的判断。于是升级后旧进程没退干净、8787 被占用时，每一轮都撞同一个端口（`Only one usage of each socket address…`），窗口反复闪、日志刷屏，看起来像程序坏了；而在控制台按 Ctrl-C，cmd 会先终止那个被调起的 exe，再回头问一句 `Terminate batch job (Y/N)?`——按 N 就再来一轮，按 Y 才退出。现在脚本**不再自己循环**：重启本来就内置在 exe 里（入口监护循环只在 `updates/restart.request` 存在时拉起，5 次/5 分钟封顶），用户按 Ctrl-C 退出的进程不会被复活。
+- **Ctrl-C 不再弹 `Terminate batch job (Y/N)?`**：启动行改成 cmd-shim 写法 `goto #_undefined_# 2>NUL || "artex-rea.exe" %*`（npm / deno 的 `cmd-shim` 同款）。`goto` 到未定义标签会立刻结束批处理上下文，但同一行已解析的命令继续在「命令行上下文」里前台运行——没有批处理作业可终止，Ctrl-C 直接落到 exe 自己身上，由它走正常收尾（关库、释放单实例锁）。常见的两个错误修法已排除：`< nul` 只是自动回答 N，脚本会继续往下跑；`start /b` 会让子进程收不到 Ctrl-C。
+- **端口被占用时给出可执行的处置，而不是无限重试**：`ListenAndServe` 失败现在先判 `EADDRINUSE`（含 Windows 的 `Only one usage of each socket address` 原文兜底），命中即以专用退出码 **2** 退出，并打印占用端口、`netstat -ano | findstr :<port>`、`taskkill /PID … /F`、以及「或者用 `-takeover` / `-lan` 接管」。脚本见 2 就留住窗口、不再重启。
+- **`ARTEX_SUPERVISED` 从 `.bat` 里删掉**：这个变量是在告诉 exe「外面有个循环会以 75 退出后把我拉起来」。脚本不再循环了，再留着它会让一次一键更新以 75 退出、然后没有任何人拉起——表现为「更新完窗口消失、打不开」。现在 Windows 上走 exe 的自重启（`Relaunch` / `relaunchOuter`）。顺带修掉 `relaunchOuter` 成功后仍返回 75 的分支：新窗口都已拉起，再回 75 只会让上层和它抢同一把单实例锁。
+- **双击时「已在运行」的提示不再一闪而过**：该路径退出码是 0，脚本不会 `pause`，于是窗口在用户读到原因前就关了。现在 stdout 真的接在控制台时停 6 秒（重定向 / 计划任务 / `ARTEX_NO_PAUSE=1` 立刻返回）。
+- **打包门禁**：`scripts/check-start-scripts.py` 除原有的 BOM / 换行 / `chcp` 位置外，新增结构约束——必须有且只有一处 `goto #_undefined_# … 2>NUL ||` 启动行，且不得出现 `:loop`/`goto loop`、不得设置 `ARTEX_SUPERVISED`、不得用 `< nul` 压 Ctrl-C。`build.sh` 与 Release 工作流都会跑它。
+
 ### 分支改动摘要（详见 [CHANGELOG.md](CHANGELOG.md)）
 
 > 本节是本分支相对上游在 Unreleased 期间的整体改动缩影；本节以上各节为逐功能细化条目，完整措辞与文件级依据以 [CHANGELOG.md](CHANGELOG.md) 为准。

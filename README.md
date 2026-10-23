@@ -99,7 +99,7 @@ Autumn-27/ARTEX（国内原作者，中文原创）
 到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载对应平台的 `artex-rea-<版本>-<平台>-<架构>.zip`（`linux` / `darwin` / `windows`），解压后得到：
 
 - `artex-rea` / `artex-rea.exe` —— 程序本体（前端已内嵌）
-- `start.bat`（Windows）/ `start.sh`（Linux、macOS）—— 启动监护脚本（页面一键更新依赖它重启进程）
+- `start.bat`（Windows）/ `start.sh`（Linux、macOS）—— 启动脚本（前台启动；Ctrl-C 直接退出。一键更新的重启由 exe 自己负责，见下文「启动与一键更新」）
 - `skills/`、`config.example.json`、`README.md`
 
 以下启动示例以 Windows 为例（Linux/macOS 为 `artex-rea` 本体与 `start.sh`）：
@@ -131,7 +131,7 @@ start.bat
 ```
 
 - `npm ci` 需要 devDependencies，例如 `@tailwindcss/postcss`。若环境为 `NODE_ENV=production`，使用 `npm ci --include=dev`，避免构建时缺包。
-- 正式启动使用 `start.bat`，不要直接运行 `artex-rea.exe` —— 监护脚本负责在一键更新或回滚退出后重新拉起进程。
+- 直接双击 `artex-rea.exe` 也能用：一键更新/回滚的重启由 exe 自己完成。`start.bat` 仍是推荐入口——它把控制台切成 UTF-8、二进制缺失时给出明确提示，并保证 Ctrl-C 直接终止（不弹 `Terminate batch job (Y/N)?`）。
 - 数据库文件位置通过 `config.json` 的 `database.path` 或环境变量 `ARTEX_SQLITE_PATH` 配置（留空则在配置文件旁自动创建 `artex.db`），见下节。
 
 ## 配置
@@ -648,7 +648,7 @@ rsync -a --delete web/out/ server/webui/dist/
 产物清单：
 
 - 单目标：`dist/artex-rea-<os>-<arch>/artex-rea`（Windows 为 `artex-rea.exe`；可用 `ARTEX_OUTPUT`/`ARTEX_OUTPUT_DIR` 改路径）。
-- 发布包（`--release` 或 `ARTEX_PACKAGE=1`）：`dist/artex-rea-<版本>-<os>-<arch>.zip`，内含 `artex-rea`/`artex-rea.exe`（内嵌前端、去符号）、`start.bat`/`start.sh`（启动监护脚本）、`skills/`、`config.example.json`、`README.md`。
+- 发布包（`--release` 或 `ARTEX_PACKAGE=1`）：`dist/artex-rea-<版本>-<os>-<arch>.zip`，内含 `artex-rea`/`artex-rea.exe`（内嵌前端、去符号）、`start.bat`/`start.sh`（启动脚本）、`skills/`、`config.example.json`、`README.md`。
 - `dist/SHA256SUMS`：对 `dist/*.zip` 的校验和。
 
 运行时文件落点：
@@ -661,15 +661,18 @@ rsync -a --delete web/out/ server/webui/dist/
 - **密钥**：`jwt.key` 与凭据密钥位于可执行文件旁，不在可浏览的 `data/` 内。
 - **单次模式（`-reset-password`）**：离线重置管理员密码后退出——不占端口、不跑自更新、不起后台 worker，只打开 SQLite 重写密码哈希（`reset-password.sh` 为其封装）。
 
-启动监护与一键更新：`start.bat`（Windows）/`start.sh`（Linux、macOS、Docker ENTRYPOINT）是推荐入口。
+启动与一键更新：`start.bat`（Windows）/`start.sh`（Linux、macOS、Docker ENTRYPOINT）是推荐入口。
 
-| 退出码 | 行为 |
-|---|---|
-| 0 | 正常停止，脚本结束 |
-| 75（`selfupdate.ExitRestart`，EX_TEMPFAIL） | 立即重新拉起（页面一键更新或回滚） |
-| 其他 | 异常退出，1、2、4…秒退避重启，最多 60 秒 |
+| 退出码 | Windows `start.bat` | `start.sh` |
+|---|---|---|
+| 0 | 正常停止（Ctrl-C、页面「停止」），窗口关闭 | 正常停止，脚本结束 |
+| 2 | 端口被占用：打印占用端口与处置办法，**不重试**，留住窗口 | 同左（不重试，直接退出） |
+| 75（`selfupdate.ExitRestart`，EX_TEMPFAIL） | 已把重启交给新进程/上层，脚本不干预 | 立即重新拉起 |
+| 其他 | 异常退出：留住窗口给用户看报错 | 1、2、4…秒退避重启，最多 60 秒 |
 
-一键更新链路：旧版进程经 `/api/update/apply` 下载并校验新版本 → 暂存 `artex-rea.new` → 退出 75 → 脚本拉起旧版 → `selfupdate.Bootstrap` 校验并冒烟测试新二进制 → 换装 → 再退出 75 → 脚本拉起新版。下载、SHA256 校验与版本替换全部在 Go 的 `selfupdate` 包中实现，脚本保持简单。直接双击 `artex-rea.exe` 不会自动重启——需要一键更新/回滚的部署应使用 `start.bat`。
+重启逻辑在 exe 里：更新或回滚装好后先写 `updates/restart.request` 意图，入口监护循环只在意图存在时把新版本拉起来（5 次/5 分钟封顶），用户按 Ctrl-C 退出的进程不会被复活。`start.bat` 因此**不再自己循环**——「异常就重试」会把一次端口冲突放大成无限重启，也会在 Ctrl-C 时弹出 `Terminate batch job (Y/N)?`。
+
+一键更新链路：旧版进程经 `/api/update/apply` 下载并校验新版本 → 暂存更新包 → 写 `updates/restart.request` 并退出 75 → 入口监护循环把进程拉起 → `selfupdate.Bootstrap` 校验并冒烟测试新二进制 → 换装 → 再退出 75 → 拉起新版。下载、SHA256 校验与版本替换全部在 Go 的 `selfupdate` 包中实现，脚本只负责把程序放到前台。
 
 ### 数据模型与保留
 

@@ -5,8 +5,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -40,6 +42,11 @@ const (
 	relaunchLockWait = 20 * time.Second
 	takeoverLockWait = 30 * time.Second
 )
+
+// exitPortInUse 是"端口被占用"的专用退出码：程序已经把占用端口与处置办法打印出来了，
+// 启动脚本据此把窗口留住给用户看，但**不再重启**——重启只会立刻再撞同一个端口，
+// 一路刷屏，正是升级后旧进程没退干净时看到的"窗口反复闪"。
+const exitPortInUse = 2
 
 const banner = `
     _    ____ _____ _______  __      ____  _____    _    
@@ -271,6 +278,10 @@ func run() int {
 	go func() {
 		log.Printf("ARTEX-REA %s backend listening on %s (data=%s, workers=%d)", version, listenAddr, *dataDir, mgr.Workers())
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if isAddrInUse(err) {
+				reportPortInUse(listenAddr, err)
+				os.Exit(exitPortInUse)
+			}
 			log.Fatalf("serve: %v", err)
 		}
 	}()
@@ -311,6 +322,64 @@ func run() int {
 func reportRunningElsewhere(addr string) {
 	fmt.Printf("\n  ARTEX-REA 已在运行：http://%s\n", displayAddr(addr))
 	fmt.Println("  本次启动直接退出，没有动那个实例；要停止它请回到它的控制台按 Ctrl-C。")
+	holdConsole(6 * time.Second)
+}
+
+// holdConsole 让「双击运行」的黑窗口在退出前多停一会儿：这一步退出码是 0，启动
+// 脚本不会替我们 pause，不停一下的话窗口会在用户读到原因之前关掉。
+//
+// 只在 stdout 真的接着控制台时才等：计划任务、服务、被重定向的调用都是普通文件或
+// 管道，一律立刻返回。ARTEX_NO_PAUSE=1 可显式关掉（与脚本里的同名开关一致）。
+func holdConsole(d time.Duration) {
+	if d <= 0 || strings.TrimSpace(os.Getenv("ARTEX_NO_PAUSE")) != "" {
+		return
+	}
+	if !consoleAttached() {
+		return
+	}
+	fmt.Printf("\n  %d 秒后自动关闭窗口（ARTEX_NO_PAUSE=1 可跳过）…\n", int(d.Seconds()))
+	time.Sleep(d)
+}
+
+// isAddrInUse 判断监听失败是不是"端口已被占用"。
+//
+// Windows 的 WSAEADDRINUSE 与 Linux 的 EADDRINUSE 在 Go 里都映射到
+// syscall.EADDRINUSE；这里再按文本兜一次底，防止中间某层把错误链包掉。
+func isAddrInUse(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "only one usage of each socket address") ||
+		strings.Contains(msg, "address already in use")
+}
+
+// reportPortInUse 把"端口被占用"讲成人话，并给出下一步。
+//
+// 升级后最容易踩的一脚：旧版本进程还活着（旧版本没有单实例锁），新进程拿到了锁
+// 却绑不上端口。以前启动脚本会把这种退出当成"异常"无限重启，每一轮都撞同一个
+// 端口，日志刷屏、窗口反复闪，用户完全看不出发生了什么。
+func reportPortInUse(addr string, err error) {
+	writePortInUse(os.Stderr, addr, err)
+}
+
+// writePortInUse 是 reportPortInUse 的可测版本：把提示写到任意 writer。
+func writePortInUse(w io.Writer, addr string, err error) {
+	port := strings.TrimSpace(addr)
+	if i := strings.LastIndex(port, ":"); i >= 0 {
+		port = port[i+1:]
+	}
+	fmt.Fprintf(w, "\n[artex-rea] 无法监听 %s：端口已被占用。\n", displayAddr(addr))
+	fmt.Fprintf(w, "  底层错误：%v\n\n", err)
+	fmt.Fprintln(w, "  最常见的原因：升级之后旧版本进程还没退干净（旧版本没有单实例锁）。")
+	fmt.Fprintln(w, "  处理办法：")
+	fmt.Fprintf(w, "    1) 看是谁占着：netstat -ano | findstr :%s\n", port)
+	fmt.Fprintln(w, "    2) 结束它：    taskkill /PID <PID> /F")
+	fmt.Fprintln(w, "    3) 或者接管：  start.bat -takeover    （start-lan.bat 的 -lan 也会接管）")
+	fmt.Fprintln(w, "\n  本次启动已退出，不会自动重试。")
 }
 
 // displayAddr 把监听地址转成浏览器能点的形式（0.0.0.0 / :: 换成 127.0.0.1）。

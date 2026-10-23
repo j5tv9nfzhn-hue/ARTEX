@@ -1,62 +1,42 @@
 @echo off
 chcp 65001 >nul 2>&1
-rem 将控制台切换为 UTF-8，避免中文在其他代码页下乱码。
-rem ARTEX-REA 启动脚本（Windows，现在是可选兜底）
-rem
-rem 不装这个脚本也能用：artex-rea.exe 自己会做单实例仲裁，更新装好后也会自己
-rem 拉起新进程重启。只有想让它崩溃后也自动重开时才需要这个脚本。
+rem ARTEX-REA 启动脚本（Windows）
 rem
 rem 用法：
-rem   start.bat                  前台运行，Ctrl-C 停止
-rem   start.bat -addr :9000      命令行原样传给 artex-rea
+rem   start.bat                 前台运行，Ctrl-C 直接退出
+rem   start.bat -addr :9000     命令行参数原样传给 artex-rea
 rem
-rem 退出码约定：
-rem   0      正常停止，脚本退出（不再循环）
-rem   75     请求重启（例如网页上点了"立即更新"），脚本立刻重启进程
-rem   其它   异常退出：按 1/2/4 秒递增等待后重试，最多 60 秒
+rem 这个脚本只做三件事：切到脚本目录、找到可执行文件、把它交出去。
+rem
+rem 一、为什么不在这里写重启循环
+rem   重启已经在 exe 里：入口程序会等核心退出，只有 updates\restart.request 存在时
+rem   才重新拉起（5 分钟内最多 5 次），用户按 Ctrl-C 出去的进程不会被复活。
+rem   外层再套一层循环只会带来两个后果：
+rem     - 端口被占用时每一轮都撞同一个端口，无限重启刷屏、窗口反复闪；
+rem     - Ctrl-C 之后还要用户回答 Terminate batch job (Y/N)?，按错就重来一遍。
+rem
+rem 二、为什么最后一行要 goto 一个不存在的标签
+rem   cmd 里 goto 到未定义标签是致命错误，会立刻结束批处理上下文；但同一行里
+rem   已经解析好的后续命令仍会执行——exe 于是在「命令行上下文」里前台运行。
+rem   没有批处理作业可终止，Ctrl-C 就不会再问 Y/N，信号直接落到 exe 自己身上，
+rem   由它按正常流程收尾（关库、释放单实例锁）。npm 的 cmd-shim 用的是同一个写法。
+rem
+rem 三、退出码
+rem   0   正常停止（或已有一个实例在跑，本次启动让路）
+rem   2   端口被占用：程序会打印占用端口与处置办法，脚本不再重试
+rem   75  已把重启交给新进程/上层（脚本不干预）
+rem   其它 异常：留住窗口让用户看错误
+rem
+rem 设置 ARTEX_NO_PAUSE=1 可以让它在无人值守场景里不停顿。
 
-setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-set "BIN=artex-rea.exe"
+set "BIN=%~dp0artex-rea.exe"
+if not exist "%BIN%" set "BIN=%~dp0artex.exe"
 if not exist "%BIN%" (
-	if exist "artex.exe" (
-		set "BIN=artex.exe"
-	) else (
-		echo [artex-rea] 找不到可执行文件：%BIN% 1>&2
-		exit /b 1
-	)
+	echo [artex-rea] 找不到 artex-rea.exe 或 artex.exe（目录：%~dp0） 1>&2
+	pause
+	exit /b 1
 )
 
-rem 告诉 artex-rea「外面有个循环会在我以 75 退出后把我重新拉起来」。
-rem 只有它为真时页面才允许自动更新：换装后进程要退出，没人拉起就变成
-rem 「更新完打不开」。直接双击 exe（没有本脚本）时它为假，界面会禁用自动更新。
-set "ARTEX_SUPERVISED=1"
-
-set "RESTART_CODE=75"
-set "MAX_DELAY=60"
-set /a delay=1
-
-:loop
-"%BIN%" %*
-set "code=!ERRORLEVEL!"
-
-if "!code!"=="0" (
-	echo [artex-rea] 正常退出
-	exit /b 0
-)
-
-if "!code!"=="%RESTART_CODE%" (
-	rem 已准备更新或回滚，重新运行时由 artex-rea 完成版本替换。
-	echo [artex-rea] 收到重启请求，正在应用新版本…
-	set /a delay=1
-	goto loop
-)
-
-echo [artex-rea] 异常退出 ^(code=!code!^)，!delay! 秒后重启 1>&2
-rem timeout 在重定向控制台可能失败，改用 ping；延迟 N 秒需要 N+1 次请求。
-set /a pings=!delay!+1
-ping -n !pings! 127.0.0.1 >nul 2>&1
-set /a delay=!delay!*2
-if !delay! gtr %MAX_DELAY% set /a delay=%MAX_DELAY%
-goto loop
+goto #_undefined_# 2>NUL || title %COMSPEC% & "%BIN%" %* || if not defined ARTEX_NO_PAUSE pause

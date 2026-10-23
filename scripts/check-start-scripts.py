@@ -14,6 +14,13 @@
   - .sh ：无 BOM、LF、首行为解释器（`#!`）。
 
 base64 文本是一整行、没有换行，第一条规则就会把它拦下来。
+
+第二条事故（2026-10-23）：`.bat` 里曾经套着一层 `:loop` 重启循环。两个后果——
+端口被占用时每轮都撞同一个端口、无限重启刷屏；Ctrl-C 之后要用户回答
+`Terminate batch job (Y/N)?`，按错还会再来一遍。重启已经内置在 exe 里（入口监护
+循环 + 5 次/5 分钟防抖），脚本不该再自己循环。所以这里把「脚本必须把前台让给 exe」
+钉成结构约束：启动行必须是 `goto #_undefined_#` 的 cmd-shim 写法（npm 同款），
+且不许出现自己的重启循环、不许替用户回答 Ctrl-C 询问。
 """
 
 from __future__ import annotations
@@ -67,6 +74,45 @@ def check_bat(path: Path) -> list[str]:
             f"chcp 65001 在第 {chcp_line + 1} 行，晚于第 {first_cjk_line + 1} 行的中文："
             "切码之前的行会按系统代码页解码"
         )
+    errs.extend(check_bat_structure(lines))
+    return errs
+
+
+def is_rem(line: str) -> bool:
+    low = line.strip().lower()
+    return low.startswith("rem ") or low == "rem" or low.startswith("::")
+
+
+def check_bat_structure(lines: list[str]) -> list[str]:
+    """钉死"脚本把前台让给 exe"这个结构（见文件头第二条事故）。"""
+    errs: list[str] = []
+    code = [ln for ln in lines if ln.strip() and not is_rem(ln)]
+    joined = "\n".join(code).lower()
+
+    shim = [ln for ln in code if "#_undefined_#" in ln.lower()]
+    if not shim:
+        errs.append(
+            "缺少启动行：必须是 `goto #_undefined_# 2>NUL || \"exe\" %*`（cmd-shim 写法），"
+            "否则 Ctrl-C 会弹 Terminate batch job (Y/N)?"
+        )
+    elif len(shim) > 1:
+        errs.append(f"有 {len(shim)} 行 cmd-shim，启动行只能有一处")
+    else:
+        ln = shim[0].lower()
+        if "2>nul" not in ln:
+            errs.append("cmd-shim 行缺少 2>NUL：goto 的报错会打到用户脸上")
+        if "||" not in ln.split("#_undefined_#", 1)[1]:
+            errs.append("cmd-shim 行缺少 ||：goto 之后必须接着跑真正的启动命令")
+
+    if "goto loop" in joined or ":loop" in joined:
+        errs.append("脚本自带重启循环（:loop / goto loop）：端口冲突时会无限重启，重启交给 exe")
+    if "artex_supervised" in joined:
+        errs.append(
+            "设置了 ARTEX_SUPERVISED：等于告诉 exe「外面有循环会拉起我」，"
+            "exe 会以 75 退出等脚本重启，脚本又没循环，更新后进程就没了"
+        )
+    if "< nul" in joined or "<nul" in joined:
+        errs.append("用 `< nul` 压 Ctrl-C：它只是自动回答 N，脚本会继续往下跑，不是修复")
     return errs
 
 

@@ -29,6 +29,18 @@ func enableUTF8Console() {
 	_ = windows.SetConsoleCP(65001)
 }
 
+// consoleAttached 报告 stdout 是否真的接在一个 Windows 控制台上。
+//
+// 被重定向到文件/管道（计划任务、`start.bat > run.log`、CI）时返回 false ——
+// 那些场景下"留住窗口"没有意义，还会把自动化卡住。
+func consoleAttached() bool {
+	if windows.Stdout == 0 {
+		return false
+	}
+	var mode uint32
+	return windows.GetConsoleMode(windows.Stdout, &mode) == nil
+}
+
 func utf8ConsoleEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("ARTEX_UTF8_CONSOLE"))) {
 	case "0", "false", "off", "no":
