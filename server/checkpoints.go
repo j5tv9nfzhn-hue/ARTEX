@@ -287,6 +287,13 @@ func (s *Server) compactionObserver(t *Task) func(agent.CompactionEvent) {
 			}
 		case "finish":
 			boundary := map[string]any{"phase": ev.Phase, "info": ev.Info}
+			// 第三阶段：把冷摘要产出规模提到顶层，落成 compaction_state 的两列
+			// （SQL 里可直接查「这次摘要写了多少、值不值」）。
+			for _, k := range []string{"injected_bytes", "digest_tokens_est"} {
+				if v, ok := ev.Info[k]; ok {
+					boundary[k] = v
+				}
+			}
 			if ev.Err != nil {
 				boundary["error"] = ev.Err.Error()
 				_ = s.m.pg.PutCompactionState(ctx, scope, db.CompactionPhaseInterrupted, boundary)

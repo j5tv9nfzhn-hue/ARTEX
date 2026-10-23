@@ -707,6 +707,9 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	// 同模型,随任务 LLM 链解析),压缩用 Complete 一次性生成 body。
 	// 批次 6：观察压缩生命周期（compaction_state + 中断检查点），任务暂停时可打断。
 	cmp := agent.NewCompactor(plannerRuntime, "task-router")
+	// 摘要预算按「本次任务的窗口」推导（DigestBudgetTokens），与 planner 的压缩
+	// 触发线同源：两处用不同窗口会让摘要长度与触发点对不上账。
+	cmp.SetWindowResolver(plannerRuntime.CompactionWindow)
 	cmp.SetObserver(s.compactionObserver(t))
 	pl.SetCompactor(cmp)
 	main := agent.NewMainAgent(mainRuntime, "task-router", s.m.dir, tx, mainRuntime.CompactionWindow(), s.agentMaxTurns("mainagent"))

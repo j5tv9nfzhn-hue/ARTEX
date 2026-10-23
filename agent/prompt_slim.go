@@ -11,6 +11,7 @@ package agent
 // 防止未来字段膨胀时注入体量再次失控。
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"unicode/utf8"
@@ -22,9 +23,9 @@ const (
 	plannerOverviewMaxBytes = 16 << 10
 	// workerOverviewMaxBytes 是 worker 首消息概览 JSON 的硬上限(字节)。
 	workerOverviewMaxBytes = 12 << 10
-	// promptDigestBodyMaxRunes 是注入侧单条 cold digest 正文上限(字符,保留首尾)。
-	// 生成侧已限 800 token(compaction.compress),这里再兜一层——digest 正文会被
-	// planner 每轮 + 每个 worker 首消息重复携带,是全量 body 的主要放大点。
+	// promptDigestBodyMaxRunes 是注入侧单条 cold digest 正文的**兜底**上限(字符)。
+	// 运行期一律用 DigestInjectRunes(window) 推导(第三阶段:窗口 128K → 2000 字符,
+	// 原来是写死的 600);只有窗口未知时才退回这个保守值。
 	promptDigestBodyMaxRunes = 600
 	// promptTriggerLineMaxBytes 是 planner 注入里单条触发消息的长度上限(字节):
 	// worker 输出/目标文本是外部数据,不设限时一条几十 KB 的结论会撑爆每轮 user 输入。
@@ -113,7 +114,7 @@ var workerPromptCaps = overviewPromptCaps{coldDigests: 8}
 // graphOverviewForPrompt 返回「注入专用」的紧凑态势视图:以 graphOverviewData 的
 // 全量数据为源,按 caps 收紧各列表、截断 digest 正文、防御性剥离完整图。
 // 工具路径(graph_overview 工具本身)不经过这里,字段与条数保持全量。
-func (t *ToolSet) graphOverviewForPrompt(caps overviewPromptCaps) map[string]any {
+func (t *ToolSet) graphOverviewForPrompt(ctx context.Context, caps overviewPromptCaps) map[string]any {
 	data := t.graphOverviewData()
 	// 完整血缘边没有进过 graphOverviewData 的返回体(内部只折叠成 parents/yields);
 	// 防御性剥离:未来若把 raw edges 加进数据层,也不会自动灌进每轮注入。
@@ -126,7 +127,8 @@ func (t *ToolSet) graphOverviewForPrompt(caps overviewPromptCaps) map[string]any
 	capOverviewList(data, "goals", caps.goals, m)
 	capOverviewList(data, "hints", caps.hints, m)
 	capColdDigests(data, caps.coldDigests, m)
-	truncateDigestBodies(data, promptDigestBodyMaxRunes)
+	perItem, total := digestInjectBudget(contextWindowFrom(ctx))
+	truncateDigestBodies(data, perItem, total)
 	if len(m.entries) > 0 {
 		data[overviewOmittedKey] = map[string]any{"hint": overviewSliceHint, "items": m.entries}
 	}
@@ -181,26 +183,71 @@ func capColdDigests(data map[string]any, n int, m *overviewManifest) {
 // truncateDigestBodies 截断注入视图里的 digest 正文(保留首尾、中段省略):完整 body
 // 可 expand_digest(id) 取。当前任务的 cold_digests 与 related_tasks[*].cold_digests
 // 都是每轮重复携带的正文,一起收。
-func truncateDigestBodies(data map[string]any, max int) {
-	if max <= 0 {
+// digestTruncNote 是被截断的 digest 正文中间的省略说明。保留 id,让模型能展开原文。
+const digestTruncNote = "……（中略,完整 body 用 expand_digest(id) 展开）……"
+
+// truncateDigestBodies 按「单条上限 + 总量上限」两级预算截断注入视图里的 digest 正文。
+//
+// 为什么要总量上限:单条上限只能挡住「一条特别长」,挡不住「条数多 × 每条都接近上限」。
+// digests 会被 planner 每轮 + 每个 worker 首消息重复携带,总量失控时每轮都在为同一批
+// 旧结论付钱。总量超出时按比例收紧单条上限(从原文重算,不是对已截断的再截——那会
+// 把首尾各丢一次),下限 400 字符,保证结论句和一条证据还在。
+func truncateDigestBodies(data map[string]any, perItem, total int) {
+	if perItem <= 0 {
 		return
 	}
-	truncList := func(list []map[string]any) {
+	var items []map[string]any
+	collect := func(list []map[string]any) {
 		for _, d := range list {
-			if body, ok := d["body"].(string); ok {
-				d["body"] = truncHeadTail(body, max, "……（中略,完整 body 用 expand_digest(id) 展开）……")
+			if d != nil {
+				items = append(items, d)
 			}
 		}
 	}
 	if list, ok := data["cold_digests"].([]map[string]any); ok {
-		truncList(list)
+		collect(list)
 	}
 	if rts, ok := data["related_tasks"].([]map[string]any); ok {
 		for _, rt := range rts {
 			if list, ok := rt["cold_digests"].([]map[string]any); ok {
-				truncList(list)
+				collect(list)
 			}
 		}
+	}
+	if len(items) == 0 {
+		return
+	}
+	orig := make([]string, len(items))
+	for i, d := range items {
+		if body, ok := d["body"].(string); ok {
+			orig[i] = body
+		}
+	}
+	per := perItem
+	for pass := 0; pass < 4; pass++ {
+		sum := 0
+		for i, d := range items {
+			if orig[i] == "" {
+				continue
+			}
+			t := truncHeadTail(orig[i], per, digestTruncNote)
+			d["body"] = t
+			sum += utf8.RuneCountInString(t)
+		}
+		if total <= 0 || sum <= total || per <= 400 {
+			return
+		}
+		next := per * total / sum
+		if next < 400 {
+			next = 400
+		}
+		if next >= per {
+			next = per - 1
+		}
+		if next <= 400 {
+			next = 400
+		}
+		per = next
 	}
 }
 
@@ -389,4 +436,20 @@ func shrinkOverviewValue(v any) (any, bool) {
 		}
 	}
 	return v, false
+}
+
+// digestInjectBudget 返回注入侧 digest 正文的单条 / 总量预算(字符)。
+//
+// 总量最多吃注入池的 2/3,剩下 1/3 留给 overview:两个注入面共用一个池子,不允许
+// 各自定上限再把窗口一起吃掉。窗口未知(0)时退回旧的保守值(600 字符/条、不限总量)。
+func digestInjectBudget(window int) (perItem, total int) {
+	if window <= 0 {
+		return promptDigestBodyMaxRunes, 0
+	}
+	perItem = DigestInjectRunes(window)
+	total = DigestTotalRunes(window)
+	if cap := InjectionBudgetRunes(window) * 2 / 3; cap > 0 && total > cap {
+		total = cap
+	}
+	return perItem, total
 }

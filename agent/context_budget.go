@@ -106,7 +106,12 @@ func reservedForCompaction(window int) int {
 //     OpenCode 的 usable、ZCode 的「窗口 − 34K」落在同一区间；
 //   - 窗口 − 预留——保证压缩来得及，不会把输出空间吃掉。
 //
-// 结果不低于窗口的 1/4（再小就变成每轮都压，反而更慢更贵）。
+// 结果不低于窗口的 1/4（再小就变成每轮都压，反而更慢更贵），但**不高于绝对上限**
+// （CompactionTriggerCapTokens，默认 120K）：窗口声明得再大，也不能让会话一路涨到
+// 80 万 token 才压——那正是 1000K 虚窗口下 8 天不触发的成因。
+//
+// 绝对上限放在最后一步，优先级高于 1/4 下限：1M 窗口时 floor(250K) 会顶穿成本线，
+// 此时以下限换成本是不可接受的。
 func CompactionTriggerTokens(window int) int {
 	if window <= 0 {
 		window = defaultWindowK * 1000
@@ -117,6 +122,9 @@ func CompactionTriggerTokens(window int) int {
 	}
 	if floor := window / 4; target < floor {
 		target = floor
+	}
+	if cap := CompactionTriggerCapTokens(); cap > 0 && target > cap {
+		target = cap
 	}
 	return target
 }
@@ -175,4 +183,165 @@ func ProviderContextLimit(err error) int {
 		}
 	}
 	return 0
+}
+
+// ---- 压缩/注入预算（第三阶段：参数重设计） ----
+//
+// 这一组函数把原先四个写死的常量换成「窗口 × 内容量」推导出来的预算：
+//
+//	旧                          新
+//	MaxTokens: 800              DigestBudgetTokens(inputTokens, window)
+//	600 字符/条 digest          DigestInjectRunes(window)
+//	maxToolOutputChars = 12000  ToolOutputChars(window)
+//	plannerOverviewMaxBytes=16K  OverviewBudgetBytes(window)
+//
+// 依据（2026-10 核对后的外部实践）：
+//   - Hermes Agent：摘要预算 = 内容量×0.20，下限 2000、上限 min(5%窗口, 12K)；触发阈值
+//     另有一条绝对上限 threshold_tokens，防止「大窗口骑满、成本失控」；注入侧用 token
+//     预算而不是条数预算；先用确定性规则剪旧工具结果，再决定要不要摘要。
+//   - OpenCode：单条工具结果上限取「窗口的 1/8」并夹在 2K–16K 字符；最近的工具输出
+//     受保护、更旧的才剪；子代理返回父级时按字节预算二次裁剪。
+//
+// 三条不变量：
+//  1. 所有预算都以**夹取后**的窗口为基准（ResolveContextWindowTokens 的结果），
+//     声明窗口虚高不会把预算一起放大；
+//  2. 摘要永远不长于输入（≤0.6×input），预算是天花板不是目标；
+//  3. 截断只裁正文，不裁可回溯指针（id / 落盘路径），见 truncateDigestBodies 与
+//     clipToolOutputHeadTail。
+
+const (
+	// digestBudgetFloorTokens 是单条冷摘要的下限：够写「结论 / 证据 / 未决」三句。
+	// 不采用 Hermes 的 2000——它压的是对话中段（输入动辄几万 token），而 ARTEX 的
+	// block 输入通常只有 1–3K token，2000 会让摘要比输入还长。
+	digestBudgetFloorTokens = 512
+	// digestBudgetCeilTokens 是上限：再长就该拆块，而不是写更长的摘要。
+	digestBudgetCeilTokens = 4096
+	// digestInputShare 是「摘要 / 输入」的目标比例。Hermes 用 0.20 压对话中段；
+	// ARTEX 的节点 summary 本身已经是压缩过的，信息密度更高，故取 0.30。
+	digestInputShare = 0.30
+	// digestNeverExpand 保证摘要永远不长于输入。
+	digestNeverExpand = 0.60
+
+	digestInjectFloorRunes = 800  // 单条注入正文下限（字符）
+	digestInjectCeilRunes  = 2000 // 单条注入正文上限（字符）
+	digestTotalFloorRunes  = 6000 // 全部 digest 注入总量下限
+	digestTotalCeilRunes   = 24000
+
+	toolOutputFloorChars = 4000
+	toolOutputCeilChars  = 24000
+
+	overviewFloorBytes = 24000
+	overviewCeilBytes  = 64000
+
+	// injectionSharePercent 是「每轮注入总量占窗口」的硬上限（overview + digests）。
+	injectionSharePercent = 12
+)
+
+// clampInt 把 v 夹到 [lo, hi]；lo > hi 时以 lo 为准（不同窗口下的极端取值）。
+func clampInt(v, lo, hi int) int {
+	if lo > hi {
+		return lo
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// 说明：文本 token 估算复用 maxtokens.go 的 estimateTextTokens（按 ASCII/宽字符分别
+// 计权），不在这里另立一套口径——两套估算打架会让预算函数的单测与线上表现对不上。
+
+// DigestBudgetTokens 计算一条冷摘要该给多少输出 token。
+func DigestBudgetTokens(inputTokens, windowTokens int) int {
+	if windowTokens <= 0 {
+		windowTokens = defaultWindowK * 1000
+	}
+	if inputTokens <= 0 {
+		return digestBudgetFloorTokens
+	}
+	budget := int(float64(inputTokens) * digestInputShare)
+	ceiling := digestBudgetCeilTokens
+	if pct := int(float64(windowTokens) * 0.05); pct < ceiling {
+		ceiling = pct
+	}
+	budget = clampInt(budget, digestBudgetFloorTokens, ceiling)
+	// 永远不长于输入：小 block 上这条优先于下限——摘要比原文还长毫无意义。
+	// 绝对地板 32 token 只为「输入小到没有摘要价值」时别退化成 0 长度调用。
+	capByInput := int(float64(inputTokens) * digestNeverExpand)
+	if capByInput < 32 {
+		capByInput = 32
+	}
+	if budget > capByInput {
+		budget = capByInput
+	}
+	if budget < 32 {
+		budget = 32
+	}
+	return budget
+}
+
+// DigestInjectRunes 是注入侧**单条** digest 正文的字符上限。
+func DigestInjectRunes(windowTokens int) int {
+	if windowTokens <= 0 {
+		windowTokens = defaultWindowK * 1000
+	}
+	// 窗口 / 50 ≈ 128K → 2560，夹到 800–2000。
+	return clampInt(windowTokens/50, digestInjectFloorRunes, digestInjectCeilRunes)
+}
+
+// DigestTotalRunes 是注入侧**全部** digest 正文的总字符预算。
+func DigestTotalRunes(windowTokens int) int {
+	if windowTokens <= 0 {
+		windowTokens = defaultWindowK * 1000
+	}
+	// 0.06 × 窗口 × 4 字符/token ≈ 窗口 × 0.24。
+	return clampInt(windowTokens*6/25, digestTotalFloorRunes, digestTotalCeilRunes)
+}
+
+// ToolOutputChars 是单条工具输出进入对话历史的字符上限。
+//
+// 语义与 OpenCode 的「窗口的 1/8」一致，并夹在 4K–24K：小窗口不能让一条输出吃掉
+// 半个上下文，大窗口也没必要无限放宽（超出的部分原本就落盘可重读）。
+func ToolOutputChars(windowTokens int) int {
+	if windowTokens <= 0 {
+		windowTokens = defaultWindowK * 1000
+	}
+	return clampInt(windowTokens/8, toolOutputFloorChars, toolOutputCeilChars)
+}
+
+// OverviewBudgetBytes 是 planner/worker 每轮态势注入的字节预算。
+func OverviewBudgetBytes(windowTokens int) int {
+	if windowTokens <= 0 {
+		windowTokens = defaultWindowK * 1000
+	}
+	return clampInt(windowTokens*2/5, overviewFloorBytes, overviewCeilBytes)
+}
+
+// InjectionBudgetRunes 是「每轮注入总量」的硬上限（含 overview 与 digests）。
+//
+// 这是一条守恒式：每加一个注入面，就从同一个池子里取，不允许各自定上限然后一起把
+// 窗口吃满。超出时由调用方按固定优先级降级（先 digest 正文 → 再旧 facts → 绝不丢
+// open_intents / finding_list）。
+func InjectionBudgetRunes(windowTokens int) int {
+	if windowTokens <= 0 {
+		windowTokens = defaultWindowK * 1000
+	}
+	return clampInt(windowTokens*injectionSharePercent/100*4, 12000, 96000)
+}
+
+// CompactionTriggerCapTokens 是触发线的绝对上限：窗口再大也不许把触发点推到这之上。
+//
+// Hermes 的 threshold_tokens 就是这条线；ARTEX 之前把 1000K 声明窗口直接当触发基准，
+// 阈值被抬到 800K，8 天一次都没压过。ARTEX_COMPACT_CAP_TOKENS 可覆盖（0=不设上限）。
+func CompactionTriggerCapTokens() int {
+	raw := strings.TrimSpace(os.Getenv("ARTEX_COMPACT_CAP_TOKENS"))
+	if raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			return v
+		}
+	}
+	return 120000
 }

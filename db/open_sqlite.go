@@ -132,6 +132,18 @@ var sqliteColumnAdds = []struct {
 		`ALTER TABLE llm_profiles ADD COLUMN credential_id BIGINT REFERENCES credentials(id) ON DELETE SET NULL`,
 	},
 	{
+		// 第三阶段：冷摘要产出规模(注入字节 / 估算 token)。可空,老库补列后为 NULL,
+		// 不写默认值——NULL 与 0 的区别是「没测过」与「测了是 0」。
+		"compaction_state",
+		"injected_bytes",
+		`ALTER TABLE compaction_state ADD COLUMN injected_bytes INTEGER`,
+	},
+	{
+		"compaction_state",
+		"digest_tokens_est",
+		`ALTER TABLE compaction_state ADD COLUMN digest_tokens_est INTEGER`,
+	},
+	{
 		// 任务级 token 预算(0=不限)。普通带默认值的列,直接 ADD 即可。
 		"tasks",
 		"token_budget",

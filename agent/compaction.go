@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Autumn-27/artex/db"
@@ -41,6 +43,12 @@ type Compactor struct {
 	maxDur   time.Duration // hard cap on one background compaction
 
 	observer func(CompactionEvent) // host hook (批次 6: 压缩状态/中断检查点); nil = off
+	windowFn func() int            // 当前任务上下文窗口（摘要预算用）；nil = 按默认窗口
+
+	// 本轮压缩的产出统计（供 compaction_state 落库对账）：注入字节 / 估算 token。
+	// 后台单轮只压一个探索（tryStart 保证），故进程级累加即可，run 开始时清零。
+	statInjected  atomic.Int64
+	statDigestTok atomic.Int64
 
 	mu      sync.Mutex
 	running map[int64]bool
@@ -157,6 +165,8 @@ func (c *Compactor) OnPlannerRound(ctx context.Context, ts *db.ExplorationStore)
 		defer stopTimeout()
 		c.setCancel(expID, cancelCause)
 		defer c.clearCancel(expID)
+		c.statInjected.Store(0)
+		c.statDigestTok.Store(0)
 		c.notify(CompactionEvent{ExpID: expID, Stage: "start", Phase: phase, Info: info})
 		// 压缩是裸 provider 调用（compress 里直接 prov.Complete），不经过 agentcore
 		// 的会话循环，所以 ctx 上没有 session id；按 session-id 头做提示缓存/粘性
@@ -171,6 +181,10 @@ func (c *Compactor) OnPlannerRound(ctx context.Context, ts *db.ExplorationStore)
 		}
 		// context.Cause: nil = 正常结束; 非 nil = 超时(cause=DeadlineExceeded)或
 		// 被任务暂停打断(cause=宿主传入的 AbortPausedByUser 等)。
+		// 产出规模随 finish 一起上报：compaction_state 的 injected_bytes /
+		// digest_tokens_est 由宿主落库，用来回答「这次摘要到底写了多少、值不值」。
+		info["injected_bytes"] = c.statInjected.Load()
+		info["digest_tokens_est"] = c.statDigestTok.Load()
 		c.notify(CompactionEvent{ExpID: expID, Stage: "finish", Phase: phase, Info: info, Err: context.Cause(bg)})
 	}()
 }
@@ -604,14 +618,21 @@ func buildCompressionInput(g *coldGraph, b block, nodeByID map[int64]*db.Node) s
 }
 
 // compress runs the §4 body LLM call on one block. Uses the same model the agent
-// runs on; thinking disabled (a pure summarization step). MaxTokens 收紧到 800
-// (批次 E):digest 正文会被 planner 每轮 + 每个 worker 首消息重复携带,生成侧
-// 先限长,注入侧另有 600 字符/条的截断兜底(agent/prompt_slim.go)。
+// runs on; thinking disabled (a pure summarization step).
+//
+// 输出上限不再是固定 800，而是按「这一块的输入量 × 窗口」推导（DigestBudgetTokens）：
+// 固定 800 的问题是**摘要短于信息量**，规划者读完仍不确定，只能回头重查原节点，
+// 于是调用次数反弹——省下的 token 又花回去，还多出几轮延迟。
+//
+// 生成后追加一行机械锚点（appendDigestAnchors）：由代码从原始节点抽取 id / 资产 /
+// 漏洞 / 路径，**不参与任何字符预算**。这样正文无论如何被注入侧截断，「这条结论
+// 对应哪个节点、哪个资产」都不会丢。
 func (c *Compactor) compress(ctx context.Context, g *coldGraph, b block, nodeByID map[int64]*db.Node) (string, error) {
+	input := buildCompressionInput(g, b, nodeByID)
 	req := llm.CompletionRequest{
 		System:    []string{compressionSystemPrompt},
-		Messages:  []llm.Message{llm.UserText(buildCompressionInput(g, b, nodeByID))},
-		MaxTokens: 800,
+		Messages:  []llm.Message{llm.UserText(input)},
+		MaxTokens: DigestBudgetTokens(estimateTextTokens(input), c.windowTokens()),
 		Thinking:  "disabled",
 	}
 	msg, _, _, err := c.prov.Complete(ctx, req)
@@ -622,7 +643,81 @@ func (c *Compactor) compress(ctx context.Context, g *coldGraph, b block, nodeByI
 	if body == "" {
 		return "", fmt.Errorf("empty body from model")
 	}
+	body = appendDigestAnchors(body, b, nodeByID)
+	// 统计口径与注入侧一致：按字符（rune）算体积、按 estimateTextTokens 估 token。
+	c.statInjected.Add(int64(runeLen(body)))
+	c.statDigestTok.Add(int64(estimateTextTokens(body)))
 	return body, nil
+}
+
+// windowTokens 返回本压缩器使用的上下文窗口（供预算推导）。
+// 未注入解析器时退回默认窗口——冷摘要是后台任务，窗口取不准只会让预算偏保守。
+func (c *Compactor) windowTokens() int {
+	if c.windowFn != nil {
+		if w := c.windowFn(); w > 0 {
+			return w
+		}
+	}
+	return defaultWindowK * 1000
+}
+
+// SetWindowResolver 注册「当前任务的上下文窗口」。与 planner/worker 的
+// SetCompactionWindowResolver 同源，保证摘要预算与压缩触发线用的是同一个窗口。
+func (c *Compactor) SetWindowResolver(fn func() int) { c.windowFn = fn }
+
+// digestAnchorPatterns 是「可回溯指针」的机械抽取规则。
+//
+// 只抽结构化、可从原始节点复现的片段——id、IPv4(:port)、CVE、绝对/相对路径、常见
+// 工具名。不抽自然语言描述：那是模型的活儿，代码只负责**不丢**。
+var digestAnchorPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b`), // IP / IP:port
+	regexp.MustCompile(`\bCVE-\d{4}-\d{4,7}\b`),                    // CVE
+	regexp.MustCompile(`(?i)\b(?:[A-Z]:\\|/)[\w.\-/]{3,}`),         // 绝对路径（含盘符）
+	regexp.MustCompile(`\b[\w.-]+\.(?:go|py|js|ts|tsx|json|yaml|yml|txt|log|md|sh|ps1|bat)\b`),
+}
+
+// appendDigestAnchors 在 body 之后追加一行 [[anchors]]。
+//
+// 为什么放在代码里而不是让模型输出：模型写摘要时会丢 id（它认为那是噪音），而 id 正是
+// 「这条结论能不能被复核」的唯一凭据。抽取逻辑必须是确定的、与模型无关的。
+func appendDigestAnchors(body string, b block, nodeByID map[int64]*db.Node) string {
+	set := map[string]bool{}
+	var ordered []string
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || set[v] {
+			return
+		}
+		set[v] = true
+		ordered = append(ordered, v)
+	}
+	// 成员与锚点节点的 id 永远在最前面：它们是最低成本的定位手段。
+	for _, m := range b.Members {
+		add(fmt.Sprintf("#%d", m))
+	}
+	for _, a := range b.Anchors {
+		add(fmt.Sprintf("#%d", a))
+	}
+	for _, m := range b.Members {
+		text := nodeSummary(nodeByID[m])
+		if text == "" {
+			continue
+		}
+		for _, re := range digestAnchorPatterns {
+			for _, hit := range re.FindAllString(text, 4) {
+				add(hit)
+			}
+		}
+	}
+	if len(ordered) == 0 || len(ordered) > 24 {
+		if len(ordered) > 24 {
+			ordered = ordered[:24]
+		}
+	}
+	if len(ordered) == 0 {
+		return body
+	}
+	return body + "\n\n[[anchors]] " + strings.Join(ordered, " · ")
 }
 
 // compressionSystemPrompt is the §4 body prompt.

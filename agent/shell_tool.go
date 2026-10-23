@@ -44,16 +44,16 @@ func runShellTool(ctx context.Context, command, workDir string, extraEnv []strin
 		if text != "" {
 			msg = text + "\n\n" + msg
 		}
-		return actool.Errorf(actool.Capture(tc, msg))
+		return actool.Errorf(captureToolOutput(tc, msg))
 	}
 
 	if strings.TrimSpace(text) == "" {
 		text = "(command produced no output)"
 	}
 	if out.ExitCode != 0 {
-		return actool.Errorf(fmt.Sprintf("%s\n\n[exit code %d]", actool.Capture(tc, text), out.ExitCode))
+		return actool.Errorf(fmt.Sprintf("%s\n\n[exit code %d]", captureToolOutput(tc, text), out.ExitCode))
 	}
-	return actool.Text(actool.Capture(tc, text))
+	return actool.Text(captureToolOutput(tc, text))
 }
 
 // shellErrorClass* 是 8 类错误（任务 26 步骤 ⑤）。取值刻意保持低基数，
@@ -273,12 +273,25 @@ func ErrorClassOf(res actool.Result, err error, callCtx context.Context) string 
 	if !res.IsError {
 		return errClassNone
 	}
-	text := res.Flatten()
+	return classifyErrorText(res.Flatten())
+}
+
+// ClassifyToolError 是「只有 error、没有结果文本」的归因入口（MCP 审计事件走这条）。
+// 与控制台内部调用共用同一套判定链，保证账本里的 error_class 口径一致。
+func ClassifyToolError(err error) string {
+	if err == nil {
+		return errClassNone
+	}
+	return classifyErrorText(err.Error())
+}
+
+// classifyErrorText 是 8 类判定的唯一实现：从结果/错误文本推导类别。
+func classifyErrorText(text string) string {
 	lower := strings.ToLower(text)
 	if strings.Contains(text, "【配置错误：执行器不可用") {
 		return ErrClassConfig
 	}
-	if strings.Contains(text, "【超时】") || strings.Contains(text, "命令超时") {
+	if strings.Contains(text, "【超时】") || strings.Contains(text, "命令超时") || strings.Contains(lower, "timed out") || strings.Contains(lower, "timeout") {
 		return ErrClassTimeout
 	}
 	if strings.Contains(text, "【写法与执行器不匹配】") {

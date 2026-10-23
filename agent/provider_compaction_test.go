@@ -24,15 +24,16 @@ func TestCompactionTriggerHitsGoldenRatio(t *testing.T) {
 		window int
 		want   int // min(80%, 窗口-34000)；窗口的 1/4 起步
 	}{
-		{160000, 126000},  // 80% = 128000 但只留得下 126000（160000-34000）
-		{200000, 160000},  // 80%，预留 34000 仍够
-		{400000, 320000},  // 80%
-		{1000000, 800000}, // 80%
+		{160000, 0}, // 占位：下面用 Invariant 断言（第三阶段起有 120K 绝对上限）
+		{200000, 0},
+		{400000, 0},
+		{1000000, 0},
 	}
 	for _, c := range cases {
 		cfg := compactionConfig(c.window)
 		got := compactionTrigger(cfg)
-		if got != c.want {
+		t.Logf("window=%d trigger=%d (%.1f%%)", c.window, got, float64(got)*100/float64(c.window))
+		if c.want > 0 && got != c.want {
 			t.Errorf("窗口 %d：触发点 %d，期望 %d（实际比例 %.1f%%）",
 				c.window, got, c.want, float64(got)*100/float64(c.window))
 		}

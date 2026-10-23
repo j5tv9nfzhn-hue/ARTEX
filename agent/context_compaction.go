@@ -36,6 +36,12 @@ func newObservedCompactor(label string, cfg *compaction.Config, summary compacti
 }
 
 func (c *observedCompactor) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens int) []llm.Message {
+	// 第三阶段：先做无 LLM 预剪（旧工具输出），再交给 SDK 判断要不要摘要。
+	// 顺序不能反——先摘要会让模型为即将被丢掉的日志付一次调用费。
+	if pruned, n := pruneToolOutputs(msgs, c.cfg.ContextWindow, compactionTrigger(&c.cfg)); n > 0 {
+		log.Printf("[compaction] %s: 预剪 %d 条旧工具输出（无 LLM，可逆：重跑命令即可）", c.label, n)
+		msgs = pruned
+	}
 	out := c.inner.Pre(ctx, msgs, lastInputTokens)
 	c.report(msgs, out, lastInputTokens, "自动")
 	return out

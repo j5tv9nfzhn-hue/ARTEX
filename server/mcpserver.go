@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/mcpserver"
 )
@@ -248,10 +249,19 @@ func (s *Server) recordMCPUsage(ev mcpserver.AuditEvent) {
 	if s.m == nil || s.m.pg == nil {
 		return
 	}
+	isErr := ev.Err != nil
+	class := ""
+	if isErr {
+		// 与内部调用同一套归因：MCP 侧的错误若不分类，控制台的错误率就只统计
+		// 了一半的工具面，Bash 之类的高频错误在外部调用里完全看不见。
+		class = agent.ClassifyToolError(ev.Err)
+	}
 	_ = s.m.pg.InsertToolUsage(&db.ToolUsage{
-		ToolKey:   ev.Tool,
-		AgentKey:  "mcp-server",
-		SessionID: ev.Client,
+		ToolKey:    ev.Tool,
+		AgentKey:   "mcp-server",
+		SessionID:  ev.Client,
+		IsError:    isErr,
+		ErrorClass: class,
 	})
 }
 

@@ -193,9 +193,9 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		BashEnv:               proxyEnv(m.proxyAddr, m.proxyCACert), // Bash 子命令默认走代理+信任 CA
 		WorkingDir:            mainDir,                              // 本任务工作目录 <workDir>/tasks/<taskID>
 		ToolOutputDir:         cmdOutDir(mainDir),
-		MaxToolOutputChars:    maxToolOutputChars,    // 工具输出入历史的上限(超限全量落盘可重读)
-		MaxTurns:              m.maxTurns,            // 0 = unlimited (configurable in agent management)
-		Todos:                 actool.NewTodoStore(), // 会话级临时待办（TodoWrite），纯规划用，退出即丢
+		MaxToolOutputChars:    ToolOutputChars(m.compactionWindow()), // 工具输出入历史的上限(超限全量落盘可重读)
+		MaxTurns:              m.maxTurns,                            // 0 = unlimited (configurable in agent management)
+		Todos:                 actool.NewTodoStore(),                 // 会话级临时待办（TodoWrite），纯规划用，退出即丢
 		// 命中预算(步数)→ SDK 跑收尾:向用户输出一句进展总结。Prompt 与收尾轮数可后台编辑(默认 10 轮)。
 		Settlement:   wrapupSettlement("mainagent", nil),
 		NonStreaming: m.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete

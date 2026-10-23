@@ -50,9 +50,11 @@ func TestCompactionTriggerTokens(t *testing.T) {
 	cases := []struct{ window, want int }{
 		{32000, 24000},
 		{128000, 96000},
-		{200000, 160000},
-		{400000, 320000},
-		{1000000, 800000},
+		// 第三阶段：绝对上限 120K（Hermes 的 threshold_tokens）。窗口声明得再大，
+		// 也不允许会话一路涨到 80 万 token 才压——那正是 1000K 虚窗口的病根。
+		{200000, 120000},
+		{400000, 120000},
+		{1000000, 120000},
 	}
 	for _, c := range cases {
 		if got := CompactionTriggerTokens(c.window); got != c.want {

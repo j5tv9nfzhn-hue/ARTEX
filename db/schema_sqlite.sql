@@ -1591,7 +1591,11 @@ CREATE TABLE IF NOT EXISTS compaction_state (
     phase         TEXT NOT NULL DEFAULT 'idle',
     boundary_json TEXT NOT NULL DEFAULT '{}',
     started_at    TIMESTAMP,
-    updated_at    TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
+    updated_at    TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    -- 第三阶段：最近一次冷摘要的产出规模。注入侧按字符（rune）计，token 用与预算
+    -- 函数同一套估算（agent.estimateTextTokens）。可空：老库补列后为 NULL。
+    injected_bytes    INTEGER,
+    digest_tokens_est INTEGER
 );
 
 

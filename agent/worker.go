@@ -430,12 +430,17 @@ func renderWorkerIntentAssets(assets []*db.Asset) string {
 // 注入瘦身(批次 E):调用方传入 graphOverviewForPrompt 的紧凑视图(cold digests 15→8、
 // digest 正文截断);marshal 后再限总字节,防止字段膨胀把首消息撑大。完整图/资产/更早
 // 明细都可用工具按需查,这里只是"了解大局"的可降级信息(见 worker.go execute 的取舍注释)。
-func renderWorkerGraphOverview(data map[string]any) string {
+func renderWorkerGraphOverview(ctx context.Context, data map[string]any) string {
 	// coverage 是给规划者判断「哪类测得少 / 要不要扩范围」的信号，与 worker「只做领到的
 	// 那条意图、别追未覆盖的点」的职责边界相悖 → 从 worker 视图里剔除。data 是本次 worker
 	// 专属的新 map，删键不影响 planner。
 	delete(data, "coverage")
-	b := marshalOverviewCapped(data, workerOverviewMaxBytes)
+	// 第三阶段:同 planner,注入预算随窗口伸缩;窗口未知时退回旧值。
+	maxBytes := workerOverviewMaxBytes
+	if w := contextWindowFrom(ctx); w > 0 {
+		maxBytes = OverviewBudgetBytes(w)
+	}
+	b := marshalOverviewCapped(data, maxBytes)
 	if b == "" {
 		return "" // fall back silently: the worker just won't have the global context
 	}
@@ -480,6 +485,8 @@ func intentPhase(n *db.Node) string {
 
 func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
 	runDir := ensureRunDir(w.workDir, taskID, intent.ID)
+	// 同 planner：态势/digest 注入预算要按窗口推导，opts 与首条 user 消息之前挂上。
+	ctx = WithContextWindow(ctx, w.compactionWindow())
 	tsx := NewToolSet(ts, name)
 	tsx.SetPhase(intentPhase(intent)) // 意图声明了阶段 → worker 只注入该阶段工具面
 	tsx.SetFindingRecorder(w.findingRecorder)
@@ -527,7 +534,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// The run-wide intent is not the current tool action. Do not forward it or
 	// inherit a parent run's background into the action reviewer.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
-	overview := renderWorkerGraphOverview(tsx.graphOverviewForPrompt(workerPromptCaps))
+	overview := renderWorkerGraphOverview(ctx, tsx.graphOverviewForPrompt(ctx, workerPromptCaps))
 	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
 	if isRE {
 		sysBody = softwareREWorker + softwareREArtifactSpec(runDir) + toolBatchSpec() + langDirective(resolveOutputLang())
@@ -641,7 +648,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		ToolOutputDir: cmdOutDir(runDir),
 		// 工具输出进入对话历史的字符上限：超限部分仍全量落盘可重读，头部 12k 足够；
 		// 收紧上限直接降低每轮历史重发体积（详见 maxToolOutputChars 的注释）。
-		MaxToolOutputChars: maxToolOutputChars,
+		MaxToolOutputChars: ToolOutputChars(w.compactionWindow()),
 		Todos:              actool.NewTodoStore(), // 会话级临时待办（TodoWrite），纯规划用，退出即丢
 		NonStreaming:       w.nonStreaming(),      // 该 profile 选非流式时走 Provider.Complete
 		MaxTokens:          w.maxTokens(),         // 0 = 不单独设限;norma harness 兜底为 32768(harness/query.go maxTokens)

@@ -130,9 +130,15 @@ func innerAcceptsRawInput(t actool.CoreTool) bool {
 // 整条运行挂死。取宽松值，避免误杀合法的长任务。
 const toolFallbackTimeout = 30 * time.Minute
 
-// maxToolOutputChars 是单条工具输出进入对话历史的字符上限（映射到 agentcore 的
-// MaxToolOutputChars；SDK 默认 30000，我们收紧到 12000）。
-const maxToolOutputChars = 12000
+// defaultMaxToolOutputChars 是「窗口未知」时单条工具输出进入对话历史的字符上限
+// （映射到 agentcore 的 MaxToolOutputChars）。
+//
+// 第三阶段起运行期一律由 ToolOutputChars(window) 推导（窗口 1/8，夹 4K–24K：
+// 128K 窗口 → 16000）；这个常量只剩兜底与 SDK 默认值(30000)之间的夹角作用。
+const defaultMaxToolOutputChars = 12000
+
+// maxToolOutputChars 是旧名，保留给仍在注释/测试里引用的地方。
+const maxToolOutputChars = defaultMaxToolOutputChars
 
 func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (res actool.Result, err error) {
 	name := g.Name()
@@ -170,6 +176,10 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 	}
 	defer release()
 	res, err = g.CoreTool.Call(callCtx, in, tc)
+	// 统一输出裁剪（第三阶段）：head 70% / tail 30% + 全量落盘。
+	// 只处理「工具自己没裁过」的长文本——SDK 的 tool.Capture、MCP 与自定义工具
+	// 可能已经裁过，重复裁剪会把落盘指针切掉。
+	res = clippedResult(tc, res)
 	if err != nil || res.IsError {
 		// 失败按「记在谁头上」分档（timeout / transport / exec，见 tool_failure_class.go）：
 		// 网络与超时不该算进工具自身的错误率。

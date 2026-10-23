@@ -320,8 +320,13 @@ func truncOutput(s string, n int) string {
 // 输入瘦身:这份 JSON 每轮重复计费). Deeper detail — full graph, all assets,
 // older windows — is still one tool call away (graph_overview / node_detail /
 // list_facts / list_assets / …), as the trailing JIT hint reminds the model.
-func renderGraphOverview(data map[string]any) string {
-	b := marshalOverviewCapped(data, plannerOverviewMaxBytes)
+func renderGraphOverview(ctx context.Context, data map[string]any) string {
+	maxBytes := plannerOverviewMaxBytes
+	// 第三阶段:注入预算随窗口伸缩(128K → 51KB,原来写死 16KB)。窗口未知时退回旧值。
+	if w := contextWindowFrom(ctx); w > 0 {
+		maxBytes = OverviewBudgetBytes(w)
+	}
+	b := marshalOverviewCapped(data, maxBytes)
 	if b == "" {
 		return "" // fall back to the model calling graph_overview itself
 	}
@@ -390,6 +395,9 @@ func plannerSystem(goal, dataDir, workDir string) string {
 // for time/heartbeat wakes). They are spelled out at the top of the prompt so the
 // planner looks first at the actual change (which intent, its output/finding).
 func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, goal string, triggers []TriggerEvent, emit func(db.Activity)) (met bool, reason string, err error) {
+	// 注入预算（态势 JSON / digest 正文）按窗口推导，必须先挂到 ctx 上——后面
+	// renderGraphOverview 要读它；文件末尾那次 WithContextWindow 只覆盖到会话循环。
+	ctx = WithContextWindow(ctx, p.compactionWindow())
 	// cold-digest §2.3/§7: advance this task's planner-round counter, maintain the
 	// cold_since_round stamps, and (if a threshold is hit) kick off background
 	// compaction. Synchronous part is cheap (a few queries); the LLM compaction
@@ -423,7 +431,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// 关键态势（刚完成的意图 + 预取的完整图）改放【本轮 user 输入】(见下方 input)，system
 	// 只留静态规划正文。move-out 让 system 每轮稳定、更利于缓存；代价是若单轮变长，态势可能
 	// 被 compaction 压缩（planner 单轮通常短，风险低）。situational 会拼进下方 input。
-	situational := renderTriggers(ts, triggers) + renderGraphOverview(tsx.graphOverviewForPrompt(plannerPromptCaps))
+	situational := renderTriggers(ts, triggers) + renderGraphOverview(ctx, tsx.graphOverviewForPrompt(ctx, plannerPromptCaps))
 	// 任务级 deadline / 终局模式(经 ctx 注入,见 taskclock.go)。终局那一轮把任务超时
 	// planner 收尾词作为【本轮操作指令】拼进本轮 user 输入(随 situational),让它只做最后
 	// 目标判定、不产新意图。
@@ -489,9 +497,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		BashEnv:               proxyEnv(p.proxyAddr, p.proxyCACert), // Bash 子命令默认走代理+信任 CA
 		WorkingDir:            taskDir,                              // 本任务工作目录 <workDir>/tasks/<taskID>
 		ToolOutputDir:         cmdOutDir(taskDir),
-		MaxToolOutputChars:    maxToolOutputChars, // 工具输出入历史的上限(超限全量落盘可重读)
-		MaxTurns:              p.maxTurns,         // 0 = unlimited (configurable in agent management)
-		MaxDuration:           maxDur,             // 0=不限;有 deadline 时=距 deadline 剩余
+		MaxToolOutputChars:    ToolOutputChars(p.compactionWindow()), // 工具输出入历史的上限(超限全量落盘可重读)
+		MaxTurns:              p.maxTurns,                            // 0 = unlimited (configurable in agent management)
+		MaxDuration:           maxDur,                                // 0=不限;有 deadline 时=距 deadline 剩余
 		// 跨唤醒共享的规划待办：让串行链在多轮之间保留（session 是新的，store 不是）。
 		Todos: p.todoFor(ts.ID()),
 		// 命中【本轮】步数预算→ SDK 跑收尾:把本轮已想清楚的结论落地(该派的 add_intent、
