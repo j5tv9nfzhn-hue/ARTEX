@@ -464,7 +464,15 @@ func (c Config) NewProvider() (llm.Provider, error) {
 		return nil, err
 	}
 	// 最内层再套一层「工具入参截流」：模型一边生成参数，界面一边显示（见 toolstream.go）。
-	return wrapToolStream(prov), nil
+	prov = wrapToolStream(prov)
+	// Anthropic 格式不套「内联思考拆分」：Anthropic 要求回放 thinking 块时带 signature，
+	// 拆出来的思考块没有签名，下一轮请求会被 400 拒掉——它的原生 thinking 块本来也不走
+	// content。其余两种格式把思考回放成 reasoning_content / reasoning 项，不需要签名
+	//（见 reasoning_split.go）。
+	if c.Format != llm.FormatAnthropic {
+		prov = splitInlineThinking(prov)
+	}
+	return prov, nil
 }
 
 // IsQuotaExhaustedMessage deliberately recognizes only explicit balance,

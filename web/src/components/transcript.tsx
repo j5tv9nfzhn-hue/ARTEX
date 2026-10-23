@@ -101,6 +101,16 @@ type Group =
   | { type: "msg"; key: number; worker: string; steps: Activity[] }
   | { type: "intercept"; key: number; step: Activity };
 
+// 内联思考兜底：有的网关不认 reasoning_content，把整段推理写进 content，落库的
+// kind 就是 "text"。服务端的 reasoning_split 只对之后的新数据生效，历史行还得在
+// 渲染层兜住 —— 否则 chat 页会把它当成最终正文整段展开（这就是「思考变正文」的
+// 观感）。标签集合与服务端 agent/reasoning_split.go 必须保持一致。
+const REASONING_OPEN_RE = /^\s*<(?:think|thinking|reasoning|thought)>/i;
+
+function looksInlineThinking(step: Activity): boolean {
+  return step.kind === "text" && REASONING_OPEN_RE.test(step.summary ?? "");
+}
+
 function groupSteps(steps: Activity[], chat: boolean): Group[] {
   const out: Group[] = [];
   const byToolId = new Map<string, Extract<Group, { type: "tool" }>>();
@@ -122,6 +132,17 @@ function groupSteps(steps: Activity[], chat: boolean): Group[] {
         key: s.seq,
         step: s,
         intent: s.kind === "intent",
+      });
+      continue;
+    }
+    // 历史脏行兜底：整段推理被网关写进 content 时 kind 会是 "text"。就地改成思考
+    // 分组，别让它在 chat 页被当成最终正文整段展开（见 looksInlineThinking）。
+    if (looksInlineThinking(s)) {
+      out.push({
+        type: "msg",
+        key: s.seq,
+        worker: s.worker,
+        steps: [{ ...s, kind: "thinking", summary: s.summary.replace(REASONING_OPEN_RE, "") }],
       });
       continue;
     }
