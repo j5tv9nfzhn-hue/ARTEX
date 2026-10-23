@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -50,14 +51,42 @@ type ToolStat struct {
 // ToolStats counts executions grouped by tool under the same filters
 // ListCommands takes. Unpaginated on purpose: the tally describes the whole
 // filtered set, not the page currently on screen.
+//
+// 数据源是 tool_usage 账本，不是 activity：activity 会随任务数据一起被清理，
+// 而「哪个工具错误率高」恰恰是清理之后还要回答的问题（线上 47,374 次调用的
+// 错误信息就是这么丢掉的）。账本刻意不存工具入参，所以 q 拆成两步：
+// 先在 activity 里解析「入参命中 q 的工具名」，再回账本按工具名统计——
+// 数字始终出自同一份账本，不会因为有没有关键字而换口径。
 func (d *DB) ToolStats(expID *int64, q string) ([]ToolStat, error) {
-	where, args, _ := commandFilter(expID, q)
+	where := `WHERE 1=1`
+	args := []any{}
+	argN := 1
+	if expID != nil {
+		where += fmt.Sprintf(` AND exploration_id = $%d`, argN)
+		args = append(args, *expID)
+		argN++
+	}
+	if q != "" {
+		names, err := d.toolNamesMatching(q)
+		if err != nil {
+			return nil, err
+		}
+		if len(names) == 0 {
+			return []ToolStat{}, nil
+		}
+		ph := make([]string, len(names))
+		for i, name := range names {
+			ph[i] = fmt.Sprintf("$%d", argN)
+			args = append(args, name)
+			argN++
+		}
+		where += ` AND tool_key IN (` + strings.Join(ph, ",") + `)`
+	}
 
 	rows, err := d.Query(`
-SELECT COALESCE(NULLIF(u.tool,''),'-') AS tool, COUNT(*) AS total,
-       COUNT(*) FILTER (WHERE COALESCE(r.is_error,false)) AS errors
-FROM activity u
-LEFT JOIN activity r ON r.tool_use_id = u.tool_use_id AND r.kind = 'tool_result'
+SELECT COALESCE(NULLIF(tool_key,''),'-') AS tool, COUNT(*) AS total,
+       SUM(CASE WHEN is_error THEN 1 ELSE 0 END) AS errors
+FROM tool_usage
 `+where+`
 GROUP BY 1
 ORDER BY total DESC, tool ASC`, args...)
@@ -73,6 +102,27 @@ ORDER BY total DESC, tool ASC`, args...)
 			return nil, err
 		}
 		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// toolNamesMatching resolves a keyword to the tool names whose recorded input
+// contains it. Only activity keeps tool inputs (the ledger deliberately does not),
+// so this is the one place the old source still answers a question the ledger cannot.
+func (d *DB) toolNamesMatching(q string) ([]string, error) {
+	rows, err := d.Query(`SELECT DISTINCT tool FROM activity
+WHERE kind='tool_use' AND COALESCE(detail,'') `+sqlILike()+` $1`, "%"+q+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
 	}
 	return out, rows.Err()
 }
