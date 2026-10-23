@@ -286,6 +286,16 @@ VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),$8,$9,$
 			credMode = 2
 		}
 	}
+	// 模型身份（format / base_url / model）一变，上次探测到的能力快照就作废：
+	// 留着它等于用旧模型的物理上限去钳新模型的请求——8K 输出的旧模型会把刚换上的
+	// 64K 模型永久压在 8K，而且界面上看不出原因。读失败不阻断保存：
+	// 探测缓存永远不能变成写路径的硬依赖。
+	staleCaps := false
+	var prevFormat, prevBase, prevModel string
+	if err := d.QueryRow(`SELECT format,COALESCE(base_url,''),model FROM llm_profiles WHERE id=$1`, p.ID).
+		Scan(&prevFormat, &prevBase, &prevModel); err == nil {
+		staleCaps = prevFormat != p.Format || prevBase != p.BaseURL || prevModel != p.Model
+	}
 	_, err = d.Exec(`UPDATE llm_profiles SET
 name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,
 api_key      = CASE WHEN $26 = 1 THEN NULL WHEN $6 <> '' THEN NULLIF($6,'') ELSE api_key END,
@@ -297,6 +307,9 @@ WHERE id=$28`,
 		p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, stored, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 		r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.InputModalities,
 		credMode, bindID, p.ID)
+	if err == nil && staleCaps {
+		_ = d.ClearModelCaps(p.ID)
+	}
 	return p.ID, err
 }
 
