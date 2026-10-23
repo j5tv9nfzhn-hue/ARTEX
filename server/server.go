@@ -1186,9 +1186,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/llm/providers", s.pgSaveProvider)
 	mux.HandleFunc("DELETE /api/llm/providers/{id}", s.pgDeleteProvider)
 	// 凭据实体（计划 46–47）：可被多个 LLM 配置引用
-	mux.HandleFunc("GET /api/llm/credentials", s.pgListCredentials)
-	mux.HandleFunc("POST /api/llm/credentials", s.pgSaveCredential)
-	mux.HandleFunc("DELETE /api/llm/credentials/{id}", s.pgDeleteCredential)
 	mux.HandleFunc("GET /api/llm/retry-policy", s.pgGetLLMRetryPolicy)
 	mux.HandleFunc("POST /api/llm/retry-policy", s.pgSaveLLMRetryPolicy)
 	mux.HandleFunc("GET /api/llm/pool", s.pgLLMPoolStatus)

@@ -28,7 +28,7 @@ func TestProviderGroupsModels(t *testing.T) {
 	}
 	defer func() {
 		_, _ = d.Exec(`DELETE FROM llm_profiles WHERE provider_id=$1`, pid)
-		_ = d.DeleteProvider(pid)
+		_, _ = d.DeleteProvider(pid)
 	}()
 
 	id1, err := d.SaveProfile(&LLMProfile{Name: "zz-prov-model-1", Model: "m-one", ProviderID: pid, ContextWindowK: 128})
@@ -90,17 +90,14 @@ func TestProviderGroupsModels(t *testing.T) {
 		t.Fatalf("改名后模型 base_url = %q, want 同步", p2.BaseURL)
 	}
 
-	// 4) 还有模型时不允许删供应商——删模型会级联到任务链与 Agent 绑定。
-	if err := d.DeleteProvider(pid); !errors.Is(err, ErrProviderNotEmpty) {
-		t.Fatalf("DeleteProvider = %v, want ErrProviderNotEmpty", err)
-	}
-
-	// 5) 把模型挪到另一家供应商（建错位置时的补救）。
+	// 4) 把模型挪到另一家供应商（建错位置时的补救）。
+	//    「删供应商要不要先清空模型」不在这里测：级联语义见
+	//    TestDeleteProviderCascadesModels。
 	pid2, err := d.SaveProvider(&LLMProvider{Name: "zz-provider-b", Format: "anthropic", APIKey: "sk-provider-b-2222"})
 	if err != nil {
 		t.Fatalf("save provider b: %v", err)
 	}
-	defer func() { _ = d.DeleteProvider(pid2) }()
+	defer func() { _, _ = d.DeleteProvider(pid2) }()
 	if err := d.MoveProfileToProvider(id1, pid2); err != nil {
 		t.Fatalf("move: %v", err)
 	}
@@ -158,5 +155,109 @@ func TestSaveProfileWithoutProviderStillWorks(t *testing.T) {
 	}
 
 	_ = d.DeleteProfile(id)
-	_ = d.DeleteProvider(p.ProviderID)
+	_, _ = d.DeleteProvider(p.ProviderID)
+}
+
+// DeleteProvider 必须一次带走名下全部模型：删供应商却留下孤儿模型，是重构前
+// 「先删光模型才能删供应商」那条限制的反面——两种极端都不可接受。
+func TestDeleteProviderCascadesModels(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	pid, err := d.SaveProvider(&LLMProvider{Name: "zz-cascade-prov", Format: "openai", APIKey: "sk-cascade-0001"})
+	if err != nil {
+		t.Fatalf("save provider: %v", err)
+	}
+	ids := make([]int64, 0, 3)
+	for _, name := range []string{"zz-cascade-1", "zz-cascade-2", "zz-cascade-3"} {
+		id, err := d.SaveProfile(&LLMProfile{Name: name, Model: "m-" + name, ProviderID: pid})
+		if err != nil {
+			t.Fatalf("save %s: %v", name, err)
+		}
+		ids = append(ids, id)
+	}
+	// 把其中一条设成激活：删供应商时它会被一起删掉，激活位必须自动交给别人。
+	if err := d.SetActiveProfile(pid); err != nil {
+		t.Fatalf("activate provider: %v", err)
+	}
+
+	n, err := d.DeleteProvider(pid)
+	if err != nil {
+		t.Fatalf("DeleteProvider: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("级联删除 %d 个模型，期望 3 个", n)
+	}
+	for _, id := range ids {
+		if p, _ := d.ProfileByID(id); p != nil {
+			t.Fatalf("模型 %d 未被删除", id)
+		}
+	}
+	if v, _ := d.ProviderByID(pid); v != nil {
+		t.Fatal("供应商本身未被删除")
+	}
+	var left int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM llm_profiles WHERE id IN ($1,$2,$3)`, ids[0], ids[1], ids[2]).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatalf("残留 %d 条模型行", left)
+	}
+	if _, err := d.DeleteProvider(pid); !errors.Is(err, ErrProviderNotFound) {
+		t.Fatalf("重复删除 = %v, want ErrProviderNotFound", err)
+	}
+}
+
+// 激活中的模型也必须能删——用户在一个供应商下只剩一条模型时，那一条往往就是
+// 激活的那条，旧逻辑会把人卡死。删完激活位自动交给下一个候选；一条不剩就留空。
+func TestDeleteActiveProfileHandsOverDefault(t *testing.T) {
+	// 用一次性库：这条用例要断言「激活位交给了谁」，共享套件库里别的用例
+	// 留下的配置会让排序结果不确定。
+	d, err := openSQLiteTemp(t.TempDir(), "handover.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	pid, err := d.SaveProvider(&LLMProvider{Name: "zz-handover-prov", Format: "anthropic", APIKey: "sk-handover-0002"})
+	if err != nil {
+		t.Fatalf("save provider: %v", err)
+	}
+	defer func() { _, _ = d.DeleteProvider(pid) }()
+
+	keep, err := d.SaveProfile(&LLMProfile{Name: "zz-handover-keep", Model: "keep", ProviderID: pid, Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := d.SaveProfile(&LLMProfile{Name: "zz-handover-active", Model: "active", ProviderID: pid, Priority: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = d.DeleteProfile(keep) }()
+	// 把激活位指到「想删的那条」。
+	if err := d.SetActiveProfile(active); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.DeleteProfile(active); err != nil {
+		t.Fatalf("删除激活模型被拒：%v", err)
+	}
+	got, err := d.ActiveProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID != keep {
+		t.Fatalf("激活位没有交接给剩下的模型：%+v", got)
+	}
+
+	// 最后一条也能删：删完没有任何激活配置，这是合法状态。
+	if err := d.DeleteProfile(keep); err != nil {
+		t.Fatalf("删除最后一条模型被拒：%v", err)
+	}
+	if got, _ := d.ActiveProfile(); got != nil {
+		t.Fatalf("删空后仍有激活配置：%+v", got)
+	}
 }

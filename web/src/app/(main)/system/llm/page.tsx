@@ -3,7 +3,6 @@
 import * as React from "react";
 
 import {
-  KeyRoundIcon,
   Loader2Icon,
   PlugZapIcon,
   PlusIcon,
@@ -18,6 +17,16 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/empty-state";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,7 +41,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
-import type { LLMCredential, LLMPoolMember, LLMPoolStatus, LLMProfile, LLMProvider, LLMRetryOverride } from "@/lib/types";
+import type { LLMPoolMember, LLMPoolStatus, LLMProfile, LLMProvider, LLMRetryOverride } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { ProfileRetryFields, RetryPolicyPanel, ZERO_OVERRIDE } from "./_components/retry";
@@ -47,7 +56,6 @@ const toStore = (v: string) => (v === NONE ? "" : v);
 
 // 凭据选择器的「内联 Key」哨兵：Radix Select 不接受空字符串 value，与 NONE 同理；
 // 存取时与 ""（= 未绑定，用这家供应商自己的 api_key）互转。
-const INLINE_CRED = "__inline__";
 
 type LLMFormat = "anthropic" | "openai" | "openai-responses";
 
@@ -289,13 +297,11 @@ function ProviderSheet({
   open,
   onOpenChange,
   onSaved,
-  credentials,
 }: {
   provider: LLMProvider | null; // null = 新建
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onSaved: (id: string) => void;
-  credentials: LLMCredential[];
 }) {
   const t = useTranslations("llmPage");
   const isNew = !provider;
@@ -305,8 +311,6 @@ function ProviderSheet({
   const [proxy, setProxy] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [keyHint, setKeyHint] = React.useState("");
-  // 绑定的凭据 id（""=内联 Key，用这家供应商自己的 api_key）。见 INLINE_CRED。
-  const [credId, setCredId] = React.useState("");
   const [rps, setRps] = React.useState("0");
   const [rpm, setRpm] = React.useState("0");
   const [sessionHeaderKey, setSessionHeaderKey] = React.useState("");
@@ -327,7 +331,6 @@ function ProviderSheet({
     setProxy(provider?.proxy ?? "");
     setApiKey("");
     setKeyHint(provider?.api_key_hint ?? "");
-    setCredId(provider?.credential_id ?? "");
     setRps(String(provider?.rate_per_second ?? 0));
     setRpm(String(provider?.rate_per_minute ?? 0));
     setSessionHeaderKey(provider?.session_header_key ?? "");
@@ -335,7 +338,6 @@ function ProviderSheet({
   }, [open, provider]);
 
   const providerId = provider ? Number(provider.id) : undefined;
-  const boundCred = credId ? credentials.find((c) => c.id === credId) : undefined;
   // 名下第一条模型：测试时把它的 id 递过去，后端据此取到「这条供应商的 Key」
   // （读路径本来就是 COALESCE(供应商, 模型)）。
   const sampleProfileId = provider?.models?.length ? Number(provider.models[0].id) : undefined;
@@ -401,8 +403,6 @@ function ProviderSheet({
         rate_per_second: Number(rps) || 0,
         rate_per_minute: Number(rpm) || 0,
         session_header_key: sessionHeaderKey.trim(),
-        // 凭据绑定：选中凭据 = 以凭据行为准；内联 = 显式解绑（0）。总能表态。
-        credential_id: credId ? Number(credId) : 0,
       });
       toast.success(isNew ? t("provider.toast.created", { name: name.trim() }) : t("provider.toast.saved"));
       onSaved(id);
@@ -491,47 +491,23 @@ function ProviderSheet({
             </p>
           </div>
 
-          {/* 凭据选择器：Key 的来源是独立实体。选中凭据时内联 Key 输入被隐藏——
-              绑定态只认凭据行的 Key，留一个同样能填的输入框只会造成「这边改了、
-              那边没变」的错觉。 */}
+          {/* Key 就住在这家供应商身上——没有「从别处挑一把」的第二条来源，
+              所以这里恒显示输入框。空着不填 = 保持原 Key 不变（后端只在给了
+              新 Key 时才覆盖）。 */}
           <div className="grid gap-2">
-            <Label>{t("profile.credential.label")}</Label>
-            <Select value={credId || INLINE_CRED} onValueChange={(v) => setCredId(v === INLINE_CRED ? "" : v)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={INLINE_CRED}>{t("profile.credential.inline")}</SelectItem>
-                {credentials.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                    {c.api_key_hint ? ` ${c.api_key_hint}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-muted-foreground text-xs">
-              {credId
-                ? t("profile.credential.boundHint", { name: boundCred?.name ?? provider?.credential_name ?? "" })
-                : t("profile.credential.hint")}
-            </p>
+            <Label htmlFor="v-api-key">API Key</Label>
+            <Input
+              id="v-api-key"
+              // 阻止浏览器密码管理器把已保存的登录密码自动填进来（同模型表单）。
+              name={`llm-provider-key-${provider?.id ?? "new"}`}
+              autoComplete="new-password"
+              type="password"
+              placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">{t("profile.apiKey.hint")}</p>
           </div>
-
-          {!credId && (
-            <div className="grid gap-2">
-              <Label htmlFor="v-api-key">API Key</Label>
-              <Input
-                id="v-api-key"
-                // 阻止浏览器密码管理器把已保存的登录密码自动填进来（同模型表单）。
-                name={`llm-provider-key-${provider?.id ?? "new"}`}
-                autoComplete="new-password"
-                type="password"
-                placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-            </div>
-          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
@@ -754,8 +730,8 @@ function ModelSheet({
           ? ["text", ...EXTRA_MODALITIES.filter((m) => modalities.includes(m))].join(",")
           : "",
         // 注意：这里【不】发 format / base_url / proxy / rate_* / session_header_key /
-        // api_key / credential_id。它们属于供应商，混进来就会让「只改模型」变成
-        // 「顺手把端点覆盖成表单里的旧值」。后端按 nil = 不改处理。
+        // api_key。它们属于供应商，混进来就会让「只改模型」变成「顺手把端点覆盖
+        // 成表单里的旧值」。后端按 nil = 不改处理。
       });
       if (isNew) toast.success(t("profile.toast.created", { name: name.trim() }));
       else toast.success(profile?.is_default ? t("profile.toast.savedActive") : t("profile.toast.saved"));
@@ -824,9 +800,7 @@ function ModelSheet({
               <code className="truncate font-mono text-muted-foreground">{endpoint?.base_url || "—"}</code>
             </div>
             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
-              {endpoint?.credential_name ? (
-                <span>{t("card.credential", { name: endpoint.credential_name })}</span>
-              ) : endpoint?.api_key_hint ? (
+              {endpoint?.api_key_hint ? (
                 <span>{endpoint.api_key_hint}</span>
               ) : (
                 <span className="text-destructive">{t("health.noKey.label")}</span>
@@ -1114,189 +1088,6 @@ function ModelSheet({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 凭据管理：独立于模型配置的 Key 实体，可被多家供应商 / 多条模型引用
-// ─────────────────────────────────────────────────────────────────────────────
-
-function CredentialSheet({
-  cred,
-  open,
-  onOpenChange,
-  onSaved,
-}: {
-  cred: LLMCredential | null; // null = 新建
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  onSaved: () => void;
-}) {
-  const t = useTranslations("llmPage");
-  const isNew = !cred;
-  const [name, setName] = React.useState("");
-  const [apiKey, setApiKey] = React.useState("");
-  const [saving, setSaving] = React.useState(false);
-
-  // 明文 Key 永不回显：编辑时输入框一律从空开始，留空 = 保持原值。
-  React.useEffect(() => {
-    if (!open) return;
-    setName(cred?.name ?? "");
-    setApiKey("");
-  }, [open, cred]);
-
-  async function save() {
-    if (!name.trim()) {
-      toast.error(t("credentials.toast.nameRequired"));
-      return;
-    }
-    if (isNew && !apiKey.trim()) {
-      toast.error(t("credentials.toast.keyRequired"));
-      return;
-    }
-    if (saving) return;
-    setSaving(true);
-    try {
-      await api.saveLLMCredential({
-        ...(cred ? { id: Number(cred.id) } : {}),
-        name: name.trim(),
-        api_key: apiKey.trim(),
-      });
-      toast.success(isNew ? t("credentials.toast.created", { name: name.trim() }) : t("credentials.toast.saved"));
-      onSaved();
-      onOpenChange(false);
-    } catch (e) {
-      toast.error(t("credentials.toast.saveFailed", { msg: (e as Error).message }));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex flex-col gap-0 p-0 data-[side=right]:sm:max-w-md">
-        <SheetHeader className="px-4">
-          <SheetTitle>
-            {isNew ? t("credentials.titleNew") : t("credentials.titleEdit", { name: cred?.name ?? "" })}
-          </SheetTitle>
-          <SheetDescription>{t("credentials.desc")}</SheetDescription>
-        </SheetHeader>
-
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
-          <div className="grid gap-2">
-            <Label htmlFor="c-name">{t("credentials.name.label")}</Label>
-            <Input
-              id="c-name"
-              placeholder={t("credentials.name.placeholder")}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="c-key">API Key</Label>
-            <Input
-              id="c-key"
-              // 同模型表单：阻止密码管理器自动填充，见上处注释。
-              name={`llm-credential-key-${cred?.id ?? "new"}`}
-              autoComplete="new-password"
-              type="password"
-              placeholder={
-                cred?.api_key_hint ? t("profile.apiKey.placeholderSet", { hint: cred.api_key_hint }) : "sk-…"
-              }
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-            <p className="text-muted-foreground text-xs">{t("credentials.keyHint")}</p>
-          </div>
-        </div>
-
-        <div className="flex gap-2 border-t px-4 py-3">
-          <Button onClick={save} disabled={saving} className="flex-1">
-            {saving && <Loader2Icon className="animate-spin" />}
-            {!saving && (isNew ? <PlusIcon /> : <SaveIcon />)}
-            {isNew ? t("profile.create") : t("profile.save")}
-          </Button>
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-function CredentialsPanel({ creds, onChanged }: { creds: LLMCredential[]; onChanged: () => Promise<void> }) {
-  const t = useTranslations("llmPage");
-  const [open, setOpen] = React.useState(false);
-  const [editing, setEditing] = React.useState<LLMCredential | null>(null);
-
-  const openEditor = React.useCallback((c: LLMCredential | null) => {
-    setEditing(c);
-    setOpen(true);
-  }, []);
-
-  async function remove(c: LLMCredential) {
-    try {
-      const r = await api.deleteLLMCredential(c.id);
-      toast.success(
-        r.unbound_profiles > 0
-          ? t("credentials.toast.deletedUnbound", { name: c.name, n: r.unbound_profiles })
-          : t("credentials.toast.deleted", { name: c.name }),
-      );
-      await onChanged();
-    } catch (e) {
-      toast.error(t("credentials.toast.deleteFailed", { msg: (e as Error).message }));
-    }
-  }
-
-  return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-muted-foreground text-sm">{t("credentials.intro")}</p>
-        <Button size="sm" variant="outline" onClick={() => openEditor(null)}>
-          <PlusIcon /> {t("credentials.new")}
-        </Button>
-      </div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {creds.map((c) => (
-          <Card key={c.id} className="gap-0 py-4">
-            <CardContent className="grid gap-2 px-4">
-              <div className="flex items-start gap-2">
-                <KeyRoundIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <span className="block truncate font-medium text-sm">{c.name}</span>
-                  {c.api_key_hint && (
-                    <code className="mt-1 block font-mono text-muted-foreground text-xs">{c.api_key_hint}</code>
-                  )}
-                </div>
-              </div>
-              {/* 引用关系来自后端（profile_names）：删除前就能看清会解绑谁 */}
-              <div className="min-h-4 pl-6 text-muted-foreground text-xs">
-                {c.profile_names && c.profile_names.length > 0
-                  ? t("credentials.usedBy", { names: c.profile_names.join("、") })
-                  : t("credentials.unused")}
-              </div>
-              <div className="mt-1 flex gap-2">
-                <Button size="sm" variant="outline" className="flex-1" onClick={() => openEditor(c)}>
-                  <SaveIcon /> {t("credentials.edit")}
-                </Button>
-                <Button
-                  size="icon"
-                  variant="outline"
-                  aria-label={t("credentials.deleteAria")}
-                  onClick={() => void remove(c)}
-                >
-                  <Trash2Icon className="text-destructive" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-        {creds.length === 0 && (
-          <div className="col-span-full rounded-lg border border-dashed">
-            <EmptyState illustration="shield" title={t("credentials.empty")} />
-          </div>
-        )}
-      </div>
-      <CredentialSheet cred={editing} open={open} onOpenChange={setOpen} onSaved={() => void onChanged()} />
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // 供应商卡片：端点信息 + 名下模型行
 //
 // provider === null 时渲染「未归属供应商」——历史库里可能存在 provider_id 为空
@@ -1314,6 +1105,7 @@ function ProviderCard({
   onDeleteProvider,
   onAddModel,
   onEditModel,
+  onDeleteModel,
   onActivate,
   onProbe,
 }: {
@@ -1326,6 +1118,7 @@ function ProviderCard({
   onDeleteProvider: (v: LLMProvider) => void;
   onAddModel: (v: LLMProvider | null) => void;
   onEditModel: (p: LLMProfile) => void;
+  onDeleteModel: (p: LLMProfile) => void;
   onActivate: (p: LLMProfile) => void;
   onProbe: (p: LLMProfile) => void;
 }) {
@@ -1383,8 +1176,6 @@ function ProviderCard({
               <span className="text-destructive" title={provider.key_error}>
                 {t("health.keyUnreadable")}
               </span>
-            ) : provider?.credential_name ? (
-              <span>{t("card.credential", { name: provider.credential_name })}</span>
             ) : provider?.api_key_hint ? (
               <span>{provider.api_key_hint}</span>
             ) : provider ? (
@@ -1527,6 +1318,21 @@ function ProviderCard({
                 >
                   {p.is_default ? t("card.active") : t("card.activate")}
                 </Button>
+                {/* 激活中的、以及供应商下最后一条模型都能删：删完激活位自动
+                    交接，一条不剩就留个空供应商等以后再加。 */}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7"
+                  aria-label={t("model.deleteAria")}
+                  title={t("model.deleteAria")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteModel(p);
+                  }}
+                >
+                  <Trash2Icon className="size-3.5 text-destructive" />
+                </Button>
               </div>
             </div>
           );
@@ -1555,10 +1361,11 @@ export default function LLMPage() {
   const t = useTranslations("llmPage");
   const [providers, setProviders] = React.useState<LLMProvider[]>([]);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
-  const [creds, setCreds] = React.useState<LLMCredential[]>([]);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
   const [probingId, setProbingId] = React.useState<string | null>(null);
+  // 待确认删除的供应商。非空 = 确认框打开；删除逻辑本身不依赖这个 state。
+  const [deletingProvider, setDeletingProvider] = React.useState<LLMProvider | null>(null);
 
   // 抽屉的开关和内容分开存：关闭时 editing 保持不变，否则关闭动画期间标题会从
   // 「编辑 X」闪成「新建」。editing = null 表示新建。
@@ -1586,14 +1393,6 @@ export default function LLMPage() {
     }
   }, []);
 
-  const loadCreds = React.useCallback(async () => {
-    try {
-      setCreds(await api.llmCredentials());
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
   // 供应商树（含 models[]）与扁平列表各拉一份：树负责分组渲染，扁平列表负责
   // 「未归属」兜底与轮询健康映射——两者都来自同一批行，读的是同一份 DTO。
   const load = React.useCallback(async () => {
@@ -1604,8 +1403,8 @@ export default function LLMPage() {
     } catch {
       /* ignore */
     }
-    await Promise.all([loadPool(), loadCreds()]);
-  }, [loadPool, loadCreds]);
+    await loadPool();
+  }, [loadPool]);
 
   React.useEffect(() => {
     void load();
@@ -1649,10 +1448,6 @@ export default function LLMPage() {
   }
 
   async function removeModel(p: LLMProfile) {
-    if (p.is_default) {
-      toast.error(t("page.toast.cannotDeleteActive"));
-      return;
-    }
     try {
       await api.deleteLLMProfile(p.id);
       toast.success(t("page.toast.deleted", { name: p.name }));
@@ -1662,15 +1457,20 @@ export default function LLMPage() {
     }
   }
 
-  async function removeProvider(v: LLMProvider) {
-    // 名下还有模型时后端会 409。这里先拦一次，省掉一次往返与一句英文错误。
-    if (v.model_count > 0) {
-      toast.error(t("provider.deleteBlocked"));
-      return;
-    }
+  // 删供应商是一次性动作：名下的模型、配置、任务链引用全部随之消失，所以只在
+  // 这里弹一个确认框说清「会连带删掉几个模型」，确认后一次请求删干净。
+  function removeProvider(v: LLMProvider) {
+    setDeletingProvider(v);
+  }
+
+  async function confirmRemoveProvider() {
+    const v = deletingProvider;
+    if (!v) return;
+    setDeletingProvider(null);
     try {
-      await api.deleteLLMProvider(v.id);
-      toast.success(t("provider.toast.deleted", { name: v.name }));
+      // 后端在一个事务里删模型 → 删供应商 → 交接激活位；返回被带走的模型数。
+      const r = await api.deleteLLMProvider(v.id);
+      toast.success(t("provider.toast.cascadeDeleted", { name: v.name, n: r.models_deleted ?? 0 }));
       await load();
     } catch (e) {
       toast.error(t("provider.toast.deleteFailed", { msg: (e as Error).message }));
@@ -1722,7 +1522,6 @@ export default function LLMPage() {
       <Tabs defaultValue="providers" className="flex-1">
         <TabsList>
           <TabsTrigger value="providers">{t("page.tab.providers")}</TabsTrigger>
-          <TabsTrigger value="credentials">{t("page.tab.credentials")}</TabsTrigger>
           <TabsTrigger value="retry">{t("page.tab.retry")}</TabsTrigger>
         </TabsList>
 
@@ -1740,6 +1539,7 @@ export default function LLMPage() {
                 onDeleteProvider={(x) => void removeProvider(x)}
                 onAddModel={(x) => openModel(null, x?.id ?? "")}
                 onEditModel={(p) => openModel(p, p.provider_id ?? "")}
+                onDeleteModel={(p) => void removeModel(p)}
                 onActivate={(p) => void activate(p)}
                 onProbe={(p) => void probe(p)}
               />
@@ -1755,6 +1555,7 @@ export default function LLMPage() {
                 onDeleteProvider={() => undefined}
                 onAddModel={(x) => openModel(null, x?.id ?? "")}
                 onEditModel={(p) => openModel(p, "")}
+                onDeleteModel={(p) => void removeModel(p)}
                 onActivate={(p) => void activate(p)}
                 onProbe={(p) => void probe(p)}
               />
@@ -1767,10 +1568,6 @@ export default function LLMPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="credentials" className="mt-4">
-          <CredentialsPanel creds={creds} onChanged={loadCreds} />
-        </TabsContent>
-
         <TabsContent value="retry" className="mt-4">
           <RetryPolicyPanel />
         </TabsContent>
@@ -1781,7 +1578,6 @@ export default function LLMPage() {
         open={providerOpen}
         onOpenChange={setProviderOpen}
         onSaved={() => void load()}
-        credentials={creds}
       />
       <ModelSheet
         profile={editingModel}
@@ -1792,6 +1588,34 @@ export default function LLMPage() {
         onSaved={() => void load()}
       />
       <PoolSheet open={poolOpen} onOpenChange={setPoolOpen} pool={pool} onReload={loadPool} />
+
+      {/* 唯一的防误触闸门：一个确认框，说明会连带删掉什么。 */}
+      <AlertDialog
+        open={deletingProvider !== null}
+        onOpenChange={(o) => {
+          if (!o) setDeletingProvider(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("provider.confirmDelete.title", { name: deletingProvider?.name ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingProvider?.model_count
+                ? t("provider.confirmDelete.withModels", { n: deletingProvider.model_count })
+                : t("provider.confirmDelete.empty")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("provider.confirmDelete.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => void confirmRemoveProvider()}
+            >
+              {t("provider.confirmDelete.confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -62,8 +62,6 @@ func (s *Server) pgSaveProvider(w http.ResponseWriter, r *http.Request) {
 	id, err := pg.SaveProvider(&v)
 	if err != nil {
 		switch {
-		case errors.Is(err, db.ErrCredentialNotFound):
-			writeErr(w, 400, err.Error())
 		case errors.Is(err, db.ErrProviderNameUsed):
 			writeErr(w, 409, err.Error())
 		default:
@@ -86,21 +84,23 @@ func (s *Server) pgDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := pathInt(r, "id")
-	err := pg.DeleteProvider(id)
+	// 级联：该供应商名下的模型一并删除，不再要求用户先逐个清空。
+	models, err := pg.DeleteProvider(id)
 	switch {
 	case err == nil:
 	case errors.Is(err, db.ErrProviderNotFound):
 		writeErr(w, 404, err.Error())
 		return
-	case errors.Is(err, db.ErrProviderNotEmpty):
-		writeErr(w, 409, err.Error())
-		return
 	default:
 		writeErr(w, 500, err.Error())
 		return
 	}
+	// 被删掉的模型可能是激活的那条，也可能是某些任务链上的候选：前者要立刻把
+	// 引擎切到新的激活配置（数据库里激活位已经交接好了），后者靠 DeleteProvider
+	// 里 bump 过的链版本号在下一轮重新解析。没有激活配置时 reapply 是空操作。
 	s.invalidateProfileAgents()
-	writeJSON(w, 200, map[string]any{"deleted": i64s(id)})
+	s.reapplyActiveProfile()
+	writeJSON(w, 200, map[string]any{"deleted": i64s(id), "models_deleted": models})
 }
 
 // pgMoveProfileProvider 把一条模型挪到另一家供应商下（建错位置时不用重建配置）。

@@ -2454,7 +2454,6 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/llm/profiles" && m === "POST") return { id: Number(b.id) || 3 };
   if (path === "/llm/profiles/active") return { ok: true };
   // 凭据实体（计划 46–47）：与后端同形——响应只有 hint，保存回 id 字符串。
-  if (path === "/llm/credentials" && m === "GET") return { credentials: D.llmCredentials };
   if (path === "/llm/credentials" && m === "POST") return { id: String(Number(b.id) || 4) };
   if (seg[0] === "llm" && seg[1] === "credentials" && seg.length === 3 && m === "DELETE")
     return { deleted: seg[2], unbound_profiles: 1 };

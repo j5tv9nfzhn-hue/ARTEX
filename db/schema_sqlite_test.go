@@ -258,3 +258,44 @@ func TestSQLiteForeignKeysDeclared(t *testing.T) {
 		t.Error("intercept_pending 的 REFERENCES 丢失：SQLite 默认不强制外键，丢失后无法靠运行时补救")
 	}
 }
+
+// TestSQLiteProviderDeleteCascades 钉住「删供应商 = 连带删模型」的 DB 侧兜底。
+//
+// Go 层的 DeleteProvider 事务会先删模型，所以这条外键在正常路径上不会触发；
+// 但只要它退回到没有 ON DELETE 动作的形态，任何绕过事务的删除（脚本、将来的
+// 新调用点）就会把模型留成永远没人认领的孤儿。pragma 读的是编译进表结构的
+// 动作，比读 DDL 文本可靠。
+func TestSQLiteProviderDeleteCascades(t *testing.T) {
+	con := openSQLiteForSchema(t)
+	applySQLiteSchemaForTest(t, con)
+
+	rows, err := con.Query(`PRAGMA foreign_key_list(llm_profiles)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var (
+			id, seq                   int
+			table, from, to, onUpdate string
+			onDelete                  string
+			match                     string
+		)
+		if err := rows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+			t.Fatal(err)
+		}
+		if from == "provider_id" && table == "llm_providers" {
+			found = true
+			if !strings.EqualFold(onDelete, "CASCADE") {
+				t.Fatalf("llm_profiles.provider_id 的 ON DELETE = %q，want CASCADE", onDelete)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("llm_profiles.provider_id 没有指向 llm_providers 的外键")
+	}
+}

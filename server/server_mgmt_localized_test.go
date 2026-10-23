@@ -42,7 +42,6 @@ func TestServerMgmtConstantsLocalized(t *testing.T) {
 		"errMgmtSkillZipTooLarge":   errMgmtSkillZipTooLarge,
 		"errMgmtSkillNoMDAfter":     errMgmtSkillNoMDAfter,
 		"errMgmtSkillInstallFail":   errMgmtSkillInstallFail,
-		"errMgmtLLMActiveDelete":    errMgmtLLMActiveDelete,
 		"errMgmtLLMRefChanged":      errMgmtLLMRefChanged,
 		"errMgmtLLMRefTimeout":      errMgmtLLMRefTimeout,
 		"errMgmtNoAPIKey":           errMgmtNoAPIKey,

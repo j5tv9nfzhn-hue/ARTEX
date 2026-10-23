@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 模型与成本
+
+#### 修复的问题
+
+- **删除供应商不再要求先删光模型**：此前「有模型 → 删供应商」被前端拦在前端（`model_count > 0` 直接弹一句提示）、后端还会在 `DeleteProvider` 里先 COUNT 再返回 `ErrProviderNotEmpty`（409）；而 `llm_profiles.provider_id` 的外键没有 `ON DELETE` 动作、`PRAGMA foreign_keys` 又是开着的，所以绕过那层拦截裸删会直接撞 `FOREIGN KEY constraint failed`。现在 `db.DeleteProvider` 在一个事务里按 `模型 → 供应商 → 激活位交接` 的顺序删干净，并返回被带走的模型数；新库的外键补上 `ON DELETE CASCADE`，老库外形不变（SQLite 改不了既有列的外键动作），两条路径结果一致。前端只留一个确认框说明「会连带删掉 N 个模型」。
+- **激活中的模型也能删，最后一条也能删**：`DeleteProfile` 原先对 `is_default` 直接返回 `ErrActiveLLMProfileDelete`（界面 409「请先激活另一个配置」）。问题是一个供应商下只剩一条模型时，那一条往往就是激活的那条，用户会卡在「先激活另一个 → 另一个也在这个供应商下」的死循环里。现在删完由 `promoteDefaultProfileTx` 把激活位交给下一个候选（按 `priority DESC, id ASC`），一条不剩就留空——供应商成为空壳，等以后再加模型。
+
+#### 重构
+
+- **废弃独立凭据池，API Key 收敛到供应商行上**：`【凭证】`页签、`/api/llm/credentials` 三条路由、`db/credentials.go`、`server/llm_credentials.go` 一并删除；Key 的唯一事实来源是 `llm_providers.api_key`（读路径 `profileKeyExpr` 从三层 `COALESCE(凭据, 供应商, 模型历史列)` 收敛为两层）。升级时由 `foldCredentialsIntoProviders` 把还绑着凭据的行原样折叠回供应商/模型行再解绑，幂等、在模型回填之前跑，保证同一端点、同一把 Key 的配置仍能正确合并。**`credentials` 表与 `credential_id` 列保留不删**：SQLite 删列要重建整表，在有数据的现场库上得不偿失，留下的空壳没有任何代码读写；键加密仍走 `credential_crypto.go`，`credential.key` 照旧。
+
 ### 复核
 
 #### 手机端连接

@@ -1245,18 +1245,6 @@ export interface NotificationDelivery {
 }
 
 // ---- LLM config ----
-// 凭据实体（计划 46–47）：独立于模型配置，可被多个配置引用。只回显尾 4 位提示
-// （api_key_hint），明文 key 永不进响应。
-export interface LLMCredential {
-  id: string;
-  name: string;
-  api_key_hint?: string;
-  // 当前引用该凭据的模型配置名（删除确认提示「将解绑 N 个配置」）。
-  profile_names?: string[];
-  created_at?: string;
-  updated_at?: string;
-}
-
 export interface LLMProfile {
   id: string;
   name: string;
@@ -1315,19 +1303,15 @@ export interface LLMProfile {
   // 运行时实际生效的模态（声明优先，否则按模型名推断）。文本始终包含，卡片上只
   // 展示图片/音频/PDF 这些扩展模态。
   effective_input_modalities?: string;
-  // 绑定的凭据（计划 46–47）：非空 = Key 以该凭据为准（本配置的 api_key 不参与）。
-  // 只读字段，保存请求里用数字 credential_id（0 = 解绑回内联 Key）。
-  credential_id?: string;
-  credential_name?: string;
   // 所属供应商（任务 16）：端点 / 代理 / Key / 限速 / 会话头都住在这一层，
   // 模型只保留自己那份参数。字符串形式与其它 id 一致；"0"/缺省 = 未归属。
   provider_id?: string;
   provider_name?: string;
 }
 
-// 供应商 = 端点（format / base_url / proxy）+ 鉴权（凭据或内联 Key）+ 端点级
-// 限速与会话头。列表接口一次带回名下模型，设置页据此渲染「卡片 + 模型行」，
-// 不必再按供应商发 N 个请求。
+// 供应商 = 端点（format / base_url / proxy）+ 鉴权（Key）+ 端点级限速与会话头。
+// Key 就存在供应商上：没有独立凭据池，也没有「Key 来自别处」的第二种形态。
+// 列表接口一次带回名下模型，设置页据此渲染「卡片 + 模型行」，不必再发 N 个请求。
 export interface LLMProvider {
   id: string;
   name: string;
@@ -1335,8 +1319,6 @@ export interface LLMProvider {
   base_url?: string;
   proxy?: string;
   api_key_hint?: string;
-  credential_id?: string;
-  credential_name?: string;
   rate_per_second: number;
   rate_per_minute: number;
   session_header_key?: string;

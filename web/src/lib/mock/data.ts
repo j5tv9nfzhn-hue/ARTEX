@@ -20,7 +20,6 @@ import type {
   InterceptAudit,
   InterceptPending,
   InterceptRule,
-  LLMCredential,
   LLMPoolStatus,
   LLMProfile,
   LLMTask,
@@ -3036,9 +3035,6 @@ export const llmProfiles: LLMProfile[] = [
     format: "anthropic",
     model: "claude-opus-4-8",
     api_key_hint: "…a3f2",
-    // 计划 46–47：Key 来自独立凭据实体，api_key_hint 也取自该凭据（只回显尾 4 位）。
-    credential_id: "1",
-    credential_name: "Anthropic 生产",
     rate_per_second: 0,
     rate_per_minute: 0,
     context_window_k: 1000,
@@ -3061,8 +3057,6 @@ export const llmProfiles: LLMProfile[] = [
     base_url: "https://api.deepseek.com",
     model: "deepseek-v4-flash",
     api_key_hint: "…9c11",
-    credential_id: "2",
-    credential_name: "DeepSeek 生产",
     rate_per_second: 0,
     rate_per_minute: 60,
     context_window_k: 128,
@@ -3078,35 +3072,6 @@ export const llmProfiles: LLMProfile[] = [
     // 推断成纯文本——这正是手动勾选存在的意义）。
     input_modalities: "text,image",
     effective_input_modalities: "text,image",
-  },
-];
-
-// ── LLM 凭据（计划 46–47）───────────────────────────────────────────────────
-// 独立实体：可被多个模型配置引用；响应只含尾 4 位提示，明文 Key 永不出后端。
-export const llmCredentials: LLMCredential[] = [
-  {
-    id: "1",
-    name: "Anthropic 生产",
-    api_key_hint: "…a3f2",
-    profile_names: ["Claude Opus 4.8"],
-    created_at: T("2026-06-02T03:12:00Z"),
-    updated_at: T("2026-07-20T09:45:00Z"),
-  },
-  {
-    id: "2",
-    name: "DeepSeek 生产",
-    api_key_hint: "…9c11",
-    profile_names: ["DeepSeek V4"],
-    created_at: T("2026-06-10T08:30:00Z"),
-    updated_at: T("2026-06-10T08:30:00Z"),
-  },
-  {
-    id: "3",
-    name: "备用网关",
-    api_key_hint: "…77bd",
-    profile_names: [],
-    created_at: T("2026-07-01T02:00:00Z"),
-    updated_at: T("2026-07-01T02:00:00Z"),
   },
 ];
 

@@ -5,6 +5,12 @@
 
 ## [Unreleased] · 分支改动
 
+### 模型与成本
+
+- **删除供应商改为一次性级联**：事务内按「模型 → 供应商 → 激活位交接」删除，返回被带走的模型数；新库外键补 `ON DELETE CASCADE`，老库由 Go 事务保证同一结果。前端只留一个确认框，不再要求先删光模型。
+- **激活中的模型、供应商下最后一条模型都能删**：删完自动把激活位交给下一个候选（`priority DESC, id ASC`），删空后供应商保留为空壳。
+- **废弃独立凭据池**：删掉「凭证」页签、`/api/llm/credentials` 三条路由与 `db/credentials.go`、`server/llm_credentials.go`；API Key 只存在 `llm_providers.api_key` 上，升级时由 `foldCredentialsIntoProviders` 幂等折叠回供应商行。`credentials` 表与 `credential_id` 列保留为不改动现场库形状的空壳。
+
 ### 安全
 
 - **阻止首次运行时管理员账户被远程抢先初始化。** 原来未设置密码的实例可被先访问 `POST /api/auth/init` 的人初始化并获取 JWT（私密报告者：Dangel）。现在必须提供仅在服务端控制台显示的 `setup_token`，错误尝试有速率限制；新增 `ARTEX_SETUP_TOKEN`、`ARTEX_ADMIN_PASSWORD` 环境变量和 `/setup` 令牌输入框。

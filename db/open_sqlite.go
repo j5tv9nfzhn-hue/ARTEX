@@ -262,6 +262,14 @@ func openSQLite(dsn string) (*DB, error) {
 		sqlDB.Close()
 		return nil, err
 	}
+	// 凭据折叠必须排在回填之前：先把「绑了凭据」的 Key 搬回供应商/模型行，
+	// 回填才能按真实 Key 明文把同端点的配置合并成一家，而不是按 credential_id 猜。
+	if n, err := foldCredentialsIntoProviders(context.Background(), conn); err != nil {
+		sqlDB.Close()
+		return nil, err
+	} else if n > 0 {
+		log.Printf("[db] 凭据已折叠回供应商行：%d 条（旧「凭证」模型已废弃）", n)
+	}
 	// 供应商回填：把每个存量模型配置收进它自己的供应商行。幂等（只处理
 	// provider_id 为空的行），新库是空操作。必须早于 seedBuiltins —— seed 之后的
 	// 新配置会自己建供应商，混在一起会让"这条为什么没有供应商"变得无法解释。

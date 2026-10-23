@@ -348,11 +348,9 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
 );
 
--- 凭据独立实体(计划.md 46–47):供应商 API Key 从 llm_profiles 抽出来,一份凭据
--- 可被多个配置引用。api_key 与 llm_profiles.api_key 走同一套静态加密(enc:v1:,
--- db/credential_crypto.go);api_key_hint 由明文尾 4 位推导,是唯一对外可见的部分。
--- 读取优先级(db/config.go 的 profileCols*):profile.credential_id 非空时取本表的
--- api_key,否则沿用 profile 自己的内联列(旧库/旧行为完全不变)。
+-- ⚠️ 遗留表：凭据池已废弃，Key 只存在 llm_providers.api_key 上（见 db/providers.go
+-- 的 foldCredentialsIntoProviders）。这张表保留只是为了不改动已有库的形状——
+-- SQLite 删列要整表重建，在有数据的现场库上得不偿失。没有任何代码读写它。
 CREATE TABLE IF NOT EXISTS credentials (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL UNIQUE,
@@ -388,7 +386,8 @@ CREATE TABLE IF NOT EXISTS llm_providers (
     -- 内联 Key（加密存储），与 credentials.api_key 同一套 enc:v1: 方案。
     api_key          TEXT,
     api_key_hint     TEXT,
-    -- 绑定的凭据：非空时 Key 以 credentials 行为准，本表内联列会被清空。
+    -- 遗留列：凭据池已废弃，正常运行时恒为 NULL。开库阶段由
+    -- foldCredentialsIntoProviders 把旧绑定折叠进 api_key 后清空。
     credential_id    BIGINT REFERENCES credentials(id) ON DELETE SET NULL,
     -- 端点级限速（一个 Key 一份额度，故按供应商而不是按模型计）。
     rate_per_second  REAL NOT NULL DEFAULT 0,
@@ -411,7 +410,12 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     -- 归属供应商。可空是为了让「旧库尚未回填」这一个瞬间仍然可读（读路径对空值
     -- 回落到本表的历史列），正常运行时恒非空；老库补列见 open_sqlite.go。
-    provider_id      BIGINT REFERENCES llm_providers(id),
+    --
+    -- ON DELETE CASCADE：删供应商就该把它名下的模型一起带走（否则留下永远没人
+    -- 认领的孤儿模型）。注意这只是新库的形态——老库的这一列是 ALTER 补出来的，
+    -- SQLite 无法给既有列改外键动作，那条路径由 db.DeleteProvider 的事务显式
+    -- 先删模型，两条路结果一致。
+    provider_id      BIGINT REFERENCES llm_providers(id) ON DELETE CASCADE,
     name             TEXT NOT NULL UNIQUE,
     format           TEXT NOT NULL CHECK (format IN ('openai','anthropic','openai-responses')),
     base_url         TEXT,

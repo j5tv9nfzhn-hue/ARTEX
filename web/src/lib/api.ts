@@ -60,7 +60,6 @@ import type {
   InterceptPending,
   InterceptRule,
   JudgeConfig,
-  LLMCredential,
   LLMPoolStatus,
   LLMProfile,
   LLMProvider,
@@ -1148,12 +1147,6 @@ export const api = {
       session_header_key,
     }),
   llmProfiles: () => get<{ profiles: LLMProfile[] }>("/llm/profiles").then((r) => arr(r.profiles)),
-  // 凭据实体（计划 46–47）：独立资源，"Key 来自哪"与"配置怎么用"解耦。
-  // 响应只含 api_key_hint；保存时 api_key 留空 = 保持原值，掩码值等同留空。
-  llmCredentials: () => get<{ credentials: LLMCredential[] }>("/llm/credentials").then((r) => arr(r.credentials)),
-  saveLLMCredential: (c: { id?: number; name: string; api_key?: string }) =>
-    post<{ id: string }>("/llm/credentials", c),
-  deleteLLMCredential: (id: string) => del<{ deleted: string; unbound_profiles: number }>(`/llm/credentials/${id}`),
   saveLLMProfile: (p: {
     id?: number; // omit/0 = create; set = update that profile
     name: string;
@@ -1176,7 +1169,6 @@ export const api = {
     session_header_key?: string; // 非空=每次请求带该 HTTP 头，头值=当前会话 session id；""=不发送
     retry?: LLMRetryOverride; // 本配置的重试覆盖；各项留 0 = 跟随全局重试策略
     input_modalities?: string; // 逗号分隔的 text/image/audio/pdf；""=未声明（后端按模型名保守推断）
-    credential_id?: number; // 绑定的凭据 id；0=解绑回内联 Key（缺省=不改绑定，旧客户端不传即旧行为）
     provider_id?: number; // 所属供应商；省略 = 沿用库里的归属（新库会自动建一家 1:1）
   }) => post<{ id: number; provider_id?: string }>("/llm/profiles", p),
   deleteLLMProfile: (id: string) => del<{ deleted: number }>(`/llm/profiles/${id}`),
@@ -1192,12 +1184,13 @@ export const api = {
     base_url?: string;
     proxy?: string;
     api_key?: string;
-    credential_id?: number; // 0=解绑回内联 Key；缺省=不改
     rate_per_second?: number;
     rate_per_minute?: number;
     session_header_key?: string;
   }) => post<{ id: string }>("/llm/providers", v),
-  deleteLLMProvider: (id: string) => del<{ deleted: string }>(`/llm/providers/${id}`),
+  // 级联删除：该供应商名下的模型一并删掉，models_deleted = 被带走的模型数。
+  deleteLLMProvider: (id: string) =>
+    del<{ deleted: string; models_deleted?: number }>(`/llm/providers/${id}`),
   // 把一条模型挪到另一家供应商下（端点随之改变，能力快照会被作废）。
   moveLLMProfileProvider: (id: string, providerID: number) =>
     post<{ ok: boolean }>(`/llm/profiles/${id}/provider`, { provider_id: providerID }),

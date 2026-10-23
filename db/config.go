@@ -73,11 +73,6 @@ type LLMProfile struct {
 	// 运行时路由读 EffectiveInputModalities():配置不支持的附件必须显式报错,
 	// 绝不静默丢弃、也不硬塞进纯文本请求。见 db/modalities.go。
 	InputModalities string `json:"input_modalities"`
-	// CredentialID 绑定凭据(计划 46–47)。nil = 未绑定/不修改绑定;非空指向
-	// credentials 行,此时 Key 以凭据为准。见 db/credentials.go 与 SaveProfile。
-	CredentialID *int64 `json:"credential_id"`
-	// CredentialName 是绑定凭据的展示名(只读,由读路径回填)。
-	CredentialName string `json:"credential_name,omitempty"`
 	// Caps 是最近一次能力探测的结果(窗口/输出/模态/推理档位)。它不是
 	// llm_profiles 的列:探测缓存走 settings(llm_caps:<id>),由
 	// db/capabilities.go 在读取时旁挂上来。零值 = 没探测过。
@@ -110,7 +105,7 @@ type RetryOverride struct {
 // 此时 COALESCE 回落到 llm_profiles 自己的历史列，读出来和重构前逐字一致。
 const profileFrom = ` FROM llm_profiles p LEFT JOIN llm_providers v ON v.id=p.provider_id`
 
-// profileRetryCols / profileModalityCols / profileCredentialCols 是尾部列组，
+// profileRetryCols / profileModalityCols 是尾部列组，
 // 全部改成 p. 前缀——接上 JOIN 之后原表名不再可用。
 const profileRetryCols = `COALESCE(p.retry_connect_attempts,0),COALESCE(p.retry_connect_interval_ms,0),COALESCE(p.retry_empty_attempts,0),COALESCE(p.retry_empty_interval_ms,0),COALESCE(p.retry_stream_attempts,0),COALESCE(p.retry_stream_interval_ms,0)`
 
@@ -118,33 +113,21 @@ const profileRetryCols = `COALESCE(p.retry_connect_attempts,0),COALESCE(p.retry_
 // 老库由 openSQLite 的 sqliteColumnAdds 补上,COALESCE 只是与既有列风格一致。
 const profileModalityCols = `COALESCE(p.input_modalities,'')`
 
-// profileCredentialCols 是凭据实体化(计划 46–47)的尾列:绑定的凭据 id
-// (NULL→0)与凭据展示名。绑定现在住在供应商行上,故 COALESCE 取两边——
-// 未回填的旧行仍读自己的列。
-const profileCredentialCols = `COALESCE(v.credential_id,p.credential_id,0),COALESCE((SELECT c.name FROM credentials c WHERE c.id=COALESCE(v.credential_id,p.credential_id)),'')`
-
 // profileProviderCols 是本次重构追加的两个尾列:归属供应商的 id 与名称。
 // 前端的「供应商 → 模型」分组、轮询抽屉里的归属显示都读它们。
 const profileProviderCols = `COALESCE(p.provider_id,0),COALESCE(v.name,'')`
 
-// profileKeyExpr / profileHintExpr 决定「有效 Key / 有效 hint」的来源,三层优先:
-//  1. 供应商绑定了凭据 → 凭据行的 key;
-//  2. 供应商自带内联 Key → 供应商行;
-//  3. 都没有（未回填的旧行）→ 模型自己的历史列。
+// profileKeyExpr / profileHintExpr 决定「有效 Key / 有效 hint」的来源，两层优先：
+//  1. 供应商行（重构后 Key 的唯一事实来源，一家供应商一把 Key）；
+//  2. 未回填的旧行的历史列。
 //
-// 子查询而不是再 JOIN 一次 credentials：只要一处即可，且不影响 scan 顺序。
-const profileKeyExpr = `CASE
-  WHEN COALESCE(v.credential_id,p.credential_id) IS NOT NULL
-    THEN COALESCE((SELECT c.api_key FROM credentials c WHERE c.id=COALESCE(v.credential_id,p.credential_id)),'')
-  ELSE COALESCE(v.api_key,p.api_key,'') END`
-const profileHintExpr = `CASE
-  WHEN COALESCE(v.credential_id,p.credential_id) IS NOT NULL
-    THEN COALESCE((SELECT c.api_key_hint FROM credentials c WHERE c.id=COALESCE(v.credential_id,p.credential_id)),'')
-  ELSE COALESCE(v.api_key_hint,p.api_key_hint,'') END`
+// 曾经的第三层「绑定的凭据行」已经不存在了：凭据池被收回，Key 就住在供应商上。
+const profileKeyExpr = `COALESCE(v.api_key,p.api_key,'')`
+const profileHintExpr = `COALESCE(v.api_key_hint,p.api_key_hint,'')`
 
 // profileHead 是两条读列清单共用的前缀:端点字段一律「供应商优先、模型历史列兜底」。
 const profileHead = `p.id,p.name,COALESCE(v.format,p.format),COALESCE(v.base_url,p.base_url,''),COALESCE(v.proxy,p.proxy,''),p.model,`
-const profileTail = `,COALESCE(v.rate_per_second,p.rate_per_second),COALESCE(v.rate_per_minute,p.rate_per_minute),p.context_window_k,COALESCE(p.reasoning_effort,''),p.is_default,p.priority,p.pool_exclude,COALESCE(p.thinking_type,''),COALESCE(p.streaming,true),COALESCE(p.max_tokens,0),COALESCE(p.max_tokens_field,''),COALESCE(v.session_header_key,p.session_header_key,''),` + profileRetryCols + `,` + profileModalityCols + `,` + profileCredentialCols + `,` + profileProviderCols
+const profileTail = `,COALESCE(v.rate_per_second,p.rate_per_second),COALESCE(v.rate_per_minute,p.rate_per_minute),p.context_window_k,COALESCE(p.reasoning_effort,''),p.is_default,p.priority,p.pool_exclude,COALESCE(p.thinking_type,''),COALESCE(p.streaming,true),COALESCE(p.max_tokens,0),COALESCE(p.max_tokens_field,''),COALESCE(v.session_header_key,p.session_header_key,''),` + profileRetryCols + `,` + profileModalityCols + `,` + profileProviderCols
 
 const profileCols = profileHead + profileHintExpr + profileTail
 const profileColsKey = profileHead + profileKeyExpr + profileTail
@@ -161,20 +144,15 @@ const profileColsKey = profileHead + profileKeyExpr + profileTail
 // 一步对「来自凭据」与「内联」两种来源是同一条路径。
 func scanProfile(sc interface{ Scan(...any) error }, into *string, p *LLMProfile) error {
 	var stored string
-	var credentialID sql.NullInt64
 	if err := sc.Scan(&p.ID, &p.Name, &p.Format, &p.BaseURL, &p.Proxy, &p.Model, &stored,
 		&p.RatePerSecond, &p.RatePerMinute, &p.ContextWindowK, &p.ReasoningEffort, &p.IsDefault, &p.Priority, &p.PoolExclude, &p.ThinkingType, &p.Streaming,
 		&p.MaxTokens, &p.MaxTokensField, &p.SessionHeaderKey,
 		&p.Retry.Connect.Attempts, &p.Retry.Connect.IntervalMS,
 		&p.Retry.Empty.Attempts, &p.Retry.Empty.IntervalMS,
 		&p.Retry.Stream.Attempts, &p.Retry.Stream.IntervalMS,
-		&p.InputModalities, &credentialID, &p.CredentialName,
+		&p.InputModalities,
 		&p.ProviderID, &p.ProviderName); err != nil {
 		return err
-	}
-	if credentialID.Valid && credentialID.Int64 > 0 {
-		id := credentialID.Int64
-		p.CredentialID = &id
 	}
 	if credentialEncrypted(stored) {
 		plain, err := decryptCredential(stored)
@@ -273,8 +251,7 @@ ORDER BY p.is_default DESC, p.priority DESC, p.id ASC`)
 //   - 其余：旧客户端/旧代码只给了端点字段，为它建一条供应商（1:1，不自动合并——
 //     合并是用户在界面上显式做的决定，不该被一次保存偷偷决定）。
 //
-// credential_id 语义不变：nil = 不动绑定，0 = 显式解绑，>0 = 绑定——只是绑定现在
-// 落在供应商行上（一家供应商一把 Key，正是重构要表达的事实）。
+// Key 不再有「内联 / 绑定凭据」两种形态：只有供应商行上的 api_key 一个来源。
 func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 	// 输入模态在唯一写入口归一:补 text、规范顺序、丢弃未知取值,库里永远只有
 	// 一种规范形态;"" = 未声明,保持 "" 交给运行时按模型名推断。
@@ -301,9 +278,7 @@ func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 	p.Format, p.BaseURL, p.Proxy = v.Format, v.BaseURL, v.Proxy
 	p.RatePerSecond, p.RatePerMinute = v.RatePerSecond, v.RatePerMinute
 	p.SessionHeaderKey = v.SessionHeaderKey
-	p.CredentialID = v.CredentialID
 	p.APIKeyHint = v.APIKeyHint
-	p.CredentialName = v.CredentialName
 
 	r := p.Retry.Clamped()
 	prevModel := ""
@@ -316,8 +291,8 @@ func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 
 	if p.ID == 0 {
 		var id int64
-		err := d.QueryRow(`INSERT INTO llm_profiles(provider_id,name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms,input_modalities,credential_id)
-VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,NULL,NULL,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NULL) RETURNING id`,
+		err := d.QueryRow(`INSERT INTO llm_profiles(provider_id,name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms,input_modalities)
+VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,NULL,NULL,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING id`,
 			providerID, p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.InputModalities).Scan(&id)
 		if err != nil {
@@ -391,7 +366,6 @@ func (d *DB) resolveProfileProvider(p *LLMProfile) (int64, error) {
 		RatePerSecond:    p.RatePerSecond,
 		RatePerMinute:    p.RatePerMinute,
 		SessionHeaderKey: p.SessionHeaderKey,
-		CredentialID:     p.CredentialID,
 	}
 	if patch.Format != nil {
 		v.Format = *patch.Format
@@ -413,9 +387,6 @@ func (d *DB) resolveProfileProvider(p *LLMProfile) (int64, error) {
 	}
 	if patch.APIKey != "" {
 		v.APIKey = patch.APIKey
-	}
-	if patch.CredentialID != nil {
-		v.CredentialID = patch.CredentialID
 	}
 	return d.SaveProvider(v)
 }
@@ -450,14 +421,10 @@ func (d *DB) profileEndpointPatch(p *LLMProfile) EndpointPatch {
 	if patch.APIKey == "" && p.APIKey != "" {
 		patch.APIKey = p.APIKey
 	}
-	if patch.CredentialID == nil && p.CredentialID != nil {
-		patch.CredentialID = p.CredentialID
-	}
 	return patch
 }
 
 var (
-	ErrActiveLLMProfileDelete      = errors.New("cannot delete the active LLM profile; activate another profile first")
 	ErrLLMProfileReferencesChanged = errors.New("LLM profile references changed while deleting; retry the request")
 	ErrLLMProfileNotFound          = errors.New("LLM profile not found")
 )
@@ -466,8 +433,9 @@ func (d *DB) DeleteProfile(id int64) error {
 	return d.DeleteProfileContext(context.Background(), id)
 }
 
-// DeleteProfileContext removes a non-default profile while preserving the task
-// failover cursor. Reference changes are retried because a task, agent, or
+// DeleteProfileContext removes a profile while preserving the task failover
+// cursor. 激活中的模型也能删：删完由 promoteDefaultProfileTx 把激活位交接给
+// 下一个候选，一条不剩就留空（见 deleteProfile）。 Reference changes are retried because a task, agent, or
 // conversation may start pointing at the profile between the initial scan and
 // the profile row lock. A bound prevents a continuously changing workload from
 // keeping an HTTP request alive forever.
@@ -536,9 +504,10 @@ ORDER BY id`, id)
 		}
 		return false, err
 	}
-	if isDefault {
-		return false, ErrActiveLLMProfileDelete
-	}
+	// 激活中的模型也允许删：用户在一个供应商下只剩一条模型时，那一条往往就是
+	// 激活的那条，旧逻辑会把人卡在「先激活别的」→「别的也在这个供应商下」
+	// 的死循环里。删完之后由 promoteDefaultProfileTx 把激活位交给下一个候选，
+	// 一条都不剩就留空（界面显示未配置）。
 
 	type affectedTask struct {
 		id        int64
@@ -625,6 +594,11 @@ ORDER BY x.task_id`, id)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_profiles WHERE id=$1`, id); err != nil {
 		return false, err
+	}
+	if isDefault {
+		if err := promoteDefaultProfileTx(tx); err != nil {
+			return false, err
+		}
 	}
 	// Only a successor after the deleted cursor is eligible. If there is none,
 	// clear the explicit chain so the task falls back to its Agent/global provider;

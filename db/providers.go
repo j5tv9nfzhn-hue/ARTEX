@@ -27,9 +27,6 @@ type LLMProvider struct {
 	Proxy      string `json:"proxy,omitempty"`
 	APIKey     string `json:"-"` // 明文只在内存里，永不序列化
 	APIKeyHint string `json:"api_key_hint,omitempty"`
-	// CredentialID 非空 = Key 以凭据行为准（此时内联列清空）。
-	CredentialID   *int64 `json:"credential_id,omitempty"`
-	CredentialName string `json:"credential_name,omitempty"`
 	// 端点级限速：一个 Key 一份额度，所以按供应商而不是按模型计。
 	RatePerSecond float64 `json:"rate_per_second"`
 	RatePerMinute float64 `json:"rate_per_minute"`
@@ -52,21 +49,16 @@ var (
 )
 
 const providerSelect = `SELECT v.id,v.name,v.format,COALESCE(v.base_url,''),COALESCE(v.proxy,''),COALESCE(v.api_key,''),
-COALESCE(v.api_key_hint,''),v.credential_id,COALESCE((SELECT c.name FROM credentials c WHERE c.id=v.credential_id),''),
+COALESCE(v.api_key_hint,''),
 v.rate_per_second,v.rate_per_minute,COALESCE(v.session_header_key,'')
 FROM llm_providers v`
 
 func scanProvider(sc interface{ Scan(...any) error }, v *LLMProvider) error {
-	var credID sql.NullInt64
 	var stored string
 	if err := sc.Scan(&v.ID, &v.Name, &v.Format, &v.BaseURL, &v.Proxy, &stored,
-		&v.APIKeyHint, &credID, &v.CredentialName,
+		&v.APIKeyHint,
 		&v.RatePerSecond, &v.RatePerMinute, &v.SessionHeaderKey); err != nil {
 		return err
-	}
-	if credID.Valid && credID.Int64 > 0 {
-		id := credID.Int64
-		v.CredentialID = &id
 	}
 	if credentialEncrypted(stored) {
 		plain, err := decryptCredential(stored)
@@ -163,19 +155,6 @@ func (d *DB) SaveProvider(v *LLMProvider) (int64, error) {
 	default:
 		return 0, fmt.Errorf("不支持的格式 %q", v.Format)
 	}
-	bindID := int64(0)
-	if v.CredentialID != nil {
-		bindID = *v.CredentialID
-	}
-	if bindID > 0 {
-		var n int
-		if err := d.QueryRow(`SELECT COUNT(*) FROM credentials WHERE id=$1`, bindID).Scan(&n); err != nil {
-			return 0, err
-		}
-		if n == 0 {
-			return 0, ErrCredentialNotFound
-		}
-	}
 	// 名称唯一，但只在「换了个名字」时检查——原样保存不该因为自己而失败。
 	var clash int
 	if err := d.QueryRow(`SELECT COUNT(*) FROM llm_providers WHERE name=$1 AND id<>$2`, v.Name, v.ID).Scan(&clash); err != nil {
@@ -194,10 +173,6 @@ func (d *DB) SaveProvider(v *LLMProvider) (int64, error) {
 		return 0, err
 	}
 	inlineKey, inlineHint := stored, hint
-	var credentialArg any
-	if bindID > 0 {
-		inlineKey, inlineHint, credentialArg = "", "", bindID
-	}
 
 	prevFormat, prevBase := "", ""
 	if v.ID > 0 {
@@ -208,34 +183,25 @@ func (d *DB) SaveProvider(v *LLMProvider) (int64, error) {
 
 	var id int64
 	if v.ID == 0 {
-		err = d.QueryRow(`INSERT INTO llm_providers(name,format,base_url,proxy,api_key,api_key_hint,credential_id,rate_per_second,rate_per_minute,session_header_key)
-VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8,$9,$10) RETURNING id`,
-			v.Name, v.Format, v.BaseURL, v.Proxy, inlineKey, inlineHint, credentialArg,
+		err = d.QueryRow(`INSERT INTO llm_providers(name,format,base_url,proxy,api_key,api_key_hint,rate_per_second,rate_per_minute,session_header_key)
+VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8,$9) RETURNING id`,
+			v.Name, v.Format, v.BaseURL, v.Proxy, inlineKey, inlineHint,
 			v.RatePerSecond, v.RatePerMinute, v.SessionHeaderKey).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
 		id = v.ID
-		// 三种绑定状态一条语句覆盖：内联列只在「提供了新 key」或「绑定了凭据」时
-		// 改写；没表态（key 留空且 credential_id 为 nil）时原样保留。
-		credMode := 0
-		if v.CredentialID != nil {
-			if bindID > 0 {
-				credMode = 1
-			} else {
-				credMode = 2
-			}
-		}
+		// Key 留空 = 保持原样（前端编辑时不回显明文，空输入必须是「不改」）；
+		// 给了新 Key 就整体替换，连同 hint 一起重算。
 		_, err = d.Exec(`UPDATE llm_providers SET
 name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),
-api_key      = CASE WHEN $11 = 1 THEN NULL WHEN $5 <> '' THEN NULLIF($5,'') ELSE api_key END,
-api_key_hint = CASE WHEN $11 = 1 THEN NULL WHEN $5 <> '' THEN NULLIF($6,'') ELSE api_key_hint END,
-rate_per_second=$7,rate_per_minute=$8,session_header_key=$9,
-credential_id = CASE WHEN $11 = 1 THEN $12 WHEN $11 = 2 THEN NULL ELSE credential_id END
+api_key      = CASE WHEN $5 <> '' THEN NULLIF($5,'') ELSE api_key END,
+api_key_hint = CASE WHEN $5 <> '' THEN NULLIF($6,'') ELSE api_key_hint END,
+rate_per_second=$7,rate_per_minute=$8,session_header_key=$9
 WHERE id=$10`,
 			v.Name, v.Format, v.BaseURL, v.Proxy, stored, hint,
-			v.RatePerSecond, v.RatePerMinute, v.SessionHeaderKey, id, credMode, bindID)
+			v.RatePerSecond, v.RatePerMinute, v.SessionHeaderKey, id)
 		if err != nil {
 			return 0, err
 		}
@@ -267,9 +233,8 @@ proxy=(SELECT v.proxy FROM llm_providers v WHERE v.id=$1),
 rate_per_second=(SELECT v.rate_per_second FROM llm_providers v WHERE v.id=$1),
 rate_per_minute=(SELECT v.rate_per_minute FROM llm_providers v WHERE v.id=$1),
 session_header_key=(SELECT v.session_header_key FROM llm_providers v WHERE v.id=$1),
-api_key=(SELECT CASE WHEN v.credential_id IS NOT NULL THEN NULL ELSE v.api_key END FROM llm_providers v WHERE v.id=$1),
-api_key_hint=(SELECT CASE WHEN v.credential_id IS NOT NULL THEN NULL ELSE v.api_key_hint END FROM llm_providers v WHERE v.id=$1),
-credential_id=(SELECT v.credential_id FROM llm_providers v WHERE v.id=$1)
+api_key=(SELECT v.api_key FROM llm_providers v WHERE v.id=$1),
+api_key_hint=(SELECT v.api_key_hint FROM llm_providers v WHERE v.id=$1)
 WHERE provider_id=$1`, providerID)
 	return err
 }
@@ -301,25 +266,89 @@ func (d *DB) clearProviderCaps(providerID int64) error {
 // DeleteProvider removes an empty provider. Providers with models are refused:
 // deleting them would cascade into task chains, agent bindings and conversations,
 // and "silently unhook 3 tasks" is not a good default for a settings page.
-func (d *DB) DeleteProvider(id int64) error {
+// DeleteProvider 删除一家供应商，连同它名下的全部模型（级联）。
+//
+// 旧实现是「名下还有模型就 409，让用户先逐个删干净」：一个供应商开五个模型
+// 就要点六次，而且中间任意一步失败还得从头再来。现在一次事务做完三件事：
+//
+//  1. 引用这些模型的任务把 llm_chain_revision +1，唤醒后重算故障转移链；
+//  2. 删掉模型行（老库的 llm_profiles.provider_id 是后补的列、没有
+//     ON DELETE CASCADE，所以必须显式删；新库 schema 已声明级联，两条路径
+//     结果一致）。task_llm_profiles / agent_llm_fallbacks / llm_profile_health
+//     由各自的 ON DELETE CASCADE 收尾，tasks / agents / conversations 的
+//     引用列由 ON DELETE SET NULL 收尾——这些都是建表时就有的，老库同样生效；
+//  3. 如果删掉的模型里有「当前激活」的那条，把激活位交给剩下的最优模型；
+//     一条都不剩就留空（界面显示未配置，而不是继续跑一个已经删掉的身份）。
+//
+// 返回被一起删掉的模型数量，供调用方在提示里说清「顺带删了几条」。
+func (d *DB) DeleteProvider(id int64) (int, error) {
 	if id <= 0 {
-		return ErrProviderNotFound
+		return 0, ErrProviderNotFound
 	}
-	var models int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM llm_profiles WHERE provider_id=$1`, id).Scan(&models); err != nil {
-		return err
-	}
-	if models > 0 {
-		return fmt.Errorf("%w（%d 个）", ErrProviderNotEmpty, models)
-	}
-	res, err := d.Exec(`DELETE FROM llm_providers WHERE id=$1`, id)
+	tx, err := d.Begin()
 	if err != nil {
-		return err
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var exists int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM llm_providers WHERE id=$1`, id).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if exists == 0 {
+		return 0, ErrProviderNotFound
+	}
+	var wasDefault int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM llm_profiles WHERE provider_id=$1 AND is_default`, id).Scan(&wasDefault); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`UPDATE tasks SET llm_chain_revision=llm_chain_revision+1
+WHERE llm_profile_id IN (SELECT id FROM llm_profiles WHERE provider_id=$1)
+   OR active_llm_profile_id IN (SELECT id FROM llm_profiles WHERE provider_id=$1)
+   OR id IN (SELECT x.task_id FROM task_llm_profiles x
+             JOIN llm_profiles p ON p.id=x.profile_id WHERE p.provider_id=$1)`, id); err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`DELETE FROM llm_profiles WHERE provider_id=$1`, id)
+	if err != nil {
+		return 0, err
+	}
+	models, _ := res.RowsAffected()
+
+	res, err = tx.Exec(`DELETE FROM llm_providers WHERE id=$1`, id)
+	if err != nil {
+		return 0, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrProviderNotFound
+		return 0, ErrProviderNotFound
 	}
-	return nil
+	if wasDefault > 0 {
+		if err := promoteDefaultProfileTx(tx); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(models), nil
+}
+
+// promoteDefaultProfileTx 在「激活模型刚被删掉」之后把激活位交给下一个可用模型。
+//
+// 排序与轮询链一致（priority DESC, id ASC）：用户没显式选的时候，接管的最优
+// 候选就该是链首。一条模型都不剩时什么也不做——没有默认模型是合法状态，
+// 界面据此提示「去配置一个」，而不是让进程继续持有一个已删除身份的副本。
+func promoteDefaultProfileTx(tx *sql.Tx) error {
+	var hasDefault int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM llm_profiles WHERE is_default`).Scan(&hasDefault); err != nil {
+		return err
+	}
+	if hasDefault > 0 {
+		return nil
+	}
+	_, err := tx.Exec(`UPDATE llm_profiles SET is_default=true
+WHERE id=(SELECT id FROM llm_profiles ORDER BY priority DESC, id ASC LIMIT 1)`)
+	return err
 }
 
 // ---------- 端点补丁（旧客户端写模型的兼容路径） ----------
@@ -337,8 +366,6 @@ type EndpointPatch struct {
 	SessionHeaderKey *string
 	RatePerSecond    *float64
 	RatePerMinute    *float64
-	// CredentialID: nil = 不动；0 = 解绑；>0 = 绑定。
-	CredentialID *int64
 	// APIKey 非空 = 换一把 Key（明文）。
 	APIKey string
 }
@@ -346,7 +373,7 @@ type EndpointPatch struct {
 // empty 报告这份补丁是否什么都没说，避免无谓的供应商读写。
 func (p EndpointPatch) empty() bool {
 	return p.Format == nil && p.BaseURL == nil && p.Proxy == nil && p.SessionHeaderKey == nil &&
-		p.RatePerSecond == nil && p.RatePerMinute == nil && p.CredentialID == nil && p.APIKey == ""
+		p.RatePerSecond == nil && p.RatePerMinute == nil && p.APIKey == ""
 }
 
 // applyEndpointPatch 把补丁套到供应商行上并落库。
@@ -379,10 +406,6 @@ func (d *DB) applyEndpointPatch(providerID int64, patch EndpointPatch) error {
 	if patch.RatePerMinute != nil {
 		v.RatePerMinute = *patch.RatePerMinute
 	}
-	if patch.CredentialID != nil {
-		id := *patch.CredentialID
-		v.CredentialID = &id
-	}
 	if patch.APIKey != "" {
 		v.APIKey = patch.APIKey
 	}
@@ -409,7 +432,6 @@ func (d *DB) newProviderForProfile(p *LLMProfile) (int64, error) {
 		RatePerSecond:    p.RatePerSecond,
 		RatePerMinute:    p.RatePerMinute,
 		SessionHeaderKey: p.SessionHeaderKey,
-		CredentialID:     p.CredentialID,
 	}
 	return d.SaveProvider(v)
 }
@@ -472,6 +494,48 @@ type sqlRunner interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// foldCredentialsIntoProviders 把「独立凭据」里的 Key 折叠回供应商行，然后解绑。
+//
+// 凭据池是重构过程中的中间形态：Key 曾经被抽成可复用的独立实体，结果界面上多出
+// 一个「凭证」标签页，用户要先建凭据、再去供应商里挑，才能填一把 Key。现在收回
+// 到一个事实来源——Key 就存在供应商行上（api_key / api_key_hint）。
+//
+// 这一步只搬数据，不改语义：绑定过的供应商，其 Key 原样（仍是密文，不加解密）
+// 从 credentials 行复制过来，随后 credential_id 置空。幂等——折过一遍之后
+// credential_id 恒为 NULL，再跑就是空操作。
+//
+// 表与列本身不删：SQLite 给已有表删列要重建整张表，在有数据的现场库上得不偿失，
+// 而留下的空壳不影响任何读写路径。
+func foldCredentialsIntoProviders(ctx context.Context, con sqlRunner) (int64, error) {
+	var tables int
+	if err := con.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='credentials'`).Scan(&tables); err != nil {
+		return 0, err
+	}
+	if tables == 0 {
+		return 0, nil
+	}
+	res, err := con.ExecContext(ctx, `UPDATE llm_providers SET
+api_key      = COALESCE((SELECT c.api_key      FROM credentials c WHERE c.id=llm_providers.credential_id), api_key),
+api_key_hint = COALESCE((SELECT c.api_key_hint FROM credentials c WHERE c.id=llm_providers.credential_id), api_key_hint),
+credential_id = NULL
+WHERE credential_id IS NOT NULL`)
+	if err != nil {
+		return 0, fmt.Errorf("fold provider credentials: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	// 模型行上的历史列同样折一遍：读路径已经不看它，但让数据自洽，
+	// 任何只平铺 llm_profiles 的外部脚本才不会读到「绑了凭据却没 Key」。
+	if _, err := con.ExecContext(ctx, `UPDATE llm_profiles SET
+api_key      = COALESCE((SELECT c.api_key      FROM credentials c WHERE c.id=llm_profiles.credential_id), api_key),
+api_key_hint = COALESCE((SELECT c.api_key_hint FROM credentials c WHERE c.id=llm_profiles.credential_id), api_key_hint),
+credential_id = NULL
+WHERE credential_id IS NOT NULL`); err != nil {
+		return n, fmt.Errorf("fold profile credentials: %w", err)
+	}
+	return n, nil
 }
 
 // backfillLLMProviders 把 provider_id 为空的存量配置收进供应商行。

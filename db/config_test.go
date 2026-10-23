@@ -80,9 +80,8 @@ func TestConfigStores(t *testing.T) {
 	if err := d.SetActiveProfile(pid); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.DeleteProfile(pid); !errors.Is(err, ErrActiveLLMProfileDelete) {
-		t.Fatalf("deleting active profile error=%v, want %v", err, ErrActiveLLMProfileDelete)
-	}
+	// 激活中的模型允许删（删完激活位交接给下一个候选），但不能把它变成
+	// 「删了却还留在内存里」的幽灵：删之前先确认读得出来。
 	act, err := d.ActiveProfile()
 	if err != nil || act == nil || act.APIKey != "secret123" {
 		t.Fatalf("active profile/key: %+v err=%v", act, err)

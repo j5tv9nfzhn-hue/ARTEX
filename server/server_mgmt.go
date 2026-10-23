@@ -115,10 +115,10 @@ const (
 	errMgmtSkillZipTooLarge  = "解压后的大小过大"
 	errMgmtSkillNoMDAfter    = "解压后缺少 SKILL.md"
 	errMgmtSkillInstallFail  = "安装失败： " // 后拼接 err.Error()。
-	// 删除 LLM 配置。
-	errMgmtLLMActiveDelete = "无法删除当前已激活的 LLM 配置。请先激活另一个配置"
-	errMgmtLLMRefChanged   = "LLM 配置正在被某个任务或对话修改，请重试"
-	errMgmtLLMRefTimeout   = "等待 LLM 配置引用释放超时。请重试"
+	// 删除 LLM 配置。（激活中的模型现在允许直接删，删完自动交接激活位，
+	// 所以不再有「先激活另一个」这条错误。）
+	errMgmtLLMRefChanged = "LLM 配置正在被某个任务或对话修改，请重试"
+	errMgmtLLMRefTimeout = "等待 LLM 配置引用释放超时。请重试"
 
 	// LLM 连接测试与模型列表查询 pgListModels。
 	errMgmtNoAPIKey      = "未提供 API Key"
@@ -2258,7 +2258,6 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 		RatePerSecond    *float64 `json:"rate_per_second"`
 		RatePerMinute    *float64 `json:"rate_per_minute"`
 		SessionHeaderKey *string  `json:"session_header_key"`
-		CredentialID     *int64   `json:"credential_id"`
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, 400, err.Error())
@@ -2288,7 +2287,6 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 		RatePerSecond:    body.RatePerSecond,
 		RatePerMinute:    body.RatePerMinute,
 		SessionHeaderKey: body.SessionHeaderKey,
-		CredentialID:     body.CredentialID,
 	}
 	if body.ProviderID != nil {
 		p.ProviderID = *body.ProviderID
@@ -2372,8 +2370,6 @@ func (s *Server) pgDeleteProfile(w http.ResponseWriter, r *http.Request) {
 	id, _ := pathInt(r, "id")
 	if err := pg.DeleteProfileContext(r.Context(), id); err != nil {
 		switch {
-		case errors.Is(err, db.ErrActiveLLMProfileDelete):
-			writeErr(w, 409, errMgmtLLMActiveDelete)
 		case errors.Is(err, db.ErrLLMProfileReferencesChanged):
 			writeErr(w, 409, errMgmtLLMRefChanged)
 		case errors.Is(err, context.DeadlineExceeded):

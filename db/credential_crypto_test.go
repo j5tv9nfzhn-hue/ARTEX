@@ -1,7 +1,9 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -158,7 +160,7 @@ func TestProfileKeyEncryptedAtRest(t *testing.T) {
 		// 用例（同一个共享测试库）在没装主密钥的情况下读它会整表失败。
 		_, _ = d.Exec(`DELETE FROM llm_profiles WHERE id=$1`, id)
 		if pid > 0 {
-			_ = d.DeleteProvider(pid)
+			_, _ = d.DeleteProvider(pid)
 		}
 	}()
 
@@ -210,5 +212,109 @@ func TestProfileKeyEncryptedAtRest(t *testing.T) {
 	legacy, err := d.ProfileByID(id)
 	if err != nil || legacy.APIKey != "sk-legacy-plain" {
 		t.Fatalf("legacy plaintext read = %q err=%v, want passthrough", legacy.APIKey, err)
+	}
+}
+
+// 凭据池废弃后的升级路径：绑了凭据的供应商/模型行，开库时必须把 Key 原样折叠
+// 回自己那一行再解绑——否则升级后这些配置就变成「Key 读不出来」，界面显示成
+// 未配置 Key，用户只能重填。
+func TestOpenFoldsCredentialPoolIntoProviders(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "legacy-creds.db") +
+		"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+
+	// 先用一个正常库写入「旧形态」数据：Key 在 credentials 行上，两行都绑着它。
+	d, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("建库：%v", err)
+	}
+	enc, err := encryptCredential("sk-pooled-7777")
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	res, err := d.Exec(`INSERT INTO credentials(name,api_key,api_key_hint) VALUES('旧凭据',$1,$2)`,
+		enc, "…7777")
+	if err != nil {
+		t.Fatalf("insert credential: %v", err)
+	}
+	credID, _ := res.LastInsertId()
+	// 供应商内联列故意留空：旧读路径只能靠凭据行拿到 Key 与 hint。
+	if _, err := d.Exec(`INSERT INTO llm_providers(name,format,api_key,api_key_hint,credential_id)
+VALUES('zz-legacy-pool','openai',NULL,NULL,$1)`, credID); err != nil {
+		t.Fatalf("insert provider: %v", err)
+	}
+	var pid int64
+	if err := d.QueryRow(`SELECT id FROM llm_providers WHERE name='zz-legacy-pool'`).Scan(&pid); err != nil {
+		t.Fatalf("读供应商 id: %v", err)
+	}
+	prow, err := d.Exec(`INSERT INTO llm_profiles(name,format,model,api_key,credential_id,provider_id)
+VALUES('zz-legacy-pool-model','openai','m-pool','',$1,$2)`, credID, pid)
+	if err != nil {
+		t.Fatalf("insert profile: %v", err)
+	}
+	modelID, _ := prow.LastInsertId()
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// 再次打开 = 一次升级。折叠加解绑都应当发生。
+	d2, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("二次打开：%v", err)
+	}
+	defer d2.Close()
+
+	var apiKey string
+	var credIDAfter sql.NullInt64
+	if err := d2.QueryRow(`SELECT COALESCE(api_key,''),credential_id FROM llm_providers WHERE id=?`, pid).
+		Scan(&apiKey, &credIDAfter); err != nil {
+		t.Fatalf("读供应商：%v", err)
+	}
+	if credIDAfter.Valid {
+		t.Fatalf("供应商仍绑着凭据 %d，未解绑", credIDAfter.Int64)
+	}
+	if apiKey == "" {
+		t.Fatal("供应商的 api_key 没有被折叠回来")
+	}
+	if plain, err := decryptCredential(apiKey); err != nil || plain != "sk-pooled-7777" {
+		t.Fatalf("折叠后的 Key = %q err=%v，want sk-pooled-7777", plain, err)
+	}
+
+	// 读路径必须立刻用得上这把 Key（否则升级后第一次请求就 401）。
+	p, err := d2.ProfileByID(modelID)
+	if err != nil || p == nil {
+		t.Fatalf("读模型：%v %v", p, err)
+	}
+	if p.APIKey != "sk-pooled-7777" {
+		t.Fatalf("模型读到的 Key = %q，want sk-pooled-7777", p.APIKey)
+	}
+	// 卡片显示的是 hint：它必须跟着折叠过来，否则升级后界面显示「未配置 Key」
+	// 而请求其实能发出去，是最难自证的那种不一致。
+	list, err := d2.ListProfiles()
+	if err != nil {
+		t.Fatalf("ListProfiles: %v", err)
+	}
+	var hint string
+	for _, x := range list {
+		if x.ID == modelID {
+			hint = x.APIKeyHint
+		}
+	}
+	if hint != "…7777" {
+		t.Fatalf("模型的 hint = %q，want …7777", hint)
+	}
+
+	// 幂等：credential_id 已为空，再开一次不应改动任何东西。
+	if err := d2.Close(); err != nil {
+		t.Fatalf("close 2: %v", err)
+	}
+	d3, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("三次打开：%v", err)
+	}
+	defer d3.Close()
+	p3, err := d3.ProfileByID(modelID)
+	if err != nil || p3 == nil || p3.APIKey != "sk-pooled-7777" {
+		t.Fatalf("重开一次后 Key 变了：%+v err=%v", p3, err)
 	}
 }

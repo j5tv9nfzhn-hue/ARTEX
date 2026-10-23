@@ -2040,7 +2040,6 @@
     "card": {
       "activate": "设为激活",
       "active": "已激活",
-      "credential": "凭据：{name}",
       "maxTokens": "输出上限 {n}",
       "windowK": "窗口 {k}K",
       "deleteAria": "删除配置",
@@ -2051,33 +2050,6 @@
       "proxy": "代理 {proxy}",
       "thinking": "思考 {effort}",
       "thinkingOff": "关"
-    },
-    "credentials": {
-      "deleteAria": "删除凭据",
-      "desc": "Key 加密存储在独立实体里，可被多个模型配置引用；更新时留空输入框表示保持原值。",
-      "edit": "编辑",
-      "empty": "还没有凭据。新建一个后，在模型配置里选择它即可复用同一把 Key。",
-      "intro": "凭据是独立的 API Key 实体，可被多个模型配置引用；界面只显示尾 4 位，明文永不回显。",
-      "keyHint": "保存后只回显尾 4 位；更新时留空 = 保持不变。",
-      "name": {
-        "label": "名称",
-        "placeholder": "例如：OpenAI 生产"
-      },
-      "new": "新建凭据",
-      "titleEdit": "编辑凭据：{name}",
-      "titleNew": "新建凭据",
-      "toast": {
-        "created": "已新建凭据：{name}（在模型配置的「API Key 来源」里选择它即可使用）",
-        "deleteFailed": "删除失败：{msg}",
-        "deleted": "已删除凭据：{name}",
-        "deletedUnbound": "已删除凭据：{name}，{n} 个配置已解绑（需重新选择 Key 来源）",
-        "keyRequired": "请填写 API Key",
-        "nameRequired": "请填写凭据名称",
-        "saveFailed": "保存失败：{msg}",
-        "saved": "已保存"
-      },
-      "unused": "未被任何配置使用",
-      "usedBy": "被 {names} 使用"
     },
     "health": {
       "degraded": "异常 · 失败 {fails} 次",
@@ -2099,14 +2071,12 @@
       "poolConfig": "轮询配置",
       "subtitle": "供应商 = 端点 + 凭据，模型挂在供应商下。点供应商卡片里的模型行编辑，星标为当前激活的模型。",
       "tab": {
-        "credentials": "凭据",
         "providers": "供应商",
         "retry": "重试与退避"
       },
       "toast": {
         "activateFailed": "激活失败：{msg}",
         "activated": "已激活：{name}",
-        "cannotDeleteActive": "无法删除当前激活的配置",
         "deleteFailed": "删除失败：{msg}",
         "deleted": "已删除：{name}"
       }
@@ -2164,7 +2134,8 @@
       "providerLabel": "所属供应商",
       "reprobe": "重新探测能力",
       "reprobeFailed": "探测失败：{msg}",
-      "reprobeOk": "探测完成：窗口 {k}K"
+      "reprobeOk": "探测完成：窗口 {k}K",
+      "deleteAria": "删除该模型"
     },
     "provider": {
       "addModel": "添加模型",
@@ -2190,24 +2161,27 @@
         "deleted": "已删除供应商：{name}",
         "nameRequired": "请填写供应商名称",
         "saveFailed": "保存失败：{msg}",
-        "saved": "已保存，名下模型即时生效"
+        "saved": "已保存，名下模型即时生效",
+        "cascadeDeleted": "已删除供应商：{name}（连带删除 {n} 个模型）"
+      },
+      "confirmDelete": {
+        "title": "删除供应商「{name}」？",
+        "withModels": "它名下的 {n} 个模型会一起删除，任务与对话里引用到它们的配置也会同步失效。此操作不可撤销。",
+        "empty": "这家供应商名下还没有模型。删除后不可撤销。",
+        "cancel": "取消",
+        "confirm": "删除"
       }
     },
     "profile": {
       "activeBadge": "激活中",
       "apiKey": {
-        "placeholderSet": "已设置（{hint}），留空保持不变"
+        "placeholderSet": "已设置（{hint}），留空保持不变",
+        "hint": "Key 保存在这家供应商上，名下所有模型共用；留空 = 保持原值。"
       },
       "baseUrl": {
         "label": "Base URL（可选）"
       },
       "create": "新建",
-      "credential": {
-        "boundHint": "Key 由凭据「{name}」提供，在「凭据」标签页统一管理；绑定期间本配置的内联 Key 会被清空。",
-        "hint": "Key 只属于本配置。多个配置共用同一把 Key 时，改用「凭据」只需维护一处。",
-        "inline": "内联 Key（本配置自带）",
-        "label": "API Key 来源"
-      },
       "caps": {
         "detected": "实测窗口",
         "output": "最大输出",
@@ -5486,6 +5460,3 @@
     "sessionNote": "仅保留本次会话最近 {count} 条，刷新页面后清空。"
   }
 }
-
-
-

@@ -415,15 +415,8 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 存量内联 Key 迁移为独立凭据（计划 46–47）。幂等：迁移过的行不再满足条件，
-	// 每次启动调用都是空操作；个别 key 读不出来（主密钥缺失/密文损坏）就跳过该行，
-	// 绝不改动、绝不失败——那些行的读取行为与迁移前完全一致。非致命，仅记日志。
-	if mig, merr := pg.MigrateInlineProfileKeys(); merr != nil {
-		log.Printf("[credentials] 内联 Key 迁移失败（本次跳过，不影响启动）：%v", merr)
-	} else if mig.Migrated > 0 || len(mig.Skipped) > 0 {
-		log.Printf("[credentials] 内联 Key 迁移完成：%d 个已转为独立凭据，%d 个读不出被跳过",
-			mig.Migrated, len(mig.Skipped))
-	}
+	// 「独立凭据」已废弃：Key 只存在供应商行上。库里残留的绑定由开库阶段的
+	// foldCredentialsIntoProviders 一次性折叠（幂等），这里不再需要迁移。
 	if err := pg.RecoverFindingRetests(); err != nil {
 		pg.Close()
 		return nil, fmt.Errorf("recover finding retests: %w", err)

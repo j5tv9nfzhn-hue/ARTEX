@@ -99,19 +99,12 @@ func (s *Server) resolveLLMKey(formKey string, profileID *int64) (llmKeySource, 
 			return llmKeySource{}, fmt.Errorf("配置 #%d 不存在（可能已被删除），请重新选择配置", *profileID)
 		}
 		src := fmt.Sprintf("配置 #%d「%s」", p.ID, p.Name)
-		if p.CredentialID != nil {
-			if name := strings.TrimSpace(p.CredentialName); name != "" {
-				src = fmt.Sprintf("凭据 #%d「%s」", *p.CredentialID, name)
-			} else {
-				src = fmt.Sprintf("凭据 #%d", *p.CredentialID)
-			}
-		}
 		k, err := normalizeLLMKey(p.APIKey)
 		if err != nil {
 			return llmKeySource{}, fmt.Errorf("%s 里保存的 Key 不可用：%w", src, err)
 		}
 		if k == "" {
-			return llmKeySource{}, fmt.Errorf("%s 没有可用的 API Key（凭据为空，或该配置未绑定 Key）：请补全后再测", src)
+			return llmKeySource{}, fmt.Errorf("%s 没有可用的 API Key：请到它所属的供应商里补全后再测", src)
 		}
 		return llmKeySource{Key: k, Source: src, Hint: llmKeyHint(k)}, nil
 	}

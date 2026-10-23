@@ -666,10 +666,6 @@ type LLMProfileDTO struct {
 	// 运行时实际生效的能力 = 声明优先，未声明按模型名保守推断
 	// (db.LLMProfile.EffectiveInputModalities)。前端据此显示「实际支持」徽章。
 	EffectiveInputModalities string `json:"effective_input_modalities"`
-	// 凭据绑定（计划 46–47）：非空 = Key 以 credentials 行为准（api_key_hint 也
-	// 来自该凭据）。credential_name 只读，供界面显示「Key 来自凭据 X」。
-	CredentialID   string `json:"credential_id,omitempty"`
-	CredentialName string `json:"credential_name,omitempty"`
 	// ---- 能力探测（llmprobe）----
 	// Caps 是最近一次探测到的模型能力（窗口/输出/模态/推理档位）；
 	// 零值 = 没探测过，前端不显示徽章。
@@ -686,10 +682,6 @@ type LLMProfileDTO struct {
 }
 
 func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
-	credID := ""
-	if p.CredentialID != nil {
-		credID = i64s(*p.CredentialID)
-	}
 	return LLMProfileDTO{
 		ID:               i64s(p.ID),
 		Name:             p.Name,
@@ -714,8 +706,6 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 
 		InputModalities:          p.InputModalities,
 		EffectiveInputModalities: p.EffectiveInputModalities(),
-		CredentialID:             credID,
-		CredentialName:           p.CredentialName,
 
 		Caps:                    p.Caps,
 		EffectiveContextWindowK: p.EffectiveContextWindowK(),
@@ -743,8 +733,6 @@ type LLMProviderDTO struct {
 	BaseURL          string          `json:"base_url,omitempty"`
 	Proxy            string          `json:"proxy,omitempty"`
 	APIKeyHint       string          `json:"api_key_hint,omitempty"`
-	CredentialID     string          `json:"credential_id,omitempty"`
-	CredentialName   string          `json:"credential_name,omitempty"`
 	RatePerSecond    float64         `json:"rate_per_second"`
 	RatePerMinute    float64         `json:"rate_per_minute"`
 	SessionHeaderKey string          `json:"session_header_key,omitempty"`
@@ -772,10 +760,6 @@ func llmProviderDTOs(in []*db.LLMProvider) []LLMProviderDTO {
 			Models:           llmProfileDTOs(v.Models),
 			KeyError:         v.KeyError,
 		}
-		if v.CredentialID != nil {
-			dto.CredentialID = i64s(*v.CredentialID)
-		}
-		dto.CredentialName = v.CredentialName
 		out = append(out, dto)
 	}
 	return out
