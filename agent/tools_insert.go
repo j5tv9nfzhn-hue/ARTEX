@@ -674,7 +674,10 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 			t.insertAssets(), t.listAssets(),
 			t.webReconTool(), t.dnsProbeTool(), t.netProbeTool(), t.httpRequestTool(),
 			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(), t.nodeDetail(),
-			t.listFindings(), t.recordFact(), t.tacticalKBTool(),
+			// add_finding 必须给:侦察本身就常常直接坐实一个漏洞(暴露的 .git/actuator、
+			// 未授权接口、目录列表)。此前 recon 只有 list_findings,一旦验证到漏洞,
+			// worker 只能退而 record_fact,漏洞不进漏洞表——表现就是"明明找到了却没报"。
+			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
 		}
 	case workerPhaseVerify:
 		return []actool.CoreTool{

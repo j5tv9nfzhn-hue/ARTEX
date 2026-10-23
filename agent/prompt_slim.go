@@ -253,11 +253,15 @@ func marshalOverviewCapped(data map[string]any, maxBytes int) string {
 		return string(b)
 	}
 	// 优先级:规划决策字段在前,按需可查字段在后。
+	//
+	// finding_list(已确认漏洞)紧跟 running_intents:它直接决定"还该不该继续找、
+	// 哪些已经报过"。以前它排在 recent_done_intents / frontier_open / facts 之后,
+	// 图一变大就整键被字节预算挤掉,规划者于是看不见自己已报的漏洞,反复派意图
+	// 去打同一个点——这正是"越跑越笨、效率越来越低"的体感来源之一。
 	order := []string{
-		"task", "goals", "open_intents", "running_intents", "recent_done_intents",
-		"frontier_open", "done_intents_total", "findings_total", "facts",
-		"finding_list", "recent_facts", "hints", "coverage", "cold_digests",
-		"cold_digests_more", "related_tasks",
+		"task", "goals", "open_intents", "running_intents", "finding_list", "findings_total",
+		"recent_facts", "recent_done_intents", "frontier_open", "done_intents_total",
+		"facts", "hints", "coverage", "cold_digests", "cold_digests_more", "related_tasks",
 	}
 	budget := maxBytes - len(overviewTruncatedNote) - 1 // 尾注另算,预留进预算
 	if budget < 0 {
