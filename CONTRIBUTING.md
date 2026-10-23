@@ -34,9 +34,9 @@ ARTEX 是由 LLM 多 Agent 自主执行渗透测试的进攻性安全工具，�
 ## 开发环境
 
 > **AI 助手 / MCP 代理在本机作业时不执行本节任何构建命令**，其作业边界见
-> [`docs/开发与发布约定.md`](docs/开发与发布约定.md)；人类开发者在自己的环境按本节执行。
+> [README.md 的「开发与发布约定」](README.md#开发与发布约定长期生效--最高优先级)；人类开发者在自己的环境按本节执行。
 
-Go 后端可内嵌 Next.js 静态前端，数据库为 **SQLite**（单文件，无需安装、无需服务）。涉及 `report_finding.traffic_refs` 或报告自动绑定时，先阅读[多流量证据设计](docs/finding-traffic-evidence.md)，中文原稿也保留在[同目录](docs/finding-traffic-evidence.md)。旧 `-ko` 文件名仅为链接兼容。
+Go 后端可内嵌 Next.js 静态前端，数据库为 **SQLite**（单文件，无需安装、无需服务）。涉及 `report_finding.traffic_refs` 或报告自动绑定时，先阅读 [README.md 的「安全设计要点」](README.md#安全设计要点)与「历史文档归档索引」。
 
 ### 要求版本
 
@@ -101,7 +101,7 @@ docker run --rm -v "$PWD":/src -w /src/web \
 # 或按 README 的源码构建流程产出内嵌前端的单二进制，用 start.bat / start.sh 启动
 ```
 
-本项目发布 Linux/macOS/Windows 三端 Go 单二进制；历史上游产物（Docker Compose、install.sh/update.sh）在本分支已移除，源码构建与发布包流程见 [README](README.md#快速开始三端二进制) 与[构建与产物](docs/构建与产物.md)。
+本项目发布 Linux/macOS/Windows 三端 Go 单二进制；历史上游产物（Docker Compose、install.sh/update.sh）在本分支已移除，源码构建与发布包流程见 [README](README.md#快速开始三端二进制) 与[构建与产物](README.md#构建与产物)。
 
 ## 贡献流程
 

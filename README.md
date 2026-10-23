@@ -149,7 +149,7 @@ start.bat
 
 LLM 可在环境变量或“LLM 设置”页面配置，相关环境变量包括 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`ARTEX_LLM_PROVIDER`、`ARTEX_LLM_MODEL`、`ARTEX_LLM_BASE_URL`、`ARTEX_LLM_PROXY`。OpenAI 兼容供应商可使用自己的 Base URL。
 
-成本与效率相关的运行设置（新建任务默认 Token 预算 `default_task_token_budget`、模型价目表 `price_table`、LLM 重试策略 `llm_retry_policy`）在「系统配置」页填写，说明与默认值见[成本效率优化实施记录](docs/成本效率优化-实施记录.md)。
+成本与效率相关的运行设置（新建任务默认 Token 预算 `default_task_token_budget`、模型价目表 `price_table`、LLM 重试策略 `llm_retry_policy`）在「系统配置」页填写，说明与默认值见[成本与上下文](#成本上下文与重试)。
 
 每个任务的 Worker 并发数在系统设置中配置，默认 3。`-addr` 控制 Web/API 地址，`-proxy` 控制流量记录代理，例如 `./start.sh -addr :8787 -proxy :8788`；默认 Web/API 仅绑定 `127.0.0.1:8787`。
 
@@ -179,7 +179,7 @@ LLM 可在环境变量或“LLM 设置”页面配置，相关环境变量包括
 
 Web、API、SSE 共用后端端口。生产环境可只公开 443，将 8787 留在内部；同源 SSE 通常无需设置 `NEXT_PUBLIC_SSE_BASE`。
 
-**必须关闭 SSE 代理缓冲**，否则浏览器连接成功但活动流持续等待。Nginx 示例见 [README.zh.md](README.zh.md#反向代理部署https--只开放-443)。
+**必须关闭 SSE 代理缓冲**，否则浏览器连接成功但活动流持续等待。Nginx 示例见[反向代理部署](#反向代理部署https--只开放-443)。
 
 ## 系统架构
 
@@ -416,7 +416,7 @@ flowchart LR
   IN --> RUN --> OBSV
 ```
 
-对应落点：提示缓存 `agent/deferred.go`；预算闸 `server/engine.go` + `tasks.token_budget`；计价 `server/pricing.go`（设置 `price_table`）；通知 `notify/`；配置项与完整清单见[成本效率优化实施记录](docs/成本效率优化-实施记录.md)。
+对应落点：提示缓存 `agent/deferred.go`；预算闸 `server/engine.go` + `tasks.token_budget`；计价 `server/pricing.go`（设置 `price_table`）；通知 `notify/`；配置项与完整清单见[成本与上下文](#成本上下文与重试)。
 
 ### ⑥ 单二进制部署与交付
 
@@ -429,7 +429,7 @@ flowchart LR
   BIN -->|"授权范围内"| PTGT["测试目标"]
 ```
 
-发布产物、编译标志与运行时文件落点详见[构建与产物](docs/构建与产物.md)。
+发布产物、编译标志与运行时文件落点详见[构建与产物](#构建与产物)。
 
 ## 防御与检测资料
 
@@ -442,17 +442,400 @@ flowchart LR
 
 新增规则请遵循[检测规则与测试贡献契约](CONTRIBUTING.md#检测规则与测试贡献)，不得将泛化行为误称 ARTEX 专属指纹。
 
-## 项目文档
+## 工程手册
 
-- [开发总清单](docs/开发总清单.md)：`计划.md` 198 条（除 97–130 反检测外）的全面落实执行表与批次状态。
-- [修复台账](docs/修复台账.md)：198 条的核实结果、PostgreSQL → SQLite 迁移记录与本轮落地条目。
-- [成本效率优化实施记录](docs/成本效率优化-实施记录.md)：省 token、产出可见、操作顺手的改动、配置项与落点。
-- [norma SDK 优化补丁清单](docs/norma-SDK优化补丁清单.md)：需在 SDK 上游立项的 6 项优化建议。
-- [架构分层](docs/架构分层.md)：后端分层现状、边界约定与本轮新增模块的层级归属。
-- [构建与产物](docs/构建与产物.md)：构建入口、编译标志、发布包内容与运行时文件落点。
-- [UTF-8 全链路审计](docs/utf8-audit.md)：编码风险点（控制台代码页、子进程 stdio）与修复、回退开关。
-- [XSS 全链路审计](docs/xss-audit.md)：前端注入面、后端凭据掩码与 `Cache-Control` 加固记录。
-- [漏洞多流量证据](docs/finding-traffic-evidence.md)：关联流量的工具、API、存储、导出与归档设计。
+> **2026-10-23 文档收口**：原 `docs/` 下 40 篇报告／方案／诊断／记录已合并进本节，原文只保留在 git 历史里（删除前基线 `bda8829`，可用 `git show bda8829:docs/<文件名>` 取回）。
+>
+> 唯一保留的独立文档是 [`docs/defense.md`](docs/defense.md)：`detections/tests/check-defense-template.sh` 会把它挂进容器，校验其中的内联 Sigma 模板（check、后端转换矩阵、双语规则主体一致），它是**检测门禁的输入文件**，不是报告，因此不并入本 README。
+
+### 开发与发布约定（长期生效 · 最高优先级）
+
+本节优先级高于 `CONTRIBUTING.md` 与 `MAINTAINING.md` 的通用开发说明；冲突时以本节为准。修改本节应与修改 `release.yml` 同等审慎，并在同一个提交内同步。
+
+约定分两类，不要混用：**第 1～6 条**约束「AI 助手 / MCP 客户端在本机工作副本上作业」的行为；**第 7～9 条**（门禁分层、代理、发布）是仓库级约定，对任何执行 `git push`、打 tag 的人与自动化都成立。人类开发者在其他机器上正常开发，仍按 `CONTRIBUTING.md` 的「开发环境」执行本地构建与测试，不受第 2 条限制。
+
+#### 1. 源码唯一位置
+
+项目源码只存在于工作副本 `C:\Users\Administrator\Desktop\ARTEX-REA`（及其远端 `j5tv9nfzhn-hue/ARTEX`）。所有改动直接落在该目录，不另建副本、不在别处「另起一份工程」。
+
+#### 2. 本机不做任何测试 / 编译 / 构建 / 打包
+
+在本机（含通过 MCP shell 间接调用、含写 `.bat` / `.ps1` / `.cmd` 去跑、含用 `docker run` 跑等价命令）：
+
+**禁止**
+
+```text
+go build / go vet / go test / go run / gofmt / golangci-lint
+npm ci|install|test|run build|run build:static、npx tsc、npx biome、next build
+build.sh、dev.sh、任何打包 / 压缩 / 出 zip 的脚本
+```
+
+**允许**
+
+```text
+读文件、写文件（源码 / 配置 / 脚本 / 文档）、列目录
+git status / diff / log / show / ls-files 等只读查看
+git add / commit / push / tag（按第 5、6 条的网络与时机规则）
+gh 只读查询（run list / release list / api GET）
+```
+
+理由：本机是用户的生产机，跑构建会污染工作树、占用 CPU 与磁盘，且与云端环境不一致；云端 Actions 才是唯一的权威构建环境，本机的「跑一下看看」既慢又不能证明发版可用。
+
+**替代手段**：写完回读文件，静态核对 import / 符号名 / 类型签名 / 调用点参数 / 结构体字段 / i18n 键是否存在。宁可写得保守，也不在用户机器上跑命令兜底。
+
+#### 3. 验证由云端承担
+
+| 工作流 | 职责 |
+|---|---|
+| `.github/workflows/release.yml` | **唯一的构建流水线**：gate（编译/静态）→ frontend → binaries（6 目标）→ release；`workflow_dispatch` 可干跑不发布 |
+| `.github/workflows/detections.yml` | 检测规则与指标回归（`push` 时忽略 `v*` tag） |
+| `.github/workflows/verification-helper.yml` | 手动触发，单独模块 |
+
+本机的结论只能是「静态看是对的」，不能是「跑通了」。
+
+#### 4. 用静态自检替代编译
+
+提交前逐项核对：
+
+1. 新用的符号是否真实存在（`grep` 定义处，不凭记忆）。
+2. 函数签名 / 返回类型 / 错误处理是否与调用点一致。
+3. 结构体字段名、JSON tag 是否与前端类型、golden 文件一致。
+4. 新增的 `import` 是否齐全，删除代码后是否留下未使用的 import。
+5. 新增界面文案是否同时写进 `web/messages/zh.json`，键名一致。
+6. 改了 `capability` 相关能力项时，同步 `mcp_tools.golden.json` 与计数断言。
+
+#### 5. 网络：访问 GitHub 必须走本地代理 7897
+
+裸直连会稳定超时（约 20 秒后 `Failed to connect to github.com:443`），而 `gh api` 走另一条链路可能仍然可用——**不要**因此误判为「仓库坏了」。
+
+```bat
+:: git（按次传参，不写全局 config）
+git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 push origin main
+git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 ls-remote origin refs/heads/main
+
+:: gh
+set HTTPS_PROXY=http://127.0.0.1:7897&& set HTTP_PROXY=http://127.0.0.1:7897&& gh run list --limit 6
+```
+
+故障处理顺序：
+
+1. 先探测：`curl -x http://127.0.0.1:7897 -sS -o /dev/null -w "%{http_code}" https://github.com`，得 `200` 再 push。
+2. 单次 20 秒无响应即判不可达；最多重试 2 次（合计 3 次）。
+3. 3 次仍失败 → **停止并如实报告**。不裸直连硬刷、不无限重试、不改端口乱试。
+4. **禁止**用 `gh api POST /git/refs` 绕过 push：commit 不在远端时必然 `422 Object does not exist`，还会让远端出现悬空引用。
+
+#### 6. 推送 / 打 tag / CI：发起即返回
+
+- 不阻塞等待、不轮询日志、不盯 Actions 进度、不为「确认成功」反复查询。
+- 唯一必须串行的动作：**tag 必须在新 commit 已到远端之后创建**。因此允许 `push → ls-remote 校验 → push tag` 一次性完成，校验通过立即结束。
+- 失败信息由用户转述，或按需再改源码；不靠本机复现失败。
+
+#### 7. 门禁分层：编译失败必拦，测试失败不拦
+
+这是本项目对 CI 的核心口径。**产物健康**与**代码健康**是两件事，不能互相绑架。
+
+| 类别 | 判定 | 典型内容 | 失败时的行为 |
+|---|---|---|---|
+| **编译 / 静态检查** | 确定性 | `go build ./...`、`go vet ./...`、`go vet -tags embedui`、`gofmt`、`golangci-lint`、前端 `build:static`（含 TS 类型检查） | **硬门禁：必须拦住，不得出包** |
+| **测试** | 概率性 / 环境相关 | `go test ./...`、`node --test`、`detections/tests` | **信号灯：只报告健康度，不得阻塞打包与发版** |
+| **发布流程** | 确定性 | 资产缺失、zip 数量不符、sha256 不匹配、上传失败、草稿未转正 | **硬门禁：必须失败并清理，不留半成品** |
+
+三条红线：
+
+1. **「测试不拦」≠「什么都不拦」。** 编译类、类型类的确定性失败必须拦死；不得把这条口径当作放松门禁的理由。
+2. **测试红了要显著标注**（PR / Release 说明里写清楚哪几个包红），不得静默放过；更不得为了让测试变绿而删测试或改断言。
+3. **发布失败必须原子回退**：`release.yml` 的 `if: failure()` 会删除草稿、保留 tag，下一次可原地重跑。
+
+当前落地方式：
+
+```text
+release.yml（唯一的构建流水线）
+gate       tag 格式 + go build + go vet + go vet -tags embedui + gofmt + golangci-lint
+frontend   npm ci → npm test / biome（信号）→ build:static（硬门禁，含类型检查）
+binaries   6 目标交叉编译 + 头校验 + 打包
+release    校验 6 个 zip → sha256sum → 建草稿 → 上传 → latest.json → 转正
+           if: failure() → 删除草稿，保留 tag
+signals    go test / 语言检查 / 文档链接（continue-on-error，只报告不拦）
+```
+
+**为什么只有一份构建**：2026-10-21 之前 `ci.yml` 与 `release.yml` 各有一套前端构建与 Go 编译，两处维护、两套缓存 key，还会出现「ci 绿了但 release 挂了」。现在合并为 `release.yml` 一份；`workflow_dispatch` 用于打 tag 前干跑（不发布）。
+
+**为什么测试不进门禁**：测试失败不代表二进制坏掉；把测试挂在发版链路上，会让一次 flaky 测试挡住整个版本。编译与静态检查才是「产物能不能用」的必要条件。
+
+#### 8. 版本与发布
+
+- **每版必须发 GitHub Release**，tag 与 Release 同名（`vX.Y.Z`），二者缺一视为该版未发布。
+- 版本被删除后**重发沿用同一版本号**，不递增；前提是新 commit 已经成功推到远端。
+- 更新源白名单只有 `j5tv9nfzhn-hue/ARTEX`：`selfupdate` 只接受该仓库的 Release，且保留**白名单 + SHA256 双闸门**。`jiwoochris/*`、`Autumn-27/artex` 已彻底移除，不得再进入检测或下载链路。
+- 自动更新（安装）**默认关**；自动检测默认开；两者都要有开关，且状态可持久化。
+- **发布说明必须写全量变更**：由 `scripts/gen-release-notes.py` 从 git 历史按类型分组生成，不再使用 `gh release create --generate-notes`（它只汇总 PR 标题，直接提交的改动会全部丢失）。正文上限 8 KB——它会进 `latest.json`，客户端每次检测都要下载。
+- 一次 tag 推送只应产生 **1 个**发布 run：只保留一个构建工作流后，一次 tag 推送只会产生 `release.yml` 这一次运行；`detections.yml` 用 `tags-ignore: ["v*"]` 排除 tag。
+
+#### 9. 提交粒度
+
+- 一次语义完整的改动合成**单个提交**，提交信息用中文，写清「改了什么 / 为什么 / 影响面」。
+- 不提交构建产物（`dist/`、`server/webui/dist/`、`web/out/`）、不提交本地配置与密钥。
+- 提交前默认执行 `git status` 与 `git diff --stat` 复核，确认没有夹带无关文件。
+
+#### 10. 常见误判对照表
+
+| 现象 | 真实原因 | 正确做法 |
+|---|---|---|
+| `git push` 20 秒后 `Failed to connect to github.com:443` | 没走代理 | 按第 5 条加 `-c http.proxy=...:7897` |
+| `git push` 返回 `Empty reply from server` | 代理链路抖动 | 换代理参数重试一次；仍失败则报告 |
+| `gh api POST /git/refs` 返回 `422 Object does not exist` | commit 还没推到远端 | 先 push，校验 `ls-remote` 后再建 tag |
+| 首页 404 | 构建没带 `-tags embedui` | 那是构建参数问题，不是代码问题（见「构建与产物」） |
+| CI 红但 Release 正常出包 | 红的是 `go-test`（测试信号） | 属预期行为，按第 7 条处理 |
+| CI `go-build` 红、无 artifact | 编译或静态检查失败 | 硬门禁生效，必须修代码 |
+
+### 架构分层
+
+依赖方向自下而上（`go list -deps` 实测，箭头 = import 方向）：
+
+| 层 | 包 | 职责 | 主要依赖 |
+|---|---|---|---|
+| 前端 | `web/`、`website/` | Next.js 静态导出 UI；内嵌（`-tags embedui`）或独立 dev | 只经 HTTP JSON API |
+| 进程入口 | `cmd/artex` | 生命周期、自举、端口、控制台 UTF-8、数据/前端目录、单次模式（`-reset-password`） | server、config、selfupdate |
+| API 与编排 | `server` | HTTP 路由/鉴权/SSE、任务管理器、工具执行（内置/自定义）、内嵌前端服务、价格表与费用聚合（`pricing.go`）、任务级通知 emit（`task_notify.go`）、检查点、环境快照、能力元数据 | agent 及其下全部 |
+| 角色编排 | `agent` | goals / planner / worker / mainagent、图积累、审批与捕获、注入瘦身（`prompt_slim.go`）、压缩分层、止损、技能路由、域策略（`domain.go`） | db、guard、intercept、llmrec、evidence、sidequestion、metrics |
+| 领域能力 | `traffic`、`evidence`、`guard`、`intercept`、`enrich`、`report`、`detections` | 记录代理、证据快照、命令防护、管控规则、资产补全、报告、检测规则 | 按需组合 → db |
+| 平台集成 | `selfupdate`、`mcphttp`、`mcpserver`、`mcpbuiltin`、`llmpool`、`llmrec`、`llmtest`、`integrations` | 自更新、MCP 客户端/服务端、进程内 MCP、模型池（角色私有熔断/备用链）、调用记录、服务商轻量测试 | db、config |
+| 存储 | `db` | SQLite 唯一引擎、schema 与补列兼容层、检查点/环境快照/压缩状态/MCP 密钥加密、保留策略与审计 | config、metrics、notify、sidequestion |
+| 基础设施 | `config`、`metrics`、`notify`、`sidequestion`、`fsutil`、`stageerr`、`tracelog` | 配置与路径解析、指标、通知（含任务级事件）、旁路提问、原子写、阶段错误、链路日志 | 叶子（基本无项目内依赖） |
+
+硬边界（现行、可验证）：
+
+1. **存储唯一出口是 `db`**：SQLite 是唯一引擎，不存在第二后端；路径、DSN 与 pragma 契约只在 `config/sqlite.go` 的 `SQLiteDSNFor` 定义，测试与工具也必须走它。
+2. **路径解析集中 `config`**：`BaseDir()`/`Path()`/`SkillDir()`/`SQLitePath()` 是文件位置的唯一来源；数据目录由 `--data` 注入 `server.NewManager`，其他包不再各自拼装。
+3. **前端只经 HTTP API**：组件不直连数据库；内嵌与否由 build tag 决定（`server/webui_embed.go` 与 `server/webui_stub.go` 一进一 stub，忘带 `-tags embedui` 时首页返回中文 404 提示）。
+4. **消费者侧接口隔离**：`llmrec.Recorder` 的持久化依赖收敛为 `recordStore` 接口（仅 `InsertLLMUsage`/`InsertLLMRecord` 两个方法），不再持有具体 `*db.DB` 句柄。
+5. **常量表代替魔法串**：工具 kind 收敛为 `server/toolkind.go` 的四个常量（`command`/`script`/`http`/`shell`），这些值同时是数据库列值与前端契约，只保留一个定义点。
+6. **格式与静态门禁**：`gofmt` 由 CI 门禁把关，静态检查为 `.golangci.yml`（govet，干净基线）＋ golangci-lint（v2.14.0）＋ `.pre-commit-config.yaml` 的 `go` hook。收紧路径：ineffassign、unused、staticcheck、misspell、revive 逐项清零后加入，避免一次性引入噪声把门禁架空。
+
+### 构建与产物
+
+| 场景 | 命令 | 说明 |
+|---|---|---|
+| 日常开发（后端） | `go run ./cmd/artex` | 不含内嵌前端；前端另起 `cd web && npm run dev`。`dev.sh` 一键起前后端 |
+| 日常开发（前端） | `cd web && npm run dev` | `/api` 代理到后端 8787 |
+| 正式构建（当前平台） | `./build.sh` | 先构建前端再编译；需 Node.js/npm 与 rsync |
+| 正式构建（指定目标） | `./build.sh --target windows/amd64` | 支持 linux、darwin、windows 目标 |
+| 发布打包 | `./build.sh --release` | 构建三端默认目标（linux/darwin/windows × amd64/arm64）并产出 zip |
+
+编译标志（`build.sh` 固定）：
+
+```text
+CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> \
+go build -tags embedui -trimpath \
+  -ldflags "-s -w -buildid= -X main.version=<版本>" \
+  -o dist/artex-rea-<os>-<arch>/artex-rea        # Windows 目标为 artex-rea.exe
+```
+
+- `-tags embedui`：启用 `server/webui_embed.go`，把 `server/webui/dist` 编进二进制。**默认构建走 `server/webui_stub.go`，首页返回 404**——这是「忘了带 tag」最常见症状。
+- `-trimpath` 去本地绝对路径保证可复现；`-ldflags "-s -w -buildid="` 去符号去 buildid；`-X main.version=` 默认取 `git describe --tags --always --dirty`（去 `v` 前缀），可用 `ARTEX_BUILD_VERSION` 覆盖。
+- UPX 默认关闭（`ARTEX_COMPRESS=off`）；`--upx` 强制（缺 upx 直接失败）；`ARTEX_COMPRESS=auto` 缺 upx 时保留未压缩二进制；macOS 目标自动追加 `--force-macos`。
+
+前端静态导出：
+
+```text
+cd web && npm ci && npm run build:static   # 产出 web/out
+rsync -a --delete web/out/ server/webui/dist/
+```
+
+`build.sh` 自动完成同步；`release.yml` 的 `frontend` job 用 `cp -a` 等价操作。`server/webui/dist/` 是生成目录，不手工维护。
+
+产物清单：
+
+- 单目标：`dist/artex-rea-<os>-<arch>/artex-rea`（Windows 为 `artex-rea.exe`；可用 `ARTEX_OUTPUT`/`ARTEX_OUTPUT_DIR` 改路径）。
+- 发布包（`--release` 或 `ARTEX_PACKAGE=1`）：`dist/artex-rea-<版本>-<os>-<arch>.zip`，内含 `artex-rea`/`artex-rea.exe`（内嵌前端、去符号）、`start.bat`/`start.sh`（启动监护脚本）、`skills/`、`config.example.json`、`README.md`。
+- `dist/SHA256SUMS`：对 `dist/*.zip` 的校验和。
+
+运行时文件落点：
+
+- **配置**：`ARTEX_CONFIG` > 当前目录 `config.json` > 可执行文件旁 `config.json`（先存在者优先）。
+- **基目录 `config.BaseDir()`**：可执行文件所在目录；`go run` 的临时/缓存二进制会被识别并回退到当前工作目录。
+- **SQLite**：`ARTEX_SQLITE_PATH` > 配置 `database.path` > 配置目录 `artex.db`。连接约定见 `config/sqlite.go`（WAL、busy_timeout、`synchronous=NORMAL`、`foreign_keys`、`_texttotime`、`_txlock=immediate`）。
+- **数据目录**：`--data`，默认 `BaseDir()/data`；内含 `tasks/<任务ID>/`、`transcripts/`、`.delete-staging/`。
+- **技能目录**：`ARTEX_SKILL_DIR` > 配置 `skill_dir` > `BaseDir()/skills`。
+- **密钥**：`jwt.key` 与凭据密钥位于可执行文件旁，不在可浏览的 `data/` 内。
+- **单次模式（`-reset-password`）**：离线重置管理员密码后退出——不占端口、不跑自更新、不起后台 worker，只打开 SQLite 重写密码哈希（`reset-password.sh` 为其封装）。
+
+启动监护与一键更新：`start.bat`（Windows）/`start.sh`（Linux、macOS、Docker ENTRYPOINT）是推荐入口。
+
+| 退出码 | 行为 |
+|---|---|
+| 0 | 正常停止，脚本结束 |
+| 75（`selfupdate.ExitRestart`，EX_TEMPFAIL） | 立即重新拉起（页面一键更新或回滚） |
+| 其他 | 异常退出，1、2、4…秒退避重启，最多 60 秒 |
+
+一键更新链路：旧版进程经 `/api/update/apply` 下载并校验新版本 → 暂存 `artex-rea.new` → 退出 75 → 脚本拉起旧版 → `selfupdate.Bootstrap` 校验并冒烟测试新二进制 → 换装 → 再退出 75 → 脚本拉起新版。下载、SHA256 校验与版本替换全部在 Go 的 `selfupdate` 包中实现，脚本保持简单。直接双击 `artex-rea.exe` 不会自动重启——需要一键更新/回滚的部署应使用 `start.bat`。
+
+### 数据模型与保留
+
+SQLite 单文件，62 张表（`db/schema_sqlite.sql`），按域分组：
+
+| 域 | 表 |
+|---|---|
+| 资产与范围 | `companies` `assets` `company_scope` `asset_intercept_rules` |
+| 探索图 | `explorations` `exploration_nodes` `exploration_edges` `exploration_anchors` |
+| 任务与编排 | `tasks` `task_categories` `task_templates` `task_relations` `task_asset_links` `task_llm_profiles` `task_scope` `task_constraints` `task_intercept_rules` `task_env_context` `task_archives` `agents` `agent_prompts` `agent_prompt_vars` `agent_llm_fallbacks` `agent_visibility` `agent_skill_visibility` `agent_triggers` `scheduler_state` |
+| 工具与 MCP | `tools` `mcp_servers` `mcp_tools_cache` `tool_usage` `skill_usage` |
+| 对话与运行 | `conversations` `conversation_activities` `main_sessions` `checkpoints` `compaction_state` `activity` `server_logs` |
+| 发现与证据 | `findings` `finding_retests` `traffic_evidence_snapshots` `finding_traffic_bindings` |
+| 拦截与审批 | `intercept_rules` `intercept_pending` |
+| 逆向 | `re_samples` `re_task_samples` `re_providers` `re_sessions` `re_evidence` `re_entities` |
+| 模型与成本 | `llm_profiles` `llm_profile_health` `credentials` |
+| 通知 | `notification_channels` `notification_events` `notification_deliveries` |
+| 存储治理 | `retention_plans` `retention_audit` |
+| 其他 | `settings` `side_question_sessions` `side_question_requests` |
+
+保留策略：
+
+- 默认 **30 / 14 / 30 天**（原始记录 / 证据 / 归档，按 `retention_plans` 可改），后台自动执行，每次动作写 `retention_audit`。
+- 活动流默认 **14 天 + 10 万行**双闸门，先量后定档；删除走 `.delete-staging/` 暂存，避免误删即失。
+- 存储页提供「写入管道」观测（只读连接池、写队列、库体积），先量再定默认档，不凭感觉调参。
+- 数据保留的界面与后端均为源码交付；**没有**运行迁移、清理或启动服务，验收清单独立列在历史归档中。
+
+### 成本、上下文与重试
+
+- **自动注入瘦身**：planner 每轮态势与 worker 首消息概览收紧条数并加字节硬上限（16 KB / 12 KB）；工具输出进入历史的字符上限 30000 → 12000，超限全文落盘、可按需重读。planner 心跳空转跳过（无触发消息、无边沿变更且仍有在跑意图时不烧整轮）。
+- **system prompt 整段缓存**：整段 system（含延迟披露工具块）作为缓存块跨轮复用。
+- **上下文压缩**：触发比例按「反解等效窗口」落到 **80%** 黄金比例，不改 SDK；调整与回退见 `agent/provider_compaction_test.go` 的验证矩阵。
+- **任务级 Token 预算硬闸**：`default_task_token_budget` 与任务级预算，累计输入+输出达到上限自动暂停并在活动流留痕，恢复后继续累计。
+- **模型价目表**：`price_table` 由 `server/pricing.go` 做最长子串匹配与读时计价，费用按会话/角色聚合（`llm_usage`、`TokenByWorker`）。
+- **五层重试**（`llm_retry_policy`，每层可配「次数 + 间隔」，留空用默认指数退避，填 `-1` 关闭）：建连重试（SDK）→ 空响应重试（SDK，仅 openai 格式）→ 同 provider 安全窗口重试（尚未交付任何输出前的断流重放）→ 轮询熔断（连续失败冷却跳过）→ 意图重跑（worker 以 `model_error` 收场后整条意图重跑）。前三层可逐模型覆盖，熔断与意图重跑是进程级全局一份。
+- **连接测试独立**：`llmtest` 走轻量路径（无 tools / system / stream / 历史 / 压缩 / worker），刻意不带重试参数，避免把可用端点测成超时。
+
+### 工具生态：MCP、外部集成与技能包
+
+**进程内 MCP（纯 Go，不拉子进程）**，命名统一 `mcp__<server>__<tool>`：
+
+| 服务器 | 工具 |
+|---|---|
+| `artex-recon` | `dns_recon`、`port_probe`、`tls_inspect`、`tech_hints` |
+| `artex-webscan` | `http_send`、`http_fuzz`、`dir_probe`、`param_probe`、`jwt_inspect`、`sqli_probe` |
+| `artex-binscan` | `file_identify`、`pe_info`、`strings_scan`、`entropy_scan`、`ioc_extract` |
+
+**外部接入**：REA（`rea_*` 预设，如 `rea_open_sample`、`rea_list_strings`）、WPE64（14 工具契约：抓包/改包/重放/规则/落盘）、ScopeSentry（资产同步）、浏览器（L1：系统 Chrome/Edge 走 CDP，零额外磁盘；Camoufox 降为按需档）。外部接入扫描是**只读、固定路径、四态**；一键配置遵循 `plan → diff → apply`；同一时间只允许一种接法在线，避免工具面互相盖住。
+
+**技能包（14 个，`skills/`，`go:embed` 注册）**：`api-recon`、`web-vuln-tactics`、`exploit-kb-patterns`、`expert-triage-pivot`、`reverse-engineering`、`rea-mcp`、`wpe64-mcp`、`mitmproxy-traffic`、`human-verification`、`scopesentry-mcp`、`wasm-cloud-saas-tactics`、`ai-gateway-logic`、`ai-coding-sandbox-tactics`、`camoufox`。由 `skill_router.go` 路由、`tool_contract.go` 做别名、`db` 播种可见性（V2 开关只补新包、不复活用户关闭的旧包）。
+
+### 逆向工程契约（REA）
+
+- 契约分层 `unverified / basic / deep`，核心操作集 `status / functions / decompile / xrefs / callgraph`；「工具能调」与「引擎 ready」分开判定。
+- **地址纪律**：RVA 用于 functions/decompile/xrefs/callgraph/modules/imports/exports；`file_offset` 只用于 strings；多模块以 `(module, address_kind, address)` 三元组为身份。
+- 提供完整导出 bundle、配额与清理（`/api/re/sweep`）；外部引擎经 `REProviderConfig` 通用映射层接入（Ghidra / IDA 为骨架），配套 `reEvaluateCapabilities` 做目录与 schema 门控。
+
+### Harness 与域策略
+
+「按域分策略」已代码化：`agent/domain.go` 的 `ModePolicy` 是唯一真值源。多域升级按阶段推进（Phase 0 起逐域迁移），数据模型只加不删；每阶段有独立回归清单，未完成阶段不做跨域混改。
+
+### 人机验证链路
+
+四条能力（原生分类 / 旧 ALTCHA PoW / 同会话 flow / 端到端工具链）与 IPC v2 契约均为**源码交付，未编译、未运行、未做线上通行或生产验收**：
+
+- 工具与能力：分类、PoW、同会话 flow，预算与去重、证据落盘。
+- 契约：IPC v2 明确请求/响应字段与失败语义；操作者可远程按需验收。
+- 边界：资源与降级有上限，不承诺任何厂商必然通过；格式检查或研究资料**不等于**测试通过。
+
+### 移动端 App 与局域网连接
+
+适用于手机 App 连接本机 ARTEX 服务（`mobile/`，Expo/React Native）。
+
+App 是胖 HTTP 客户端：登录页填「服务器地址 + 密码」→ 拿 Bearer token → 轮询 `/api/mobile/*`。默认服务只监听 `127.0.0.1:8787`，手机上访问不到，需要显式放开局域网。
+
+| 方式 | 写法 | 适合 |
+|---|---|---|
+| 命令行开关 | `artex-rea.exe -lan` | 临时开一次 |
+| 命令行地址 | `artex-rea.exe -addr :8787` | 想指定端口 |
+| 配置文件 | `config.json` 加 `"listen": ":8787"` | 一直开着 |
+| 环境变量 | `ARTEX_LISTEN=:8787` | 脚本/容器 |
+
+优先级：`-addr` > `-lan` > `ARTEX_LISTEN` > `config.json` 的 `listen` > 默认 `127.0.0.1:8787`。启动横幅会直接列出手机该填的地址；仍在回环上时明确提示「App 连不上」并给出加 `-lan` 的做法。
+
+防火墙（Windows 管理员）：
+
+```text
+netsh advfirewall firewall add rule name="ARTEX-REA" dir=in action=allow protocol=TCP localport=8787
+```
+
+Linux：`sudo ufw allow 8787/tcp`；macOS 首次运行会弹系统提示，点允许即可。
+
+安全与排查：
+
+- 只在可信局域网开放；公寓/咖啡厅/公共 Wi-Fi 不要开。要从外网访问用 TLS 反向代理（Nginx/Caddy），不要把 8787 直接映射到公网。
+- 管理员密码未设置时，监听非回环地址会打开放警告（`WarnIfExposed`）；登录接口按源 IP 限流（`authLimiter`）。
+- 排查顺序：`netstat -ano | findstr :8787` 应出现 `0.0.0.0:8787` 或 `[::]:8787` → 手机浏览器访问 `http://<局域网IP>:8787/api/health` 能出 JSON → 再回 App 登录。
+- 已知限制：Android 9+ 默认禁止明文 HTTP（`android:usesCleartextTraffic`），iOS ATS 默认拦非 localhost 的 `http://`（`NSAppTransportSecurity`）。两者属 `mobile/app.json` 原生配置；debug 包通常已放开，release 包可能需要补配置。
+
+### 安全设计要点
+
+1. **首次初始化防抢占**：`POST /api/auth/init` 必须提供仅服务端控制台显示的 `setup_token`，错误尝试有速率限制（`ARTEX_SETUP_TOKEN` / `ARTEX_ADMIN_PASSWORD`）。
+2. **默认只绑回环**：`-addr` 默认 `127.0.0.1:8787`，非回环 + 无密码会告警。
+3. **JWT 密钥由密码哈希派生**：改密即废除全部旧 token（UI / `reset-password.sh` / 直接改库都生效）。
+4. **CORS 允许列表**（`ARTEX_CORS_ORIGINS`），服务端最短 8 位密码。
+5. **凭证静态加密**：API Key 与 MCP env 密钥落库加密（`credential_crypto.go`、`mcp_env.go`）；响应侧只回 hint。
+6. **命令防护与管控**：`guard` 审批钩子 + `intercept` 规则/判定，审计带调用 ID 与并发匹配。
+7. **编码**：文本写盘、JSON、数据库与 HTTP 链路全程 UTF-8；风险集中在 Windows 控制台代码页与平台派生出的子进程 stdio，已修复并提供回退开关。前端只有 2 处 `dangerouslySetInnerHTML`，均不接收不受信任输入；后端只输出 JSON，不渲染 HTML。
+8. **自更新双闸门**：更新源白名单 `j5tv9nfzhn-hue/ARTEX` + SHA256 校验；自动检测默认开、自动安装默认关。
+
+### 已知未闭环
+
+| 项 | 说明 |
+|---|---|
+| `reOpen` 会话数硬拒绝 | 当前只是报告阈值，未做硬拒绝 |
+| REA / WPE64 真实 MCP 联调 | 工具缓存为离线预置，真实 `tools/list` 刷新未验 |
+| 逆向单引擎验收 | 需按验收门禁清单另行授权执行 |
+| 「源码已落地 / 运行验收待完成」条目 | 开发总清单中大量条目处于此态；自动清理默认关闭 |
+| 运行期假设 | 五断层收口的一批假设只能由运行期数据判定 |
+| 手机端明文策略 | release 包可能仍需补 `usesCleartextTraffic` / ATS 两行配置 |
+
+### 历史文档归档索引
+
+下表是并入本 README 前的 40 篇文档；细节以 git 历史为准（`git show bda8829:docs/<文件名>`）。
+
+| 原文件 | 覆盖内容 | 状态 / 结论 |
+|---|---|---|
+| `开发与发布约定.md` | 本机不构建、静态自检、代理 7897、推送即返回、门禁分层、版本与提交 | 已全文并入「开发与发布约定」 |
+| `架构分层.md` | 后端分层、依赖方向、6 条硬边界、命名清理 | 已并入「架构分层」 |
+| `构建与产物.md` | 构建入口、编译标志、产物清单、运行时落点、启动监护 | 已并入「构建与产物」 |
+| `项目总结-2026-10-21.md` | 全仓盘点：595 个 Go 文件、62 表、15 个内置工具、14 个技能、38 个环境变量、核心能力链 | 本手册的主要来源 |
+| `开发总清单.md` | `计划.md` 198 条的执行表与 9 个批次状态（97–130 反检测维持拒绝） | 历史执行表 |
+| `修复台账.md` | 198 条核实结果、27 条确认缺陷、PostgreSQL→SQLite 迁移、待做队列 | 历史台账 |
+| `五断层收口-假设与验证-2026-10-21.md` | 批次 2–10 的只读假设→验证闭环、流式链路、存储保底 | 已落地，运行期假设待验 |
+| `架构整改方案-2026-10-21.md` | 五断层整改的分批方案与验收口径 | 已落地 |
+| `架构框架问题诊断-2026-10-21.md` | 耦合、魔法串、接口边界的问题诊断 | 已收敛为边界约定 |
+| `上下文压缩黄金比例-落地说明-2026-10-21.md` | 80% 触发比例、反解等效窗口、验证矩阵 | 已落地（不改 SDK） |
+| `成本效率优化-实施记录.md`（批次 E） | 注入瘦身、整段 system 缓存、token 预算、意图重跑收敛 | 已落地 |
+| `成本预算-会话级后端整改方案.md` | 会话级成本/预算审计、三原则、档位与未落地项 | 部分落地（P1/P2 未做） |
+| `LLM重试设计.md` | 五层重试与熔断的存储结构、边界校验、与故障切换链的协同 | 已落地 |
+| `norma-SDK优化补丁清单.md` | 需上游立项的 8 条 SDK 优化（缓存断点、压缩白名单、摘要 provider 等） | 供上游评估 |
+| `多模态图片链路-调研与整改.md` | 图片从未抵达模型的根因、视觉桥方案、开关与回滚 | 已落地 |
+| `工具调用稳定性-三端差异与修复.md` | 「三端 50%+ vs 本机 4%」的四个叠因与本机 20 类错误处置 | 已修复 |
+| `工具并发与多文件补丁-落地说明.md` | 并发四层叠加诊断、业界对照、语义边界与残留窗口 | 已落地 |
+| `shell-windows-契约与编码.md` | Windows 执行器契约、cmd/PowerShell 差异与编码失败模式 | 已固化 |
+| `utf8-audit.md` | UTF-8 全链路审计：风险集中在控制台代码页与子进程 stdio | 已修复，带回退开关 |
+| `xss-audit.md` | 前端 2 处 `dangerouslySetInnerHTML`、Markdown 不透传 HTML、后端不渲染 HTML | 已加固 |
+| `finding-traffic-evidence.md` | 漏洞「关联流量」：多选、用途说明、排序、解除绑定与导出归档 | 已落地 |
+| `数据保留策略.md` | 保留策略后端、元数据表、人工维护 API | 源码交付，未运行迁移/清理 |
+| `数据保留界面-实现与验收清单.md` | 保留策略管理界面与验收项 | 源码交付，未验收 |
+| `主项目进度-2026-10-17.md` | 本轮源码维护口径：SDK Result、Skill/KB 契约、止损与证据措辞 | 历史进度 |
+| `云端全量编译测试与验收门禁清单-2026-10-18.md` | 云端/隔离沙箱的编译、测试、契约核对顺序 | 操作手册 |
+| `人机验证工具-2026-10-18.md` | 原生分类工具与预算、返回契约 | 源码交付，未验收 |
+| `人机验证端到端工具链-2026-10-18.md` | 端到端工具链契约与资源边界 | 源码交付，未验收 |
+| `人机验证专业工具链-2026-10-18.md` | 第三次增量：专业分类、旧 ALTCHA PoW、同会话 flow | 源码交付，未验收 |
+| `人机验证链路加固与验收准备-2026-10-18.md` | 代码审查发现、IPC v2 契约、远程验收步骤 | 源码交付，未验收 |
+| `逆向引擎契约-REA落地与WPE64-MCP协同设计.md` | `REProviderConfig` 通用映射层、目录/schema 门控、与 WPE64 协同 | 已落地 |
+| `MCP能力扩展-调研与路线图.md` | 渗透/逆向双域 MCP 现状实测、差距矩阵、分阶段路线（第一批已落地） | 第一批落地，其余待评估 |
+| `MCP外部接入-扫描与一键配置.md` | 两种接法、只读扫描四态、`plan → diff → apply`、同时在线约束 | 已落地 |
+| `harness-2.0-升级说明.md` | 修掉三个真缺陷、对标补齐能力、关键取舍 | 已落地 |
+| `harness-多域升级路线图.md` | 域驱动目标形态、分阶段迁移、数据模型只加不删 | 长期任务，Phase 0 起 |
+| `浏览器选型-轻量-vs-反检测-2026-10-21.md` | 自带引擎 150 MB 起步 vs 系统浏览器；L1 落地为零额外磁盘 | 已选型（系统 Chrome/Edge + CDP） |
+| `自更新重构方案-2026-10-21.md` | 自更新链路重构：下载、校验、暂存、换装、回滚 | 已落地 |
+| `自动更新流程分析-2026-10-21.md` | 与上一份同尺寸的更新链路分析（含退出码 75 监护语义） | 已落地 |
+| `AI自我进化沉淀机制.md` | 任务终态/删除/手动提炼的沉淀触发、写入门控与审阅 API、脱敏 | 已落地 |
+| `website-maintenance.md` | 官网从独立目录迁入 `website/`、无构建静态化、Cloudflare 发布边界 | 已并入「独立官网」 |
+| `手机端局域网连接-2026-10-22.md` | App 连不上的根因、四种开放方式、防火墙、已知明文限制 | 已全文并入「移动端 App 与局域网连接」 |
 
 ## 开发
 
@@ -467,7 +850,7 @@ flowchart LR
 - 前端：在 `web` 执行 `npm test`、`npm run check`、`npm run build:static`。
 - 语言与文档：`python3 -I scripts/check-language.py --source`、构建后 `--web`、`python3 -I scripts/check-doc-links.py`。
 
-更多开发说明见 [README.zh.md](README.zh.md#开发)及[贡献指南](CONTRIBUTING.md)。分支变更见 [CHANGELOG.md](CHANGELOG.md)。
+更多开发说明见[贡献指南](CONTRIBUTING.md)。分支变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证与免责声明
 
@@ -499,7 +882,7 @@ flowchart LR
 - **国内原作者 / 上游原创：** [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)（中文原创，AGPL-3.0）。
 - **韩语分支（本仓库的 fork 源）：** [jiwoochris/artex-ko](https://github.com/jiwoochris/artex-ko)。
 - **Agent SDK：** [Autumn-27/norma](https://github.com/Autumn-27/norma)。
-- 上游中文技术原稿：[README.zh.md](README.zh.md)。
+- 上游中文技术原稿：原 `README.zh.md`（已并入本 README，历史版本见 git）。
 - 上游演示：[artex-demo.vercel.app](https://artex-demo.vercel.app/)。
 
 上述远端在 2026-10 被记录为无法公开访问；保留链接用于来源归属与历史对照，不保证当前可访问，也不以此断言永久删除。
@@ -507,4 +890,4 @@ flowchart LR
 
 ## 独立官网源码
 
-对外静态官网统一维护于 [`website/`](website/README.md)，与产品控制台 `web/` 分离。目录说明、无构建的静态化维护与 Cloudflare 发布边界见[官网维护说明](docs/website-maintenance.md)。
+对外静态官网统一维护于 [`website/`](website/README.md)，与产品控制台 `web/` 分离。目录说明、无构建的静态化维护与 Cloudflare 发布边界见 [website/README.md](website/README.md)。

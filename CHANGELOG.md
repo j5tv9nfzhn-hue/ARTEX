@@ -75,9 +75,9 @@
 - **保留贡献与治理设施。** [Issue 模板](.github/ISSUE_TEMPLATE/)、[PR 模板](.github/PULL_REQUEST_TEMPLATE.md)、[安全政策](SECURITY.md)、[行为准则](CODE_OF_CONDUCT.md)改为简体中文，英文版本继续提供。
 - **保留英文文档层。** README、变更历史、安全政策、行为准则、贡献/维护指南、防御指南、流量证据设计与检测规则均有英文入口；历史 `*-ko.md` 路径继续有效，但内容现为简体中文。
 - **移除历史截图预览并重写架构章节。** 删除 `screenshots/` 目录与 `web/media/dashboard.png`；两个 README 不再展示截图，「系统架构」以六视图全面重建（全景分层 · 任务运行闭环 · 数据底座 · 协作机制 · 成本与可靠性控制面 · 单二进制部署）。
-- **恢复三端打包脚本（Linux/macOS/Windows）。** 按 Git 历史还原 2026-10-11 裁剪（`3492c39`）对 [build.sh](build.sh) 的收窄：恢复 linux/darwin 目标、三端 Release 默认清单（保留裁剪期新增的 `windows/arm64`）、非 Windows 包附 `start.sh` 与 macOS UPX 参数；[README](README.md)、[构建与产物](docs/构建与产物.md) 与 [维护手册](MAINTAINING.md) 同步。
+- **恢复三端打包脚本（Linux/macOS/Windows）。** 按 Git 历史还原 2026-10-11 裁剪（`3492c39`）对 [build.sh](build.sh) 的收窄：恢复 linux/darwin 目标、三端 Release 默认清单（保留裁剪期新增的 `windows/arm64`）、非 Windows 包附 `start.sh` 与 macOS UPX 参数；[README](README.md)、[构建与产物](README.md#构建与产物) 与 [维护手册](MAINTAINING.md) 同步。
 - **构建流水线合并为单一工作流（2026-10-21）。** 删除 `.github/workflows/ci.yml`：它和 `release.yml` 各有一套前端静态导出与 Go 编译，重复构建、两套缓存 key，还会出现「ci 绿了但 release 挂了」。现在只保留 `release.yml`——`gate`（build / vet / embedui-vet / gofmt / golangci-lint）→ `frontend`（含类型检查）→ `binaries`（6 目标）→ `release`；测试、语言检查与文档链接移入 `signals`（`continue-on-error`，只报告不拦发布），`workflow_dispatch` 可干跑不发布。检测规则仍由独立的 `detections.yml` 按路径触发。
-- **Release 工作流恢复三端打包。** [release.yml](.github/workflows/release.yml) 的发布矩阵由 Windows 双架构扩展为 Linux/macOS/Windows × amd64/arm64：随 `v*` tag 交叉编译、按平台校验收件头（PE/ELF/Mach-O）与目标架构后发布三端 zip 与 SHA256SUMS；CI（`ci.yml`，已于 2026-10-21 并入 `release.yml`）每次 push 的可下载产物同步改为三端 zip（复用同一 `build.sh`，版本取提交短 sha），两处校验共用 [scripts/check-binary-headers.py](scripts/check-binary-headers.py)；[README](README.md)、[README.zh.md](README.zh.md)、[CONTRIBUTING](CONTRIBUTING.md)、[维护手册](MAINTAINING.md) 与[构建与产物](docs/构建与产物.md) 同步。
+- **Release 工作流恢复三端打包。** [release.yml](.github/workflows/release.yml) 的发布矩阵由 Windows 双架构扩展为 Linux/macOS/Windows × amd64/arm64：随 `v*` tag 交叉编译、按平台校验收件头（PE/ELF/Mach-O）与目标架构后发布三端 zip 与 SHA256SUMS；CI（`ci.yml`，已于 2026-10-21 并入 `release.yml`）每次 push 的可下载产物同步改为三端 zip（复用同一 `build.sh`，版本取提交短 sha），两处校验共用 [scripts/check-binary-headers.py](scripts/check-binary-headers.py)；[README](README.md)（含原 README.zh.md 内容）、[CONTRIBUTING](CONTRIBUTING.md)、[维护手册](MAINTAINING.md) 与[构建与产物](README.md#构建与产物) 同步。
 
 ---
 
