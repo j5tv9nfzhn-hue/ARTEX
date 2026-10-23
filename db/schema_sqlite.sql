@@ -470,7 +470,11 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     updated_at       TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_one_default ON llm_profiles(is_default) WHERE is_default;
-CREATE INDEX IF NOT EXISTS idx_llm_profiles_provider ON llm_profiles(provider_id);
+-- provider_id 的索引**故意不在这里**。老库的这一列是 open_sqlite.go 的
+-- sqliteColumnAdds 补出来的，而 schema 整段重放发生在补列之前；对本文件里
+-- 不存在的列建索引，会让老库在启动时直接 no such column: provider_id 退不出来
+-- （v2.4.0 升级现场的真实故障）。凡是引用「补出来的列」的 DDL 一律放
+-- open_sqlite.go 的 sqlitePostColumnDDL，那边排在补列之后执行。
 DROP TRIGGER IF EXISTS trg_llm_upd;
 
 CREATE TRIGGER IF NOT EXISTS trg_llm_upd_updated_at

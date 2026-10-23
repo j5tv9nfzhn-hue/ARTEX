@@ -160,6 +160,21 @@ var sqliteColumnAdds = []struct {
 	},
 }
 
+// sqlitePostColumnDDL 是「依赖 sqliteColumnAdds 补出来的列」的 DDL，必须在补列
+// **之后**执行。
+//
+// 为什么不能写进 schema_sqlite.sql：schema 每次启动整段重放，而 CREATE TABLE
+// IF NOT EXISTS 对已存在的表是空操作——老库里 provider_id 这一列还不存在，索引
+// 一建就报 `no such column: provider_id`，整个进程起不来（v2.4.0 从 2.3.x 升级
+// 时的现场故障）。新库因为 CREATE TABLE 自带这一列看不出来；CI 里的数据库全是
+// 新建的，同样发现不了，所以必须由 TestOpenUpgradesLegacyLLMProfiles 这类「先退化成
+// 老库形态再打开」的用例兜住。
+//
+// 以后凡是引用「补出来的列」的索引/视图/触发器，一律加到这里，不要加回 schema 文件。
+var sqlitePostColumnDDL = []string{
+	`CREATE INDEX IF NOT EXISTS idx_llm_profiles_provider ON llm_profiles(provider_id)`,
+}
+
 // applySQLiteColumnAdds 逐条补齐上表缺失的列。pragma_table_info 是表值函数,表名
 // 可以作为绑定参数传入,不必拼进 SQL(与 archive_restore_sqlite.go 的用法一致)。
 func applySQLiteColumnAdds(ctx context.Context, con *sql.Conn) error {
@@ -175,6 +190,17 @@ func applySQLiteColumnAdds(ctx context.Context, con *sql.Conn) error {
 		}
 		if _, err := con.ExecContext(ctx, col.alter); err != nil {
 			return fmt.Errorf("add sqlite column %s.%s: %w", col.table, col.column, err)
+		}
+	}
+	return nil
+}
+
+// applySQLitePostColumnDDL 建那些引用补列的索引。IF NOT EXISTS 保证幂等，
+// 新库老库走同一条路。
+func applySQLitePostColumnDDL(ctx context.Context, con *sql.Conn) error {
+	for _, stmt := range sqlitePostColumnDDL {
+		if _, err := con.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("apply sqlite post-column ddl: %w\n  > %s", err, stmt)
 		}
 	}
 	return nil
@@ -227,6 +253,12 @@ func openSQLite(dsn string) (*DB, error) {
 	// 补旧库列:老 SQLite 文件缺的列在这里补齐(新库的列已折进 CREATE TABLE,
 	// 此步是完整的空操作)。必须在 seedBuiltins 之前——seed 会写 llm_profiles 等表。
 	if err := applySQLiteColumnAdds(context.Background(), conn); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+	// 依赖补列的索引排在补列之后：schema 重放时老库还没有 provider_id，
+	// 在那里建索引会让升级当场失败（见 sqlitePostColumnDDL 的注释）。
+	if err := applySQLitePostColumnDDL(context.Background(), conn); err != nil {
 		sqlDB.Close()
 		return nil, err
 	}
