@@ -52,6 +52,41 @@ func TestMeterToolRecordsAttributionAndDelegates(t *testing.T) {
 	}
 }
 
+// 错误标记必须落账：否则「工具错误率」只能靠 activity，而 activity 会随任务数据
+// 一起被清理——线上正是这样把 47374 次调用的错误信息丢干净的。
+func TestMeterToolRecordsError(t *testing.T) {
+	base := actool.Build(actool.Spec{
+		Name: "http_request",
+		Run: func(context.Context, json.RawMessage, *actool.ToolContext) (actool.Result, error) {
+			return actool.Errorf("boom"), nil
+		},
+	})
+	recorder := &recordingToolUsage{}
+	wrapped := meterTool(base, recorder, "http_request", "worker", agent.RunInfo{})
+	if _, err := wrapped.Call(context.Background(), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.rows) != 1 || !recorder.rows[0].IsError {
+		t.Fatalf("IsError not recorded for an error result: %+v", recorder.rows)
+	}
+
+	// handler 直接返回 error（网络失败、panic 之前的提前返回）同样算错误。
+	base2 := actool.Build(actool.Spec{
+		Name: "http_request",
+		Run: func(context.Context, json.RawMessage, *actool.ToolContext) (actool.Result, error) {
+			return actool.Result{}, errors.New("dial tcp: timeout")
+		},
+	})
+	recorder2 := &recordingToolUsage{}
+	wrapped2 := meterTool(base2, recorder2, "http_request", "worker", agent.RunInfo{})
+	if _, err := wrapped2.Call(context.Background(), nil, nil); err == nil {
+		t.Fatal("want the handler error surfaced to the caller")
+	}
+	if len(recorder2.rows) != 1 || !recorder2.rows[0].IsError {
+		t.Fatalf("IsError not recorded for a handler error: %+v", recorder2.rows)
+	}
+}
+
 func TestMeterToolFailureDoesNotBreakInvocation(t *testing.T) {
 	calls := 0
 	base := actool.Build(actool.Spec{

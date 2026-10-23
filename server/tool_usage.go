@@ -33,16 +33,22 @@ func meterTool(t actool.CoreTool, recorder toolUsageRecorder, toolKey, agentKey 
 	return &meteredTool{CoreTool: t, recorder: recorder, toolKey: toolKey, agentKey: agentKey, ri: ri}
 }
 
-func (m *meteredTool) Call(ctx context.Context, input json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
-	if err := m.recorder.InsertToolUsage(&db.ToolUsage{
-		ToolKey:       m.toolKey,
-		AgentKey:      m.agentKey,
-		TaskID:        m.ri.TaskID,
-		ExplorationID: m.ri.ExplorationID,
-		IntentID:      m.ri.IntentID,
-		SessionID:     m.ri.SessionID,
-	}); err != nil {
-		log.Printf("[toolusage] insert %s: %v", m.toolKey, err)
-	}
+func (m *meteredTool) Call(ctx context.Context, input json.RawMessage, tc *actool.ToolContext) (res actool.Result, err error) {
+	// 账本改成「调用结束后」写：只有拿到结果才知道这次是不是错误。
+	// 用 defer 保证 panic / 提前返回也记一行——「调用了却没记」会让错误率被
+	// 系统性低估，而这正是「工具错误率到底多高」这个问题的唯一数据源。
+	defer func() {
+		if insErr := m.recorder.InsertToolUsage(&db.ToolUsage{
+			ToolKey:       m.toolKey,
+			AgentKey:      m.agentKey,
+			TaskID:        m.ri.TaskID,
+			ExplorationID: m.ri.ExplorationID,
+			IntentID:      m.ri.IntentID,
+			SessionID:     m.ri.SessionID,
+			IsError:       err != nil || res.IsError,
+		}); insErr != nil {
+			log.Printf("[toolusage] insert %s: %v", m.toolKey, insErr)
+		}
+	}()
 	return m.CoreTool.Call(ctx, input, tc)
 }

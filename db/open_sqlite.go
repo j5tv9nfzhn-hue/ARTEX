@@ -144,6 +144,13 @@ var sqliteColumnAdds = []struct {
 		"validation",
 		`ALTER TABLE findings ADD COLUMN validation TEXT NOT NULL DEFAULT 'unverified'`,
 	},
+	{
+		// 工具错误标记(见 server/tool_usage.go)。历史行没有错误信息可回溯,统一回填
+		// 0=未报错——宁可低估,也不要把「不知道」记成错误。
+		"tool_usage",
+		"is_error",
+		`ALTER TABLE tool_usage ADD COLUMN is_error BOOLEAN NOT NULL DEFAULT 0`,
+	},
 }
 
 // applySQLiteColumnAdds 逐条补齐上表缺失的列。pragma_table_info 是表值函数,表名

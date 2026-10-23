@@ -962,7 +962,10 @@ CREATE TABLE IF NOT EXISTS tool_usage (
     task_id        BIGINT,
     exploration_id BIGINT,
     intent_id      BIGINT,
-    session_id     TEXT
+    session_id     TEXT,
+    -- 这次调用是否以错误收场(工具返回 IsError,或 handler 直接返回 error)。
+    -- 错误率统计靠它:activity 会随任务数据一起被清理,账本不能跟着丢。
+    is_error       BOOLEAN NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tool_usage_tool ON tool_usage(tool_key, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_usage_task ON tool_usage(task_id);

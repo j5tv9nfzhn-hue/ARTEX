@@ -9,16 +9,20 @@ type ToolUsage struct {
 	ExplorationID int64  `json:"exploration_id"`
 	IntentID      int64  `json:"intent_id"`
 	SessionID     string `json:"session_id"`
+	// IsError 标记这次调用是否以错误收场（工具返回 IsError，或 handler 直接返回
+	// error）。错误率是判断「工具好不好用」的唯一客观指标，必须写在账本里：
+	// activity 会随任务数据一起被清理，账本不该跟着丢。
+	IsError bool `json:"is_error"`
 }
 
 // InsertToolUsage appends one ledger row. Runtime callers treat metering as
 // best-effort so a statistics failure never interrupts the tool itself.
 func (d *DB) InsertToolUsage(u *ToolUsage) error {
 	_, err := d.Exec(`
-INSERT INTO tool_usage(tool_key, agent_key, task_id, exploration_id, intent_id, session_id)
-VALUES ($1, NULLIF($2,''), $3, $4, $5, NULLIF($6,''))`,
+INSERT INTO tool_usage(tool_key, agent_key, task_id, exploration_id, intent_id, session_id, is_error)
+VALUES ($1, NULLIF($2,''), $3, $4, $5, NULLIF($6,''), $7)`,
 		u.ToolKey, u.AgentKey, nullIfZero(u.TaskID), nullIfZero(u.ExplorationID),
-		nullIfZero(u.IntentID), u.SessionID)
+		nullIfZero(u.IntentID), u.SessionID, u.IsError)
 	return err
 }
 
