@@ -49,7 +49,18 @@ type Pool struct {
 	members []*Member // in chain order (active first, then priority DESC)
 	health  *Registry
 	rr      atomic.Uint64 // rotates the starting point within an equal-priority group
+	// failHook 在每次「可故障转移的成员失败」时调用，带上本次请求的 ctx。
+	// 服务端用它把「这个配置对当前任务额度用尽」记到任务链游标上——这件事
+	// Pool 自己判断不了：成员是跨任务共享的，只有 ctx 知道这次是哪个任务。
+	failHook FailureHook
 }
+
+// FailureHook 观察一次可故障转移的成员失败。它在失败路径上同步执行，一次失败
+// 调用一次，实现必须足够轻（至多一次 DB 写）。
+type FailureHook func(ctx context.Context, memberID int64, err error)
+
+// SetFailureHook 安装回调（nil = 关闭）。请在 New 之后、Pool 被并发使用之前调用一次。
+func (p *Pool) SetFailureHook(fn FailureHook) { p.failHook = fn }
 
 // New builds a Pool over members (already in chain order). Returns nil when the
 // chain is empty. A single-member chain is still a valid Pool — it just behaves
@@ -112,6 +123,9 @@ func (p *Pool) Stream(ctx context.Context, req llm.CompletionRequest) iter.Seq2[
 			if p.health.Trip(m.ID, trimErr(failed), hard) {
 				log.Printf("[llmpool] 配置 %q(%s) 已熔断：%s", m.Name, m.Model, trimErr(failed))
 			}
+			if p.failHook != nil {
+				p.failHook(ctx, m.ID, failed)
+			}
 			if i+1 < len(order) {
 				n := order[i+1]
 				log.Printf("[llmpool] LLM 故障转移：%q(%s) → %q(%s)，原因：%s",
@@ -153,6 +167,9 @@ func (p *Pool) Complete(ctx context.Context, req llm.CompletionRequest) (llm.Mes
 		hard := isHardFailure(err)
 		if p.health.Trip(m.ID, trimErr(err), hard) {
 			log.Printf("[llmpool] 配置 %q(%s) 已熔断：%s", m.Name, m.Model, trimErr(err))
+		}
+		if p.failHook != nil {
+			p.failHook(ctx, m.ID, err)
 		}
 		if i+1 < len(order) {
 			n := order[i+1]

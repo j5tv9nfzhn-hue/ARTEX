@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"time"
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/llmpool"
+	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/norma/llm"
 )
 
@@ -52,6 +55,48 @@ func newLLMHealthRegistry(pg *db.DB) *llmpool.Registry {
 		}
 	}
 	return reg
+}
+
+// attachMemberQuotaHook 让「链上某个配置额度用尽」在发生的那一刻就落到当前任务的
+// 链游标上，而不是等整条链都失败。
+//
+// 原来的缺口很具体：A 欠费 402 → 轮询切到 B 成功 → 任务照跑，但 task_llm_profiles
+// 里 A 仍然是 ready，下一次运行时任务又会先拿 A 去撞一次（有熔断兜着，每次只浪费
+// 一次失败，但一天几十次 × 每次最长 50 秒）。成员级标记把这个洞补上：谁的额度没了
+// 就记谁，链游标随之前移。
+//
+// 任务 id 从 ctx 上取（server/task_llm.go 用 llmrec.WithTaskID 挂的）；chat、侧问、
+// 连接测试没有任务游标，自然跳过。
+func (s *Server) attachMemberQuotaHook(pool *llmpool.Pool) {
+	if pool == nil || s.m == nil || s.m.pg == nil {
+		return
+	}
+	pool.SetFailureHook(func(ctx context.Context, profileID int64, err error) {
+		if !isQuotaExhaustedError(err) {
+			return
+		}
+		taskID, perr := parseTaskID(llmrec.TaskIDFrom(ctx))
+		if perr != nil {
+			return
+		}
+		reason := err.Error()
+		if len(reason) > 300 {
+			reason = reason[:300] + "…"
+		}
+		transition, merr := s.m.pg.MarkTaskLLMProfileQuotaExhausted(taskID, profileID, reason)
+		if merr != nil {
+			log.Printf("[llmpool] 标记配置 #%d 额度耗尽失败(task %d): %v", profileID, taskID, merr)
+			return
+		}
+		next := "（已在链尾）"
+		if transition.NextProfileID != nil {
+			next = fmt.Sprintf("→ 下一个配置 #%d", *transition.NextProfileID)
+		}
+		log.Printf("[llmpool] 配置 #%d 额度耗尽，已从任务 %d 的链上摘除 %s", profileID, taskID, next)
+		if pt, gerr := s.m.pg.GetTask(taskID); gerr == nil && pt != nil {
+			s.syncTaskLLMState(pt)
+		}
+	})
 }
 
 // poolMember builds one chain member from a profile, reusing the per-profile
@@ -122,7 +167,9 @@ func (s *Server) poolChain(headID int64, headProv llm.Provider, headCfg agent.Co
 	if len(members) < 2 {
 		return nil // nothing to fail over to
 	}
-	return llmpool.New(members, s.llmHealth)
+	pool := llmpool.New(members, s.llmHealth)
+	s.attachMemberQuotaHook(pool)
+	return pool
 }
 
 // poolForActive wraps the globally-active provider in the failover chain. Returns
@@ -250,7 +297,9 @@ func (s *Server) roleFallbackPool(role string, r agentBindingResolution) *llmpoo
 	if len(members) < 2 {
 		return nil // 没有可用的备选 → 保持「绑定独占」的原有语义
 	}
-	return llmpool.New(members, s.roleHealth(role))
+	pool := llmpool.New(members, s.roleHealth(role))
+	s.attachMemberQuotaHook(pool)
+	return pool
 }
 
 // LLMPoolMemberStatus is one chain entry as shown in the UI.
