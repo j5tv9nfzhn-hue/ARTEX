@@ -101,3 +101,15 @@ func (p *LLMProfile) EffectiveContextWindowK() int {
 func (p *LLMProfile) ContextWindowDetected() bool {
 	return p != nil && p.Caps.ContextTokens > 0
 }
+
+// MaxOutputTokens 返回探测到的单次输出上限（0 = 未知）。
+//
+// 和窗口不一样，这里不做「与用户声明取小」：profile 里没有「声明的输出上限」这一列，
+// MaxTokens 是每轮请求值（策略），本字段是模型能力（事实），两者语义不同，
+// 由 agent 侧在发请求时取最小（见 agent/maxtokens.go）。
+func (p *LLMProfile) MaxOutputTokens() int {
+	if p == nil {
+		return 0
+	}
+	return p.Caps.MaxOutputTokens
+}

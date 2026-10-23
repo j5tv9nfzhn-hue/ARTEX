@@ -515,6 +515,9 @@ func (s *Server) loadLLMConfig() (agent.Config, bool) {
 	// 让阈值停在 800K，8 天一次都没压过。
 	cfg.ContextWindowK = p.EffectiveContextWindowK()
 	cfg.ContextWindowDetected = p.ContextWindowDetected()
+	// 输出上限同理：探测到的模型上限只用来给请求的 max_tokens 封顶，
+	// 不参与压缩阈值（见 agent/maxtokens.go）。
+	cfg.MaxOutputDetected = p.MaxOutputTokens()
 	cfg.ThinkingType = p.ThinkingType
 	cfg.ReasoningEffort = p.ReasoningEffort
 	cfg.Stream = p.Streaming
@@ -692,6 +695,9 @@ func (s *Server) loadProfileConfig(id int64) (agent.Config, bool) {
 	// 就会让压缩阈值停在永远够不到的地方。
 	cfg.ContextWindowK = p.EffectiveContextWindowK()
 	cfg.ContextWindowDetected = p.ContextWindowDetected()
+	// 输出上限同理：探测到的模型上限只用来给请求的 max_tokens 封顶，
+	// 不参与压缩阈值（见 agent/maxtokens.go）。
+	cfg.MaxOutputDetected = p.MaxOutputTokens()
 	cfg.ThinkingType = p.ThinkingType
 	cfg.ReasoningEffort = p.ReasoningEffort
 	cfg.Stream = p.Streaming

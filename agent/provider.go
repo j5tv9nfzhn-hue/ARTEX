@@ -74,6 +74,11 @@ type Config struct {
 	// OpenAI 推理模型(o 系列/GPT-5)只认后者,收到 max_tokens 会直接报
 	// unsupported_parameter;而多数兼容网关只认前者,故不做自动推断,交由用户按端点选。
 	MaxTokensField string
+	// MaxOutputDetected 是供应商上报的单次输出上限（llmprobe.Capabilities.
+	// MaxOutputTokens），0 = 未知。它只用来给请求的 max_tokens 封顶：用户配置可以更小，
+	// 但不能更大——请求超过模型上限时，Anthropic 3.7/4 与 vLLM 都是直接 400，
+	// 而不是像老模型那样自动下调。钳制逻辑见 maxtokens.go。
+	MaxOutputDetected int
 	// SessionHeaderKey,非空时,让每次 LLM 请求带上一个自定义 HTTP 头,头名为该值、
 	// 头值为【当前会话的 session id】(chat 会话=conv-<id>,worker=exp<x>-worker-i<intent>
 	// 等,见 WorkerSessionID)。用于某些按 session-id 头做提示缓存/粘性路由的网关。
@@ -496,7 +501,10 @@ func (c Config) NewProvider() (llm.Provider, error) {
 	if c.Format != llm.FormatAnthropic {
 		prov = splitInlineThinking(prov)
 	}
-	return prov, nil
+	// 最外层做输出上限钳制（见 maxtokens.go）：这是最后一个同时看得见「本次请求想要
+	// 多少输出」和「模型/窗口实际能给多少」的位置。放在这里，chat / planner / worker /
+	// goals / 摘要 / 连接测试全部自动覆盖，以后新增调用链也不会漏。
+	return &clampProvider{inner: prov, cfg: c}, nil
 }
 
 // IsQuotaExhaustedMessage deliberately recognizes only explicit balance,
