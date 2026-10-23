@@ -945,6 +945,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tasks/{id}/intents/{iid}/steer", s.steerIntent)               // 引导:向运行中的 Worker 递话(不打断,下一步生效)
 	mux.HandleFunc("POST /api/tasks/{id}/intents/{iid}/rerun", s.rerunIntent)               // 重跑单条 blocked/exhausted/stopped 意图
 	mux.HandleFunc("POST /api/tasks/{id}/intents/rerun-blocked", s.rerunBlocked)            // 批量重跑本任务全部 blocked 意图
+	mux.HandleFunc("GET /api/tasks/{id}/branches", s.taskBranches)                          // 未收口分支（完成闸门角标）
 	mux.HandleFunc("GET /api/tasks/{id}/checkpoints", s.taskCheckpoints)                    // 检查点:列出任务时间线检查点
 	mux.HandleFunc("POST /api/tasks/{id}/checkpoints/{cid}/revert", s.revertTaskCheckpoint) // 检查点:回滚任务时间线
 	mux.HandleFunc("POST /api/tasks/{id}/messages/{seq}/rollback", s.rollbackTaskMessage)   // 对话:回滚主 Agent 某条消息之前(气泡箭头，只动对话不动任务)
@@ -1448,8 +1449,8 @@ func (s *Server) controlIntent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: "+err.Error())
 		return
 	}
-	if req.Action != "pause" && req.Action != "resume" && req.Action != "cancel" {
-		writeErr(w, 400, "action must be pause|resume|cancel")
+	if req.Action != "pause" && req.Action != "resume" && req.Action != "cancel" && req.Action != "abandon" {
+		writeErr(w, 400, "action must be pause|resume|cancel|abandon")
 		return
 	}
 
@@ -3660,6 +3661,9 @@ func (s *Server) settingsPayload() map[string]any {
 		// 实验功能:noa 模型驱动上下文压缩(默认关)。开启后平台接入的四类 agent 由 noa
 		// 接管上下文压缩,取代内置 compaction;每 run 读一次,对之后启动的 run 生效。
 		"noa_compaction": s.m.NoaCompactionEnabled(),
+		// 实验功能:完成闸门(未收口分支不许判完成)。off=关 / shadow=只记录 / enforce=真拦并回炉。
+		// 每次完成判定读一次，切换即时生效。
+		"branch_gate_mode": s.m.BranchGateMode(),
 		// 漏洞 IM 推送的全局项。渠道本身是独立资源，走 /api/notify/* 管理；
 		// 这里只放「作用于全部渠道」的三项。
 		"notify_enabled":             s.m.pg.GetBool(settingNotifyEnabled, true),
@@ -3753,6 +3757,8 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		ConstraintsInjectWorker  *bool `json:"constraints_inject_worker"`
 		// 实验功能:noa 上下文压缩开关(默认关);每 run 读,对之后启动的 run 生效,无需重建 agent。
 		NoaCompaction *bool `json:"noa_compaction"`
+		// 实验功能:完成闸门模式(off/shadow/enforce);每次完成判定读,切换即时生效。
+		BranchGateMode *string `json:"branch_gate_mode"`
 		// 漏洞 IM 推送的全局项。三者都由投递引擎每轮读一次，改完即时生效，
 		// 不需要重建 agent 或重启。
 		NotifyEnabled    *bool   `json:"notify_enabled"`
@@ -3816,6 +3822,13 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 每 run 读的解析器,切换即时对之后启动的 run 生效,无需 applyLLM 重建。
 		if err := s.m.SetNoaCompaction(*req.NoaCompaction); err != nil {
 			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.BranchGateMode != nil {
+		// 完成闸门模式:每次完成判定读一次,切换即时生效(不改任何已落库的任务状态)。
+		if err := s.m.SetBranchGateMode(*req.BranchGateMode); err != nil {
+			writeErr(w, 400, err.Error())
 			return
 		}
 	}

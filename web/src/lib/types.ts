@@ -431,6 +431,16 @@ export type FindingState = "confirmed" | "dismissed";
 export type HintState = "active" | "consumed";
 export type ExploreRel = "spawns" | "derived_from" | "yields" | "proves" | "covers";
 
+// 未收口分支（完成闸门）：来自 GET /tasks/{id}/branches 的 blockers。
+export interface TaskBlocker {
+  intent_id: number;
+  end_state: string;
+  stop_reason: string;
+  attempt: number;
+  node_state: string;
+  has_handoff: boolean;
+}
+
 export interface TaskNode {
   id: string;
   type: ExploreKind;
@@ -1075,6 +1085,9 @@ export interface Settings {
   // worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction;每 run 读一次,对
   // 之后启动的 run 生效。
   noa_compaction?: boolean;
+  // 实验功能:完成闸门（未收口分支不许判完成）。off=关 / shadow=只记录不拦 / enforce=真拦并回炉。
+  // 切换即时生效（每次完成判定读一次），无需重启。
+  branch_gate_mode?: "off" | "shadow" | "enforce" | string;
   // AI 自我进化沉淀：任务完成/删除时把可复用路径、证据与失败模式整理成技能。
   // skill_review_gate=true（默认）时先进入待审阅队列；auto_distill_apply=true 才直接落盘。
   skill_review_gate?: boolean;

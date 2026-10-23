@@ -358,6 +358,20 @@ func intentAssetIDs(intent *db.Node) []int64 {
 	return p.AssetIDs
 }
 
+// intentContinues 返回本条意图的续派源（payload.continues_intent_id），0 = 全新方向。
+func intentContinues(intent *db.Node) int64 {
+	if intent == nil || len(intent.Payload) == 0 {
+		return 0
+	}
+	var p struct {
+		ContinuesIntentID int64 `json:"continues_intent_id"`
+	}
+	if err := json.Unmarshal(intent.Payload, &p); err != nil {
+		return 0
+	}
+	return p.ContinuesIntentID
+}
+
 func renderIntentTask(intent *db.Node) string {
 	return fmt.Sprintf("\n\n【你领到的意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n%s\n意图 id: %d（写回 record_fact / report_finding 时传它）", string(intent.Payload), intent.ID)
 }
@@ -552,6 +566,15 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			"\n…（意图块超长已截断；完整资产用 list_assets / asset_neighbors 查。）"
 	}
 	sysBody += intentBlock
+	// 结构化交接：本条意图若是「接着某条没跑完的意图继续」（payload.continues_intent_id），
+	// 把那条意图最近的交接单注入 system 尾部。交接单的事实层由服务端机械抽取
+	// （跑过什么/写回什么/最后输出/可回读区间），不依赖上一位的文本总结，
+	// 因此"没说出口的东西"不会因为换了个子代理就蒸发。
+	if src := intentContinues(intent); src > 0 {
+		if h, err := ts.IntentHandoff(src); err == nil && h != nil && strings.TrimSpace(h.RenderText) != "" {
+			sysBody += h.RenderText
+		}
+	}
 	if hint := func() string {
 		tactical := BuildTacticalRoutingHint(intentBlock, tools, def)
 		if isRE {

@@ -259,8 +259,18 @@ func (s *Server) applyIntentControl(ctx context.Context, t *Task, iid int64, act
 			t.NotifyCancelled(iid, summary, reason)
 			out.State = db.StateIntentDeleted
 		}
+	case "abandon":
+		// 人工收口：把一条没跑完的分支标记为「已人工结案」（写 intent_closures 审计行）。
+		// 不删意图、不改状态、不丢产物；只是从此不再算未收口，完成闸门不会再拦任务。
+		// 用于回炉到上限后的兜底——这时只能由人来判断「这条方向确实不做了」。
+		if err := s.m.CloseBranch(t, iid, reason); err != nil {
+			return out, err
+		}
+		s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
+			Summary: fmt.Sprintf("意图 #%d 已人工收口（不再算未收口分支）：%s", iid, strings.TrimSpace(reason))})
+		out.State = node.State // 状态不变，只是收口留痕
 	default:
-		return out, fmt.Errorf("action must be pause|resume|cancel")
+		return out, fmt.Errorf("action must be pause|resume|cancel|abandon")
 	}
 	return out, nil
 }

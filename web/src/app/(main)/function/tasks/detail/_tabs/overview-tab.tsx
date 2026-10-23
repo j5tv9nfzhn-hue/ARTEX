@@ -40,6 +40,7 @@ import type {
   Stats,
   Task,
   TaskConstraint,
+  TaskBlocker,
   TaskGoal,
   TaskNode,
   TaskScopeRow,
@@ -131,6 +132,10 @@ export function OverviewTab({ taskId }: { taskId: string }) {
   } | null>(null);
   // 正在重跑的意图 ID，批量使用 __all__，用于禁用按钮并显示 spinner。
   const [rerunning, setRerunning] = React.useState<Set<string>>(new Set());
+  // 未收口分支（完成闸门）：exhausted/blocked/stopped 且没被续派或收口的分支。
+  // 与下面的 blocked 列表不同——exhausted 也在此列，且支持人工收口。
+  const [branches, setBranches] = React.useState<TaskBlocker[]>([]);
+  const [closing, setClosing] = React.useState<Set<number>>(new Set());
   // 测试范围列表与添加表单状态。
   const [scope, setScope] = React.useState<TaskScopeRow[]>([]);
   const [scopeKind, setScopeKind] = React.useState<TaskScopeRow["kind"]>("root_domain");
@@ -357,6 +362,24 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     }
   };
 
+  // 人工收口：只写审计行（不动状态/产物），成功后卡片里这一条消失。
+  const closeOne = async (id: number) => {
+    setClosing((prev) => new Set(prev).add(id));
+    try {
+      await api.closeIntent(taskId, String(id), "");
+      setBranches((prev) => prev.filter((b) => b.intent_id !== id));
+      toast.success(t("branches.closed", { id }));
+    } catch (e) {
+      toast.error(t("branches.failed", { error: (e as Error).message }));
+    } finally {
+      setClosing((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
   // 批量重跑当前任务的所有 blocked 意图。
   const rerunAll = async () => {
     markRerun("__all__", true);
@@ -396,6 +419,15 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     }
   };
 
+  const loadBranches = React.useCallback(async () => {
+    try {
+      const r = await api.taskBranches(taskId);
+      setBranches(r.blockers ?? []);
+    } catch {
+      // 台账表尚未建好（老库首次启动）时读不到，卡片不显示即可。
+    }
+  }, [taskId]);
+
   // load 提到 useCallback：条件变化时立即刷新一次，周期刷新交给 usePolling。
   // 两者共用同一份请求逻辑，usePolling 保证同一时刻只有一轮在跑。
   const load = React.useCallback(async () => {
@@ -428,7 +460,8 @@ export function OverviewTab({ taskId }: { taskId: string }) {
       .catch(() => {
         // 没有资产库时 coverage 可能 503——下一轮轮询会重试，这里不打断其它面板。
       });
-  }, [taskId]);
+    void loadBranches();
+  }, [taskId, loadBranches]);
 
   // 首次加载：把 scope / tokens / goals / constraints 一起拉齐。
   React.useEffect(() => {
@@ -513,6 +546,46 @@ export function OverviewTab({ taskId }: { taskId: string }) {
             ))}
             {blocked.length > 20 && (
               <p className="text-muted-foreground text-xs">{t("blocked.truncated", { rest: blocked.length - 20 })}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {/* 未收口分支：跑崩/耗尽/被停但没人收口。回炉到上限后就靠这里人工收口收尾。 */}
+      {branches.length > 0 && (
+        <Card className="border-amber-500/30">
+          <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <ShieldAlertIcon className="size-4 text-amber-500" /> {t("branches.title")}
+              <span className="font-normal text-muted-foreground text-xs">
+                {t("branches.hint", { count: branches.length })}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {branches.slice(0, 20).map((b) => (
+              <div key={b.intent_id} className="flex items-center gap-2 text-sm">
+                <StatusBadge domain="intent" value={b.end_state} />
+                <span className="shrink-0 font-mono text-muted-foreground text-xs">#{b.intent_id}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
+                  {b.stop_reason || "—"} · {t("branches.attempt", { n: b.attempt })}
+                  {b.has_handoff ? ` · ${t("branches.handoff")}` : ""}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2 text-xs"
+                  disabled={closing.has(b.intent_id)}
+                  onClick={() => void closeOne(b.intent_id)}
+                >
+                  <CheckIcon className={`size-3 ${closing.has(b.intent_id) ? "opacity-40" : ""}`} />
+                  {t("branches.close")}
+                </Button>
+              </div>
+            ))}
+            {branches.length > 20 && (
+              <p className="text-muted-foreground text-xs">
+                {t("branches.truncated", { rest: branches.length - 20 })}
+              </p>
             )}
           </CardContent>
         </Card>

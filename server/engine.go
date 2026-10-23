@@ -1082,6 +1082,10 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		if open, err := t.Store.HasOpenGoal(); err == nil && !open {
 			t.drainTriggers() // 丢弃累积的 done/finding 触发，避免 goalless 长会话里无界增长
 			if active, err := t.Store.HasActiveIntent(); err == nil && !active {
+				// 完成闸门（G3）：抽干不等于做完——还有坏终态分支就先回炉，不收尾。
+				if e.blockTaskCompletion(t) {
+					return
+				}
 				// frontier 抽干且无在跑意图 → 收尾。用 Guarded 版做 CAS，避免踩到并发的
 				// pause/delete/超时收尾的状态转换。
 				if won, err := e.m.SetTaskStatusGuarded(t.ID, "done"); err != nil {
@@ -1142,6 +1146,11 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 			log.Printf("[planner] task %s 规划出错: %v", t.ID, err)
 		case met:
 			log.Printf("[planner] task %s 判定目标达成: %s", t.ID, reason)
+			// 完成闸门（G2）：还有未收口分支就不收官——不落 done、不取消在跑 worker，
+			// 已把坏终态的分支放回 frontier（强制执行 / 回炉）。
+			if e.blockTaskCompletion(t) {
+				break
+			}
 			// 所有目标达成 → 持久化任务状态为 done（前端 DTO 会优先展示该终态）。
 			if err := e.m.SetTaskStatus(t.ID, "done"); err != nil {
 				log.Printf("[planner] task %s 标记完成落库失败: %v", t.ID, err)
@@ -1293,6 +1302,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		hooks = traceHooks{inner: hooks, tr: e.tr, taskID: t.ID, intentID: iid, thread: agent.WorkerSessionID(t.ExpID, iid), label: label}
 	}
 	wTaskID, _ := strconv.ParseInt(t.ID, 10, 64)
+	runStarted := time.Now()
 	e.BeginLLMCall(t.ID)
 	var reason harness.TerminalReason
 	var wrote agent.WriteCounts
@@ -1395,6 +1405,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		if err := transitionIntentState(t.Store, intent.ID, "running", "exhausted"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d 超时收尾状态落库失败: %v", name, t.ID, intent.ID, err)
 		}
+		e.recordIntentRun(t, intent, runStarted, reason, "exhausted", "task_timeout", wrote)
 		log.Printf("[worker %s] task %s 意图 #%d 因任务超时收尾结束(exhausted)，写回 %s", name, t.ID, intent.ID, wrote)
 		e.notifyIntentSettled(t, intent.ID, "exhausted")
 		e.touch(t.ID)
@@ -1407,6 +1418,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		if err := transitionIntentState(t.Store, intent.ID, "running", "stopped"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d 终态停止落库失败: %v", name, t.ID, intent.ID, err)
 		}
+		e.recordIntentRun(t, intent, runStarted, reason, "stopped", "goal_met_cancel", wrote)
 		log.Printf("[worker %s] task %s 意图 #%d 因任务已完成而取消(stopped)", name, t.ID, intent.ID)
 		e.notifyIntentSettled(t, intent.ID, "stopped")
 		e.touch(t.ID)
@@ -1418,6 +1430,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		if err := transitionIntentState(t.Store, intent.ID, "running", "stopped"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d planner 停止落库失败: %v", name, t.ID, intent.ID, err)
 		}
+		e.recordIntentRun(t, intent, runStarted, reason, "stopped", "planner_kill", wrote)
 		log.Printf("[worker %s] task %s 意图 #%d 被终止(stopped)", name, t.ID, intent.ID)
 		e.notifyIntentSettled(t, intent.ID, "stopped")
 		e.touch(t.ID)
@@ -1449,6 +1462,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 			log.Printf("[worker %s] task %s 意图 #%d 终态 %s 落库失败: %v", name, t.ID, intent.ID, state, stateErr)
 		}
 	}
+	e.recordIntentRun(t, intent, runStarted, reason, state, stopReasonFrom(reason, err), wrote)
 	log.Printf("[worker %s] task %s 意图 #%d 结束: %s (写回 %s)", name, t.ID, intent.ID, state, wrote)
 	e.notifyIntentSettled(t, intent.ID, state)
 	e.touch(t.ID)

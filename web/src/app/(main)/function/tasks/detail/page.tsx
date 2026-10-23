@@ -234,6 +234,30 @@ function TaskDetailInner() {
   const [paused, setPaused] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
   const [tab, setTab] = React.useState("sessions");
+  // 未收口分支数（完成闸门）：坏终态且没被续派/收口的分支。进页面拉一次 + 15s 轮询，
+  // 数字掉了说明分支已回炉跑完或被人工收口。
+  const [openBranches, setOpenBranches] = React.useState(0);
+  React.useEffect(() => {
+    const id = task?.id;
+    if (!id) return;
+    let alive = true;
+    const load = () => {
+      api
+        .taskBranches(id)
+        .then((r) => {
+          if (alive) setOpenBranches(r.count || 0);
+        })
+        .catch(() => {
+          /* 角标是增强信息，读不到就不显示，不影响主流程 */
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 15000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [task?.id]);
   const [interceptPendingCount, setInterceptPendingCount] = React.useState(0);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [archiving, setArchiving] = React.useState(false);
@@ -411,6 +435,11 @@ function TaskDetailInner() {
               {t(task.analysis_domain === "software_re" ? "analysisDomain.software" : "analysisDomain.web")}
             </Badge>
             <StatusBadge domain={terminal ? "task" : "engine"} value={terminal ? task.status : engineMode} dot />
+            {openBranches > 0 && (
+              <Badge variant="destructive" title={t("openBranchesTip")}>
+                {t("openBranches", { n: openBranches })}
+              </Badge>
+            )}
           </div>
 
           {/* Live Mission Pulse Pills (Quick-Switch Telemetry) */}

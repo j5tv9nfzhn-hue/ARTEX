@@ -673,14 +673,14 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		return []actool.CoreTool{
 			t.insertAssets(), t.listAssets(),
 			t.webReconTool(), t.dnsProbeTool(), t.netProbeTool(), t.httpRequestTool(),
-			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.nodeDetail(),
+			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.nodeDetail(),
 			t.listFindings(), t.recordFact(), t.tacticalKBTool(),
 		}
 	case workerPhaseVerify:
 		return []actool.CoreTool{
 			t.humanVerificationTool(), t.verificationSolveTool(), t.verificationCapabilitiesTool(), t.verificationFlowTool(),
 			t.httpRequestTool(), t.binaryInspectTool(), t.extractDataTool(), t.codecCryptoTool(),
-			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.nodeDetail(),
+			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.nodeDetail(),
 			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
 		}
 	case workerPhaseExploit:
@@ -688,7 +688,7 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 			t.httpFuzzTool(), t.httpSequenceTool(), t.httpRequestTool(),
 			t.codecCryptoTool(), t.extractDataTool(), t.binaryInspectTool(),
 			t.insertAssets(), t.listAssets(),
-			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.nodeDetail(),
+			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.nodeDetail(),
 			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
 		}
 	}
@@ -708,6 +708,8 @@ func (t *ToolSet) allWorkerTools() []actool.CoreTool {
 		// search_all_worker_traces：不必先知道 intent_id，按关键字全局捞命中步骤；
 		// get_worker_trace：锁定某条 work 后列步骤/就地搜/取完整内容。
 		t.searchAllWorkerTraces(), t.getWorkerTrace(),
+		// get_handoff：接着某条没跑完的意图继续时，取它的结构化交接单（事实层）。
+		t.getHandoff(),
 		// node_detail：worker 拿到 intent_id/节点 id 后可查该节点完整详情（配合上面的回看）。
 		t.nodeDetail(),
 		// 原生 Go 渗透测试执行工具：直接在进程内完成 HTTP 发包、受控并发 Fuzz、编解码/加解密/JWT、
@@ -724,7 +726,7 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 	return []actool.CoreTool{
 		t.verificationCapabilitiesTool(), t.binaryInspectTool(), t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
 		t.expandDigest(), // cold-digest §6.1
-		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.addHint(), t.addIntent(),
+		t.getWorkerOutput(), t.getWorkerTrace(), t.getHandoff(), t.searchAllWorkerTraces(), t.addHint(), t.addIntent(),
 		// kill_work / restart_work / steer_work：人可结束指定 work、重启已终止/受阻/耗尽的
 		// work、或对运行中 work 实时纠偏（不打断、不丢进展）——完整的 worker 管理能力。
 		t.killWorkTool(), t.restartWorkTool(), t.steerWorkTool(),

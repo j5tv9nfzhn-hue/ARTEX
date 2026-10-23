@@ -440,6 +440,10 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err := pg.EnsureLLMUsageTable(); err != nil {
 		log.Printf("[llmusage] create table: %v", err)
 	}
+	// 意图运行台账 / 交接单 / 收口审计 / 续派链（完成闸门与结构化交接的数据底座）。
+	if err := pg.EnsureIntentLedgerTables(); err != nil {
+		log.Printf("[gate] create intent ledger tables: %v", err)
+	}
 	m := &Manager{dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg)}
 	if proxyAddr != "" {
 		tr, err := traffic.Open(filepath.Join(dir, "traffic"), proxyAddr)
@@ -1371,6 +1375,13 @@ func (m *Manager) SetTaskStatusGuarded(id, status string) (won bool, err error) 
 		m.taskStateMu.Unlock()
 		return false, err
 	}
+	// G4：done 是受保护状态。存在未收口分支时，任何调用点都写不进去。
+	if status == "done" {
+		if gateErr := m.completionBlocked(id); gateErr != nil {
+			m.taskStateMu.Unlock()
+			return false, gateErr
+		}
+	}
 	won, err = m.pg.SetTerminalStatusGuarded(n, status)
 	if err != nil || !won {
 		m.taskStateMu.Unlock()
@@ -1404,6 +1415,13 @@ func (m *Manager) SetTaskStatus(id, status string) error {
 	if err != nil {
 		m.taskStateMu.Unlock()
 		return err
+	}
+	// G4：done 是受保护状态。存在未收口分支时，任何调用点都写不进去。
+	if status == "done" {
+		if gateErr := m.completionBlocked(id); gateErr != nil {
+			m.taskStateMu.Unlock()
+			return gateErr
+		}
 	}
 	// 与 SetStatus 相比多一个「是否真实变化」的返回值：调用方可能多轮以同一
 	// 状态收尾（如 planner 每轮都以 met 结束），重复写不应重复推送。

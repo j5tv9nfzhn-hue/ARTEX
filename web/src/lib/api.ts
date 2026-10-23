@@ -433,6 +433,27 @@ export const api = {
   steerIntent: (taskId: string, intentId: string, text: string) =>
     post<{ id: number; state: "running"; accepted: true }>(`/tasks/${taskId}/intents/${intentId}/steer`, { text }),
   taskLLMResolution: (id: string) => get<TaskLLMResolutions>(`/tasks/${id}/llm/resolution`),
+  // 未收口分支（完成闸门）：坏终态且没被续派/收口的分支。面板角标用。
+  taskBranches: (id: string) =>
+    get<{
+      count: number;
+      mode: string;
+      blockers: {
+        intent_id: number;
+        end_state: string;
+        stop_reason: string;
+        attempt: number;
+        node_state: string;
+        has_handoff: boolean;
+      }[];
+    }>(`/tasks/${id}/branches`),
+  // 人工收口一条没跑完的分支：只写收口审计，不改意图状态/不删产物。
+  // 回炉到上限后需要人来判断「这条方向确实不做了」，否则强制模式会一直拦完成。
+  closeIntent: (taskId: string, intentId: string, reason: string) =>
+    post<{ id: number; state: string }>(`/tasks/${taskId}/intents/${intentId}/control`, {
+      action: "abandon",
+      reason,
+    }),
   // 重跑一条没跑成功的意图(blocked/exhausted/stopped)：置回 open，worker 重新认领并接续该意图的原会话继续跑（不是从头开始）。
   rerunIntent: (taskId: string, intentId: string) =>
     post<{ id: string; reopened: number }>(`/tasks/${taskId}/intents/${intentId}/rerun`),

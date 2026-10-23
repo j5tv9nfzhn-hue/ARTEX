@@ -75,6 +75,8 @@ export default function SystemSettingsPage() {
   const [injectWorker, setInjectWorker] = React.useState(true);
   // 实验功能:noa 上下文压缩(默认关)。
   const [noaCompaction, setNoaCompaction] = React.useState(false);
+  // 实验功能:完成闸门(未收口分支不许判完成)。off=关 / shadow=只记录 / enforce=真拦，切换即时生效。
+  const [branchGateMode, setBranchGateMode] = React.useState("shadow");
   // 复核成本闸门：等级达到阈值自动复核，低于阈值按比例抽查（见 server/verify_policy.go）。
   const [verifyThreshold, setVerifyThreshold] = React.useState("high");
   const [verifySamplePercent, setVerifySamplePercent] = React.useState("25");
@@ -106,6 +108,7 @@ export default function SystemSettingsPage() {
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
     setNoaCompaction(!!s.noa_compaction);
+    setBranchGateMode(s.branch_gate_mode || "shadow");
     setSkillReviewGate(s.skill_review_gate !== false);
     setSkillAutoDistill(s.skill_auto_distill !== false);
     setSkillAutoDistillApply(!!s.skill_auto_distill_apply);
@@ -267,6 +270,21 @@ export default function SystemSettingsPage() {
       })
       .catch((e) => {
         setNoaCompaction(!v); // revert on failure
+        toast.error(t("toast.saveFailed", { error: (e as Error).message }));
+      });
+  };
+
+  const changeBranchGateMode = (v: string) => {
+    const prev = branchGateMode;
+    setBranchGateMode(v); // optimistic
+    api
+      .setSettings({ branch_gate_mode: v })
+      .then((s) => {
+        apply(s);
+        toast.success(t("experimental.branchGateSaved"));
+      })
+      .catch((e) => {
+        setBranchGateMode(prev); // revert on failure
         toast.error(t("toast.saveFailed", { error: (e as Error).message }));
       });
   };
@@ -599,17 +617,35 @@ export default function SystemSettingsPage() {
             </CardTitle>
             <CardDescription>{t.rich("experimental.desc", richTags)}</CardDescription>
           </CardHeader>
-          <CardContent className="flex items-center justify-between gap-4">
-            <Label htmlFor="noa-compaction" className="text-sm font-normal text-muted-foreground">
-              {t("experimental.noaLabel")}
-              {noaCompaction ? t("onSuffix") : t("offSuffix")}
-            </Label>
-            <Switch
-              id="noa-compaction"
-              checked={noaCompaction}
-              disabled={!loaded}
-              onCheckedChange={toggleNoaCompaction}
-            />
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="noa-compaction" className="text-sm font-normal text-muted-foreground">
+                {t("experimental.noaLabel")}
+                {noaCompaction ? t("onSuffix") : t("offSuffix")}
+              </Label>
+              <Switch
+                id="noa-compaction"
+                checked={noaCompaction}
+                disabled={!loaded}
+                onCheckedChange={toggleNoaCompaction}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="branch-gate" className="text-sm font-normal text-muted-foreground">
+                {t("experimental.branchGateLabel")}
+              </Label>
+              <Select value={branchGateMode} onValueChange={changeBranchGateMode} disabled={!loaded}>
+                <SelectTrigger id="branch-gate" className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">{t("experimental.branchGateOff")}</SelectItem>
+                  <SelectItem value="shadow">{t("experimental.branchGateShadow")}</SelectItem>
+                  <SelectItem value="enforce">{t("experimental.branchGateEnforce")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground">{t("experimental.branchGateHint")}</p>
           </CardContent>
         </Card>
 

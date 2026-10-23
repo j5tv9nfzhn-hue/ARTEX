@@ -1093,6 +1093,10 @@ type intentItem struct {
 	// 它进意图节点的 payload，worker 收尾与后续复核都按它判断，避免「跑了一堆但说不清
 	// 到底证明了什么」。空 = 未声明（旧调用方/纯侦察方向）。
 	ExpectedEvidence string `json:"expected_evidence"`
+	// ContinuesIntentID 非 0 = 这条方向是「接着某条没跑完的意图继续」。系统会把那条
+	// 意图的结构化交接单注入给新的 worker，并记录续派链（完成闸门据此判断该分支已收口）。
+	// 只接受仍处于 blocked/exhausted/stopped 的意图。
+	ContinuesIntentID int64 `json:"continues_intent_id"`
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id。
@@ -1141,7 +1145,23 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			return 0, fmt.Errorf("%s", b.String())
 		}
 	}
+	// 续派：源意图必须是一条「没跑完」的意图。这条链同时写进 payload（worker 侧读它
+	// 决定要不要注入交接单）和 intent_links（完成闸门读它判断分支是否已收口）。
+	if it.ContinuesIntentID > 0 {
+		src, err := t.ts.GetNodeWithSources(it.ContinuesIntentID)
+		if err != nil || src == nil || src.Kind != db.KindIntent {
+			return 0, fmt.Errorf("continues_intent_id=%d 不是本任务(或直接关联任务)里的意图节点", it.ContinuesIntentID)
+		}
+		switch src.State {
+		case "blocked", "exhausted", "stopped":
+		default:
+			return 0, fmt.Errorf("continues_intent_id=%d 当前状态是 %q：只有 blocked/exhausted/stopped 的意图才需要续派（open/running 请等它跑完，done 请另开新方向）", it.ContinuesIntentID, src.State)
+		}
+	}
 	payload := map[string]any{"summary": it.Summary}
+	if it.ContinuesIntentID > 0 {
+		payload["continues_intent_id"] = it.ContinuesIntentID
+	}
 	if len(anchors) > 0 {
 		payload["asset_ids"] = anchors
 	}
@@ -1167,6 +1187,9 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 		if origin, _ := t.ts.OriginFactID(); origin > 0 {
 			_ = t.ts.Link(origin, db.RelDerivedFrom, id)
 		}
+	}
+	if it.ContinuesIntentID > 0 {
+		_ = t.ts.LinkContinuation(it.ContinuesIntentID, id)
 	}
 	// 派发成功 = 有人在最新方向上做了决策 → 解除 kill_work 冻结的派发闸（幂等）。
 	if t.dirAck != nil {
@@ -2230,7 +2253,7 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.graphOverview(), t.overviewSlice(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
-		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
+		t.getWorkerOutput(), t.getWorkerTrace(), t.getHandoff(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
 		t.killWorkTool(), t.restartWorkTool(), t.steerWorkTool(),
 		// report_finding：规划态势研判时若自身已确证漏洞，可直接登记（与 worker 同工具）。
 		t.addFinding(),

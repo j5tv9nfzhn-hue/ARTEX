@@ -3199,6 +3199,12 @@
     },
     "experimental": {
       "desc": "尚在验证中的机制，默认关闭。可能改变 Agent 行为或影响稳定性，请在了解影响后启用。<br></br><b>noa 上下文压缩</b>：由模型主动压缩长对话历史（norma v0.4.0）。开启后平台接入的四类 Agent（<b>规划者 / 执行者 / 主 Agent / 对话</b>）改用 noa 接管上下文压缩，取代内置压缩，压缩原文会归档到任务工作目录下便于回溯。切换即时生效（对之后启动的运行生效），无需重建 Agent；关闭后立即恢复内置压缩。",
+      "branchGateEnforce": "强制拦截",
+      "branchGateHint": "意图因步数/时长耗尽、执行出错或被终止而没跑完时，这条分支就是「未收口」。影子模式只在活动流留痕（不拦）；强制模式下任务不会被判定为完成，未收口的分支会被自动放回队列重跑（每意图最多 3 次），到上限后停下来等人处理。",
+      "branchGateLabel": "完成闸门（未收口分支不许判完成）",
+      "branchGateOff": "关闭",
+      "branchGateSaved": "完成闸门已切换",
+      "branchGateShadow": "影子（只记录）",
       "noaLabel": "noa 上下文压缩",
       "title": "实验功能"
     },
@@ -3703,6 +3709,8 @@
     }
   },
   "taskDetail": {
+    "openBranches": "未收口 {n}",
+    "openBranchesTip": "这些分支因步数/时长耗尽、报错或被终止而没跑完，也还没被续派或人工收口。开启「完成闸门」后任务不会因此被判完成。",
     "analysisDomain": {
       "web": "网站安全",
       "software": "软件逆向",
@@ -3992,6 +4000,16 @@
         "executing": "执行中",
         "frontierPending": "frontier 待领",
         "title": "需要关注"
+      },
+      "branches": {
+        "attempt": "第 {n} 次",
+        "close": "人工收口",
+        "closed": "意图 #{id} 已收口",
+        "failed": "收口失败：{error}",
+        "handoff": "有交接单",
+        "hint": "（共 {count} 条，没跑完且没被续派或收口）",
+        "title": "未收口分支",
+        "truncated": "仅显示前 20 条，另有 {rest} 条。可到图谱按 ID 定位。"
       },
       "blocked": {
         "hint": "（共 {count} 条，可重跑）",
