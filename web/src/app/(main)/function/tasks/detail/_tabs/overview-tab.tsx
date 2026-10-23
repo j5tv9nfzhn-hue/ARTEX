@@ -9,6 +9,7 @@ import {
   CheckIcon,
   ClockIcon,
   CoinsIcon,
+  FileTextIcon,
   ListChecksIcon,
   PencilIcon,
   PlusIcon,
@@ -23,7 +24,16 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/empty-state";
+import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/status-badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,6 +42,7 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
+import { HandoffDialog } from "./handoff-dialog";
 import type {
   AssetInterceptKind,
   AssetInterceptRule,
@@ -136,6 +147,14 @@ export function OverviewTab({ taskId }: { taskId: string }) {
   // 与下面的 blocked 列表不同——exhausted 也在此列，且支持人工收口。
   const [branches, setBranches] = React.useState<TaskBlocker[]>([]);
   const [closing, setClosing] = React.useState<Set<number>>(new Set());
+  // 交接单查看器 / 强制完成（都需要人点开，不在轮询里做请求）。
+  const [handoffFor, setHandoffFor] = React.useState<number | null>(null);
+  const [handoffOpen, setHandoffOpen] = React.useState(false);
+  const [forceOpen, setForceOpen] = React.useState(false);
+  const [forceReason, setForceReason] = React.useState("");
+  const [forceBusy, setForceBusy] = React.useState(false);
+  // 被人工收口（abandon）的分支数：审计可见，防止「把不顺利的都放弃掉」被忽略。
+  const [abandonedBranches, setAbandonedBranches] = React.useState(0);
   // 测试范围列表与添加表单状态。
   const [scope, setScope] = React.useState<TaskScopeRow[]>([]);
   const [scopeKind, setScopeKind] = React.useState<TaskScopeRow["kind"]>("root_domain");
@@ -380,6 +399,27 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     }
   };
 
+  // 强制完成：写 force_done 审计后闸门放行。理由必填（后端也会再校验一次）。
+  const forceDone = async () => {
+    const reason = forceReason.trim();
+    if (!reason) {
+      toast.error(t("branches.forceDonePlaceholder"));
+      return;
+    }
+    setForceBusy(true);
+    try {
+      const r = await api.forceDone(taskId, reason);
+      toast.success(r.forced ? t("branches.forceDoneOk") : t("branches.forceDoneQueued"));
+      setForceOpen(false);
+      setForceReason("");
+      void loadBranches();
+    } catch (e) {
+      toast.error(t("branches.forceDoneFailed", { error: (e as Error).message }));
+    } finally {
+      setForceBusy(false);
+    }
+  };
+
   // 批量重跑当前任务的所有 blocked 意图。
   const rerunAll = async () => {
     markRerun("__all__", true);
@@ -423,6 +463,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     try {
       const r = await api.taskBranches(taskId);
       setBranches(r.blockers ?? []);
+      setAbandonedBranches(r.abandoned ?? 0);
     } catch {
       // 台账表尚未建好（老库首次启动）时读不到，卡片不显示即可。
     }
@@ -550,7 +591,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           </CardContent>
         </Card>
       )}
-      {/* 未收口分支：跑崩/耗尽/被停但没人收口。回炉到上限后就靠这里人工收口收尾。 */}
+      {/* 未收口分支：跑崩/耗尽/被停但没人收口。P2 会自动回炉，到上限转人工。 */}
       {branches.length > 0 && (
         <Card className="border-amber-500/30">
           <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
@@ -559,17 +600,53 @@ export function OverviewTab({ taskId }: { taskId: string }) {
               <span className="font-normal text-muted-foreground text-xs">
                 {t("branches.hint", { count: branches.length })}
               </span>
+              {abandonedBranches > 0 && (
+                <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+                  {t("branches.abandoned", { n: abandonedBranches })}
+                </Badge>
+              )}
             </CardTitle>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 shrink-0 px-2 text-xs"
+              onClick={() => setForceOpen(true)}
+            >
+              <ShieldAlertIcon className="size-3.5" /> {t("branches.forceDone")}
+            </Button>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {branches.slice(0, 20).map((b) => (
               <div key={b.intent_id} className="flex items-center gap-2 text-sm">
                 <StatusBadge domain="intent" value={b.end_state} />
                 <span className="shrink-0 font-mono text-muted-foreground text-xs">#{b.intent_id}</span>
+                {b.needs_human && (
+                  <Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-[10px]">
+                    {t("branches.needsHuman")}
+                  </Badge>
+                )}
                 <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
                   {b.stop_reason || "—"} · {t("branches.attempt", { n: b.attempt })}
+                  {typeof b.requeues === "number" && b.requeues > 0
+                    ? ` · ${t("branches.requeues", { n: b.requeues })}`
+                    : ""}
+                  {b.next_retry_at
+                    ? ` · ${t("branches.nextRetry", { at: new Date(b.next_retry_at).toLocaleTimeString() })}`
+                    : ""}
                   {b.has_handoff ? ` · ${t("branches.handoff")}` : ""}
                 </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2 text-xs"
+                  onClick={() => {
+                    setHandoffFor(b.intent_id);
+                    setHandoffOpen(true);
+                  }}
+                >
+                  <FileTextIcon className="size-3" />
+                  {t("branches.viewHandoff")}
+                </Button>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -590,6 +667,33 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           </CardContent>
         </Card>
       )}
+      <HandoffDialog
+        taskId={taskId}
+        intentId={handoffFor}
+        open={handoffOpen}
+        onOpenChange={setHandoffOpen}
+      />
+      <Dialog open={forceOpen} onOpenChange={setForceOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("branches.forceDoneTitle")}</DialogTitle>
+            <DialogDescription>{t("branches.forceDoneDesc")}</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={forceReason}
+            onChange={(e) => setForceReason(e.target.value)}
+            placeholder={t("branches.forceDonePlaceholder")}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setForceOpen(false)} disabled={forceBusy}>
+              {t("branches.forceDoneCancel")}
+            </Button>
+            <Button variant="destructive" onClick={() => void forceDone()} disabled={forceBusy}>
+              {t("branches.forceDoneConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* Heartbeat */}
       <Card>
         <CardHeader>

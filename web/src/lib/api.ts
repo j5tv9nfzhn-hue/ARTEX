@@ -53,6 +53,7 @@ import type {
   HarnessPlanResult,
   HarnessScan,
   IntentAsset,
+  IntentHandoffView,
   InterceptApprovalFilter,
   InterceptApprovalRow,
   InterceptDetail,
@@ -438,6 +439,8 @@ export const api = {
     get<{
       count: number;
       mode: string;
+      needs_human: number;
+      abandoned: number;
       blockers: {
         intent_id: number;
         end_state: string;
@@ -445,8 +448,17 @@ export const api = {
         attempt: number;
         node_state: string;
         has_handoff: boolean;
+        requeues?: number;
+        needs_human?: boolean;
+        next_retry_at?: string;
       }[];
     }>(`/tasks/${id}/branches`),
+  // 交接单查看器：最近一张交接单 + 全部主观补注 + 收口审计。
+  intentHandoff: (taskId: string, intentId: string) =>
+    get<IntentHandoffView>(`/tasks/${taskId}/intents/${intentId}/handoff`),
+  // 人工强制完成：必须给理由，落 force_done 审计后闸门才放行。
+  forceDone: (taskId: string, reason: string) =>
+    post<{ id: string; status: string; forced: boolean }>(`/tasks/${taskId}/force-done`, { reason }),
   // 人工收口一条没跑完的分支：只写收口审计，不改意图状态/不删产物。
   // 回炉到上限后需要人来判断「这条方向确实不做了」，否则强制模式会一直拦完成。
   closeIntent: (taskId: string, intentId: string, reason: string) =>

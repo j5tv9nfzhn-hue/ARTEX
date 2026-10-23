@@ -439,6 +439,67 @@ export interface TaskBlocker {
   attempt: number;
   node_state: string;
   has_handoff: boolean;
+  /** 已自动回炉次数（P2 策略机记账）。 */
+  requeues?: number;
+  /** 已转人工：不再自动重跑，等人决定「继续 / 收口 / 强制完成」。 */
+  needs_human?: boolean;
+  /** 退避重跑的下一次时间（RFC3339）。 */
+  next_retry_at?: string;
+}
+
+/** 交接单 L2 主观层快照（永远只是建议）。 */
+export interface HandoffOpenWorkSnapshot {
+  next_actions?: string[];
+  hypotheses?: string[];
+  negative_results?: string[];
+  advisory?: boolean;
+}
+
+/** 交接单 L1 事实层（系统机械抽取）。 */
+export interface IntentHandoffRecord {
+  schema?: string;
+  trigger?: { kind?: string; detail?: string; at?: string };
+  progress?: {
+    steps_total?: number;
+    written?: Record<string, number>;
+    last_output?: string;
+    tail?: { id: number; tool?: string; kind?: string; summary?: string; is_error?: boolean }[];
+  };
+  pointers?: { session_id?: string; trace_range?: number[] };
+  open_work?: HandoffOpenWorkSnapshot;
+  [k: string]: unknown;
+}
+
+/** 查看器一次拉回的全量数据。 */
+export interface IntentHandoffView {
+  intent_id: number;
+  handoff: null | {
+    id: number;
+    run_id: number;
+    schema: string;
+    created_at: string;
+    mech_sha256: string;
+    summary: string;
+    record: IntentHandoffRecord;
+  };
+  open_work: {
+    id: number;
+    intent_id: number;
+    author?: string;
+    next_actions?: string;
+    hypotheses?: string;
+    negative_results?: string;
+    created_at: string;
+  }[];
+  closures: {
+    id: number;
+    intent_id: number;
+    actor: string;
+    action: string;
+    reason_code: string;
+    note: string;
+    created_at: string;
+  }[];
 }
 
 export interface TaskNode {

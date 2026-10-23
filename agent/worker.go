@@ -177,7 +177,7 @@ func (w *Worker) SetTrafficStore(ts TrafficDirectStore) {
 // settleWrapUpPrompt is injected by the SDK settlement phase when a worker hits its
 // turn/time budget: stop probing, write back what was found, then end with a
 // plain-text one-liner (which becomes this run's displayed result).
-const settleWrapUpPrompt = "本次执行即将因步数/时长上限而结束。不要再执行任何命令或探测。请按以下顺序处理：(1) 逐项记录此前已识别但尚未保存的结果：新资产使用 insert_assets，探索结论与事实使用 record_fact，已确认漏洞使用 report_finding。(2) **最后只用一句纯文本**，以简体中文总结做了什么以及得到的核心结论。这句话会作为本次执行结果展示给用户，必须输出。"
+const settleWrapUpPrompt = "本次执行即将因步数/时长上限而结束。不要再执行任何命令或探测。请按以下顺序处理：(1) 调用一次 handoff_patch：把还没做完的下一步、未验证的假设、已经排除的死路各写一行——这些是下一位接手时最值钱的东西，不写就永久丢失。(2) 逐项记录此前已识别但尚未保存的结果：新资产使用 insert_assets，探索结论与事实使用 record_fact，已确认漏洞使用 report_finding。(3) **最后只用一句纯文本**，以简体中文总结做了什么以及得到的核心结论。这句话会作为本次执行结果展示给用户，必须输出。"
 
 func NewWorker(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int, extra ...actool.CoreTool) *Worker {
 	return &Worker{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns, extraTools: extra}
@@ -575,6 +575,11 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			sysBody += h.RenderText
 		}
 	}
+	// 交接纪律：明确要求「边做边写」。等到收尾再补，往往已经没有步数了——
+	// 上一任的下一步/假设/负结果就是这样丢的。
+	sysBody += "\n\n【交接纪律】你随时可能被步数/时长上限掐断，也可能被别的子代理接手。" +
+		"每当确认一个新方向、排除一条死路、或留下未验证的假设，立刻调用 handoff_patch 写下来" +
+		"（next_actions / hypotheses / negative_results 各一行，写得越具体越好）。不要等到收尾。"
 	if hint := func() string {
 		tactical := BuildTacticalRoutingHint(intentBlock, tools, def)
 		if isRE {

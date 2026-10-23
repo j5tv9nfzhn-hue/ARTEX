@@ -144,6 +144,17 @@ type IntentBlocker struct {
 	HasHandoff bool   `json:"has_handoff"`
 }
 
+// isBadNodeState 判断意图节点是否停在「没跑完、需要收口」的状态。
+// 注意 interrupted 不是节点状态（崩溃后节点仍是 running，由 ResetRunningIntents 放开），
+// 所以这里只认三种落库终态。未收口判定以【节点状态】为准，run 只提供原因。
+func isBadNodeState(state string) bool {
+	switch state {
+	case "exhausted", "blocked", "stopped":
+		return true
+	}
+	return false
+}
+
 // isBadRunState reports whether a run ending in this state means "the work did
 // not finish normally" — the states the completion gate cares about.
 func isBadRunState(state string) bool {
@@ -318,7 +329,10 @@ func (d *DB) UnresolvedBranches(taskID string, expID int64) ([]IntentBlocker, er
 		rs := byIntent[iid]
 		latest := rs[0]
 		nodeState := states[iid]
-		if nodeState == "deleted" || nodeState == "" {
+		// 「未收口」看的是【图上的状态】：只有还停在坏终态的意图才算挂着。
+		// 已经回炉成 open / 又跑起来的 running / 正常 done / deleted 都不算——
+		// 否则一次崩溃留下的 interrupted run 会在分支重开后继续挡完成。
+		if !isBadNodeState(nodeState) {
 			continue
 		}
 		if !isBadRunState(latest.EndState) {
@@ -341,7 +355,7 @@ func (d *DB) UnresolvedBranches(taskID string, expID int64) ([]IntentBlocker, er
 		}
 		out = append(out, IntentBlocker{
 			IntentID:   iid,
-			EndState:   latest.EndState,
+			EndState:   nodeState,
 			StopReason: latest.StopReason,
 			Attempt:    latest.Attempt,
 			NodeState:  nodeState,

@@ -269,6 +269,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
 	// P0 会话语义旁路转录：append-only JSONL 账本，写失败静默丢弃，绝不影响控制流。
 	s.engine.SetTraceLog(tracelog.NewStore(filepath.Join(m.dir, "traces")))
+	// P2 后台维护：启动先补一次崩溃现场（reaper），之后每 10s 处理到点的回炉队列。
+	// 只在正式进程里启；测试构造的 Engine 不会起 goroutine。
+	s.engine.StartMaintenance(ctx)
 	// First-run protection: cache the password hash and, while none is set, issue
 	// the console setup token (or apply ARTEX_ADMIN_PASSWORD) before any request.
 	s.bootstrapAuth()
@@ -946,6 +949,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tasks/{id}/intents/{iid}/rerun", s.rerunIntent)               // 重跑单条 blocked/exhausted/stopped 意图
 	mux.HandleFunc("POST /api/tasks/{id}/intents/rerun-blocked", s.rerunBlocked)            // 批量重跑本任务全部 blocked 意图
 	mux.HandleFunc("GET /api/tasks/{id}/branches", s.taskBranches)                          // 未收口分支（完成闸门角标）
+	mux.HandleFunc("GET /api/tasks/{id}/intents/{iid}/handoff", s.intentHandoff)            // 交接单查看器（事实层 + 主观层）
+	mux.HandleFunc("POST /api/tasks/{id}/force-done", s.forceDone)                          // 人工强制完成（留审计）
 	mux.HandleFunc("GET /api/tasks/{id}/checkpoints", s.taskCheckpoints)                    // 检查点:列出任务时间线检查点
 	mux.HandleFunc("POST /api/tasks/{id}/checkpoints/{cid}/revert", s.revertTaskCheckpoint) // 检查点:回滚任务时间线
 	mux.HandleFunc("POST /api/tasks/{id}/messages/{seq}/rollback", s.rollbackTaskMessage)   // 对话:回滚主 Agent 某条消息之前(气泡箭头，只动对话不动任务)

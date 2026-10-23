@@ -444,6 +444,10 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err := pg.EnsureIntentLedgerTables(); err != nil {
 		log.Printf("[gate] create intent ledger tables: %v", err)
 	}
+	// 回炉状态机 + 主观交接层（P2/P3）。
+	if err := pg.EnsureIntentRuntimeTables(); err != nil {
+		log.Printf("[gate] create intent runtime tables: %v", err)
+	}
 	m := &Manager{dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg)}
 	if proxyAddr != "" {
 		tr, err := traffic.Open(filepath.Join(dir, "traffic"), proxyAddr)

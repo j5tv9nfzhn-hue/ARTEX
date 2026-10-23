@@ -2253,7 +2253,10 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.graphOverview(), t.overviewSlice(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
-		t.getWorkerOutput(), t.getWorkerTrace(), t.getHandoff(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
+		t.getWorkerOutput(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(),
+		// abandon_intent：显式放弃一条分支（闭集理由 + 证据校验），是「不做了」的唯一合法出口；
+		// 它不产生证据，因此不能用来绕过目标判定。
+		t.abandonIntent(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
 		t.killWorkTool(), t.restartWorkTool(), t.steerWorkTool(),
 		// report_finding：规划态势研判时若自身已确证漏洞，可直接登记（与 worker 同工具）。
 		t.addFinding(),
