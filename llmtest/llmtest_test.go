@@ -262,10 +262,13 @@ func TestProbeTimeout(t *testing.T) {
 	}
 }
 
-// TestProbeDefaultTimeoutPinned 固化默认超时 = 10s（#74）。
+// TestProbeDefaultTimeoutPinned 固化默认超时 = 60s。
+//
+// 这条是「连接测试别再把慢模型误判成坏配置」的回归钉：带推理的模型单发补全
+// 20–50s 是常态，上限回落到 10s 会让好配置直接被判死。
 func TestProbeDefaultTimeoutPinned(t *testing.T) {
-	if DefaultTimeout != 10*time.Second {
-		t.Fatalf("默认超时 = %v，预期 10s", DefaultTimeout)
+	if DefaultTimeout != 60*time.Second {
+		t.Fatalf("默认超时 = %v，预期 60s", DefaultTimeout)
 	}
 }
 

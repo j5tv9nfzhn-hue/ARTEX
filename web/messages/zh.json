@@ -2238,6 +2238,7 @@
       },
       "testConnection": "测试连接",
       "testing": "测试中…",
+      "testingElapsed": "测试中… {s}s（最长 60s）",
       "thinkingType": {
         "hint": "控制是否发送 thinking 字段。不发送=不带该字段（兼容 MiniMax 等不支持 的模型）；关闭=发 disabled；开启=发 enabled。与下面的强度互相独立。",
         "label": "思考开关 · thinking.type",

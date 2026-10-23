@@ -302,6 +302,9 @@ function ProfileSheet({
   // 声明的扩展输入模态(image/audio/pdf);空数组 = 未声明,后端按模型名保守推断。
   const [modalities, setModalities] = React.useState<ExtraModality[]>([]);
   const [testing, setTesting] = React.useState(false);
+  // 连接测试最长 60s（带推理的模型单发补全就要几十秒）。等待期间按秒刷新
+  // 「测试中… Ns」，否则按钮一直转圈会被当成卡死，用户会去反复点。
+  const [testElapsed, setTestElapsed] = React.useState(0);
   const [saving, setSaving] = React.useState(false);
   const [models, setModels] = React.useState<string[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
@@ -382,6 +385,9 @@ function ProfileSheet({
   async function testConnection() {
     if (testing) return;
     setTesting(true);
+    setTestElapsed(0);
+    const startedAt = Date.now();
+    const ticker = setInterval(() => setTestElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
     try {
       // 用配置实际会跑的思考参数来测，这样不支持该字段的模型在这里就失败，
       // 而不是等到跑任务时才炸。传 profile id：Key 输入框留空时用已存的 Key。
@@ -414,6 +420,7 @@ function ProfileSheet({
     } catch (e) {
       toast.error(t("profile.toast.testError", { msg: (e as Error).message }));
     } finally {
+      clearInterval(ticker);
       setTesting(false);
     }
   }
@@ -819,7 +826,7 @@ function ProfileSheet({
         <div className="flex gap-2 border-t px-4 py-3">
           <Button variant="outline" onClick={testConnection} disabled={testing}>
             {testing ? <Loader2Icon className="animate-spin" /> : <PlugZapIcon />}
-            {testing ? t("profile.testing") : t("profile.testConnection")}
+            {testing ? t("profile.testingElapsed", { s: testElapsed }) : t("profile.testConnection")}
           </Button>
           <Button onClick={save} disabled={saving} className="flex-1">
             {saving && <Loader2Icon className="animate-spin" />}

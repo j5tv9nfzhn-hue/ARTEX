@@ -44,8 +44,13 @@ import (
 	"time"
 )
 
-// DefaultTimeout 是单次探测的总时限：默认 10s（#74）。
-const DefaultTimeout = 10 * time.Second
+// DefaultTimeout 是单次探测的总时限：默认 60s。
+//
+// 早先定的是 10s（#74），在带推理的模型上会误杀：思考型模型单发一次最小补全
+// 经常要 20–50s（有的供应商还要先排队），10s 到点就报「连接失败」，而模型本身
+// 是好的。连接测试的目的是「这套配置能不能用」，不是「它多快」，因此把上限
+// 放到 60s；真慢到 60s 不回的配置，跑起来也一定会拖垮任务，报错仍然是合理的。
+const DefaultTimeout = 60 * time.Second
 
 // probeMaxTokens 只用于 anthropic 协议：Messages API 的 max_tokens 是必填项，
 // 给一个够短回复用的固定小预算即可。openai / openai-responses 不发送输出上限
@@ -102,7 +107,7 @@ type Config struct {
 	// SessionHeaderKey 可选：非空时探测请求带上该头，值为一次性随机 session id。
 	// 某些端点（如 opencode zen）强制要求会话头，缺失即 400。
 	SessionHeaderKey string
-	// Timeout 单次探测的总时限；0 = DefaultTimeout（10s）。
+	// Timeout 单次探测的总时限；0 = DefaultTimeout（60s）。
 	Timeout time.Duration
 }
 

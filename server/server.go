@@ -1702,7 +1702,8 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[llm-test] Key 来源=%s 尾号=%s → %s / %s @ %s", src.Source, src.Hint, req.Provider, req.Model, req.BaseURL)
 
 	// 重试参数【不】带进连接测试：测试看的是「这个端点通不通」，重试节奏是跑起来
-	// 之后的事；独立探测本身就是单发不重试，总时限 10s（llmtest.DefaultTimeout）。
+	// 之后的事；独立探测本身就是单发不重试，总时限 60s（llmtest.DefaultTimeout）。
+	// 60s 是给带推理的模型留的余量：测试判的是「配置能不能用」，慢不等于坏。
 	res, err := llmtest.Probe(r.Context(), llmtest.Config{
 		Format:           llmtest.Format(req.Provider),
 		BaseURL:          req.BaseURL,
