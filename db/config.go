@@ -82,6 +82,17 @@ type LLMProfile struct {
 	// llm_profiles 的列:探测缓存走 settings(llm_caps:<id>),由
 	// db/capabilities.go 在读取时旁挂上来。零值 = 没探测过。
 	Caps llmprobe.Capabilities `json:"caps,omitempty"`
+
+	// ---- 供应商(重构后新增) ----
+	// ProviderID 指向 llm_providers:模型的端点/鉴权/端点级限速都从那里来。
+	// 本结构体仍然是「铺平」的——上面的 Format/BaseURL/Proxy/APIKey/Rate* 由读
+	// 路径从供应商行 JOIN 出来,而不是从 llm_profiles 的同名列读。这样轮询、
+	// 能力探测、任务链这些只关心"怎么发请求"的代码一行都不用改。
+	ProviderID   int64  `json:"provider_id"`
+	ProviderName string `json:"provider_name,omitempty"`
+	// Endpoint 只在写路径上有意义:旧客户端把端点字段和模型字段混在一个请求里
+	// 提交,服务端把它们收进这份补丁,保存时落到供应商行上。读出来的值恒为 nil。
+	Endpoint *EndpointPatch `json:"-"`
 }
 
 // RetryOverride is one profile's optional override of the three retry layers
@@ -94,27 +105,49 @@ type RetryOverride struct {
 	Stream  RetryRule `json:"stream"`
 }
 
-// profileCols is the read column list (hint variant, no api key) shared by the
-// list query; profileColsKey is the same with api_key for the single-row loads.
-const profileRetryCols = `COALESCE(retry_connect_attempts,0),COALESCE(retry_connect_interval_ms,0),COALESCE(retry_empty_attempts,0),COALESCE(retry_empty_interval_ms,0),COALESCE(retry_stream_attempts,0),COALESCE(retry_stream_interval_ms,0)`
+// profileFrom 是所有读路径唯一的 FROM 子句：模型表左连接供应商表。
+// 左连接（而不是内连接）是为了「旧库刚补了列、回填还没跑」这一瞬间仍能读到行——
+// 此时 COALESCE 回落到 llm_profiles 自己的历史列，读出来和重构前逐字一致。
+const profileFrom = ` FROM llm_profiles p LEFT JOIN llm_providers v ON v.id=p.provider_id`
+
+// profileRetryCols / profileModalityCols / profileCredentialCols 是尾部列组，
+// 全部改成 p. 前缀——接上 JOIN 之后原表名不再可用。
+const profileRetryCols = `COALESCE(p.retry_connect_attempts,0),COALESCE(p.retry_connect_interval_ms,0),COALESCE(p.retry_empty_attempts,0),COALESCE(p.retry_empty_interval_ms,0),COALESCE(p.retry_stream_attempts,0),COALESCE(p.retry_stream_interval_ms,0)`
 
 // profileModalityCols 挂在两个读列清单末尾;input_modalities 是补旧库列,
 // 老库由 openSQLite 的 sqliteColumnAdds 补上,COALESCE 只是与既有列风格一致。
-const profileModalityCols = `COALESCE(input_modalities,'')`
+const profileModalityCols = `COALESCE(p.input_modalities,'')`
 
-// profileCredentialCols 是凭据实体化(计划 46–47)追加的尾列:绑定的凭据 id
-// (NULL→0)与凭据展示名。
-const profileCredentialCols = `COALESCE(credential_id,0),COALESCE((SELECT c.name FROM credentials c WHERE c.id=llm_profiles.credential_id),'')`
+// profileCredentialCols 是凭据实体化(计划 46–47)的尾列:绑定的凭据 id
+// (NULL→0)与凭据展示名。绑定现在住在供应商行上,故 COALESCE 取两边——
+// 未回填的旧行仍读自己的列。
+const profileCredentialCols = `COALESCE(v.credential_id,p.credential_id,0),COALESCE((SELECT c.name FROM credentials c WHERE c.id=COALESCE(v.credential_id,p.credential_id)),'')`
 
-// profileKeyExpr / profileHintExpr 决定「有效 Key / 有效 hint」的来源:绑定了凭据
-// 就取凭据行,否则沿用 profile 自己的内联列——旧库、旧配置的行为逐字不变。用
-// 相关子查询而不是 JOIN,是为了让既有列清单与 scan 顺序只需尾部追加,所有查询的
-// FROM 仍是裸的 llm_profiles。
-const profileKeyExpr = `CASE WHEN credential_id IS NULL THEN COALESCE(api_key,'') ELSE COALESCE((SELECT c.api_key FROM credentials c WHERE c.id=llm_profiles.credential_id),'') END`
-const profileHintExpr = `CASE WHEN credential_id IS NULL THEN COALESCE(api_key_hint,'') ELSE COALESCE((SELECT c.api_key_hint FROM credentials c WHERE c.id=llm_profiles.credential_id),'') END`
+// profileProviderCols 是本次重构追加的两个尾列:归属供应商的 id 与名称。
+// 前端的「供应商 → 模型」分组、轮询抽屉里的归属显示都读它们。
+const profileProviderCols = `COALESCE(p.provider_id,0),COALESCE(v.name,'')`
 
-const profileCols = `id,name,format,COALESCE(base_url,''),COALESCE(proxy,''),model,` + profileHintExpr + `,rate_per_second,rate_per_minute,context_window_k,COALESCE(reasoning_effort,''),is_default,priority,pool_exclude,COALESCE(thinking_type,''),COALESCE(streaming,true),COALESCE(max_tokens,0),COALESCE(max_tokens_field,''),COALESCE(session_header_key,''),` + profileRetryCols + `,` + profileModalityCols + `,` + profileCredentialCols
-const profileColsKey = `id,name,format,COALESCE(base_url,''),COALESCE(proxy,''),model,` + profileKeyExpr + `,rate_per_second,rate_per_minute,context_window_k,COALESCE(reasoning_effort,''),is_default,priority,pool_exclude,COALESCE(thinking_type,''),COALESCE(streaming,true),COALESCE(max_tokens,0),COALESCE(max_tokens_field,''),COALESCE(session_header_key,''),` + profileRetryCols + `,` + profileModalityCols + `,` + profileCredentialCols
+// profileKeyExpr / profileHintExpr 决定「有效 Key / 有效 hint」的来源,三层优先:
+//  1. 供应商绑定了凭据 → 凭据行的 key;
+//  2. 供应商自带内联 Key → 供应商行;
+//  3. 都没有（未回填的旧行）→ 模型自己的历史列。
+//
+// 子查询而不是再 JOIN 一次 credentials：只要一处即可，且不影响 scan 顺序。
+const profileKeyExpr = `CASE
+  WHEN COALESCE(v.credential_id,p.credential_id) IS NOT NULL
+    THEN COALESCE((SELECT c.api_key FROM credentials c WHERE c.id=COALESCE(v.credential_id,p.credential_id)),'')
+  ELSE COALESCE(v.api_key,p.api_key,'') END`
+const profileHintExpr = `CASE
+  WHEN COALESCE(v.credential_id,p.credential_id) IS NOT NULL
+    THEN COALESCE((SELECT c.api_key_hint FROM credentials c WHERE c.id=COALESCE(v.credential_id,p.credential_id)),'')
+  ELSE COALESCE(v.api_key_hint,p.api_key_hint,'') END`
+
+// profileHead 是两条读列清单共用的前缀:端点字段一律「供应商优先、模型历史列兜底」。
+const profileHead = `p.id,p.name,COALESCE(v.format,p.format),COALESCE(v.base_url,p.base_url,''),COALESCE(v.proxy,p.proxy,''),p.model,`
+const profileTail = `,COALESCE(v.rate_per_second,p.rate_per_second),COALESCE(v.rate_per_minute,p.rate_per_minute),p.context_window_k,COALESCE(p.reasoning_effort,''),p.is_default,p.priority,p.pool_exclude,COALESCE(p.thinking_type,''),COALESCE(p.streaming,true),COALESCE(p.max_tokens,0),COALESCE(p.max_tokens_field,''),COALESCE(v.session_header_key,p.session_header_key,''),` + profileRetryCols + `,` + profileModalityCols + `,` + profileCredentialCols + `,` + profileProviderCols
+
+const profileCols = profileHead + profileHintExpr + profileTail
+const profileColsKey = profileHead + profileKeyExpr + profileTail
 
 // scanProfile reads one row in the profileCols / profileColsKey column order. The
 // 7th column lands in APIKeyHint or APIKey depending on which list the caller used.
@@ -135,7 +168,8 @@ func scanProfile(sc interface{ Scan(...any) error }, into *string, p *LLMProfile
 		&p.Retry.Connect.Attempts, &p.Retry.Connect.IntervalMS,
 		&p.Retry.Empty.Attempts, &p.Retry.Empty.IntervalMS,
 		&p.Retry.Stream.Attempts, &p.Retry.Stream.IntervalMS,
-		&p.InputModalities, &credentialID, &p.CredentialName); err != nil {
+		&p.InputModalities, &credentialID, &p.CredentialName,
+		&p.ProviderID, &p.ProviderName); err != nil {
 		return err
 	}
 	if credentialID.Valid && credentialID.Int64 > 0 {
@@ -154,7 +188,7 @@ func scanProfile(sc interface{ Scan(...any) error }, into *string, p *LLMProfile
 }
 
 func (d *DB) ListProfiles() ([]*LLMProfile, error) {
-	rows, err := d.Query(`SELECT ` + profileCols + ` FROM llm_profiles ORDER BY id`)
+	rows, err := d.Query(`SELECT ` + profileCols + profileFrom + ` ORDER BY p.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +208,7 @@ func (d *DB) ListProfiles() ([]*LLMProfile, error) {
 // ActiveProfile returns the default (active) profile with its api key, or nil.
 func (d *DB) ActiveProfile() (*LLMProfile, error) {
 	var p LLMProfile
-	err := scanProfile(d.QueryRow(`SELECT `+profileColsKey+` FROM llm_profiles WHERE is_default LIMIT 1`), &p.APIKey, &p)
+	err := scanProfile(d.QueryRow(`SELECT `+profileColsKey+profileFrom+` WHERE p.is_default LIMIT 1`), &p.APIKey, &p)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -189,7 +223,7 @@ func (d *DB) ActiveProfile() (*LLMProfile, error) {
 // Used to run a task on a specific (non-default) LLM profile.
 func (d *DB) ProfileByID(id int64) (*LLMProfile, error) {
 	var p LLMProfile
-	err := scanProfile(d.QueryRow(`SELECT `+profileColsKey+` FROM llm_profiles WHERE id=$1`, id), &p.APIKey, &p)
+	err := scanProfile(d.QueryRow(`SELECT `+profileColsKey+profileFrom+` WHERE p.id=$1`, id), &p.APIKey, &p)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -207,9 +241,9 @@ func (d *DB) ProfileByID(id int64) (*LLMProfile, error) {
 // credential when there is one, else the inline column). The ordering IS the
 // policy — callers walk the slice front to back.
 func (d *DB) PoolProfiles() ([]*LLMProfile, error) {
-	rows, err := d.Query(`SELECT ` + profileColsKey + ` FROM llm_profiles
-WHERE ` + profileKeyExpr + ` <> '' AND (is_default OR NOT pool_exclude)
-ORDER BY is_default DESC, priority DESC, id ASC`)
+	rows, err := d.Query(`SELECT ` + profileColsKey + profileFrom + `
+WHERE ` + profileKeyExpr + ` <> '' AND (p.is_default OR NOT p.pool_exclude)
+ORDER BY p.is_default DESC, p.priority DESC, p.id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -226,91 +260,201 @@ ORDER BY is_default DESC, priority DESC, id ASC`)
 	return out, rows.Err()
 }
 
-// SaveProfile inserts (id==0) or updates a profile. Empty apiKey on update keeps existing.
+// SaveProfile inserts (id==0) or updates a model profile.
 //
-// credential_id 语义(凭据实体化,计划 46–47):
-//   - nil = 不动绑定(新建=不绑定)。旧客户端不传该字段 → 行为与从前逐字一致。
-//   - 0   = 显式解绑,回到「内联 Key」模式(内联列原样保留)。
-//   - >0  = 绑定该凭据:key 以凭据行为准,并清空本表的内联 api_key/api_key_hint,
-//     免得留下「改的是 A、用的是 B」的旧副本(请求里同时带 api_key 时忽略之)。
+// 重构后的分工：模型行只存「模型自己」的参数；端点身份（format / base_url /
+// proxy）、鉴权（凭据或内联 Key）、端点级限速与会话头全部归供应商。所以本函数
+// 先解决「这条模型属于哪家供应商」，再把端点相关的意图转成一份 EndpointPatch
+// 落给供应商行，最后才写模型行。
+//
+// 供应商归属的三种情况：
+//   - p.ProviderID > 0：显式指定（新界面走这条）；
+//   - p.ID > 0 且库里有归属：编辑既有模型，沿用原供应商；
+//   - 其余：旧客户端/旧代码只给了端点字段，为它建一条供应商（1:1，不自动合并——
+//     合并是用户在界面上显式做的决定，不该被一次保存偷偷决定）。
+//
+// credential_id 语义不变：nil = 不动绑定，0 = 显式解绑，>0 = 绑定——只是绑定现在
+// 落在供应商行上（一家供应商一把 Key，正是重构要表达的事实）。
 func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 	// 输入模态在唯一写入口归一:补 text、规范顺序、丢弃未知取值,库里永远只有
 	// 一种规范形态;"" = 未声明,保持 "" 交给运行时按模型名推断。
 	p.InputModalities = NormalizeModalities(p.InputModalities)
-	bindID := int64(0)
-	if p.CredentialID != nil {
-		bindID = *p.CredentialID
+	if p.MaxTokens < 0 {
+		p.MaxTokens = 0
 	}
-	if bindID > 0 {
-		// 绑定的凭据必须真实存在:否则这条配置会静默变成「无 Key」,错误离原因很远。
-		var n int
-		if err := d.QueryRow(`SELECT COUNT(*) FROM credentials WHERE id=$1`, bindID).Scan(&n); err != nil {
-			return 0, err
-		}
-		if n == 0 {
-			return 0, ErrCredentialNotFound
-		}
-	}
-	hint := p.APIKeyHint
-	if len(p.APIKey) >= 4 {
-		hint = "…" + p.APIKey[len(p.APIKey)-4:]
-	}
-	r := p.Retry.Clamped()
-	// hint 必须由明文推导，绝不能由密文推导——"…9f2a"是用户唯一认得出的部分，
-	// 显示 base64 尾巴既无用又是新的（小）泄露面。
-	stored, err := encryptCredential(p.APIKey)
+
+	providerID, err := d.resolveProfileProvider(p)
 	if err != nil {
 		return 0, err
 	}
-	// 绑定态的内联列一律写 NULL;非绑定态按参数写。
-	inlineKey, inlineHint := stored, hint
-	var credentialArg any
-	if bindID > 0 {
-		inlineKey, inlineHint, credentialArg = "", "", bindID
+	p.ProviderID = providerID
+
+	// 端点字段以供应商为准：模型行上的同名历史列只是镜像，不能让调用方在这里
+	// 覆盖出第二个事实来源。
+	v, err := d.ProviderByID(providerID)
+	if err != nil {
+		return 0, err
 	}
+	if v == nil {
+		return 0, ErrProviderNotFound
+	}
+	p.Format, p.BaseURL, p.Proxy = v.Format, v.BaseURL, v.Proxy
+	p.RatePerSecond, p.RatePerMinute = v.RatePerSecond, v.RatePerMinute
+	p.SessionHeaderKey = v.SessionHeaderKey
+	p.CredentialID = v.CredentialID
+	p.APIKeyHint = v.APIKeyHint
+	p.CredentialName = v.CredentialName
+
+	r := p.Retry.Clamped()
+	prevModel := ""
+	var prevProvider int64
+	if p.ID > 0 {
+		// 读失败不阻断保存：探测缓存不能变成写路径的硬依赖。
+		_ = d.QueryRow(`SELECT model,COALESCE(provider_id,0) FROM llm_profiles WHERE id=$1`, p.ID).
+			Scan(&prevModel, &prevProvider)
+	}
+
 	if p.ID == 0 {
 		var id int64
-		err := d.QueryRow(`INSERT INTO llm_profiles(name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms,input_modalities,credential_id)
-VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26) RETURNING id`,
-			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, inlineKey, inlineHint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
-			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.InputModalities, credentialArg).Scan(&id)
-		return id, err
-	}
-	// 一条语句覆盖三种绑定状态:内联列只在「提供了新 key」或「绑定凭据」时改写,
-	// 未表态时原样保留(空 key 保留旧 key 的既有契约不变)。
-	credMode := 0
-	if p.CredentialID != nil {
-		if bindID > 0 {
-			credMode = 1
-		} else {
-			credMode = 2
+		err := d.QueryRow(`INSERT INTO llm_profiles(provider_id,name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms,input_modalities,credential_id)
+VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,NULL,NULL,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,NULL) RETURNING id`,
+			providerID, p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
+			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.InputModalities).Scan(&id)
+		if err != nil {
+			return 0, err
+		}
+		p.ID = id
+	} else {
+		_, err = d.Exec(`UPDATE llm_profiles SET
+provider_id=$1,name=$2,model=$3,context_window_k=$4,reasoning_effort=$5,priority=$6,pool_exclude=$7,thinking_type=$8,streaming=$9,max_tokens=$10,max_tokens_field=$11,
+retry_connect_attempts=$12,retry_connect_interval_ms=$13,retry_empty_attempts=$14,retry_empty_interval_ms=$15,retry_stream_attempts=$16,retry_stream_interval_ms=$17,input_modalities=$18
+WHERE id=$19`,
+			providerID, p.Name, p.Model, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField,
+			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.InputModalities, p.ID)
+		if err != nil {
+			return 0, err
 		}
 	}
-	// 模型身份（format / base_url / model）一变，上次探测到的能力快照就作废：
-	// 留着它等于用旧模型的物理上限去钳新模型的请求——8K 输出的旧模型会把刚换上的
-	// 64K 模型永久压在 8K，而且界面上看不出原因。读失败不阻断保存：
-	// 探测缓存永远不能变成写路径的硬依赖。
-	staleCaps := false
-	var prevFormat, prevBase, prevModel string
-	if err := d.QueryRow(`SELECT format,COALESCE(base_url,''),model FROM llm_profiles WHERE id=$1`, p.ID).
-		Scan(&prevFormat, &prevBase, &prevModel); err == nil {
-		staleCaps = prevFormat != p.Format || prevBase != p.BaseURL || prevModel != p.Model
+	// 模型行上的端点历史列一律从供应商镜像过来（含加密后的 Key）。这保证任何
+	// 「只平铺 llm_profiles」的读取方（备份导出、外部脚本、旧二进制）仍然自洽。
+	if err := d.mirrorProviderToProfiles(providerID); err != nil {
+		return p.ID, err
 	}
-	_, err = d.Exec(`UPDATE llm_profiles SET
-name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,
-api_key      = CASE WHEN $26 = 1 THEN NULL WHEN $6 <> '' THEN NULLIF($6,'') ELSE api_key END,
-api_key_hint = CASE WHEN $26 = 1 THEN NULL WHEN $6 <> '' THEN NULLIF($7,'') ELSE api_key_hint END,
-rate_per_second=$8,rate_per_minute=$9,context_window_k=$10,reasoning_effort=$11,priority=$12,pool_exclude=$13,thinking_type=$14,streaming=$15,max_tokens=$16,max_tokens_field=$17,session_header_key=$18,
-retry_connect_attempts=$19,retry_connect_interval_ms=$20,retry_empty_attempts=$21,retry_empty_interval_ms=$22,retry_stream_attempts=$23,retry_stream_interval_ms=$24,input_modalities=$25,
-credential_id = CASE WHEN $26 = 1 THEN $27 WHEN $26 = 2 THEN NULL ELSE credential_id END
-WHERE id=$28`,
-		p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, stored, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
-		r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.InputModalities,
-		credMode, bindID, p.ID)
-	if err == nil && staleCaps {
+	// 模型换了、或者换了供应商（端点跟着变）→ 上一份能力快照属于旧端点/旧模型，
+	// 留着只会用旧上限去钳新端点。界面上「把模型挪到另一家供应商」走的正是这条
+	// 路径（保存时带 provider_id），所以这里必须和 MoveProfileToProvider 一样清掉。
+	if prevModel != "" && (prevModel != p.Model || prevProvider != providerID) {
 		_ = d.ClearModelCaps(p.ID)
 	}
-	return p.ID, err
+	return p.ID, nil
+}
+
+// resolveProfileProvider 决定这条模型归哪家供应商，并把端点相关的改动落到供应商行。
+func (d *DB) resolveProfileProvider(p *LLMProfile) (int64, error) {
+	patch := d.profileEndpointPatch(p)
+	switch {
+	case p.ProviderID > 0:
+		if v, err := d.ProviderByID(p.ProviderID); err != nil {
+			return 0, err
+		} else if v == nil {
+			return 0, ErrProviderNotFound
+		}
+		if !patch.empty() {
+			if err := d.applyEndpointPatch(p.ProviderID, patch); err != nil {
+				return 0, err
+			}
+		}
+		return p.ProviderID, nil
+	case p.ID > 0:
+		var pid sql.NullInt64
+		if err := d.QueryRow(`SELECT provider_id FROM llm_profiles WHERE id=$1`, p.ID).Scan(&pid); err == nil && pid.Valid && pid.Int64 > 0 {
+			if !patch.empty() {
+				if err := d.applyEndpointPatch(pid.Int64, patch); err != nil {
+					return 0, err
+				}
+			}
+			return pid.Int64, nil
+		}
+	}
+	// 没有归属：用当前这些端点字段建一条供应商。名字取模型名（重名自动加后缀），
+	// 用户随后可以在界面上改名或把模型挪到别的供应商下。
+	name, err := d.uniqueProviderName(p.Name)
+	if err != nil {
+		return 0, err
+	}
+	v := &LLMProvider{
+		Name:             name,
+		Format:           p.Format,
+		BaseURL:          p.BaseURL,
+		Proxy:            p.Proxy,
+		APIKey:           p.APIKey,
+		RatePerSecond:    p.RatePerSecond,
+		RatePerMinute:    p.RatePerMinute,
+		SessionHeaderKey: p.SessionHeaderKey,
+		CredentialID:     p.CredentialID,
+	}
+	if patch.Format != nil {
+		v.Format = *patch.Format
+	}
+	if patch.BaseURL != nil {
+		v.BaseURL = *patch.BaseURL
+	}
+	if patch.Proxy != nil {
+		v.Proxy = *patch.Proxy
+	}
+	if patch.SessionHeaderKey != nil {
+		v.SessionHeaderKey = *patch.SessionHeaderKey
+	}
+	if patch.RatePerSecond != nil {
+		v.RatePerSecond = *patch.RatePerSecond
+	}
+	if patch.RatePerMinute != nil {
+		v.RatePerMinute = *patch.RatePerMinute
+	}
+	if patch.APIKey != "" {
+		v.APIKey = patch.APIKey
+	}
+	if patch.CredentialID != nil {
+		v.CredentialID = patch.CredentialID
+	}
+	return d.SaveProvider(v)
+}
+
+// profileEndpointPatch 把一次模型保存里「属于端点的那部分」收拢成补丁。
+//
+// 只收明确表达过的意图：Format 为空字符串表示没提；BaseURL/Proxy/限速这些
+// 「空值也有意义」的字段必须由调用方用指针显式给出，否则不能拿零值去覆盖供应商。
+func (d *DB) profileEndpointPatch(p *LLMProfile) EndpointPatch {
+	var patch EndpointPatch
+	if p.Endpoint != nil {
+		patch = *p.Endpoint
+	} else {
+		// Endpoint 为空 = 这个调用方不是 HTTP 层（测试、db 内部调用、server 的
+		// legacy setLLM）。它们按「整行覆盖」的老语义工作：传进来的端点字段就是要
+		// 写进去的值，空串/0 也是。
+		//
+		// HTTP 层永远给 Endpoint 赋值（哪怕是全 nil 的空补丁），所以「新界面只改
+		// 模型、不动端点」与「旧界面连端点一起改」在这里被干净地分开。
+		if p.Format != "" {
+			f := p.Format
+			patch.Format = &f
+		}
+		base, proxy, header := p.BaseURL, p.Proxy, p.SessionHeaderKey
+		rps, rpm := p.RatePerSecond, p.RatePerMinute
+		patch.BaseURL, patch.Proxy, patch.SessionHeaderKey = &base, &proxy, &header
+		patch.RatePerSecond, patch.RatePerMinute = &rps, &rpm
+	}
+	if patch.Format == nil && p.Format != "" {
+		f := p.Format
+		patch.Format = &f
+	}
+	if patch.APIKey == "" && p.APIKey != "" {
+		patch.APIKey = p.APIKey
+	}
+	if patch.CredentialID == nil && p.CredentialID != nil {
+		patch.CredentialID = p.CredentialID
+	}
+	return patch
 }
 
 var (

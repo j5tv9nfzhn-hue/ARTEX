@@ -2041,10 +2041,13 @@
       "activate": "设为激活",
       "active": "已激活",
       "credential": "凭据：{name}",
+      "maxTokens": "输出上限 {n}",
+      "windowK": "窗口 {k}K",
       "deleteAria": "删除配置",
       "excluded": "不参与轮询",
       "modalities": "支持 {modalities}",
       "priority": "优先级 {priority}",
+      "providerModels": "{n} 个模型",
       "proxy": "代理 {proxy}",
       "thinking": "思考 {effort}",
       "thinkingOff": "关"
@@ -2087,14 +2090,16 @@
       "trippedCooldown": "已熔断 · {cooldown}"
     },
     "page": {
-      "empty": "还没有模型配置，点击右上角「新建」创建第一个。",
+      "empty": "还没有供应商，点击右上角「新建供应商」创建第一个。",
       "enabled": "已开启",
       "new": "新建",
+      "newProvider": "新建供应商",
+      "orphanTitle": "未归属供应商",
       "poolConfig": "轮询配置",
-      "subtitle": "全 Agent 共享的格式 / 模型 / 限速配置。点击卡片编辑，星标为当前激活配置。",
+      "subtitle": "供应商 = 端点 + 凭据，模型挂在供应商下。点供应商卡片里的模型行编辑，星标为当前激活的模型。",
       "tab": {
         "credentials": "凭据",
-        "profiles": "模型配置",
+        "providers": "供应商",
         "retry": "重试与退避"
       },
       "toast": {
@@ -2144,6 +2149,47 @@
         "recoveredAll": "已恢复全部配置",
         "recoveredOne": "已恢复该配置",
         "setFailed": "设置失败：{msg}"
+      }
+    },
+    "model": {
+      "activate": "设为激活",
+      "effectiveMax": "生效上限 {n} token（配置 {configured}、模型上限 {cap}，取小）",
+      "effectiveMaxCapped": "配置 {configured} 超过模型上限 {cap}，实际按 {n} 发送",
+      "effectiveMaxUnknown": "生效上限由服务端默认值决定（尚未探测到模型上限）",
+      "moveHint": "保存后该模型立即改用新供应商的端点与 Key。",
+      "providerRequired": "先选一个供应商：端点与 Key 都归它管，模型不能没有归属。",
+      "noCaps": "尚未探测到能力，压缩与输出上限暂按声明值计算。",
+      "providerHint": "决定这条模型用哪个端点、哪把 Key、哪份限速。改到这里等于把模型挪到另一家供应商下。",
+      "providerLabel": "所属供应商",
+      "reprobe": "重新探测能力",
+      "reprobeFailed": "探测失败：{msg}",
+      "reprobeOk": "探测完成：窗口 {k}K"
+    },
+    "provider": {
+      "addModel": "添加模型",
+      "deleteAria": "删除供应商",
+      "deleteBlocked": "名下还有模型，先删除或移走它们",
+      "descEdit": "修改后点击保存；该供应商名下的所有模型立即继承新的端点与 Key。",
+      "descNew": "供应商 = 端点（格式 / Base URL / 代理）+ 鉴权（凭据或内联 Key）+ 端点级限速。保存后可以往它下面添加任意多个模型。",
+      "edit": "编辑供应商",
+      "editTitle": "编辑供应商：{name}",
+      "modelsCount": "{n} 个模型",
+      "name": {
+        "label": "名称",
+        "placeholder": "例如：OpenAI 生产"
+      },
+      "new": "新建供应商",
+      "newTitle": "新建供应商",
+      "noModels": "还没有模型，点「添加模型」开始。",
+      "testModel": "测试用模型",
+      "testNeedModel": "先填一个模型名再测试",
+      "toast": {
+        "created": "已新建供应商：{name}（接着往它下面添加模型）",
+        "deleteFailed": "删除失败：{msg}",
+        "deleted": "已删除供应商：{name}",
+        "nameRequired": "请填写供应商名称",
+        "saveFailed": "保存失败：{msg}",
+        "saved": "已保存，名下模型即时生效"
       }
     },
     "profile": {
@@ -5439,3 +5485,6 @@
     "sessionNote": "仅保留本次会话最近 {count} 条，刷新页面后清空。"
   }
 }
+
+
+

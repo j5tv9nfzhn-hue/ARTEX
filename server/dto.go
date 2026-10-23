@@ -679,6 +679,10 @@ type LLMProfileDTO struct {
 	// 才能一眼看出「填的数」和「实际用的数」不是一回事。
 	EffectiveContextWindowK int  `json:"effective_context_window_k"`
 	ContextWindowDetected   bool `json:"context_window_detected"`
+	// ---- 供应商归属（重构后）----
+	// 界面按供应商分组时用这两个字段；老客户端忽略它们即可，行为不受影响。
+	ProviderID   string `json:"provider_id,omitempty"`
+	ProviderName string `json:"provider_name,omitempty"`
 }
 
 func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
@@ -716,7 +720,61 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 		Caps:                    p.Caps,
 		EffectiveContextWindowK: p.EffectiveContextWindowK(),
 		ContextWindowDetected:   p.ContextWindowDetected(),
+
+		ProviderID:   providerIDString(p.ProviderID),
+		ProviderName: p.ProviderName,
 	}
+}
+
+// providerIDString 把内部 id 转成界面用的字符串 id；0 保持空（= 未归属）。
+func providerIDString(id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	return i64s(id)
+}
+
+// LLMProviderDTO 是一家供应商及其名下模型。模型复用 LLMProfileDTO——前端拿到的
+// 每一条仍然是「能直接发请求的完整配置」，只是多了一层分组关系。
+type LLMProviderDTO struct {
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Format           string          `json:"format"`
+	BaseURL          string          `json:"base_url,omitempty"`
+	Proxy            string          `json:"proxy,omitempty"`
+	APIKeyHint       string          `json:"api_key_hint,omitempty"`
+	CredentialID     string          `json:"credential_id,omitempty"`
+	CredentialName   string          `json:"credential_name,omitempty"`
+	RatePerSecond    float64         `json:"rate_per_second"`
+	RatePerMinute    float64         `json:"rate_per_minute"`
+	SessionHeaderKey string          `json:"session_header_key,omitempty"`
+	ModelCount       int             `json:"model_count"`
+	Models           []LLMProfileDTO `json:"models"`
+}
+
+func llmProviderDTOs(in []*db.LLMProvider) []LLMProviderDTO {
+	out := make([]LLMProviderDTO, 0, len(in))
+	for _, v := range in {
+		dto := LLMProviderDTO{
+			ID:               i64s(v.ID),
+			Name:             v.Name,
+			Format:           v.Format,
+			BaseURL:          v.BaseURL,
+			Proxy:            v.Proxy,
+			APIKeyHint:       v.APIKeyHint,
+			RatePerSecond:    v.RatePerSecond,
+			RatePerMinute:    v.RatePerMinute,
+			SessionHeaderKey: v.SessionHeaderKey,
+			ModelCount:       v.ModelCount,
+			Models:           llmProfileDTOs(v.Models),
+		}
+		if v.CredentialID != nil {
+			dto.CredentialID = i64s(*v.CredentialID)
+		}
+		dto.CredentialName = v.CredentialName
+		out = append(out, dto)
+	}
+	return out
 }
 
 func llmProfileDTOs(in []*db.LLMProfile) []LLMProfileDTO {

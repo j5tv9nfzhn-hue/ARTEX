@@ -369,8 +369,49 @@ BEGIN
   UPDATE credentials SET updated_at = (strftime('%Y-%m-%d %H:%M:%f+00:00','now')) WHERE rowid = NEW.rowid;
 END;
 
+-- 供应商（模型的上游端点）。重构前，「一家供应商」是由 format + base_url + 代理 +
+-- Key 四个字段共同隐式表达的，且每个模型各存一份——同一家开三个模型就要重复填三遍
+-- 端点与凭据。抽成独立实体后：
+--   provider = 端点身份（format / base_url / proxy）+ 鉴权（credential 或内联 Key）
+--              + 端点级限速与网关会话头
+--   profile  = 一个模型（窗口、输出上限、思考参数、轮询顺位、模态声明）
+-- 读路径不要求调用方改：db/config.go 的 profileCols* 用 LEFT JOIN 把供应商列铺平，
+-- 所以 db.LLMProfile / LLMProfileDTO / 轮询 / 探测 / 任务链仍然是同一份扁平结构。
+-- 旧库的一次性回填见 db/providers.go 的 backfillLLMProviders（每个旧配置 →
+-- 一条供应商，同端点同 Key 的会合并）。
+CREATE TABLE IF NOT EXISTS llm_providers (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT NOT NULL UNIQUE,
+    format           TEXT NOT NULL CHECK (format IN ('openai','anthropic','openai-responses')),
+    base_url         TEXT,
+    proxy            TEXT,
+    -- 内联 Key（加密存储），与 credentials.api_key 同一套 enc:v1: 方案。
+    api_key          TEXT,
+    api_key_hint     TEXT,
+    -- 绑定的凭据：非空时 Key 以 credentials 行为准，本表内联列会被清空。
+    credential_id    BIGINT REFERENCES credentials(id) ON DELETE SET NULL,
+    -- 端点级限速（一个 Key 一份额度，故按供应商而不是按模型计）。
+    rate_per_second  REAL NOT NULL DEFAULT 0,
+    rate_per_minute  REAL NOT NULL DEFAULT 0,
+    -- 网关的会话头：同一条网关链路对所有模型一致。
+    session_header_key TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now')),
+    updated_at       TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_llm_providers_format ON llm_providers(format);
+DROP TRIGGER IF EXISTS trg_llm_providers_upd;
+
+CREATE TRIGGER IF NOT EXISTS trg_llm_providers_upd_updated_at
+AFTER UPDATE ON llm_providers
+BEGIN
+  UPDATE llm_providers SET updated_at = (strftime('%Y-%m-%d %H:%M:%f+00:00','now')) WHERE rowid = NEW.rowid;
+END;
+
 CREATE TABLE IF NOT EXISTS llm_profiles (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 归属供应商。可空是为了让「旧库尚未回填」这一个瞬间仍然可读（读路径对空值
+    -- 回落到本表的历史列），正常运行时恒非空；老库补列见 open_sqlite.go。
+    provider_id      BIGINT REFERENCES llm_providers(id),
     name             TEXT NOT NULL UNIQUE,
     format           TEXT NOT NULL CHECK (format IN ('openai','anthropic','openai-responses')),
     base_url         TEXT,
@@ -429,6 +470,7 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     updated_at       TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f+00:00','now'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_one_default ON llm_profiles(is_default) WHERE is_default;
+CREATE INDEX IF NOT EXISTS idx_llm_profiles_provider ON llm_profiles(provider_id);
 DROP TRIGGER IF EXISTS trg_llm_upd;
 
 CREATE TRIGGER IF NOT EXISTS trg_llm_upd_updated_at

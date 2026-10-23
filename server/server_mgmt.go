@@ -2243,10 +2243,22 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	// *bool shadowing the embedded json:"streaming": an absent field must default
 	// to streaming (true), which a plain bool zero value (false = non-streaming)
 	// would get wrong — legacy/partial clients that never send it stay streaming.
+	// 端点级字段用指针接收（provider_id / format / base_url / proxy / 限速 /
+	// 会话头 / credential_id）：nil = 这次请求没提这个字段 → 不动供应商行。
+	// 这是「新界面只发模型字段、旧界面继续把端点字段混在一起发」能共存的关键——
+	// 用零值判断会把「清空 Base URL」和「没提 Base URL」变成同一件事。
 	var body struct {
 		db.LLMProfile
-		APIKey    string `json:"api_key"`
-		Streaming *bool  `json:"streaming"`
+		APIKey           string   `json:"api_key"`
+		Streaming        *bool    `json:"streaming"`
+		ProviderID       *int64   `json:"provider_id"`
+		Format           *string  `json:"format"`
+		BaseURL          *string  `json:"base_url"`
+		Proxy            *string  `json:"proxy"`
+		RatePerSecond    *float64 `json:"rate_per_second"`
+		RatePerMinute    *float64 `json:"rate_per_minute"`
+		SessionHeaderKey *string  `json:"session_header_key"`
+		CredentialID     *int64   `json:"credential_id"`
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, 400, err.Error())
@@ -2268,6 +2280,35 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	if p.MaxTokens < 0 {
 		p.MaxTokens = 0
 	}
+	// 端点相关的意图原样交给 db 层：它有事务，也知道「哪家供应商才是这些字段的主人」。
+	p.Endpoint = &db.EndpointPatch{
+		Format:           body.Format,
+		BaseURL:          body.BaseURL,
+		Proxy:            body.Proxy,
+		RatePerSecond:    body.RatePerSecond,
+		RatePerMinute:    body.RatePerMinute,
+		SessionHeaderKey: body.SessionHeaderKey,
+		CredentialID:     body.CredentialID,
+	}
+	if body.ProviderID != nil {
+		p.ProviderID = *body.ProviderID
+	}
+	// 判断 max_tokens_field 要看「最终生效的格式」——新界面不传 format，得回查一次
+	// 供应商；否则每次保存都会把 max_completion_tokens 误清成空。
+	effectiveFormat := ""
+	switch {
+	case body.Format != nil:
+		effectiveFormat = *body.Format
+	case p.ProviderID > 0:
+		if v, err := pg.ProviderByID(p.ProviderID); err == nil && v != nil {
+			effectiveFormat = v.Format
+		}
+	case p.ID > 0:
+		if cur, err := pg.ProfileByID(p.ID); err == nil && cur != nil {
+			effectiveFormat = cur.Format
+		}
+	}
+	p.Format = effectiveFormat
 	if p.Format != "openai" || p.MaxTokensField != llm.MaxTokensFieldCompletion {
 		p.MaxTokensField = ""
 	}
@@ -2287,7 +2328,7 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	// 保存后异步探一次模型能力（模型没变且快照新鲜会自动跳过）。
 	// 起在响应之前，但不阻塞返回——探测慢不该拖住设置页。
 	s.probeProfileAsync(pg, id)
-	writeJSON(w, 200, map[string]any{"id": id})
+	writeJSON(w, 200, map[string]any{"id": id, "provider_id": i64s(p.ProviderID)})
 }
 
 // pgGetLLMRetryPolicy 返回全局重试策略(五层各自的次数+间隔)。未配置过 → 全零，

@@ -1319,6 +1319,29 @@ export interface LLMProfile {
   // 只读字段，保存请求里用数字 credential_id（0 = 解绑回内联 Key）。
   credential_id?: string;
   credential_name?: string;
+  // 所属供应商（任务 16）：端点 / 代理 / Key / 限速 / 会话头都住在这一层，
+  // 模型只保留自己那份参数。字符串形式与其它 id 一致；"0"/缺省 = 未归属。
+  provider_id?: string;
+  provider_name?: string;
+}
+
+// 供应商 = 端点（format / base_url / proxy）+ 鉴权（凭据或内联 Key）+ 端点级
+// 限速与会话头。列表接口一次带回名下模型，设置页据此渲染「卡片 + 模型行」，
+// 不必再按供应商发 N 个请求。
+export interface LLMProvider {
+  id: string;
+  name: string;
+  format: "openai" | "anthropic" | "openai-responses";
+  base_url?: string;
+  proxy?: string;
+  api_key_hint?: string;
+  credential_id?: string;
+  credential_name?: string;
+  rate_per_second: number;
+  rate_per_minute: number;
+  session_header_key?: string;
+  model_count: number;
+  models: LLMProfile[];
 }
 
 // ---- LLM 重试策略 ----
@@ -1355,6 +1378,10 @@ export interface LLMPoolMember {
   name: string;
   model: string;
   format: string;
+  // 所属供应商（任务 16）。同一家供应商可能在链上连着出现多条模型，标出归属
+  // 才能分清「换的是端点」还是「只是换个模型名」。
+  provider_id?: string;
+  provider_name?: string;
   priority: number;
   active: boolean; // 是否为当前激活配置（恒为链首）
   excluded: boolean; // pool_exclude：不参与轮询
@@ -2260,3 +2287,5 @@ export interface UpdateJournal {
     versions?: string[];
   };
 }
+
+

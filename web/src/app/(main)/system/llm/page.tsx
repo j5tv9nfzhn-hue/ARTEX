@@ -32,7 +32,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
-import type { LLMCredential, LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
+import type { LLMCredential, LLMPoolMember, LLMPoolStatus, LLMProfile, LLMProvider, LLMRetryOverride } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { ProfileRetryFields, RetryPolicyPanel, ZERO_OVERRIDE } from "./_components/retry";
@@ -46,8 +46,10 @@ const fromStore = (v?: string) => (v ? v : NONE);
 const toStore = (v: string) => (v === NONE ? "" : v);
 
 // 凭据选择器的「内联 Key」哨兵：Radix Select 不接受空字符串 value，与 NONE 同理；
-// 存取时与 ""（= 未绑定，用本配置自己的 api_key）互转。
+// 存取时与 ""（= 未绑定，用这家供应商自己的 api_key）互转。
 const INLINE_CRED = "__inline__";
+
+type LLMFormat = "anthropic" | "openai" | "openai-responses";
 
 // 输入模态复选框与存储串互转。存储格式是逗号分隔的 text/image/audio/pdf（后端
 // 保存时归一）；"" = 未声明，后端按模型名保守推断。text 由后端始终隐含，界面上
@@ -66,9 +68,21 @@ function cooldownText(secs: number) {
   return `${Math.ceil(secs / 60)}min`;
 }
 
-// 一个配置在卡片上显示的「是否正常」。没填 Key 的配置根本发不出请求，比熔断更该先说；
-// 其余状态来自轮询的熔断记录（轮询关着时不会产生新记录，此时「正常」= 没有已知故障）。
-// 文案走 i18n（llmPage.health.*），所以把 t 传进来由调用方注入。
+// 一条模型实际会发出去的输出上限。真正调用时后端还会再按「窗口 − 输入 − margin」
+// 钳一次（只降不升、溢出即放弃钳制交给溢出恢复），这里只推演「配置 vs 模型上限」
+// 这一层——它正是用户在设置页能直接改坏的那一层：填超了会被静默压到上限，
+// 界面上必须看得见压成了多少，否则「我明明填了 64K」会变成长期的口径纠纷。
+function effectiveMaxOutput(p: LLMProfile): { value: number; cap: number; configured: number; capped: boolean } {
+  const configured = Math.max(0, p.max_tokens ?? 0);
+  const cap = Math.max(0, p.caps?.max_output_tokens ?? 0);
+  if (configured <= 0) return { value: cap, cap, configured, capped: false };
+  if (cap <= 0) return { value: configured, cap, configured, capped: false };
+  return { value: Math.min(configured, cap), cap, configured, capped: configured > cap };
+}
+
+// 一个模型在卡片上显示的「是否正常」。没填 Key 的模型根本发不出请求，比熔断更该
+// 先说；其余状态来自轮询的熔断记录（轮询关着时不会产生新记录，此时「正常」=
+// 没有已知故障）。文案走 i18n（llmPage.health.*），所以把 t 传进来由调用方注入。
 type Health = { label: string; cls: string; hint?: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -231,6 +245,9 @@ function PoolSheet({
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 pl-7 text-muted-foreground text-xs">
                         <code className="truncate font-mono">{m.model}</code>
+                        {/* 供应商名：轮询链按模型排序，同一家可能连着出现多条，
+                            标出归属才知道「换的到底是端点还是只是模型」。 */}
+                        {m.provider_name && <span>{m.provider_name}</span>}
                         {!m.active && <span>{t("pool.priority", { priority: m.priority })}</span>}
                       </div>
                       {m.last_error && (
@@ -260,36 +277,332 @@ function PoolSheet({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 模型配置抽屉（新建 / 编辑共用同一套表单）
+// 供应商抽屉（新建 / 编辑）
+//
+// 这一层只放「一家端点共享的字段」：格式、Base URL、代理、Key/凭据、端点级限速、
+// 会话头。模型自己的参数全在模型抽屉里——代理与 Key 在这里只维护一次，就是这次
+// 重构的目的本身。
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProfileSheet({
-  profile,
+function ProviderSheet({
+  provider,
   open,
   onOpenChange,
   onSaved,
   credentials,
 }: {
-  profile: LLMProfile | null; // null = 新建
+  provider: LLMProvider | null; // null = 新建
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onSaved: (id: string) => void;
-  credentials: LLMCredential[]; // 可选的独立凭据（计划 46–47）
+  credentials: LLMCredential[];
 }) {
   const t = useTranslations("llmPage");
-  const isNew = !profile;
+  const isNew = !provider;
   const [name, setName] = React.useState("");
-  const [format, setFormat] = React.useState<"anthropic" | "openai" | "openai-responses">("anthropic");
-  const [model, setModel] = React.useState("");
+  const [format, setFormat] = React.useState<LLMFormat>("anthropic");
   const [baseUrl, setBaseUrl] = React.useState("");
   const [proxy, setProxy] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [keyHint, setKeyHint] = React.useState("");
-  // 绑定的凭据 id（""=内联 Key，用本配置自己的 api_key）。见 INLINE_CRED。
+  // 绑定的凭据 id（""=内联 Key，用这家供应商自己的 api_key）。见 INLINE_CRED。
   const [credId, setCredId] = React.useState("");
   const [rps, setRps] = React.useState("0");
   const [rpm, setRpm] = React.useState("0");
-  const [cw, setCw] = React.useState("0"); // 上下文窗口(K tokens);0=默认200K
+  const [sessionHeaderKey, setSessionHeaderKey] = React.useState("");
+  // 连接测试要一个模型名。供应商本身不带模型，默认拿名下第一条去测；
+  // 还没有模型时让用户手填，反正只是探端点通不通。
+  const [testModel, setTestModel] = React.useState("");
+  const [testing, setTesting] = React.useState(false);
+  const [testElapsed, setTestElapsed] = React.useState(0);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!open) return;
+    setName(provider?.name ?? "");
+    setFormat(
+      provider?.format === "openai" || provider?.format === "openai-responses" ? provider.format : "anthropic",
+    );
+    setBaseUrl(provider?.base_url ?? "");
+    setProxy(provider?.proxy ?? "");
+    setApiKey("");
+    setKeyHint(provider?.api_key_hint ?? "");
+    setCredId(provider?.credential_id ?? "");
+    setRps(String(provider?.rate_per_second ?? 0));
+    setRpm(String(provider?.rate_per_minute ?? 0));
+    setSessionHeaderKey(provider?.session_header_key ?? "");
+    setTestModel(provider?.models?.[0]?.model ?? "");
+  }, [open, provider]);
+
+  const providerId = provider ? Number(provider.id) : undefined;
+  const boundCred = credId ? credentials.find((c) => c.id === credId) : undefined;
+  // 名下第一条模型：测试时把它的 id 递过去，后端据此取到「这条供应商的 Key」
+  // （读路径本来就是 COALESCE(供应商, 模型)）。
+  const sampleProfileId = provider?.models?.length ? Number(provider.models[0].id) : undefined;
+
+  async function testConnection() {
+    if (testing) return;
+    const model = testModel.trim();
+    if (!model) {
+      toast.error(t("provider.testNeedModel"));
+      return;
+    }
+    setTesting(true);
+    setTestElapsed(0);
+    const startedAt = Date.now();
+    const ticker = setInterval(() => setTestElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    try {
+      const r = await api.testLLM(
+        format,
+        model,
+        baseUrl,
+        apiKey,
+        proxy,
+        "",
+        "",
+        sampleProfileId,
+        sessionHeaderKey.trim(),
+      );
+      const keyLine = r.key_source ? t("profile.toast.testKey", { source: r.key_source, hint: r.key_hint ?? "" }) : "";
+      if (r.ok)
+        toast.success(t("profile.toast.testOk", { latency: r.latency_ms ?? "?", model: r.model ?? model }), {
+          description:
+            [r.reply ? t("profile.toast.testReply", { reply: r.reply }) : "", keyLine].filter(Boolean).join(" · ") ||
+            undefined,
+        });
+      else
+        toast.error(t("profile.toast.testFailed", { error: r.error ?? t("profile.toast.unknown") }), {
+          description: keyLine || undefined,
+        });
+    } catch (e) {
+      toast.error(t("profile.toast.testError", { msg: (e as Error).message }));
+    } finally {
+      clearInterval(ticker);
+      setTesting(false);
+    }
+  }
+
+  async function save() {
+    if (!name.trim()) {
+      toast.error(t("provider.toast.nameRequired"));
+      return;
+    }
+    if (saving) return;
+    setSaving(true);
+    try {
+      const { id } = await api.saveLLMProvider({
+        ...(providerId ? { id: providerId } : {}),
+        name: name.trim(),
+        format,
+        base_url: baseUrl.trim(),
+        proxy: proxy.trim(),
+        // trim 后再提交：粘贴 Key 时常带首尾空白/换行，原样入库会让鉴权静默失败。
+        api_key: apiKey.trim(),
+        rate_per_second: Number(rps) || 0,
+        rate_per_minute: Number(rpm) || 0,
+        session_header_key: sessionHeaderKey.trim(),
+        // 凭据绑定：选中凭据 = 以凭据行为准；内联 = 显式解绑（0）。总能表态。
+        credential_id: credId ? Number(credId) : 0,
+      });
+      toast.success(isNew ? t("provider.toast.created", { name: name.trim() }) : t("provider.toast.saved"));
+      onSaved(id);
+      onOpenChange(false);
+    } catch (e) {
+      toast.error(t("provider.toast.saveFailed", { msg: (e as Error).message }));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex flex-col gap-0 p-0 data-[side=right]:min-w-[420px] data-[side=right]:sm:max-w-xl"
+      >
+        <SheetHeader className="px-4">
+          <SheetTitle className="flex items-center gap-2">
+            <PlugZapIcon className="size-4" />
+            {isNew ? t("provider.newTitle") : t("provider.editTitle", { name: provider?.name ?? "" })}
+          </SheetTitle>
+          <SheetDescription>{isNew ? t("provider.descNew") : t("provider.descEdit")}</SheetDescription>
+        </SheetHeader>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="v-name">{t("provider.name.label")}</Label>
+              <Input
+                id="v-name"
+                placeholder={t("provider.name.placeholder")}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>{t("profile.format.label")}</Label>
+              <Select value={format} onValueChange={(v) => setFormat(v as LLMFormat)}>
+                <SelectTrigger>
+                  <SelectValue placeholder={t("profile.format.placeholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="anthropic">Anthropic</SelectItem>
+                  <SelectItem value="openai">OpenAI (Chat Completions)</SelectItem>
+                  <SelectItem value="openai-responses">OpenAI (Responses API)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="v-base-url">{t("profile.baseUrl.label")}</Label>
+            <Input
+              id="v-base-url"
+              className="font-mono"
+              placeholder="https://api.openai.com/v1"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="v-proxy">{t("profile.proxy.label")}</Label>
+            <Input
+              id="v-proxy"
+              className="font-mono"
+              placeholder="socks5://user:pass@127.0.0.1:1080 · http://127.0.0.1:8080"
+              value={proxy}
+              onChange={(e) => setProxy(e.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">{t("profile.proxy.hint")}</p>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="v-session-header">{t("profile.sessionHeader.label")}</Label>
+            <Input
+              id="v-session-header"
+              className="font-mono"
+              placeholder={t("profile.sessionHeader.placeholder")}
+              value={sessionHeaderKey}
+              onChange={(e) => setSessionHeaderKey(e.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">
+              {t.rich("profile.sessionHeader.hint", { b: (c) => <b>{c}</b> })}
+            </p>
+          </div>
+
+          {/* 凭据选择器：Key 的来源是独立实体。选中凭据时内联 Key 输入被隐藏——
+              绑定态只认凭据行的 Key，留一个同样能填的输入框只会造成「这边改了、
+              那边没变」的错觉。 */}
+          <div className="grid gap-2">
+            <Label>{t("profile.credential.label")}</Label>
+            <Select value={credId || INLINE_CRED} onValueChange={(v) => setCredId(v === INLINE_CRED ? "" : v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INLINE_CRED}>{t("profile.credential.inline")}</SelectItem>
+                {credentials.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                    {c.api_key_hint ? ` ${c.api_key_hint}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-muted-foreground text-xs">
+              {credId
+                ? t("profile.credential.boundHint", { name: boundCred?.name ?? provider?.credential_name ?? "" })
+                : t("profile.credential.hint")}
+            </p>
+          </div>
+
+          {!credId && (
+            <div className="grid gap-2">
+              <Label htmlFor="v-api-key">API Key</Label>
+              <Input
+                id="v-api-key"
+                // 阻止浏览器密码管理器把已保存的登录密码自动填进来（同模型表单）。
+                name={`llm-provider-key-${provider?.id ?? "new"}`}
+                autoComplete="new-password"
+                type="password"
+                placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+            </div>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="v-rps">{t("profile.rps")}</Label>
+              <Input id="v-rps" type="number" min={0} value={rps} onChange={(e) => setRps(e.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="v-rpm">{t("profile.rpm")}</Label>
+              <Input id="v-rpm" type="number" min={0} value={rpm} onChange={(e) => setRpm(e.target.value)} />
+            </div>
+          </div>
+          <p className="-mt-2 text-muted-foreground text-xs">{t("profile.rateHint")}</p>
+
+          <div className="grid gap-2">
+            <Label htmlFor="v-test-model">{t("provider.testModel")}</Label>
+            <Input
+              id="v-test-model"
+              className="font-mono"
+              placeholder="claude-opus-4-8"
+              value={testModel}
+              onChange={(e) => setTestModel(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2 border-t px-4 py-3">
+          <Button variant="outline" onClick={testConnection} disabled={testing}>
+            {testing ? <Loader2Icon className="animate-spin" /> : <PlugZapIcon />}
+            {testing ? t("profile.testingElapsed", { s: testElapsed }) : t("profile.testConnection")}
+          </Button>
+          <Button onClick={save} disabled={saving} className="flex-1">
+            {saving && <Loader2Icon className="animate-spin" />}
+            {!saving && (isNew ? <PlusIcon /> : <SaveIcon />)}
+            {isNew ? t("profile.create") : t("profile.save")}
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 模型抽屉（新建 / 编辑共用同一套表单）
+//
+// 只提交「模型自己的参数」。格式 / Base URL / 代理 / Key / 限速 / 会话头全部属于
+// 供应商：这里既不显示可编辑的输入框、也不往请求里塞这些字段（后端收到 nil 就
+// 不动供应商行）。「改到这里等于把模型挪到另一家供应商下」是唯一的例外——那是
+// 换归属，不是改端点。
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ModelSheet({
+  profile,
+  providerId,
+  providers,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  profile: LLMProfile | null; // null = 新建
+  providerId: string; // 新建时的默认归属；编辑时由 profile.provider_id 覆盖
+  providers: LLMProvider[];
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSaved: (id: string) => void;
+}) {
+  const t = useTranslations("llmPage");
+  const isNew = !profile;
+  const [name, setName] = React.useState("");
+  const [pid, setPid] = React.useState("");
+  const [model, setModel] = React.useState("");
+  const [cw, setCw] = React.useState("0"); // 上下文窗口(K tokens);0=默认 200K
   const [thinkingType, setThinkingType] = React.useState(NONE);
   const [effort, setEffort] = React.useState(NONE);
   const [priority, setPriority] = React.useState("0"); // 轮询顺位;越大越先
@@ -297,14 +610,10 @@ function ProfileSheet({
   const [streaming, setStreaming] = React.useState(true); // true=流式(默认);false=非流式
   const [maxTokens, setMaxTokens] = React.useState("0"); // 单次回复输出上限;0=不发送
   const [maxTokensField, setMaxTokensField] = React.useState(NONE); // 上限用哪个字段名;NONE=max_tokens
-  const [sessionHeaderKey, setSessionHeaderKey] = React.useState(""); // 自定义会话头名;空=不发送
-  const [retry, setRetry] = React.useState<LLMRetryOverride>(ZERO_OVERRIDE); // 本配置的重试覆盖;全 0=跟随全局
+  const [retry, setRetry] = React.useState<LLMRetryOverride>(ZERO_OVERRIDE); // 本模型的重试覆盖;全 0=跟随全局
   // 声明的扩展输入模态(image/audio/pdf);空数组 = 未声明,后端按模型名保守推断。
   const [modalities, setModalities] = React.useState<ExtraModality[]>([]);
-  const [testing, setTesting] = React.useState(false);
-  // 连接测试最长 60s（带推理的模型单发补全就要几十秒）。等待期间按秒刷新
-  // 「测试中… Ns」，否则按钮一直转圈会被当成卡死，用户会去反复点。
-  const [testElapsed, setTestElapsed] = React.useState(0);
+  const [probing, setProbing] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [models, setModels] = React.useState<string[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
@@ -330,16 +639,12 @@ function ProfileSheet({
   ];
 
   // 每次打开时从传入的 profile 灌一遍表单（新建则重置为默认值）。抽屉关掉再打开
-  // 就是一次干净的开始，不会留下上一个配置的残影。
+  // 就是一次干净的开始，不会留下上一条模型的残影。
   React.useEffect(() => {
     if (!open) return;
     setName(profile?.name ?? "");
-    setFormat(profile?.format === "openai" || profile?.format === "openai-responses" ? profile.format : "anthropic");
+    setPid(profile?.provider_id ?? providerId);
     setModel(profile?.model ?? "");
-    setBaseUrl(profile?.base_url ?? "");
-    setProxy(profile?.proxy ?? "");
-    setRps(String(profile?.rate_per_second ?? 0));
-    setRpm(String(profile?.rate_per_minute ?? 0));
     setCw(String(profile?.context_window_k ?? 0));
     setThinkingType(fromStore(profile?.thinking_type));
     setEffort(fromStore(profile?.reasoning_effort));
@@ -348,26 +653,36 @@ function ProfileSheet({
     setStreaming(profile?.streaming ?? true);
     setMaxTokens(String(profile?.max_tokens ?? 0));
     setMaxTokensField(fromStore(profile?.max_tokens_field));
-    setSessionHeaderKey(profile?.session_header_key ?? "");
     setRetry(profile?.retry ?? ZERO_OVERRIDE);
     setModalities(extraModalities(profile?.input_modalities));
-    setApiKey("");
-    setKeyHint(profile?.api_key_hint ?? "");
-    setCredId(profile?.credential_id ?? "");
     setModels([]);
     setModelsOpen(false);
-  }, [open, profile]);
+  }, [open, profile, providerId]);
 
+  const endpoint = providers.find((v) => v.id === pid);
+  const format = endpoint?.format ?? "anthropic";
   const profileId = profile ? Number(profile.id) : undefined;
-  // 绑定的凭据对象（仅用于显示名称；hint 已在 profile.api_key_hint 里）。
-  const boundCred = credId ? credentials.find((c) => c.id === credId) : undefined;
+  // 生效上限跟随输入框实时推演（而不是等保存后回读），否则用户改了数字却看不到
+  // 「其实会被压到多少」，这条提示就白写了。cap 来自能力快照，没探测过时为 0。
+  const cap = Math.max(0, profile?.caps?.max_output_tokens ?? 0);
+  const asked = Math.max(0, Number(maxTokens) || 0);
+  const effValue = asked > 0 ? (cap > 0 ? Math.min(asked, cap) : asked) : cap;
+  const capped = asked > 0 && cap > 0 && asked > cap;
 
   async function loadModels() {
     if (loadingModels) return;
     setLoadingModels(true);
     setModels([]);
     try {
-      const r = await api.fetchLLMModels(format, baseUrl, apiKey, proxy, profileId);
+      // 端点参数取自供应商（只读），Key 留空 + 传 profile id：后端据 profile 的
+      // 读路径（COALESCE 供应商 Key）取到真正会用的那把。
+      const r = await api.fetchLLMModels(
+        format,
+        endpoint?.base_url ?? "",
+        "",
+        endpoint?.proxy ?? "",
+        profileId,
+      );
       if (r.ok && r.models && r.models.length > 0) {
         setModels(r.models);
         setModelsOpen(true);
@@ -382,46 +697,23 @@ function ProfileSheet({
     }
   }
 
-  async function testConnection() {
-    if (testing) return;
-    setTesting(true);
-    setTestElapsed(0);
-    const startedAt = Date.now();
-    const ticker = setInterval(() => setTestElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+  // 手动重新探测：窗口 / 最大输出 / 模态 / 推理档位。成功后重新拉列表，
+  // 让「生效上限」与压缩口径立刻按新能力显示。
+  async function reprobe() {
+    if (!profile || probing) return;
+    setProbing(true);
     try {
-      // 用配置实际会跑的思考参数来测，这样不支持该字段的模型在这里就失败，
-      // 而不是等到跑任务时才炸。传 profile id：Key 输入框留空时用已存的 Key。
-      // 独立轻量探测固定非流式（不发送 stream），与配置的流式开关无关。
-      const r = await api.testLLM(
-        format,
-        model,
-        baseUrl,
-        apiKey,
-        proxy,
-        toStore(thinkingType),
-        toStore(effort),
-        profileId,
-        sessionHeaderKey.trim(),
-      );
-      // 回复内容一并展示：看得见模型确实说了话，才算和会话里跑通是一回事。
-      // Key 来源一并显示：测试失败时「Key 填错了」与「压根没读到 Key」是两回事，
-      // 少了这一行用户只看得到供应商那句 401，很容易去反复重填同一把正确的 Key。
-      const keyLine = r.key_source ? t("profile.toast.testKey", { source: r.key_source, hint: r.key_hint ?? "" }) : "";
-      if (r.ok)
-        toast.success(t("profile.toast.testOk", { latency: r.latency_ms ?? "?", model: r.model ?? model }), {
-          description:
-            [r.reply ? t("profile.toast.testReply", { reply: r.reply }) : "", keyLine].filter(Boolean).join(" · ") ||
-            undefined,
-        });
-      else
-        toast.error(t("profile.toast.testFailed", { error: r.error ?? t("profile.toast.unknown") }), {
-          description: keyLine || undefined,
-        });
+      const r = await api.probeLLMProfile(profile.id);
+      if (r.ok) {
+        toast.success(t("model.reprobeOk", { k: Math.round(r.effective_context_window_k ?? 0) }));
+        onSaved(profile.id);
+      } else {
+        toast.error(t("model.reprobeFailed", { msg: r.error ?? t("profile.toast.unknown") }));
+      }
     } catch (e) {
-      toast.error(t("profile.toast.testError", { msg: (e as Error).message }));
+      toast.error(t("model.reprobeFailed", { msg: (e as Error).message }));
     } finally {
-      clearInterval(ticker);
-      setTesting(false);
+      setProbing(false);
     }
   }
 
@@ -430,21 +722,21 @@ function ProfileSheet({
       toast.error(t("profile.toast.nameModelRequired"));
       return;
     }
+    // 没有归属就没法保存：端点（于是格式）只存在于供应商上，后端拿不到 format
+    // 就只能报「不支持的格式」。这里先说明真正该做的事。
+    if (!pid) {
+      toast.error(t("model.providerRequired"));
+      return;
+    }
     if (saving) return;
     setSaving(true);
     try {
       const { id } = await api.saveLLMProfile({
         ...(profile ? { id: Number(profile.id) } : {}),
         name: name.trim(),
-        format,
         model: model.trim(),
-        base_url: baseUrl.trim(),
-        proxy: proxy.trim(),
-        // trim 后再提交：粘贴 Key 时常带首尾空白/换行，原样入库会让鉴权静默失败，
-        // 且下次打开时 hint 显示的是空白字符，看起来像"Key 错位"。
-        api_key: apiKey.trim(),
-        rate_per_second: Number(rps) || 0,
-        rate_per_minute: Number(rpm) || 0,
+        // 归属：新界面永远显式表态，后端据此决定这条模型用哪套端点与 Key。
+        ...(pid ? { provider_id: Number(pid) } : {}),
         context_window_k: Number(cw) || 0,
         thinking_type: toStore(thinkingType),
         reasoning_effort: toStore(effort),
@@ -455,16 +747,15 @@ function ProfileSheet({
         // 字段名开关只对 openai(Chat Completions) 有意义，其它格式一律回落到默认；
         // 后端也会再做一次同样的归一化，这里只是别让 UI 送出自相矛盾的值。
         max_tokens_field: format === "openai" ? toStore(maxTokensField) : "",
-        session_header_key: sessionHeaderKey.trim(),
         retry,
         // 三种扩展模态全不勾 = 未声明（"" 交给后端按模型名保守推断）；勾选即显式
         // 声明。text 始终隐含，由后端归一补上，这里一并写出规范顺序。
         input_modalities: modalities.length
           ? ["text", ...EXTRA_MODALITIES.filter((m) => modalities.includes(m))].join(",")
           : "",
-        // 凭据绑定（计划 46–47）：选中凭据 = 以凭据行为准（本配置的 api_key 被清空）；
-        // 内联 = 显式解绑（0）。总能表态，不会出现「改了选择却没生效」。
-        credential_id: credId ? Number(credId) : 0,
+        // 注意：这里【不】发 format / base_url / proxy / rate_* / session_header_key /
+        // api_key / credential_id。它们属于供应商，混进来就会让「只改模型」变成
+        // 「顺手把端点覆盖成表单里的旧值」。后端按 nil = 不改处理。
       });
       if (isNew) toast.success(t("profile.toast.created", { name: name.trim() }));
       else toast.success(profile?.is_default ? t("profile.toast.savedActive") : t("profile.toast.saved"));
@@ -507,18 +798,46 @@ function ProfileSheet({
               />
             </div>
             <div className="grid gap-2">
-              <Label>{t("profile.format.label")}</Label>
-              <Select value={format} onValueChange={(v) => setFormat(v as "anthropic" | "openai" | "openai-responses")}>
+              <Label>{t("model.providerLabel")}</Label>
+              <Select value={pid} onValueChange={setPid}>
                 <SelectTrigger>
-                  <SelectValue placeholder={t("profile.format.placeholder")} />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="anthropic">Anthropic</SelectItem>
-                  <SelectItem value="openai">OpenAI (Chat Completions)</SelectItem>
-                  <SelectItem value="openai-responses">OpenAI (Responses API)</SelectItem>
+                  {providers.map((v) => (
+                    <SelectItem key={v.id} value={v.id}>
+                      {v.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          {/* 只读的端点摘要：让「这条模型跑在哪个端点、用谁的 Key」一眼可见，
+              同时明确告知改这些要去供应商那边改。 */}
+          <div className="grid gap-1.5 rounded-lg border border-dashed p-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="uppercase">
+                {format}
+              </Badge>
+              <code className="truncate font-mono text-muted-foreground">{endpoint?.base_url || "—"}</code>
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
+              {endpoint?.credential_name ? (
+                <span>{t("card.credential", { name: endpoint.credential_name })}</span>
+              ) : endpoint?.api_key_hint ? (
+                <span>{endpoint.api_key_hint}</span>
+              ) : (
+                <span className="text-destructive">{t("health.noKey.label")}</span>
+              )}
+              <span>
+                {endpoint?.rate_per_second ?? 0}/s · {endpoint?.rate_per_minute ?? 0}/min
+              </span>
+              {endpoint?.proxy && <span className="truncate">{t("card.proxy", { proxy: endpoint.proxy })}</span>}
+              {endpoint?.session_header_key && <span className="font-mono">{endpoint.session_header_key}</span>}
+            </div>
+            <p className="text-muted-foreground leading-relaxed">{t("model.providerHint")}</p>
           </div>
 
           <div className="grid gap-2">
@@ -569,43 +888,6 @@ function ProfileSheet({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="p-base-url">{t("profile.baseUrl.label")}</Label>
-            <Input
-              id="p-base-url"
-              className="font-mono"
-              placeholder="https://api.openai.com/v1"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="p-proxy">{t("profile.proxy.label")}</Label>
-            <Input
-              id="p-proxy"
-              className="font-mono"
-              placeholder="socks5://user:pass@127.0.0.1:1080 · http://127.0.0.1:8080"
-              value={proxy}
-              onChange={(e) => setProxy(e.target.value)}
-            />
-            <p className="text-muted-foreground text-xs">{t("profile.proxy.hint")}</p>
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="p-session-header">{t("profile.sessionHeader.label")}</Label>
-            <Input
-              id="p-session-header"
-              className="font-mono"
-              placeholder={t("profile.sessionHeader.placeholder")}
-              value={sessionHeaderKey}
-              onChange={(e) => setSessionHeaderKey(e.target.value)}
-            />
-            <p className="text-muted-foreground text-xs">
-              {t.rich("profile.sessionHeader.hint", { b: (c) => <b>{c}</b> })}
-            </p>
-          </div>
-
-          <div className="grid gap-2">
             <Label>{t("profile.modalities.label")}</Label>
             <div className="grid gap-2 rounded-lg border p-3">
               {/* text 由后端始终隐含（任何能读消息的模型都能读文本），固定勾选、
@@ -635,100 +917,65 @@ function ProfileSheet({
             <p className="text-muted-foreground text-xs">{t("profile.modalities.hint")}</p>
           </div>
 
-          {/* 凭据选择器（计划 46–47）：Key 的来源是独立实体。选中凭据时本配置的
-              API Key 输入被隐藏——绑定态只认凭据行的 Key，留一个同样能填的输入框
-              只会造成「这边改了、那边没变」的错觉。 */}
-          <div className="grid gap-2">
-            <Label>{t("profile.credential.label")}</Label>
-            <Select value={credId || INLINE_CRED} onValueChange={(v) => setCredId(v === INLINE_CRED ? "" : v)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={INLINE_CRED}>{t("profile.credential.inline")}</SelectItem>
-                {credentials.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                    {c.api_key_hint ? ` ${c.api_key_hint}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-muted-foreground text-xs">
-              {credId
-                ? t("profile.credential.boundHint", {
-                    name: boundCred?.name ?? profile?.credential_name ?? "",
-                  })
-                : t("profile.credential.hint")}
-            </p>
-          </div>
-
-          {!credId && (
-            <div className="grid gap-2">
-              <Label htmlFor="p-api-key">API Key</Label>
-              <Input
-                id="p-api-key"
-                // 阻止浏览器密码管理器把已保存的登录密码自动填进来：type="password"
-                // 的输入框默认会被自动填充，而填充值会被 save() 当成新 Key 提交，
-                // 造成「下次打开出现重复内容」「Key 写到错误的配置」。autoComplete="off"
-                // 在 Chrome 上不被尊重，new-password 才是有效值；name 再带上 profile id
-                // 让不同配置的输入框不被浏览器当作同一个字段。
-                name={`llm-profile-key-${profile?.id ?? "new"}`}
-                autoComplete="new-password"
-                type="password"
-                placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-            </div>
-          )}
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="grid gap-2">
-              <Label htmlFor="p-rps">{t("profile.rps")}</Label>
-              <Input id="p-rps" type="number" min={0} value={rps} onChange={(e) => setRps(e.target.value)} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="p-rpm">{t("profile.rpm")}</Label>
-              <Input id="p-rpm" type="number" min={0} value={rpm} onChange={(e) => setRpm(e.target.value)} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="p-cw">{t("profile.cw")}</Label>
+          <div className="grid gap-2 rounded-lg border p-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="grid gap-0.5">
+                <Label htmlFor="p-cw" className="text-sm">
+                  {t("profile.cw")}
+                </Label>
+                <p className="text-muted-foreground text-xs">{t("profile.rateHint")}</p>
+              </div>
               <Input
                 id="p-cw"
                 type="number"
                 min={0}
                 max={1000}
+                className="w-24 shrink-0"
                 value={cw}
                 onChange={(e) => setCw(e.target.value)}
                 placeholder="200"
               />
+            </div>
+
+            {/* 能力探测结果 + 重新探测按钮。快照存在 settings 里而不是列上，
+                这里的值就是压缩与上限实际会用的那一份。 */}
+            <div className="grid gap-1 border-t pt-3 text-xs">
               {profile?.caps?.context_tokens ? (
-                <p className="text-muted-foreground text-xs leading-relaxed">
+                <p className="text-muted-foreground leading-relaxed">
                   {t("profile.caps.detected")}：
-                  {Math.round((profile?.caps?.context_tokens ?? 0) / 1000)}K
-                  {profile?.caps?.max_output_tokens
-                    ? ` · ${t("profile.caps.output")} ${profile?.caps?.max_output_tokens}`
+                  {Math.round((profile.caps.context_tokens ?? 0) / 1000)}K
+                  {profile.caps.max_output_tokens ? ` · ${t("profile.caps.output")} ${profile.caps.max_output_tokens}` : ""}
+                  {profile.caps.input_modalities?.length
+                    ? ` · ${t("profile.caps.modalities")} ${profile.caps.input_modalities.join(" / ")}`
                     : ""}
-                  {profile?.caps?.input_modalities?.length
-                    ? ` · ${t("profile.caps.modalities")} ${profile?.caps?.input_modalities?.join(" / ")}`
-                    : ""}
-                  {profile?.caps?.reasoning
+                  {profile.caps.reasoning
                     ? ` · ${t("profile.caps.reasoning")}${
-                        profile?.caps?.reasoning_efforts?.length
-                          ? " " + profile?.caps?.reasoning_efforts?.join(" / ")
-                          : ""
+                        profile.caps.reasoning_efforts?.length ? " " + profile.caps.reasoning_efforts.join(" / ") : ""
                       }`
                     : ""}
-                  {profile?.caps?.source ? ` · ${profile?.caps?.source}` : ""}
-                  {profile?.effective_context_window_k
-                    ? ` · ${t("profile.caps.effective")} ${profile?.effective_context_window_k}K`
+                  {profile.caps.source ? ` · ${profile.caps.source}` : ""}
+                  {profile.effective_context_window_k
+                    ? ` · ${t("profile.caps.effective")} ${profile.effective_context_window_k}K`
                     : ""}
                 </p>
-              ) : null}
+              ) : (
+                <p className="text-muted-foreground leading-relaxed">{t("model.noCaps")}</p>
+              )}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">{profile?.caps?.probed_at ?? ""}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7"
+                  disabled={!profile || probing}
+                  onClick={() => void reprobe()}
+                >
+                  {probing ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
+                  {t("model.reprobe")}
+                </Button>
+              </div>
             </div>
           </div>
-          <p className="-mt-2 text-muted-foreground text-xs">{t("profile.rateHint")}</p>
 
           <div className="grid gap-3 rounded-lg border p-3">
             <div className="flex items-center justify-between gap-4">
@@ -780,6 +1027,14 @@ function ProfileSheet({
                 placeholder="0"
               />
             </div>
+            {/* 生效上限：填超了会被模型上限压回去，界面上必须看得见压成了多少。 */}
+            <p className="text-muted-foreground text-xs leading-relaxed">
+              {capped
+                ? t("model.effectiveMaxCapped", { configured: asked, cap, n: effValue })
+                : effValue > 0
+                  ? t("model.effectiveMax", { n: effValue, configured: asked > 0 ? asked : cap, cap })
+                  : t("model.effectiveMaxUnknown")}
+            </p>
             <div className="flex items-center justify-between gap-4 border-t pt-3">
               <div className="grid gap-0.5">
                 <Label className="text-sm">{t("profile.maxTokensField.label")}</Label>
@@ -847,10 +1102,6 @@ function ProfileSheet({
         </div>
 
         <div className="flex gap-2 border-t px-4 py-3">
-          <Button variant="outline" onClick={testConnection} disabled={testing}>
-            {testing ? <Loader2Icon className="animate-spin" /> : <PlugZapIcon />}
-            {testing ? t("profile.testingElapsed", { s: testElapsed }) : t("profile.testConnection")}
-          </Button>
           <Button onClick={save} disabled={saving} className="flex-1">
             {saving && <Loader2Icon className="animate-spin" />}
             {!saving && (isNew ? <PlusIcon /> : <SaveIcon />)}
@@ -863,7 +1114,7 @@ function ProfileSheet({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 凭据管理（计划 46–47）：独立于模型配置的 Key 实体，可被多个配置引用
+// 凭据管理：独立于模型配置的 Key 实体，可被多家供应商 / 多条模型引用
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CredentialSheet({
@@ -941,7 +1192,7 @@ function CredentialSheet({
             <Label htmlFor="c-key">API Key</Label>
             <Input
               id="c-key"
-              // 同 profile 表单：阻止密码管理器自动填充，见上处注释。
+              // 同模型表单：阻止密码管理器自动填充，见上处注释。
               name={`llm-credential-key-${cred?.id ?? "new"}`}
               autoComplete="new-password"
               type="password"
@@ -1046,53 +1297,280 @@ function CredentialsPanel({ creds, onChanged }: { creds: LLMCredential[]; onChan
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 供应商卡片：端点信息 + 名下模型行
+//
+// provider === null 时渲染「未归属供应商」——历史库里可能存在 provider_id 为空
+// 的模型（例如回填被跳过、或外部脚本直接写库），它们必须仍然可见、可编辑，
+// 否则设置页会静默丢掉这些配置。
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ProviderCard({
+  provider,
+  models,
+  health,
+  poolOn,
+  probingId,
+  onEditProvider,
+  onDeleteProvider,
+  onAddModel,
+  onEditModel,
+  onActivate,
+  onProbe,
+}: {
+  provider: LLMProvider | null;
+  models: LLMProfile[];
+  health: Map<string, LLMPoolMember>;
+  poolOn: boolean;
+  probingId: string | null;
+  onEditProvider: (v: LLMProvider) => void;
+  onDeleteProvider: (v: LLMProvider) => void;
+  onAddModel: (v: LLMProvider | null) => void;
+  onEditModel: (p: LLMProfile) => void;
+  onActivate: (p: LLMProfile) => void;
+  onProbe: (p: LLMProfile) => void;
+}) {
+  const t = useTranslations("llmPage");
+
+  // 一条模型在卡片上的「是否正常」。没 Key 的模型根本发不出请求，比熔断更该先说。
+  const healthOf = (p: LLMProfile): Health => {
+    const m = health.get(p.id);
+    if (!p.api_key_hint) {
+      return {
+        label: t("health.noKey.label"),
+        cls: "border-muted-foreground/40 text-muted-foreground",
+        hint: t("health.noKey.hint"),
+      };
+    }
+    if (m?.state === "tripped") {
+      return {
+        label:
+          m.cooldown_secs > 0 ? t("health.trippedCooldown", { cooldown: cooldownText(m.cooldown_secs) }) : t("health.tripped"),
+        cls: "border-destructive/50 text-destructive",
+        hint: m.last_error,
+      };
+    }
+    if (m?.state === "degraded") {
+      return {
+        label: t("health.degraded", { fails: m.fails }),
+        cls: "border-amber-500/50 text-amber-600 dark:text-amber-400",
+        hint: m.last_error,
+      };
+    }
+    return { label: t("health.ok"), cls: "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" };
+  };
+
+  return (
+    <Card className="gap-0 overflow-hidden py-0">
+      <div className="flex items-start gap-2 border-b bg-muted/30 px-4 py-3">
+        <PlugZapIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-medium text-sm">{provider?.name ?? t("page.orphanTitle")}</span>
+            {provider && (
+              <Badge variant="outline" className="uppercase">
+                {provider.format}
+              </Badge>
+            )}
+            <Badge variant="outline" className="text-muted-foreground">
+              {t("card.providerModels", { n: models.length })}
+            </Badge>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground text-xs">
+            {provider?.base_url && <code className="truncate font-mono">{provider.base_url}</code>}
+            {provider?.credential_name ? (
+              <span>{t("card.credential", { name: provider.credential_name })}</span>
+            ) : provider?.api_key_hint ? (
+              <span>{provider.api_key_hint}</span>
+            ) : provider ? (
+              <span className="text-destructive">{t("health.noKey.label")}</span>
+            ) : null}
+            {provider && (
+              <span>
+                {provider.rate_per_second}/s · {provider.rate_per_minute}/min
+              </span>
+            )}
+            {provider?.proxy && <span className="truncate">{t("card.proxy", { proxy: provider.proxy })}</span>}
+            {provider?.session_header_key && <span className="font-mono">{provider.session_header_key}</span>}
+          </div>
+        </div>
+        {provider && (
+          <div className="flex shrink-0 gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              aria-label={t("provider.edit")}
+              title={t("provider.edit")}
+              onClick={() => onEditProvider(provider)}
+            >
+              <SaveIcon className="size-3.5" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              aria-label={t("provider.deleteAria")}
+              title={t("provider.deleteAria")}
+              onClick={() => onDeleteProvider(provider)}
+            >
+              <Trash2Icon className="size-3.5 text-destructive" />
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className="divide-y">
+        {models.map((p) => {
+          const h = healthOf(p);
+          const eff = effectiveMaxOutput(p);
+          return (
+            // biome-ignore lint/a11y/useSemanticElements: 行内含自己的操作按钮，用原生 <button> 会造成按钮嵌套（非法 HTML）
+            <div
+              key={p.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onEditModel(p)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onEditModel(p);
+                }
+              }}
+              className={cn(
+                "flex cursor-pointer items-start gap-2 px-4 py-2.5 outline-none transition-colors hover:bg-accent/40",
+                p.is_default && "bg-amber-400/5",
+              )}
+            >
+              <StarIcon
+                className={cn(
+                  "mt-0.5 size-4 shrink-0",
+                  p.is_default ? "fill-amber-400 text-amber-400" : "text-muted-foreground",
+                )}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate font-medium text-xs">{p.name}</span>
+                  <Badge variant="outline" className={cn(h.cls)} title={h.hint}>
+                    {h.label}
+                  </Badge>
+                </div>
+                <code className="mt-0.5 block truncate font-mono text-muted-foreground text-xs">{p.model}</code>
+                <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground text-xs">
+                  {(p.effective_context_window_k || p.context_window_k) && (
+                    <span>{t("card.windowK", { k: p.effective_context_window_k ?? p.context_window_k ?? 0 })}</span>
+                  )}
+                  {/* 输出上限显示「生效值」而不是原样的配置值：两者不一致时用户
+                      看到的就是真正发出去的那个数。 */}
+                  {eff.value > 0 && <span>{t("card.maxTokens", { n: eff.value })}</span>}
+                  {p.reasoning_effort && (
+                    <span>
+                      {t("card.thinking", {
+                        effort: p.reasoning_effort === "off" ? t("card.thinkingOff") : p.reasoning_effort,
+                      })}
+                    </span>
+                  )}
+                  {/* 实际生效的扩展输入模态（声明优先、否则按模型名推断）；text
+                      始终隐含，不占版面。空 = 纯文本模型。 */}
+                  {extraModalities(p.effective_input_modalities).length > 0 && (
+                    <span>
+                      {t("card.modalities", {
+                        modalities: extraModalities(p.effective_input_modalities)
+                          .map((m) => t(`profile.modalities.opt.${m}`))
+                          .join("·"),
+                      })}
+                    </span>
+                  )}
+                  {/* 轮询相关的两个字段只在轮询开着时才有意义，关着时不占版面 */}
+                  {poolOn &&
+                    !p.is_default &&
+                    (p.pool_exclude ? (
+                      <span>{t("card.excluded")}</span>
+                    ) : (
+                      <span>{t("card.priority", { priority: p.priority ?? 0 })}</span>
+                    ))}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7"
+                  aria-label={t("model.reprobe")}
+                  title={t("model.reprobe")}
+                  disabled={probingId === p.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onProbe(p);
+                  }}
+                >
+                  {probingId === p.id ? (
+                    <Loader2Icon className="size-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCwIcon className="size-3.5" />
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7"
+                  disabled={p.is_default}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onActivate(p);
+                  }}
+                >
+                  {p.is_default ? t("card.active") : t("card.activate")}
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+        {models.length === 0 && (
+          <p className="px-4 py-3 text-muted-foreground text-xs">{t("provider.noModels")}</p>
+        )}
+      </div>
+
+      {/* 未归属卡片不提供「添加模型」：新模型必须落在某家供应商下（见 ModelSheet
+          的 providerRequired 守卫）。 */}
+      {provider && (
+        <div className="border-t px-3 py-2">
+          <Button size="sm" variant="ghost" onClick={() => onAddModel(provider)}>
+            <PlusIcon /> {t("provider.addModel")}
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function LLMPage() {
   const t = useTranslations("llmPage");
+  const [providers, setProviders] = React.useState<LLMProvider[]>([]);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [creds, setCreds] = React.useState<LLMCredential[]>([]);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
+  const [probingId, setProbingId] = React.useState<string | null>(null);
+
   // 抽屉的开关和内容分开存：关闭时 editing 保持不变，否则关闭动画期间标题会从
   // 「编辑 X」闪成「新建」。editing = null 表示新建。
-  const [editOpen, setEditOpen] = React.useState(false);
-  const [editing, setEditing] = React.useState<LLMProfile | null>(null);
-  const openEditor = React.useCallback((p: LLMProfile | null) => {
-    setEditing(p);
-    setEditOpen(true);
-  }, []);
+  const [providerOpen, setProviderOpen] = React.useState(false);
+  const [editingProvider, setEditingProvider] = React.useState<LLMProvider | null>(null);
+  const [modelOpen, setModelOpen] = React.useState(false);
+  const [editingModel, setEditingModel] = React.useState<LLMProfile | null>(null);
+  const [modelProviderId, setModelProviderId] = React.useState("");
 
-  // 一个配置在卡片上显示的「是否正常」。没填 Key 的配置根本发不出请求，比熔断更该先说。
-  const healthOf = React.useCallback(
-    (p: LLMProfile, m?: LLMPoolMember): Health => {
-      if (!p.api_key_hint) {
-        return {
-          label: t("health.noKey.label"),
-          cls: "border-muted-foreground/40 text-muted-foreground",
-          hint: t("health.noKey.hint"),
-        };
-      }
-      if (m?.state === "tripped") {
-        return {
-          label:
-            m.cooldown_secs > 0
-              ? t("health.trippedCooldown", { cooldown: cooldownText(m.cooldown_secs) })
-              : t("health.tripped"),
-          cls: "border-destructive/50 text-destructive",
-          hint: m.last_error,
-        };
-      }
-      if (m?.state === "degraded") {
-        return {
-          label: t("health.degraded", { fails: m.fails }),
-          cls: "border-amber-500/50 text-amber-600 dark:text-amber-400",
-          hint: m.last_error,
-        };
-      }
-      return { label: t("health.ok"), cls: "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" };
-    },
-    [t],
-  );
+  const openProvider = React.useCallback((v: LLMProvider | null) => {
+    setEditingProvider(v);
+    setProviderOpen(true);
+  }, []);
+  const openModel = React.useCallback((p: LLMProfile | null, pid: string) => {
+    setEditingModel(p);
+    setModelProviderId(p?.provider_id ?? pid);
+    setModelOpen(true);
+  }, []);
 
   const loadPool = React.useCallback(async () => {
     try {
@@ -1110,9 +1588,13 @@ export default function LLMPage() {
     }
   }, []);
 
+  // 供应商树（含 models[]）与扁平列表各拉一份：树负责分组渲染，扁平列表负责
+  // 「未归属」兜底与轮询健康映射——两者都来自同一批行，读的是同一份 DTO。
   const load = React.useCallback(async () => {
     try {
-      setProfiles(await api.llmProfiles());
+      const [vs, ps] = await Promise.all([api.llmProviders(), api.llmProfiles()]);
+      setProviders(vs);
+      setProfiles(ps);
     } catch {
       /* ignore */
     }
@@ -1123,24 +1605,44 @@ export default function LLMPage() {
     void load();
   }, [load]);
 
-  // 卡片上的健康徽章按 profile id 取轮询状态。
+  // 按 provider_id 分组；找不到归属的模型进「未归属」桶，绝不静默丢弃。
+  const grouped = React.useMemo(() => {
+    const byProv = new Map<string, LLMProfile[]>();
+    for (const v of providers) byProv.set(v.id, []);
+    const orphans: LLMProfile[] = [];
+    for (const p of profiles) {
+      const bucket = p.provider_id ? byProv.get(p.provider_id) : undefined;
+      if (bucket) bucket.push(p);
+      else orphans.push(p);
+    }
+    // 卡片内排序：激活的永远在最前，其余按轮询优先级降序、再按名称。
+    const order = (a: LLMProfile, b: LLMProfile) =>
+      Number(b.is_default) - Number(a.is_default) ||
+      (b.priority ?? 0) - (a.priority ?? 0) ||
+      a.name.localeCompare(b.name);
+    for (const list of byProv.values()) list.sort(order);
+    orphans.sort(order);
+    return { byProv, orphans };
+  }, [providers, profiles]);
+
+  // 行上的健康徽章按 profile id 取轮询状态。
   const health = React.useMemo(() => {
     const m = new Map<string, LLMPoolMember>();
     for (const c of pool?.chain ?? []) m.set(c.profile_id, c);
     return m;
   }, [pool]);
 
-  async function activate(id: string, name: string) {
+  async function activate(p: LLMProfile) {
     try {
-      await api.activateLLMProfile(id);
-      toast.success(t("page.toast.activated", { name }));
+      await api.activateLLMProfile(p.id);
+      toast.success(t("page.toast.activated", { name: p.name }));
       await load();
     } catch (e) {
       toast.error(t("page.toast.activateFailed", { msg: (e as Error).message }));
     }
   }
 
-  async function remove(p: LLMProfile) {
+  async function removeModel(p: LLMProfile) {
     if (p.is_default) {
       toast.error(t("page.toast.cannotDeleteActive"));
       return;
@@ -1151,6 +1653,39 @@ export default function LLMPage() {
       await load();
     } catch (e) {
       toast.error(t("page.toast.deleteFailed", { msg: (e as Error).message }));
+    }
+  }
+
+  async function removeProvider(v: LLMProvider) {
+    // 名下还有模型时后端会 409。这里先拦一次，省掉一次往返与一句英文错误。
+    if (v.model_count > 0) {
+      toast.error(t("provider.deleteBlocked"));
+      return;
+    }
+    try {
+      await api.deleteLLMProvider(v.id);
+      toast.success(t("provider.toast.deleted", { name: v.name }));
+      await load();
+    } catch (e) {
+      toast.error(t("provider.toast.deleteFailed", { msg: (e as Error).message }));
+    }
+  }
+
+  async function probe(p: LLMProfile) {
+    if (probingId) return;
+    setProbingId(p.id);
+    try {
+      const r = await api.probeLLMProfile(p.id);
+      if (r.ok) {
+        toast.success(t("model.reprobeOk", { k: Math.round(r.effective_context_window_k ?? 0) }));
+        await load();
+      } else {
+        toast.error(t("model.reprobeFailed", { msg: r.error ?? t("profile.toast.unknown") }));
+      }
+    } catch (e) {
+      toast.error(t("model.reprobeFailed", { msg: (e as Error).message }));
+    } finally {
+      setProbingId(null);
     }
   }
 
@@ -1172,128 +1707,53 @@ export default function LLMPage() {
               </Badge>
             )}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => openEditor(null)}>
-            <PlusIcon /> {t("page.new")}
+          <Button size="sm" variant="outline" onClick={() => openProvider(null)}>
+            <PlusIcon /> {t("page.newProvider")}
           </Button>
         </div>
       </div>
 
-      <Tabs defaultValue="profiles" className="flex-1">
+      <Tabs defaultValue="providers" className="flex-1">
         <TabsList>
-          <TabsTrigger value="profiles">{t("page.tab.profiles")}</TabsTrigger>
+          <TabsTrigger value="providers">{t("page.tab.providers")}</TabsTrigger>
           <TabsTrigger value="credentials">{t("page.tab.credentials")}</TabsTrigger>
           <TabsTrigger value="retry">{t("page.tab.retry")}</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="profiles" className="mt-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {profiles.map((p) => {
-              const h = healthOf(p, health.get(p.id));
-              return (
-                // biome-ignore lint/a11y/useSemanticElements: 卡片内含自己的操作按钮，用原生 <button> 会造成按钮嵌套（非法 HTML）
-                <Card
-                  key={p.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openEditor(p)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openEditor(p);
-                    }
-                  }}
-                  className={cn(
-                    "cursor-pointer gap-0 py-4 outline-none transition-colors hover:border-foreground/30",
-                    p.is_default && "border-amber-400/50 bg-amber-400/5",
-                  )}
-                >
-                  <CardContent className="grid gap-2 px-4">
-                    <div className="flex items-start gap-2">
-                      <StarIcon
-                        className={cn(
-                          "mt-0.5 size-4 shrink-0",
-                          p.is_default ? "fill-amber-400 text-amber-400" : "text-muted-foreground",
-                        )}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate font-medium text-sm">{p.name}</span>
-                          <Badge variant="outline" className="uppercase">
-                            {p.format}
-                          </Badge>
-                          <Badge variant="outline" className={cn("ml-auto", h.cls)} title={h.hint}>
-                            {h.label}
-                          </Badge>
-                        </div>
-                        <code className="mt-1 block truncate font-mono text-muted-foreground text-xs">{p.model}</code>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-muted-foreground text-xs">
-                      {p.credential_name && <span>{t("card.credential", { name: p.credential_name })}</span>}
-                      {p.api_key_hint && <span>{p.api_key_hint}</span>}
-                      <span>
-                        {p.rate_per_second}/s · {p.rate_per_minute}/min
-                      </span>
-                      {p.proxy && <span className="truncate">{t("card.proxy", { proxy: p.proxy })}</span>}
-                      {p.reasoning_effort && (
-                        <span>
-                          {t("card.thinking", {
-                            effort: p.reasoning_effort === "off" ? t("card.thinkingOff") : p.reasoning_effort,
-                          })}
-                        </span>
-                      )}
-                      {/* 实际生效的扩展输入模态（声明优先、否则按模型名推断）；text
-                          始终隐含，不占版面。空 = 纯文本配置。 */}
-                      {extraModalities(p.effective_input_modalities).length > 0 && (
-                        <span>
-                          {t("card.modalities", {
-                            modalities: extraModalities(p.effective_input_modalities)
-                              .map((m) => t(`profile.modalities.opt.${m}`))
-                              .join("·"),
-                          })}
-                        </span>
-                      )}
-                      {/* 轮询相关的两个字段只在轮询开着时才有意义，关着时不占版面 */}
-                      {poolOn &&
-                        !p.is_default &&
-                        (p.pool_exclude ? (
-                          <span>{t("card.excluded")}</span>
-                        ) : (
-                          <span>{t("card.priority", { priority: p.priority ?? 0 })}</span>
-                        ))}
-                    </div>
-
-                    <div className="mt-1 flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1"
-                        disabled={p.is_default}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void activate(p.id, p.name);
-                        }}
-                      >
-                        {p.is_default ? t("card.active") : t("card.activate")}
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        aria-label={t("card.deleteAria")}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void remove(p);
-                        }}
-                      >
-                        <Trash2Icon className="text-destructive" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-            {profiles.length === 0 && (
+        <TabsContent value="providers" className="mt-4">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {providers.map((v) => (
+              <ProviderCard
+                key={v.id}
+                provider={v}
+                models={grouped.byProv.get(v.id) ?? []}
+                health={health}
+                poolOn={poolOn}
+                probingId={probingId}
+                onEditProvider={openProvider}
+                onDeleteProvider={(x) => void removeProvider(x)}
+                onAddModel={(x) => openModel(null, x?.id ?? "")}
+                onEditModel={(p) => openModel(p, p.provider_id ?? "")}
+                onActivate={(p) => void activate(p)}
+                onProbe={(p) => void probe(p)}
+              />
+            ))}
+            {grouped.orphans.length > 0 && (
+              <ProviderCard
+                provider={null}
+                models={grouped.orphans}
+                health={health}
+                poolOn={poolOn}
+                probingId={probingId}
+                onEditProvider={openProvider}
+                onDeleteProvider={() => undefined}
+                onAddModel={(x) => openModel(null, x?.id ?? "")}
+                onEditModel={(p) => openModel(p, "")}
+                onActivate={(p) => void activate(p)}
+                onProbe={(p) => void probe(p)}
+              />
+            )}
+            {providers.length === 0 && grouped.orphans.length === 0 && (
               <div className="col-span-full rounded-lg border border-dashed">
                 <EmptyState illustration="nodes" title={t("page.empty")} />
               </div>
@@ -1310,12 +1770,20 @@ export default function LLMPage() {
         </TabsContent>
       </Tabs>
 
-      <ProfileSheet
-        profile={editing}
-        open={editOpen}
-        onOpenChange={setEditOpen}
+      <ProviderSheet
+        provider={editingProvider}
+        open={providerOpen}
+        onOpenChange={setProviderOpen}
         onSaved={() => void load()}
         credentials={creds}
+      />
+      <ModelSheet
+        profile={editingModel}
+        providerId={modelProviderId}
+        providers={providers}
+        open={modelOpen}
+        onOpenChange={setModelOpen}
+        onSaved={() => void load()}
       />
       <PoolSheet open={poolOpen} onOpenChange={setPoolOpen} pool={pool} onReload={loadPool} />
     </div>

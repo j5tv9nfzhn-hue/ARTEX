@@ -151,6 +151,13 @@ var sqliteColumnAdds = []struct {
 		"is_error",
 		`ALTER TABLE tool_usage ADD COLUMN is_error BOOLEAN NOT NULL DEFAULT 0`,
 	},
+	{
+		// 供应商标识(模型挂在供应商下)。可空列才能带 REFERENCES(SQLite 的 ADD
+		// COLUMN 限制);回填由 backfillLLMProviders 紧跟其后完成,所以运行期恒非空。
+		"llm_profiles",
+		"provider_id",
+		`ALTER TABLE llm_profiles ADD COLUMN provider_id BIGINT REFERENCES llm_providers(id)`,
+	},
 }
 
 // applySQLiteColumnAdds 逐条补齐上表缺失的列。pragma_table_info 是表值函数,表名
@@ -222,6 +229,13 @@ func openSQLite(dsn string) (*DB, error) {
 	if err := applySQLiteColumnAdds(context.Background(), conn); err != nil {
 		sqlDB.Close()
 		return nil, err
+	}
+	// 供应商回填：把每个存量模型配置收进它自己的供应商行。幂等（只处理
+	// provider_id 为空的行），新库是空操作。必须早于 seedBuiltins —— seed 之后的
+	// 新配置会自己建供应商，混在一起会让"这条为什么没有供应商"变得无法解释。
+	if err := backfillLLMProviders(context.Background(), conn); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("backfill llm providers: %w", err)
 	}
 	// 老库的一次性转换：历史文件是 auto_vacuum=NONE，删除过的页永远留在文件里
 	// （实测有安装 91.5% 的页停在这里）。这一步把它整体重写一次并永久改为

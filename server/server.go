@@ -1178,6 +1178,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/llm/profiles/active", s.pgActivateProfile)
 	// 能力探测：窗口/输出/模态/推理档位从供应商端点取，替代手填。
 	mux.HandleFunc("POST /api/llm/profiles/{id}/probe", s.pgProbeProfile)
+	// 模型改挂供应商（建错位置 / 回填后手工归并）。
+	mux.HandleFunc("POST /api/llm/profiles/{id}/provider", s.pgMoveProfileProvider)
+	// 供应商：模型的上游端点。旧接口 /api/llm/profiles 继续可用且返回扁平配置，
+	// 这里只是把「端点」抽出来单独管理。
+	mux.HandleFunc("GET /api/llm/providers", s.pgListProviders)
+	mux.HandleFunc("POST /api/llm/providers", s.pgSaveProvider)
+	mux.HandleFunc("DELETE /api/llm/providers/{id}", s.pgDeleteProvider)
 	// 凭据实体（计划 46–47）：可被多个 LLM 配置引用
 	mux.HandleFunc("GET /api/llm/credentials", s.pgListCredentials)
 	mux.HandleFunc("POST /api/llm/credentials", s.pgSaveCredential)

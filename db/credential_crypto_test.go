@@ -192,7 +192,10 @@ func TestProfileKeyEncryptedAtRest(t *testing.T) {
 
 	// Legacy plaintext row (written before the key existed) reads back fine —
 	// the lazy-upgrade window promised in credential_crypto.go.
-	if _, err := d.Exec(`UPDATE llm_profiles SET api_key='sk-legacy-plain' WHERE id=$1`, id); err != nil {
+	//
+	// 供应商重构后，Key 的事实来源是 llm_providers；这条用例要验证的是「没有供应商
+	// 归属的老行」仍能直读自己的明文列，所以先把 provider_id 摘掉。
+	if _, err := d.Exec(`UPDATE llm_profiles SET api_key='sk-legacy-plain', provider_id=NULL WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
 	legacy, err := d.ProfileByID(id)
@@ -200,3 +203,4 @@ func TestProfileKeyEncryptedAtRest(t *testing.T) {
 		t.Fatalf("legacy plaintext read = %q err=%v, want passthrough", legacy.APIKey, err)
 	}
 }
+

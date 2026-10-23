@@ -158,8 +158,14 @@ func (d *DB) DeleteCredential(id int64) (int, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
+	// 计数口径仍是「有多少个模型会因此失去 Key」——用户在删除确认里看到的就是这个
+	// 数。绑定本身落在供应商行上，所以既算直接绑定的模型行，也算经由供应商绑定的。
 	var n int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM llm_profiles WHERE credential_id=$1`, id).Scan(&n); err != nil {
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM llm_profiles p
+WHERE p.credential_id=$1 OR p.provider_id IN (SELECT v.id FROM llm_providers v WHERE v.credential_id=$1)`, id).Scan(&n); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`UPDATE llm_providers SET credential_id=NULL WHERE credential_id=$1`, id); err != nil {
 		return 0, err
 	}
 	if _, err := tx.Exec(`UPDATE llm_profiles SET credential_id=NULL WHERE credential_id=$1`, id); err != nil {
@@ -198,7 +204,11 @@ type CredentialMigrationResult struct {
 // 留着旧副本只会造成「改的是 A、用的是 B」的错觉。
 func (d *DB) MigrateInlineProfileKeys() (CredentialMigrationResult, error) {
 	var res CredentialMigrationResult
-	rows, err := d.Query(`SELECT id,name,COALESCE(api_key,'') FROM llm_profiles
+	// 内联 Key 现在住在供应商行上（重构前是 llm_profiles）——迁移的目标随之改变：
+	// 一个供应商一把 Key，抽出一条凭据，然后镜像回它名下的模型行。
+	// 未归属供应商的历史行（provider_id IS NULL，只可能出现在回填失败的瞬间）
+	// 仍按旧规则处理，保证这条路不会因为重构而漏掉任何一把 Key。
+	rows, err := d.Query(`SELECT id,name,COALESCE(api_key,'') FROM llm_providers
 WHERE credential_id IS NULL AND COALESCE(api_key,'') <> ''
 ORDER BY id`)
 	if err != nil {
@@ -230,7 +240,39 @@ ORDER BY id`)
 			res.Skipped = append(res.Skipped, p.id)
 			continue
 		}
-		if err := d.migrateOneInlineKey(p.id, p.name, plain); err != nil {
+		if err := d.migrateOneInlineKey(p.id, p.name, plain, true); err != nil {
+			return res, err
+		}
+		res.Migrated++
+	}
+	// 兜底：还没有供应商归属的模型行（旧库回填失败/新库刚建）继续走原路径。
+	legacy, err := d.Query(`SELECT id,name,COALESCE(api_key,'') FROM llm_profiles
+WHERE provider_id IS NULL AND credential_id IS NULL AND COALESCE(api_key,'') <> ''
+ORDER BY id`)
+	if err != nil {
+		return res, err
+	}
+	var legacyTodo []pending
+	for legacy.Next() {
+		var p pending
+		if err := legacy.Scan(&p.id, &p.name, &p.key); err != nil {
+			legacy.Close()
+			return res, err
+		}
+		legacyTodo = append(legacyTodo, p)
+	}
+	if err := legacy.Err(); err != nil {
+		legacy.Close()
+		return res, err
+	}
+	legacy.Close()
+	for _, p := range legacyTodo {
+		plain, derr := decryptCredential(p.key)
+		if derr != nil {
+			res.Skipped = append(res.Skipped, p.id)
+			continue
+		}
+		if err := d.migrateOneInlineKey(p.id, p.name, plain, false); err != nil {
 			return res, err
 		}
 		res.Migrated++
@@ -238,15 +280,18 @@ ORDER BY id`)
 	return res, nil
 }
 
-// migrateOneInlineKey creates the credential + rebinds the profile in one
-// transaction, so a crash can never leave the key in neither place.
-func (d *DB) migrateOneInlineKey(profileID int64, profileName, plain string) error {
+// migrateOneInlineKey 在一条事务里建凭据并把所有者改绑过去：崩在中间也不会
+// 出现「Key 两边都不在」。
+//
+// isProvider 区分 id 属于哪张表——供应商与模型的 id 各自自增，拿一个 id 去另一张表
+// 里更新会静默改错行。
+func (d *DB) migrateOneInlineKey(ownerID int64, profileName, plain string, isProvider bool) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	name, err := uniqueCredentialName(tx, profileName, profileID)
+	name, err := uniqueCredentialName(tx, profileName, ownerID)
 	if err != nil {
 		return err
 	}
@@ -259,9 +304,16 @@ func (d *DB) migrateOneInlineKey(profileID int64, profileName, plain string) err
 VALUES ($1,NULLIF($2,''),NULLIF($3,'')) RETURNING id`, name, stored, credentialHint(plain)).Scan(&cid); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE llm_profiles SET credential_id=$1,api_key=NULL,api_key_hint=NULL WHERE id=$2`,
-		cid, profileID); err != nil {
-		return err
+	if isProvider {
+		if _, err := tx.Exec(`UPDATE llm_providers SET credential_id=$1,api_key=NULL,api_key_hint=NULL WHERE id=$2`,
+			cid, ownerID); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.Exec(`UPDATE llm_profiles SET credential_id=$1,api_key=NULL,api_key_hint=NULL WHERE id=$2`,
+			cid, ownerID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

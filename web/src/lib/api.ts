@@ -63,6 +63,7 @@ import type {
   LLMCredential,
   LLMPoolStatus,
   LLMProfile,
+  LLMProvider,
   LLMRecordDetail,
   LLMRecordItem,
   LLMRetryOverride,
@@ -1156,7 +1157,8 @@ export const api = {
   saveLLMProfile: (p: {
     id?: number; // omit/0 = create; set = update that profile
     name: string;
-    format: string;
+    // 省略 = 不改：格式属于供应商。旧界面仍然传（后端按「整行覆盖」老语义落盘）。
+    format?: string;
     model: string;
     base_url?: string;
     proxy?: string;
@@ -1175,8 +1177,39 @@ export const api = {
     retry?: LLMRetryOverride; // 本配置的重试覆盖；各项留 0 = 跟随全局重试策略
     input_modalities?: string; // 逗号分隔的 text/image/audio/pdf；""=未声明（后端按模型名保守推断）
     credential_id?: number; // 绑定的凭据 id；0=解绑回内联 Key（缺省=不改绑定，旧客户端不传即旧行为）
-  }) => post<{ id: number }>("/llm/profiles", p),
+    provider_id?: number; // 所属供应商；省略 = 沿用库里的归属（新库会自动建一家 1:1）
+  }) => post<{ id: number; provider_id?: string }>("/llm/profiles", p),
   deleteLLMProfile: (id: string) => del<{ deleted: number }>(`/llm/profiles/${id}`),
+  // ---- 供应商（任务 16）----
+  // 端点 / 代理 / Key / 端点级限速都住在这一层，名下模型只发自己的参数。
+  // 列表响应已含 models[]，设置页一次拉完即可渲染整棵分组树。
+  llmProviders: () => get<{ providers: LLMProvider[] }>("/llm/providers").then((r) => arr(r.providers)),
+  // 端点字段留空串 = 清空；省略 = 不改。api_key 掩码值等同留空（保持原值）。
+  saveLLMProvider: (v: {
+    id?: number;
+    name: string;
+    format: string;
+    base_url?: string;
+    proxy?: string;
+    api_key?: string;
+    credential_id?: number; // 0=解绑回内联 Key；缺省=不改
+    rate_per_second?: number;
+    rate_per_minute?: number;
+    session_header_key?: string;
+  }) => post<{ id: string }>("/llm/providers", v),
+  deleteLLMProvider: (id: string) => del<{ deleted: string }>(`/llm/providers/${id}`),
+  // 把一条模型挪到另一家供应商下（端点随之改变，能力快照会被作废）。
+  moveLLMProfileProvider: (id: string, providerID: number) =>
+    post<{ ok: boolean }>(`/llm/profiles/${id}/provider`, { provider_id: providerID }),
+  // 手动重新探测模型能力（窗口 / 最大输出 / 模态 / 推理档位）。
+  probeLLMProfile: (id: string) =>
+    post<{
+      ok: boolean;
+      error?: string;
+      caps?: LLMProfile["caps"];
+      effective_context_window_k?: number;
+      context_window_detected?: boolean;
+    }>(`/llm/profiles/${id}/probe`, {}),
   activateLLMProfile: (id: string) => post<{ ok: boolean }>("/llm/profiles/active", { id: Number(id) }),
   // 轮询链的实际顺序 + 各配置的熔断状态。
   llmPool: () => get<LLMPoolStatus>("/llm/pool"),
@@ -1660,3 +1693,5 @@ export const api = {
   // SSE 地址（自动带 token）：EventSource 不能带 cookie，故走 token 查询参数。
   updateStreamUrl: () => sseUrl("/api/update/stream"),
 };
+
+

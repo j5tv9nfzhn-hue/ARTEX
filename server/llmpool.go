@@ -308,9 +308,13 @@ type LLMPoolMemberStatus struct {
 	Name      string `json:"name"`
 	Model     string `json:"model"`
 	Format    string `json:"format"`
-	Priority  int    `json:"priority"`
-	Active    bool   `json:"active"`   // is the globally-activated profile
-	Excluded  bool   `json:"excluded"` // pool_exclude — not a failover target
+	// 供应商归属：界面在轮询链上显示「供应商 / 模型」两层，好区分
+	// 「换个模型」和「换一家」——两者在故障转移里是不同程度的动作。
+	ProviderID   string `json:"provider_id,omitempty"`
+	ProviderName string `json:"provider_name,omitempty"`
+	Priority     int    `json:"priority"`
+	Active       bool   `json:"active"`   // is the globally-activated profile
+	Excluded     bool   `json:"excluded"` // pool_exclude — not a failover target
 	// Health: state is "ok" | "degraded" (failing but not tripped) | "tripped".
 	State        string `json:"state"`
 	Fails        int    `json:"fails"`
@@ -348,6 +352,7 @@ func (s *Server) llmPoolStatus() map[string]any {
 		st := health[p.ID]
 		m := LLMPoolMemberStatus{
 			ProfileID: i64s(p.ID), Name: p.Name, Model: p.Model, Format: p.Format,
+			ProviderID: i64s(p.ProviderID), ProviderName: p.ProviderName,
 			Priority: p.Priority, Active: p.IsDefault, Excluded: p.PoolExclude,
 			State: "ok", Fails: st.Fails, Trips: st.Trips,
 			LastError: st.LastError,

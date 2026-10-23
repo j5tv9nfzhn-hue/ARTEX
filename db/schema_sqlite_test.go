@@ -85,6 +85,7 @@ func TestSQLiteSchemaApplies(t *testing.T) {
 		"intercept_rules",
 		"llm_profile_health",
 		"llm_profiles",
+		"llm_providers",
 		"main_sessions",
 		"mcp_servers",
 		"mcp_tools_cache",
@@ -173,6 +174,7 @@ func TestSQLiteSchemaColumnParity(t *testing.T) {
 		{"side_question_sessions", "memory"},
 		{"llm_profiles", "retry_connect_attempts"},
 		{"llm_profiles", "input_modalities"},
+		{"llm_profiles", "provider_id"},
 		{"assets", "company_source"},
 		{"findings", "evidence_version"},
 		// 批次 6 新增列同样折进 CREATE TABLE，老库靠 sqliteColumnAdds 补列。
