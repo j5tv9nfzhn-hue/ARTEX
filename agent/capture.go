@@ -118,6 +118,9 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 	}
 	lastTool := &runTrace{startedAt: time.Now()}
 	var lastUsage *llm.Usage
+	// prevUsage 是上一条 KindUsage 事件里的累计用量：事件本身是"本次 run 累计"，
+	// 相减才能还原"最近一轮模型请求的输入规模"（= 上下文真正占了多大）。
+	var prevUsage llm.Usage
 
 	var finalText string
 	var rerr error
@@ -194,6 +197,9 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			// buffered final-answer text must stay for the KindResult de-dup.
 			if ev.Usage != nil {
 				u := *ev.Usage
+				// 单轮上下文规模：累计值相减（事件是本次 run 累计），与 harness 的 lastInputTokens 同口径。
+				used := contextTokensUsed(prevUsage, u)
+				prevUsage = u
 				lastUsage = &u
 				// 会话预算：每收到一条用量事件就地结算（事件是本轮累计值，账本内部取最大）。
 				// 没挂账本时是 nil 接收者调用，方法内已做保护 → no-op。
@@ -201,12 +207,14 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 				row := db.Activity{Kind: "usage",
 					InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens,
 					CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens}
-				// 上下文容量：窗口来自 ctx（模型配置），已用按本轮输入口径（input + cache 读写）。
+				// 上下文容量：窗口来自 ctx（模型配置），已用取"最近一轮请求的输入规模"，
+				// 与 harness 喂给压缩器的 lastInputTokens 同口径 —— 容量环到
+				// CompactionRatio()（默认 80%）时，正好就是压缩真正触发的位置。
 				// 只落 metadata，不动表结构；前端读不到就退化成不显示容量环。
 				if window := contextWindowFrom(ctx); window > 0 {
 					if meta, err := json.Marshal(map[string]int{
 						"context_window": window,
-						"context_used":   u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens,
+						"context_used":   used,
 					}); err == nil {
 						row.Metadata = meta
 					}
@@ -328,4 +336,36 @@ func approvalHistory(messages []llm.Message) []db.InterceptContextEntry {
 		}
 	}
 	return entries
+}
+
+// contextTokensUsed 返回"最近一轮模型请求实际送进窗口的 token 数" —— 也就是
+// harness 传给压缩器的 lastInputTokens 同一口径（harness/query.go:
+// turnUsage.InputTokens + turnUsage.OutputTokens）。容量环用它当分子，
+// 面板上的 80% 才等于压缩真正触发的 80%。
+//
+// 两个坑，都会让占用率虚高、看起来"到了 80% 也不压缩"：
+//
+//  1. KindUsage 事件带的是本次 run 的累计用量（每完成一个模型轮就叠加一次）。
+//     直接拿它当"已用"，第二、第三轮就能把环顶到 100%，而真实上下文其实只有
+//     三分之一 —— 压缩器按真实值判断，于是用户觉得压缩"死活不触发"。
+//     prev 是上一条同类事件的累计值，相减才是本轮规模。
+//  2. norma 归一后的 llm.Usage.InputTokens 已经包含 cache read/write
+//     （llm/anthropic.go: input_tokens + cache_read + cache_creation；
+//     openai 系本来就是 prompt_tokens 口径），CacheRead/CacheWriteTokens 是它的
+//     子集。再加一遍就是重复计费两倍 —— 缓存命中率越高，虚高越离谱。
+func contextTokensUsed(prev, cur llm.Usage) int {
+	in := cur.InputTokens - prev.InputTokens
+	out := cur.OutputTokens - prev.OutputTokens
+	if in < 0 {
+		in = 0
+	}
+	if out < 0 {
+		out = 0
+	}
+	if used := in + out; used > 0 {
+		return used
+	}
+	// 有些网关不按累计上报（或整体回退），相减拿不到正数时退回当前绝对量，
+	// 至少不会把环显示成 0。
+	return cur.InputTokens + cur.OutputTokens
 }

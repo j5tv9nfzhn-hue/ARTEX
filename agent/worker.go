@@ -614,10 +614,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		// 工具输出进入对话历史的字符上限：超限部分仍全量落盘可重读，头部 12k 足够；
 		// 收紧上限直接降低每轮历史重发体积（详见 maxToolOutputChars 的注释）。
 		MaxToolOutputChars: maxToolOutputChars,
-		Compaction:         compactionConfig(w.compactionWindow()), // long tool-heavy runs stay within the window
-		Todos:              actool.NewTodoStore(),                  // 会话级临时待办（TodoWrite），纯规划用，退出即丢
-		NonStreaming:       w.nonStreaming(),                       // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:          w.maxTokens(),                          // 0 = 不单独设限;norma harness 兜底为 32768(harness/query.go maxTokens)
+		Todos:              actool.NewTodoStore(), // 会话级临时待办（TodoWrite），纯规划用，退出即丢
+		NonStreaming:       w.nonStreaming(),      // 该 profile 选非流式时走 Provider.Complete
+		MaxTokens:          w.maxTokens(),         // 0 = 不单独设限;norma harness 兜底为 32768(harness/query.go maxTokens)
 	}
 	if hooks != nil { // typed-nil guard: only set when concrete (avoids harness panic)
 		opts.Hooks = hooks
@@ -643,6 +642,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 
 	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
 	noaSession := WorkerSessionID(ts.ID(), intent.ID)
+	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）。
+	attachCompaction(&opts, w.compactionWindow(), noaSession)
 	enableNoa(&opts, w.noaEnabledFn, w.workDir, noaSession, w.compactionWindow(), noaWarn(noaSession))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)

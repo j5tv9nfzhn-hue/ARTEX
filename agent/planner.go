@@ -492,7 +492,6 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		MaxToolOutputChars:    maxToolOutputChars, // 工具输出入历史的上限(超限全量落盘可重读)
 		MaxTurns:              p.maxTurns,         // 0 = unlimited (configurable in agent management)
 		MaxDuration:           maxDur,             // 0=不限;有 deadline 时=距 deadline 剩余
-		Compaction:            compactionConfig(p.compactionWindow()),
 		// 跨唤醒共享的规划待办：让串行链在多轮之间保留（session 是新的，store 不是）。
 		Todos: p.todoFor(ts.ID()),
 		// 命中【本轮】步数预算→ SDK 跑收尾:把本轮已想清楚的结论落地(该派的 add_intent、
@@ -508,6 +507,8 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
 	noaSession := fmt.Sprintf("exp%d-planner", ts.ID())
+	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）。
+	attachCompaction(&opts, p.compactionWindow(), noaSession)
 	enableNoa(&opts, p.noaEnabledFn, p.workDir, noaSession, p.compactionWindow(), noaWarn(noaSession))
 	// 态势（刚完成的意图 + 完整图）现在拼进本轮 user 输入（见下方 input）。user 里还有
 	// 指令 + 跨唤醒待办（todo 是模型自己的规划便签，可再生，放 user 即可）。

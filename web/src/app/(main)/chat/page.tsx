@@ -876,17 +876,17 @@ function ChatView({
     return Math.min(Math.max(k, 32), 1000) * 1000;
   }, [profiles, currentProfileId]);
 
-  // 已用取最新一条 usage 活动：metadata.context_used 优先，否则用该行自带的
-  // input + cache 写入（与 capture 统计口径一致）。没有 usage 行就不渲染环。
+  // 已用取最新一条 usage 活动：metadata.context_used 是后端算好的"最近一轮请求规模"
+  // （与压缩器同一个数）；老会话没有 metadata 时退回该行自带的 input_tokens ——
+  // 它已经包含 cache（后端按 prompt_tokens 口径归一，cache_* 是子集），不要再加一遍，
+  // 否则占用率会虚高一倍。没有 usage 行就不渲染环。
   const contextUsage = React.useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const item = messages[index];
       if (item.kind !== "usage") continue;
       const size = item.metadata?.context_window ?? configuredWindow;
       if (!size) return null;
-      const used =
-        item.metadata?.context_used ??
-        (item.input_tokens ?? 0) + (item.cache_read_tokens ?? 0) + (item.cache_write_tokens ?? 0);
+      const used = item.metadata?.context_used ?? (item.input_tokens ?? 0);
       return { size, used };
     }
     return null;

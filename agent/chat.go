@@ -153,7 +153,6 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		WorkingDir:            sessionWorkDir,
 		MaxTurns:              maxTurns,
 		MaxDuration:           maxDuration,
-		Compaction:            compactionConfig(c.window),
 		Todos:                 actool.NewTodoStore(),
 		// large tool output spills to cmd-output/ under the session dir.
 		// 截断上限见 maxToolOutputChars（超限全量落盘可重读）。
@@ -172,6 +171,8 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		opts.Transcript = c.tx
 		opts.SessionID = sessionID
 	}
+	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）。
+	attachCompaction(&opts, c.window, "chat-"+sessionID)
 	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
 	enableNoa(&opts, c.noaEnabledFn, c.workDir, "chat-"+sessionID, c.window, noaWarn("chat-"+sessionID))
 	ctx = attachSideCapture(ctx, &opts)

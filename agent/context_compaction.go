@@ -1,0 +1,94 @@
+package agent
+
+// 上下文压缩的可观测装配：把 norma 内置 compaction 包一层，压缩真的发生 / 摘要失败时
+// 各留一行日志。
+//
+// 为什么需要这一层：SDK 的 AutoCompact 有三条完全静默的 "什么都不做" 路径 ——
+// summarize 为 nil、连续 3 次摘要失败后 tripped 永久关闭、可摘要区间为空 —— 全都只
+// return 不打日志。线上看到的现象就是 "上下文早就顶到窗口了，压缩却没发生"，
+// 而日志里一条线索都没有。这一层不改任何阈值与行为，只把证据补上：
+//
+//   - 摘要失败：报错一次（连续 3 次后 SDK 会关掉本会话的自动压缩）；
+//   - 压缩发生：报输入规模、等效窗口与触发点，便于和 UI 的占用率对账。
+//
+// 注意：wrapper 只实现 harness.Compactor 的三个方法，**不实现** ContextView。
+// 内置压缩是 "就地改写消息数组" 的语义，不能被当成投影型上下文管理器
+// （agentcore/noa_off_test.go 专门盯着这条）。
+
+import (
+	"context"
+	"log"
+
+	"github.com/Autumn-27/norma/agentcore"
+	"github.com/Autumn-27/norma/compaction"
+	"github.com/Autumn-27/norma/llm"
+)
+
+// observedCompactor 在保留内置压缩全部行为的前提下加日志。
+type observedCompactor struct {
+	label string
+	cfg   compaction.Config
+	inner *compaction.Compactor
+}
+
+func newObservedCompactor(label string, cfg *compaction.Config, summary compaction.Summarizer) *observedCompactor {
+	return &observedCompactor{label: label, cfg: *cfg, inner: compaction.New(*cfg, summary)}
+}
+
+func (c *observedCompactor) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens int) []llm.Message {
+	out := c.inner.Pre(ctx, msgs, lastInputTokens)
+	c.report(msgs, out, lastInputTokens, "自动")
+	return out
+}
+
+func (c *observedCompactor) Reactive(ctx context.Context, msgs []llm.Message) ([]llm.Message, bool) {
+	out, ok := c.inner.Reactive(ctx, msgs)
+	c.report(msgs, out, 0, "溢出兜底")
+	return out, ok
+}
+
+func (c *observedCompactor) IsOverflow(err error) bool { return c.inner.IsOverflow(err) }
+
+// report 只在 "多出一条压缩边界" 时打日志 —— 那是压缩真的发生过的唯一证据。
+func (c *observedCompactor) report(before, after []llm.Message, lastInputTokens int, trigger string) {
+	if c == nil || len(after) <= len(before) {
+		return
+	}
+	if llm.LastBoundaryIndex(after) <= llm.LastBoundaryIndex(before) {
+		return
+	}
+	log.Printf("[compaction] %s: 已压缩（%s）输入=%d tok → API 视图估算 %d tok（等效窗口 %d，触发点 %d）",
+		c.label, trigger, lastInputTokens,
+		compaction.EstimateTokens(llm.MessagesForAPI(after)),
+		c.cfg.ContextWindow, compactionTrigger(&c.cfg))
+}
+
+// observedSummarizer 记录摘要调用的成败。base 为 nil 时保持 nil（AutoCompact 关闭），
+// 不要替调用方把闭区间打开。
+func observedSummarizer(label string, base compaction.Summarizer) compaction.Summarizer {
+	if base == nil {
+		return nil
+	}
+	return func(ctx context.Context, msgs []llm.Message) (string, error) {
+		summary, err := base(ctx, msgs)
+		if err != nil {
+			log.Printf("[compaction] %s: 摘要失败（连续 3 次后本会话的自动压缩会被关闭）: %v", label, err)
+			return summary, err
+		}
+		log.Printf("[compaction] %s: 摘要完成 %d 条 → %d 字", label, len(msgs), len([]rune(summary)))
+		return summary, nil
+	}
+}
+
+// attachCompaction 装配内置上下文压缩，等价于 agentcore.NewSession 里那句
+//
+//	compaction.New(*opts.Compaction, compaction.ProviderSummarizer(opts.Provider, opts.MaxTokens, opts.NonStreaming))
+//
+// 只是多了一层观测。必须在 opts.Provider / opts.MaxTokens / opts.NonStreaming 就位之后
+// 调用；noa 若在之后启用会直接覆盖 opts.Compactor（实验功能优先，符合设计）。
+func attachCompaction(opts *agentcore.Options, window int, label string) {
+	cfg := compactionConfig(window)
+	opts.Compaction = nil // 只留一个上下文管理器，避免 agentcore 报 "两者同时设置"
+	opts.Compactor = newObservedCompactor(label, cfg,
+		observedSummarizer(label, compaction.ProviderSummarizer(opts.Provider, opts.MaxTokens, opts.NonStreaming)))
+}

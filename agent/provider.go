@@ -141,7 +141,7 @@ const (
 	// 与 norma compaction 的 reservedForSummary 对齐（摘要预留，默认 8000 token）。
 	compactionSummaryReserve = 8000
 	// 与 norma compaction 的 toolResultGrowthGuess 对齐：预估一轮会再长多少 token。
-	compactionTurnGrowth = 15000
+	toolResultGrowthGuess = 15000
 )
 
 // CompactionRatio 返回压缩触发比例（占模型窗口的比例，落在 [0.5, 0.95]）。
@@ -179,13 +179,32 @@ func compactionBuffer(effective int) int {
 	}
 }
 
-// 下面三个函数把 norma compaction 的阈值算法抄了一份，只用于自检、测算与反解，
-// 不参与实际决策（真正的压缩在 SDK 里跑）。阈值都按"等效窗口"算，
-// 对应 compaction/compaction.go 的 autoThreshold / predictiveOver。
+// 下面这组函数逐行复刻 norma compaction 的阈值算法（compaction/compaction.go），
+// 只用于自检、测算与反解，不参与实际决策（真正的压缩在 SDK 里跑）。
+// 入参一律是"即将交给 SDK 的 Config"：预留、缓冲、一轮增长都从同一个
+// MaxOutputTokens 推出来，镜像与实现不可能再各算一套。
 
-// autoCompactThreshold 是自动压缩的硬触发线：窗口 − 预留 − 缓冲。
-func autoCompactThreshold(window int) int {
-	effective := window - compactionSummaryReserve
+// compactionConfigReserve 复刻 SDK 的 reservedForSummary：min(MaxOutputTokens, 20000)，0 → 20000。
+func compactionConfigReserve(cfg *compaction.Config) int {
+	r := cfg.MaxOutputTokens
+	if r > 20000 || r == 0 {
+		r = 20000
+	}
+	return r
+}
+
+// compactionEffective 是扣掉摘要预留后真正可用的窗口（SDK: effectiveWindow）。
+func compactionEffective(cfg *compaction.Config) int {
+	return cfg.ContextWindow - compactionConfigReserve(cfg)
+}
+
+// compactionMaxTurnGrowth 复刻 SDK 的 estimateMaxTurnGrowth：预留 + 工具结果增长。
+// 它比缓冲大时，预测线会把压缩提前到"再来一轮就顶窗"的位置。
+func compactionMaxTurnGrowth(reserve int) int { return reserve + toolResultGrowthGuess }
+
+// autoCompactThreshold 是自动压缩的硬触发线：等效窗口 − 缓冲。
+func autoCompactThreshold(cfg *compaction.Config) int {
+	effective := compactionEffective(cfg)
 	if effective <= 0 {
 		return 0
 	}
@@ -193,41 +212,79 @@ func autoCompactThreshold(window int) int {
 }
 
 // predictiveCompactThreshold 是更早的预测线：预估"再来一轮会不会顶到窗口"。
-func predictiveCompactThreshold(window int) int {
-	effective := window - compactionSummaryReserve
+func predictiveCompactThreshold(cfg *compaction.Config) int {
+	effective := compactionEffective(cfg)
 	if effective <= 0 {
 		return 0
 	}
-	return effective - compactionTurnGrowth
+	return effective - compactionMaxTurnGrowth(compactionConfigReserve(cfg))
 }
 
-// compactionTrigger 取两条触发线里较早的一条 —— 实际压缩就发生在这一刻。
-func compactionTrigger(window int) int {
-	auto, predictive := autoCompactThreshold(window), predictiveCompactThreshold(window)
-	if predictive < auto {
-		return predictive
+// compactionMicroThreshold 复刻 SDK 的微压缩门槛：低于它 Pre 直接返回，
+// 连 MicroCompact / AutoCompact 都不看。窗口很小时它可能比触发线还高，
+// 于是"第一次真正压缩"就落在门槛上，而不是算出来的触发点。
+func compactionMicroThreshold(cfg *compaction.Config) int {
+	effective := compactionEffective(cfg)
+	if effective <= 0 {
+		return 0
 	}
-	return auto
+	return effective * 6 / 10
+}
+
+// compactionTrigger 取两条触发线里较早的一条 —— 实际压缩就发生在这一刻，
+// 但不会早于 MicroCompact 门槛（SDK 在 Pre 开头就 return）。
+// 返回的是"还不压缩的最大 token 数"：SDK 的预测线用严格大于比较，
+// 真正的第一次压缩发生在 触发点 + 1（差 1 token，忽略）。
+func compactionTrigger(cfg *compaction.Config) int {
+	auto, predictive := autoCompactThreshold(cfg), predictiveCompactThreshold(cfg)
+	trigger := auto
+	if predictive < auto {
+		trigger = predictive
+	}
+	if micro := compactionMicroThreshold(cfg); trigger < micro {
+		trigger = micro
+	}
+	return trigger
+}
+
+// compactionReserve 返回交给 SDK 的摘要预留（Config.MaxOutputTokens）。
+// 大窗口钉死 8000；窗口小于 64K 时按 1/8 收缩 —— 固定 8000 的预留在 32K 窗口里
+// 加上一轮增长（23000）已经超过窗口本身，SDK 的预测线会把触发点压到 3%，
+// 变成几乎每轮都压。收缩后 32K 的触发点回到 ~28%，仍然是"早压"，不会"狂压"。
+func compactionReserve(windowTokens int) int {
+	if windowTokens <= 0 {
+		windowTokens = defaultWindowK * 1000
+	}
+	if r := windowTokens / 8; r > 0 && r < compactionSummaryReserve {
+		return r
+	}
+	return compactionSummaryReserve
 }
 
 // compactionTriggerWindow 反解出"等效窗口"，使实际触发点等于 ratio × realWindow。
-// 触发点随窗口单调递增，取不动点即可（缓冲只有三档，几轮就收敛）。
+// 触发点随窗口单调递增，取不动点即可（缓冲只有三档，两轮就收敛）。
 // 解出来比真实窗口还大时按真实窗口封顶：宁可早压，也不能虚报窗口
 // （虚报会让压缩永远来不及，直到 API 返 413）。
+//
+// 能精确命中 ratio 的窗口下限约 160K：更小的窗口里"预留 + 一轮增长"的固定开销占比
+// 过高，反解会撞上真实窗口上限，只能提前压（128K → 76%、100K → 69%、≤64K → 52.5%
+// 并被 MicroCompact 门槛兜住），方向永远是早于目标，不会晚。
 func compactionTriggerWindow(realWindow int, ratio float64) int {
 	if realWindow <= 0 {
 		realWindow = defaultWindowK * 1000
 	}
 	target := int(float64(realWindow) * ratio)
+	reserve := compactionReserve(realWindow)
+	growth := compactionMaxTurnGrowth(reserve)
 	// 触发点 = 等效窗口 − 预留 − max(缓冲, 一轮增长)；反解时把预留与余量加回去。
-	margin := compactionTurnGrowth
-	x := target + compactionSummaryReserve + margin
+	margin := growth
+	x := target + reserve + margin
 	for i := 0; i < 4; i++ {
-		margin = compactionBuffer(x - compactionSummaryReserve)
-		if margin < compactionTurnGrowth {
-			margin = compactionTurnGrowth
+		margin = compactionBuffer(x - reserve)
+		if margin < growth {
+			margin = growth
 		}
-		x = target + compactionSummaryReserve + margin
+		x = target + reserve + margin
 	}
 	if x > realWindow {
 		x = realWindow
@@ -238,16 +295,17 @@ func compactionTriggerWindow(realWindow int, ratio float64) int {
 	return x
 }
 
-// compactionConfig builds the agent-core compaction config for a context window
-// in tokens. agentcore.NewSession wires the summarizer (same provider) when this
-// is set on Options.Compaction.
+// compactionConfig builds the agent-core compaction config for a context window in
+// tokens. 触发点 = CompactionRatio() × 真实窗口（窗口 ≥160K 时精确命中，更小的
+// 窗口只会更早）；MaxOutputTokens 只当"摘要预留"用，口径与 SDK 的
+// reservedForSummary 一致。真正的压缩由 attachCompaction 装配到 agent 上。
 func compactionConfig(windowTokens int) *compaction.Config {
 	if windowTokens <= 0 {
 		windowTokens = defaultWindowK * 1000
 	}
 	return &compaction.Config{
 		ContextWindow:   compactionTriggerWindow(windowTokens, CompactionRatio()),
-		MaxOutputTokens: compactionSummaryReserve, // 钉死摘要预留，别让 SDK 默认值漂移
+		MaxOutputTokens: compactionReserve(windowTokens), // 预留别让 SDK 默认值漂移
 	}
 }
 

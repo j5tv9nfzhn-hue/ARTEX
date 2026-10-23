@@ -1549,9 +1549,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       if (item.kind !== "usage") continue;
       const size = item.metadata?.context_window ?? fallbackContextWindow;
       if (!size) return null;
-      const used =
-        item.metadata?.context_used ??
-        (item.input_tokens ?? 0) + (item.cache_read_tokens ?? 0) + (item.cache_write_tokens ?? 0);
+      // input_tokens 已含 cache（后端按 prompt_tokens 口径归一），不能再加 cache 字段。
+      const used = item.metadata?.context_used ?? (item.input_tokens ?? 0);
       return { size, used };
     }
     return null;
