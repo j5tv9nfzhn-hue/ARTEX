@@ -48,6 +48,19 @@ function truncate(s: string, maxLen: number): string {
   return first.slice(0, maxLen) + "…";
 }
 
+// error_class → 文案键。后端只存低基数标签（config / dialect / ...），文案在前端。
+const CLASS_LABEL_KEY: Record<string, string> = {
+  config: "classConfig",
+  dialect: "classDialect",
+  not_found: "classNotFound",
+  param: "classParam",
+  perm: "classPerm",
+  env: "classEnv",
+  timeout: "classTimeout",
+  transport: "classTransport",
+  quota: "classQuota",
+};
+
 const PAGE_SIZES = [25, 50, 100];
 const CMD_MAX_LEN = 80;
 
@@ -124,6 +137,21 @@ export default function CommandsPage() {
   const statsTotal = stats.reduce((n, s) => n + s.total, 0);
   const statsErrors = stats.reduce((n, s) => n + s.errors, 0);
   const statsMax = stats.reduce((n, s) => Math.max(n, s.total), 0);
+  // 错误归因汇总：把每个工具的分类计数合成全局分布，按次数降序。
+  // 「Bash 错误率高」只有拆成写法/环境/额度几类之后才知道该修哪里。
+  const classTotals = React.useMemo(() => {
+    const acc = new Map<string, number>();
+    for (const s of stats) {
+      for (const [cls, n] of Object.entries(s.error_classes ?? {})) {
+        acc.set(cls, (acc.get(cls) ?? 0) + n);
+      }
+    }
+    return [...acc.entries()].sort((a, b) => b[1] - a[1]);
+  }, [stats]);
+  const classLabel = (cls: string) => {
+    const key = CLASS_LABEL_KEY[cls];
+    return key ? t(key) : cls;
+  };
   const totalPages = Math.max(1, Math.ceil(total / size));
   const rangeStart = total === 0 ? 0 : page * size + 1;
   const rangeEnd = page * size + commands.length;
@@ -301,6 +329,32 @@ export default function CommandsPage() {
             </DialogDescription>
           </DialogHeader>
 
+          {/* 错误归因：只看 errors 总数无法回答「为什么失败」，这里按 error_class 拆开。 */}
+          {classTotals.length > 0 && (
+            <div className="rounded-md border bg-muted/30 p-3">
+              <div className="mb-2 flex items-center justify-between text-xs font-medium">
+                <span>{t("classTitle")}</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {statsErrors} {t("failed")}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {classTotals.map(([cls, n]) => (
+                  <span
+                    key={cls}
+                    className="inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px]"
+                  >
+                    <span className="text-muted-foreground">{classLabel(cls)}</span>
+                    <span className="font-semibold tabular-nums">{n}</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {statsErrors > 0 ? `${((n / statsErrors) * 100).toFixed(0)}%` : ""}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {statsLoading && stats.length === 0 ? (
             <div className="py-10 text-center">
               <Loader2Icon className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
@@ -326,6 +380,20 @@ export default function CommandsPage() {
                         style={{ width: `${statsMax > 0 ? (s.total / statsMax) * 100 : 0}%` }}
                       />
                     </div>
+                    {s.error_classes && Object.keys(s.error_classes).length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {Object.entries(s.error_classes)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([cls, n]) => (
+                            <span
+                              key={cls}
+                              className="rounded-sm bg-red-50 px-1.5 py-0.5 text-[10px] text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                            >
+                              {classLabel(cls)} {n}
+                            </span>
+                          ))}
+                      </div>
+                    )}
                   </div>
                   <div className="text-right">
                     <div className="text-xs font-semibold tabular-nums">{s.total}</div>

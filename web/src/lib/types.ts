@@ -1817,6 +1817,9 @@ export interface ToolStat {
   tool: string;
   total: number;
   errors: number;
+  // 失败按 error_class 拆分（config / dialect / not_found / param / perm / env /
+  // timeout / transport / quota）。只看 errors 总数无法回答「Bash 为什么失败」。
+  error_classes?: Record<string, number>;
 }
 
 // ---- LLM recording ----

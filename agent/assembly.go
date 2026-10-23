@@ -12,6 +12,7 @@ import (
 
 	"github.com/Autumn-27/artex/metrics"
 	"github.com/Autumn-27/artex/stageerr"
+	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -175,6 +176,18 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 		return *blocked, nil
 	}
 	defer release()
+	// 单意图工具额度闸门（任务 27）：额度用尽后调用**不进入工具实现**，不是提示、
+	// 不是靠模型自觉。被拒绝的调用计 error_class=quota，用来回头调阈值。
+	budget := intentBudgetFrom(callCtx)
+	allow, budgetExtra := budget.beforeCall()
+	if !allow {
+		metrics.ObserveToolError(name, metrics.StageExec)
+		return actool.Result{
+			IsError: true,
+			Content: []llm.ContentBlock{llm.TextBlock(quotaRefusalText)},
+			Extra:   budgetExtra,
+		}, nil
+	}
 	res, err = g.CoreTool.Call(callCtx, in, tc)
 	// 统一输出裁剪（第三阶段）：head 70% / tail 30% + 全量落盘。
 	// 只处理「工具自己没裁过」的长文本——SDK 的 tool.Capture、MCP 与自定义工具
@@ -187,6 +200,10 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 	}
 	if g.breaker != nil {
 		res = g.breaker.inspect(name, in, res, err)
+	}
+	// 软提醒 / 强制收尾指令随本次 tool_result 一起进入对话流。
+	if len(budgetExtra) > 0 {
+		res.Extra = append(res.Extra, budgetExtra...)
 	}
 	return res, err
 }

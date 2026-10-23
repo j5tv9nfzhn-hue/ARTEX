@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -42,10 +43,15 @@ func commandFilter(expID *int64, q string) (string, []any, int) {
 }
 
 // ToolStat is one tool's execution tally for the usage summary.
+//
+// ErrorClasses 把失败按 error_class 拆开（任务 27 之后新增「quota」一类）：
+// 只看 errors 总数无法回答"Bash 错误率高是因为写法不对、环境缺依赖，还是额度打满"，
+// 而这三个原因对应的修法完全不同。
 type ToolStat struct {
-	Tool   string `json:"tool"`
-	Total  int    `json:"total"`
-	Errors int    `json:"errors"`
+	Tool         string         `json:"tool"`
+	Total        int            `json:"total"`
+	Errors       int            `json:"errors"`
+	ErrorClasses map[string]int `json:"error_classes,omitempty"`
 }
 
 // ToolStats counts executions grouped by tool under the same filters
@@ -83,27 +89,57 @@ func (d *DB) ToolStats(expID *int64, q string) ([]ToolStat, error) {
 		where += ` AND tool_key IN (` + strings.Join(ph, ",") + `)`
 	}
 
+	// 一次扫描同时拿到「按工具」和「按工具 × error_class」两维：账本可能有几十万行，
+	// 拆成两条查询会让统计弹窗在大库上明显变慢。
 	rows, err := d.Query(`
 SELECT COALESCE(NULLIF(tool_key,''),'-') AS tool, COUNT(*) AS total,
-       SUM(CASE WHEN is_error THEN 1 ELSE 0 END) AS errors
+       SUM(CASE WHEN is_error THEN 1 ELSE 0 END) AS errors,
+       COALESCE(error_class,'') AS class
 FROM tool_usage
 `+where+`
-GROUP BY 1
-ORDER BY total DESC, tool ASC`, args...)
+GROUP BY 1, 4
+ORDER BY tool ASC, class ASC`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	// 同一工具的多行（不同 error_class）在 Go 侧合并，顺序沿用 SQL 的 total DESC。
+	byTool := map[string]int{}
 	out := []ToolStat{}
 	for rows.Next() {
-		var s ToolStat
-		if err := rows.Scan(&s.Tool, &s.Total, &s.Errors); err != nil {
+		var tool, class string
+		var total, errors int
+		if err := rows.Scan(&tool, &total, &errors, &class); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+		idx, ok := byTool[tool]
+		if !ok {
+			idx = len(out)
+			byTool[tool] = idx
+			out = append(out, ToolStat{Tool: tool})
+		}
+		out[idx].Total += total
+		out[idx].Errors += errors
+		// class 为空 = 没归因的错误 + 全部成功调用，不单列。
+		if errors > 0 && class != "" {
+			if out[idx].ErrorClasses == nil {
+				out[idx].ErrorClasses = map[string]int{}
+			}
+			out[idx].ErrorClasses[class] += errors
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// SQL 已按工具名分组，这里按调用量重排（与旧行为一致：多的在前）。
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Total != out[j].Total {
+			return out[i].Total > out[j].Total
+		}
+		return out[i].Tool < out[j].Tool
+	})
+	return out, nil
 }
 
 // toolNamesMatching resolves a keyword to the tool names whose recorded input

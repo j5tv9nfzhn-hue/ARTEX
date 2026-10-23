@@ -79,6 +79,18 @@ type handoffRecord struct {
 	Progress handoffProgress  `json:"progress"`
 	Pointers handoffPointers  `json:"pointers"`
 	OpenWork *handoffOpenWork `json:"open_work,omitempty"`
+	// Quota 非空 = 本条意图因**工具额度用尽**而结束，正文是模型被强制产出的
+	// 结构化报告（① 已完成 / ② 未解决线索 / ③ 建议下一步）。
+	Quota *handoffQuota `json:"quota,omitempty"`
+}
+
+// handoffQuota 是一次「工具额度用尽」收尾的自述报告（任务 27）。
+// 与 Progress（系统直读的事实层）物理分开：这份正文由模型写，属于可推翻的描述。
+type handoffQuota struct {
+	Cap     int    `json:"cap"`
+	Calls   int    `json:"calls"`
+	Refused int    `json:"refused,omitempty"`
+	Report  string `json:"report,omitempty"`
 }
 
 // stopReasonFrom 把 SDK 的终止原因归一成台账里的 stop_reason。
@@ -223,6 +235,18 @@ func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time
 			TraceRange: traceRange(firstID, lastID),
 		},
 	}
+	// 额度用尽：把模型被强制写出的报告挂到交接单上，并把触发原因改写成 tool_quota
+	// ——「这条意图为什么停」比「正常结束」重要得多，下一轮要靠它决定接不接。
+	if wrote.Quota != nil {
+		rec.Quota = &handoffQuota{
+			Cap:     wrote.Quota.Cap,
+			Calls:   wrote.Quota.Calls,
+			Refused: wrote.Quota.Refused,
+			Report:  clipText(wrote.Quota.Report, 6000),
+		}
+		rec.Trigger.Kind = "tool_quota"
+		rec.Trigger.Detail = fmt.Sprintf("工具额度 %d/%d 用尽（拒绝 %d 次）", wrote.Quota.Calls, wrote.Quota.Cap, wrote.Quota.Refused)
+	}
 	// L2：这次 run 期间模型主动补的注。读失败不影响 L1 落库。
 	if ow, err := e.m.pg.OpenWorkSince(t.ID, intent.ID, started); err == nil && len(ow) > 0 {
 		rec.OpenWork = mergeOpenWork(ow)
@@ -235,6 +259,7 @@ func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time
 	// mech_sha256 只覆盖事实层：把 open_work 摘掉再算，模型改口也动不了这个指纹。
 	mech := rec
 	mech.OpenWork = nil
+	mech.Quota = nil // 额度报告是模型写的，不进事实层指纹
 	mechRaw, _ := json.Marshal(mech)
 	sum := sha256.Sum256(mechRaw)
 	h := &db.IntentHandoff{
@@ -322,6 +347,11 @@ func renderHandoffText(rec handoffRecord) string {
 			fmt.Fprintf(&b, "  · 已排除: %s\n", clipText(s, 200))
 		}
 	}
+	if rec.Quota != nil && strings.TrimSpace(rec.Quota.Report) != "" {
+		b.WriteString("── 额度用尽报告（模型自述，未经核实，可推翻）──\n")
+		b.WriteString(strings.TrimSpace(rec.Quota.Report))
+		b.WriteString("\n")
+	}
 	if len(rec.Pointers.TraceRange) == 2 {
 		fmt.Fprintf(&b, "细节：get_handoff(intent_id=%d) 取完整交接单；get_worker_trace(intent_id=%d) 看完整步骤（记录 %d..%d）。\n",
 			rec.Source.IntentID, rec.Source.IntentID, rec.Pointers.TraceRange[0], rec.Pointers.TraceRange[1])
@@ -351,6 +381,8 @@ func handoffTriggerLabel(kind string) string {
 		return "执行出错"
 	case "llm_quota_exhausted":
 		return "LLM 配额耗尽"
+	case "tool_quota":
+		return "工具额度用尽"
 	case "crash", "interrupted":
 		return "进程中断"
 	case "human_stop":

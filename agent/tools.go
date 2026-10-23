@@ -192,6 +192,17 @@ type WriteCounts struct {
 	Facts    int
 	Assets   int
 	Findings int
+	// Quota 非空 = 本条意图因**工具额度用尽**而收尾（任务 27）。它携带模型被强制
+	// 产出的结构化进度报告，由宿主写进交接单，作为下一轮/人工接手的正文。
+	Quota *QuotaOutcome `json:"quota,omitempty"`
+}
+
+// QuotaOutcome 是一次「额度用尽收尾」的快照。
+type QuotaOutcome struct {
+	Cap     int    `json:"cap"`
+	Calls   int    `json:"calls"`
+	Refused int    `json:"refused,omitempty"`
+	Report  string `json:"report,omitempty"`
 }
 
 // Total is every node persisted this run, regardless of kind — the

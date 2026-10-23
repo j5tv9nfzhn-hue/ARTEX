@@ -13,7 +13,8 @@ type ToolUsage struct {
 	// error）。错误率是判断「工具好不好用」的唯一客观指标，必须写在账本里：
 	// activity 会随任务数据一起被清理，账本不该跟着丢。
 	IsError bool `json:"is_error"`
-	// ErrorClass 是失败的归因类别（见 agent 包的 8 类）。空串表示非错误或未归因。
+	// ErrorClass 是失败的归因类别（见 agent 包的 9 类，含任务 27 新增的 quota）。
+	// 空串表示非错误或未归因。
 	// 有它之后，「Bash 错误率高」才能拆成「多少是写法不对、多少是环境缺依赖」。
 	ErrorClass string `json:"error_class,omitempty"`
 }

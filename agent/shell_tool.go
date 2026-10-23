@@ -69,6 +69,10 @@ const (
 	ErrClassEnv       = "env"       // 环境依赖缺失（python 未装、PATH 不含该工具）
 	ErrClassTimeout   = "timeout"   // 超时/被取消
 	ErrClassTransport = "transport" // 网络/代理层失败
+	// ErrClassQuota 是第 9 类、且不属于 Shell：本条意图的工具额度用尽、调用被闸门
+	// 拒绝（任务 27）。它必须单独成类——否则「额度打满」会被算进 Bash 的错误率里，
+	// 把真实失败率污染掉，也无法据此调阈值。
+	ErrClassQuota = "quota"
 )
 
 // ClassifyShellFailure 把一次执行结果归到 8 类之一。返回空串表示「命令正常失败」
@@ -254,6 +258,7 @@ func ErrorClassLegend() []map[string]string {
 		{"class": ErrClassEnv, "label": "环境依赖缺失"},
 		{"class": ErrClassTimeout, "label": "超时/被取消"},
 		{"class": ErrClassTransport, "label": "网络/代理失败"},
+		{"class": ErrClassQuota, "label": "意图工具额度用尽"},
 	}
 }
 
@@ -288,6 +293,10 @@ func ClassifyToolError(err error) string {
 // classifyErrorText 是 8 类判定的唯一实现：从结果/错误文本推导类别。
 func classifyErrorText(text string) string {
 	lower := strings.ToLower(text)
+	// 额度闸门的拒绝最优先：它不是工具/执行器的问题，是预算问题。
+	if strings.HasPrefix(strings.TrimSpace(text), "【额度】") {
+		return ErrClassQuota
+	}
 	if strings.Contains(text, "【配置错误：执行器不可用") {
 		return ErrClassConfig
 	}

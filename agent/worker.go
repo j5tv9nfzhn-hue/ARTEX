@@ -635,7 +635,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		// Bash 子命令的 HTTP 默认走记录代理 + 信任其 CA（工具无需 -x/-k）。
 		BashEnv:    proxyEnv(w.proxyAddr, w.proxyCACert),
 		WorkingDir: runDir,
-		MaxTurns:   w.maxTurns, // 0 = unlimited (configurable in agent management)
+		MaxTurns:   intentTurnBudget(w.maxTurns), // 与工具额度同量级；额度关闭时不动配置（0 = unlimited）
 		// 墙钟预算,轮边界判,不打断半路;0 = 不限。有任务级 deadline 时夹逼到 min(自身预算,
 		// 距 deadline 剩余),让本 run 在任务到点时自然进收尾(见 taskclock.go)。
 		MaxDuration: maxDur,
@@ -718,6 +718,20 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// still settles (no external hard-timeout backstop needed). ctx itself carries only
 	// pause / planner kill / shutdown, which the engine distinguishes and re-queues/stops.
 	ctx = WithContextWindow(ctx, w.compactionWindow())
-	_, reason, err := captureRunSession(ctx, s, input, emitWrap)
-	return reason, tsx.Writes(), err
+	// 单意图工具额度（任务 27）：每次 run = 一条意图。额度挂到 ctx 上，由
+	// guardedTool 的闸门执行——软提醒 / 硬拒绝 / 强制收尾都在那里。
+	budget := newIntentBudget(IntentToolCap())
+	ctx = WithIntentBudget(ctx, budget)
+	finalText, reason, err := captureRunSession(ctx, s, input, emitWrap)
+	wrote := tsx.Writes()
+	if budget.Exhausted() || budget.Refused() > 0 {
+		// 报告就是本条意图的"交接单正文"：落库后合并进 handoff，人工/下一轮直接可读。
+		wrote.Quota = &QuotaOutcome{
+			Cap:     budget.cap,
+			Calls:   budget.Calls(),
+			Refused: budget.Refused(),
+			Report:  clipQuotaReport(finalText),
+		}
+	}
+	return reason, wrote, err
 }

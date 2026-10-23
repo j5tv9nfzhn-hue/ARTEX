@@ -23,9 +23,10 @@ func TestToolStatsReadsLedger(t *testing.T) {
 
 	rows := []*ToolUsage{
 		{ToolKey: toolA, AgentKey: "worker", ExplorationID: 5},
-		{ToolKey: toolA, AgentKey: "worker", ExplorationID: 5, IsError: true},
-		{ToolKey: toolA, AgentKey: "worker", ExplorationID: 6},
-		{ToolKey: toolB, AgentKey: "worker", ExplorationID: 5, IsError: true},
+		{ToolKey: toolA, AgentKey: "worker", ExplorationID: 5, IsError: true, ErrorClass: "param"},
+		{ToolKey: toolA, AgentKey: "worker", ExplorationID: 6, IsError: true, ErrorClass: "param"},
+		{ToolKey: toolA, AgentKey: "worker", ExplorationID: 6, IsError: true, ErrorClass: "quota"},
+		{ToolKey: toolB, AgentKey: "worker", ExplorationID: 5, IsError: true, ErrorClass: "dialect"},
 	}
 	for _, row := range rows {
 		if err := d.InsertToolUsage(row); err != nil {
@@ -46,17 +47,31 @@ func TestToolStatsReadsLedger(t *testing.T) {
 	}
 
 	all := byTool(nil, "")
-	if got := all[toolA]; got.Total != 3 || got.Errors != 1 {
-		t.Fatalf("toolA = %+v, want total=3 errors=1", got)
+	// 同工具的多条 error_class 行必须合并成一条 ToolStat，而不是各占一行。
+	if got := all[toolA]; got.Total != 4 || got.Errors != 3 {
+		t.Fatalf("toolA = %+v, want total=4 errors=3", got)
+	}
+	if got := all[toolA].ErrorClasses; got["param"] != 2 || got["quota"] != 1 || len(got) != 2 {
+		t.Fatalf("toolA error classes = %+v, want param=2 quota=1", got)
 	}
 	if got := all[toolB]; got.Total != 1 || got.Errors != 1 {
 		t.Fatalf("toolB = %+v, want total=1 errors=1", got)
+	}
+	if got := all[toolB].ErrorClasses; got["dialect"] != 1 {
+		t.Fatalf("toolB error classes = %+v, want dialect=1", got)
+	}
+	// 没有失败的工具不该带空 map（前端据此决定画不画分类行）。
+	if got := all[toolA].ErrorClasses["nonexistent"]; got != 0 {
+		t.Fatalf("unexpected class bucket: %d", got)
 	}
 
 	exp := int64(5)
 	scoped := byTool(&exp, "")
 	if got := scoped[toolA]; got.Total != 2 || got.Errors != 1 {
 		t.Fatalf("exploration filter: toolA = %+v, want total=2 errors=1", got)
+	}
+	if got := scoped[toolA].ErrorClasses; got["param"] != 1 || len(got) != 1 {
+		t.Fatalf("exploration filter: toolA error classes = %+v, want param=1", got)
 	}
 	if got := scoped[toolB]; got.Total != 1 || got.Errors != 1 {
 		t.Fatalf("exploration filter: toolB = %+v, want total=1 errors=1", got)
