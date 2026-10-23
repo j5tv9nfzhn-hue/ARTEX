@@ -109,26 +109,35 @@ func TestMergeUTF8Env(t *testing.T) {
 	}
 }
 
-// TestDialectHintFor 固定「写法不对」的识别与提示口径。
-func TestDialectHintFor(t *testing.T) {
+// TestShellDialectHint 固定「写法不对」的识别与提示口径。
+//
+// 提示文案随当前执行器变化（见 shell_platform.go 的 shellDialectHint）：PS 5.1 提示
+// && 不可用、cmd 提示 2>nul、Git Bash 提示 /c/ 路径。这里固定这三条口径。
+func TestShellDialectHint(t *testing.T) {
 	const psErr = "Select-String : 无法将“grep”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。"
+	defer SetShellSpec(ShellSpec{})
+	SetShellSpec(ShellSpec{Mode: ShellModePowerShell, Bin: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, Version: "5.1", Flavor: "windows-powershell"})
 
-	hint := dialectHintFor(psErr, true, "windows")
+	hint := shellDialectHint(psErr, true)
 	if hint == "" || !strings.Contains(hint, "2>$null") {
 		t.Fatalf("应当给出 PowerShell 写法提示，实际 %q", hint)
 	}
-	if got := dialectHintFor(psErr, false, "windows"); got != "" {
+	if !strings.Contains(hint, "不支持 &&") {
+		t.Fatalf("5.1 的提示应说明不支持 &&，实际 %q", hint)
+	}
+	if got := shellDialectHint(psErr, false); got != "" {
 		t.Fatalf("非错误结果不该加提示：%q", got)
 	}
-	if got := dialectHintFor(psErr, true, "linux"); got != "" {
-		t.Fatalf("非 Windows 平台不该加提示：%q", got)
-	}
-	if got := dialectHintFor("Error: 404 Not Found", true, "windows"); got != "" {
+	if got := shellDialectHint("Error: 404 Not Found", true); got != "" {
 		t.Fatalf("与写法无关的失败不该加提示：%q", got)
 	}
-	// 英文报错同样要认出来。
-	if got := dialectHintFor("'grep' is not recognized as the name of a cmdlet", true, "windows"); got == "" {
+	if got := shellDialectHint("'grep' is not recognized as the name of a cmdlet", true); got == "" {
 		t.Fatalf("英文报错未识别")
+	}
+
+	SetShellSpec(ShellSpec{Mode: ShellModeCmd, Bin: `C:\Windows\System32\cmd.exe`, Flavor: "cmd"})
+	if got := shellDialectHint(psErr, true); !strings.Contains(got, "2>nul") {
+		t.Fatalf("cmd 的提示应是 2>nul，实际 %q", got)
 	}
 }
 

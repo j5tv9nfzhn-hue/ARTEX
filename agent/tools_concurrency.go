@@ -347,5 +347,10 @@ func lockResources(t actool.CoreTool) actool.CoreTool {
 func SDKDefaultTools() []actool.CoreTool {
 	out := append([]actool.CoreTool{}, actool.DefaultTools()...)
 	out = append(out, newApplyPatchTool())
-	return out
+	// Bash 必须在**这一层**就装饰好。只在 worker 里包（历史上的做法）会让
+	// chat / planner / mainagent / tool_lean 拿到 SDK 原始 Bash：它们的执行器是
+	// norma 的 shellCmd()（Windows 上硬编码 powershell），既不走设置页选的 Shell，
+	// 也不走预热池。同一台机器上「哪条命令能跑对」取决于站在哪个 agent 里，
+	// 这正是 Bash 错误率被摊到多个 agent、且难以定位的根源。
+	return WrapCrossPlatformBash(out, "", nil)
 }

@@ -11,6 +11,16 @@
 - **激活中的模型、供应商下最后一条模型都能删**：删完自动把激活位交给下一个候选（`priority DESC, id ASC`），删空后供应商保留为空壳。
 - **废弃独立凭据池**：删掉「凭证」页签、`/api/llm/credentials` 三条路由与 `db/credentials.go`、`server/llm_credentials.go`；API Key 只存在 `llm_providers.api_key` 上，升级时由 `foldCredentialsIntoProviders` 幂等折叠回供应商行。`credentials` 表与 `credential_id` 列保留为不改动现场库形状的空壳。
 
+### 工具执行层
+
+- **Windows 默认改用 PowerShell，且可以在设置里换**：新增「设置 → 工具执行器」，只列本机实测可用的 Shell（PowerShell / CMD / Git Bash），没有「自动」选项，也不会在所选执行器不可用时悄悄换用别的。解析顺序 `ARTEX_SHELL_BIN`（或设置里的自定义路径）→ `pwsh` → `powershell.exe`；任何候选都要真跑一次 `-NoLogo -NoProfile -NonInteractive -Command` 探针，`%LOCALAPPDATA%\Microsoft\WindowsApps` 下的 MSIX 别名排到最后（可被 `where` 命中却 spawn 报 1312）。
+- **Bash 工具的执行器从 SDK 手里拿回来**：装饰点从 worker 上移到 `SDKDefaultTools()`，chat / planner / mainagent / tool_lean 不再落到 norma 写死的 `shellCmd()`。之前只有 worker 的命令受控，同一台机器上「哪条命令能跑对」取决于站在哪个 agent 里。
+- **PowerShell 预热池**：常驻宿主进程 + 每命令一个 `.ps1`（UTF-8 **带 BOM** + CRLF）走 stdin 路径执行，省掉每条命令 0.8–6.9s 的 .NET 冷启动；池补不上时降级为同 exe 一次性 spawn 并记 `fallbacks`。cmd / bash 保持一次性 spawn（本身 20–150ms）。
+- **契约按「模式 + 版本」生成**：PS 5.1 明确写「不支持 `&&`」、`curl` 要写 `curl.exe`、`>` 默认 UTF-16LE；PS 7 说明支持 `&&`；cmd 给 `2>nul`；Git Bash 给 `/c/...` 路径。同一段文案不再同时用于 5.1 与 7。
+- **脚本编码分派**：`.ps1` = UTF-8 带 BOM（5.1 无 BOM 会按 GBK 解码），`.bat`/`.cmd` = **不带** BOM（BOM 会并进首行 `@echo off`）+ `chcp 65001`。
+- **`tool_usage.error_class`**：失败按 `config / dialect / not_found / param / perm / env / timeout / transport` 八类记账（新库建列，老库自动补列）。「Bash 错误率高」从此可以拆开看，而不是一个布尔值。
+- **修正超时键名**：历史实现读 `timeout`，而 SDK schema 是 `timeout_ms`，导致模型要求的 600s 一律被当成 2 分钟——这类「莫名其妙超时」本身就是错误率的一部分。
+
 ### 安全
 
 - **阻止首次运行时管理员账户被远程抢先初始化。** 原来未设置密码的实例可被先访问 `POST /api/auth/init` 的人初始化并获取 JWT（私密报告者：Dangel）。现在必须提供仅在服务端控制台显示的 `setup_token`，错误尝试有速率限制；新增 `ARTEX_SETUP_TOKEN`、`ARTEX_ADMIN_PASSWORD` 环境变量和 `/setup` 令牌输入框。

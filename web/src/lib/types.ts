@@ -1123,6 +1123,11 @@ export interface Settings {
   // MITM 上游；关闭捕获时直接注入 agent 的 bash/WebFetch。空=直连。
   global_proxy?: string;
   python_interpreter?: string; // 自定义脚本工具的 python 解释器路径(空=运行时检测)
+  // 工具执行器（Bash 工具用哪个 Shell）。只有三个明确取值，没有 auto：
+  // powershell（Windows 默认，优先 pwsh 7 再 powershell.exe 5.1）/ cmd / bash（Git Bash）。
+  shell_mode?: string;
+  // 显式覆盖可执行文件路径；空=按模式自动解析。填了就优先用它，跑不起来直接报错。
+  shell_bin?: string;
   workers?: number; // 并发工作 agent 数(默认3)；对之后启动的任务生效
   // 新建任务的默认 token 预算(input+output,0=不限)；仅在创建任务未显式给预算时取它。
   // 预算闸在每次 run 收尾按 llm_usage 累计 input+output 检查，用尽自动暂停任务。
@@ -2273,3 +2278,43 @@ export interface UpdateJournal {
 }
 
 
+
+// 本机可用/在用的 Shell 执行器（GET /api/settings/shell）。
+export type ShellOption = {
+  mode: string; // powershell | cmd | bash
+  label: string;
+  available: boolean;
+  bin?: string;
+  version?: string;
+  flavor?: string;
+  note?: string;
+  error?: string;
+};
+
+export type ShellRuntime = {
+  mode: string;
+  bin: string;
+  version: string;
+  flavor: string;
+  resolved: boolean;
+  error?: string;
+  note?: string;
+  pool_target: number;
+  pool_idle: number;
+  pool_hits: number;
+  pool_spawns: number;
+  one_shots: number;
+  fallbacks: number;
+  timeouts: number;
+  restarts: number;
+  last_latency_ms: number;
+  goos: string;
+};
+
+export type ShellSettings = {
+  shell_mode: string;
+  shell_bin: string;
+  options: ShellOption[];
+  runtime: ShellRuntime;
+  error_class: { class: string; label: string }[];
+};

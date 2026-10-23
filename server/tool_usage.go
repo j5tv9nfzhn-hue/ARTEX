@@ -38,6 +38,11 @@ func (m *meteredTool) Call(ctx context.Context, input json.RawMessage, tc *actoo
 	// 用 defer 保证 panic / 提前返回也记一行——「调用了却没记」会让错误率被
 	// 系统性低估，而这正是「工具错误率到底多高」这个问题的唯一数据源。
 	defer func() {
+		isErr := err != nil || res.IsError
+		class := ""
+		if isErr {
+			class = agent.ErrorClassOf(res, err, ctx)
+		}
 		if insErr := m.recorder.InsertToolUsage(&db.ToolUsage{
 			ToolKey:       m.toolKey,
 			AgentKey:      m.agentKey,
@@ -45,7 +50,8 @@ func (m *meteredTool) Call(ctx context.Context, input json.RawMessage, tc *actoo
 			ExplorationID: m.ri.ExplorationID,
 			IntentID:      m.ri.IntentID,
 			SessionID:     m.ri.SessionID,
-			IsError:       err != nil || res.IsError,
+			IsError:       isErr,
+			ErrorClass:    class,
 		}); insErr != nil {
 			log.Printf("[toolusage] insert %s: %v", m.toolKey, insErr)
 		}

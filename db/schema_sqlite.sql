@@ -1015,7 +1015,10 @@ CREATE TABLE IF NOT EXISTS tool_usage (
     session_id     TEXT,
     -- 这次调用是否以错误收场(工具返回 IsError,或 handler 直接返回 error)。
     -- 错误率统计靠它:activity 会随任务数据一起被清理,账本不能跟着丢。
-    is_error       BOOLEAN NOT NULL DEFAULT 0
+    is_error       BOOLEAN NOT NULL DEFAULT 0,
+    -- 失败归因(agent.ErrorClassOf):config/dialect/not_found/param/perm/env/timeout/transport。
+    -- 空串 = 非错误或未归因。低基数枚举,便于直接 GROUP BY,不塞自由文本。
+    error_class    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_tool_usage_tool ON tool_usage(tool_key, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_usage_task ON tool_usage(task_id);

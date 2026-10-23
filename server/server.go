@@ -285,6 +285,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
 	// 之后每次保存策略再推一次（saveLLMRetryPolicy）。
 	s.applyRetryPolicy()
+	// 工具执行器：启动即解析一次并预热（Bash 是调用量最大的工具，首条命令不该付冷启）。
+	// 解析失败只记运行态，不阻止启动，也不回落到别的 shell。
+	s.initShellRuntime()
 	// Every task uses a stable task router. An empty explicit chain is resolved by
 	// that router through Agent bindings and then the global provider, so adding a
 	// first chain to a running task takes effect on its very next LLM call.
@@ -1038,6 +1041,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/llm/records/{id}", s.pgGetLLMRecord)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
+	// 执行器（Shell）设置：GET 回显当前生效值 + 本机可选项 + 预热池运行态。
+	// 独立成只读端点，是因为「本机有哪些 Shell 能用」要真跑探测（秒级），
+	// 不适合塞进每次打开设置页都会拉的 /api/settings。
+	mux.HandleFunc("GET /api/settings/shell", s.getShellSettings)
 	// 漏洞 IM 推送。渠道是「多实例 + 各自过滤规则」的资源，因此独立成一组
 	// REST 接口，而不是塞进扁平的 /api/settings 键值里。
 	mux.HandleFunc("GET /api/notify/meta", s.notifyMeta)
@@ -3806,6 +3813,10 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 两项都在发现入库时读取，改完即对之后入库的发现生效，不需要重建 agent。
 		VerifyAutoThreshold *string `json:"verify_auto_threshold"`
 		VerifySamplePercent *int    `json:"verify_sample_percent"`
+		// 工具执行器：PowerShell / CMD / Git Bash（无 auto）。shell_bin 是显式路径覆盖。
+		// 两者都先真跑探测，跑不起来直接 400 且不写库（见 server/shell_settings.go）。
+		ShellMode *string `json:"shell_mode"`
+		ShellBin  *string `json:"shell_bin"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -4004,6 +4015,13 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.m.pg.SetSetting(settingVerifySamplePercent, strconv.Itoa(percent)); err != nil {
 			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.ShellMode != nil || req.ShellBin != nil {
+		// 执行器切换即时生效：新建的 agent 用新契约，后续命令走新执行器/预热池。
+		if _, status, msg := s.shellSettingsChanged(req.ShellMode, req.ShellBin); msg != "" {
+			writeErr(w, status, msg)
 			return
 		}
 	}

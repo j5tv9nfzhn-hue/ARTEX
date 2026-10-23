@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/Autumn-27/artex/agent"
 )
 
 // ShellCapability 是平台启动时对可用 shell 的一次探测结果（批次 5 / #9）。
@@ -26,14 +28,43 @@ var (
 	shellCap     ShellCapability
 )
 
-// shellCapability 返回进程生命周期内缓存的一次探测结果。
+// shellCapability 返回当前执行器 + PATH 上的候选 shell。
+//
+// 注意：Executor 必须**每次现读**，不能缓存。执行器现在由设置页决定
+// （server/shell_settings.go），用户在设置里切到 CMD 之后，/api/health 与环境快照
+// 必须立刻反映新值；缓存在 sync.Once 里会一直报启动时的旧结论。
+// PATH 探测结果才是可以缓存的（与设置无关，且 LookPath 有系统调用成本）。
 func shellCapability() ShellCapability {
 	shellCapOnce.Do(func() { shellCap = detectShellCapability() })
-	return shellCap
+	c := shellCap
+	spec := agent.CurrentShellSpec()
+	if spec.Zero() {
+		c.Executor = "unavailable"
+		c.Guidance = shellUnavailableGuidance
+		return c
+	}
+	c.Executor = string(spec.Mode)
+	c.Guidance = guidanceForFlavor(spec)
+	return c
 }
 
-// detectShellCapability 探测本机可用 shell。刻意用 exec.LookPath 而非跑一条
-// 命令：探测必须零副作用、零等待（启动路径），是否真正可用由首次 Bash 调用暴露。
+// guidanceForFlavor 只给「与执行器无关、但平台相关」的建议 + 一句话指向工具自带契约。
+//
+// 具体语法（&& 是否可用、2>$null 还是 2>nul、curl 要不要写 .exe）一律由 Bash 工具
+// 自带的契约负责（agent/shell_contract.go）。这里再讲一遍必然会出现两份文案，
+// 而其中一份迟早会和用户选的实际执行器对不上——这正是要消灭的问题。
+func guidanceForFlavor(spec agent.ShellSpec) string {
+	base := "常规 HTTP 请求、并发目录/参数 Fuzz、编解码/哈希/加解密/JWT、正则/JSON/HTML/JS 提取、端口探测及文件检索，" +
+		"请优先直接调用跨平台内置 Go 原生工具（http_request / http_fuzz / codec_crypto / extract_data / net_probe / Grep / Glob / Read），" +
+		"无需经过 Shell，也不要为此编写临时 .py 脚本。Shell 的语法对照见本工具自带的「执行器」说明。"
+	if spec.Mode == agent.ShellModeBash && spec.Version != "" {
+		return base + "（当前执行器：bash " + spec.Version + "）"
+	}
+	return base
+}
+
+// detectShellCapability 的 Available 用 exec.LookPath（零副作用、零等待）；
+// 真正能不能跑由 agent 的解析器用「真跑一次探针」判定，两者互不替代。
 func detectShellCapability() ShellCapability {
 	c := ShellCapability{OS: runtime.GOOS}
 	candidates := []string{"bash", "sh", "zsh", "pwsh", "powershell", "cmd"}
@@ -45,16 +76,6 @@ func detectShellCapability() ShellCapability {
 		if _, err := exec.LookPath(name); err == nil {
 			c.Available = append(c.Available, name)
 		}
-	}
-	switch runtime.GOOS {
-	case "windows":
-		c.Executor = "powershell"
-		c.Guidance = windowsShellGuidance
-	case "darwin":
-		c.Executor = "bash"
-		c.Guidance = darwinShellGuidance
-	default:
-		c.Executor = "bash"
 	}
 	return c
 }
@@ -68,14 +89,6 @@ func platformShellNote() string {
 	return "\n\n【平台环境提示】" + g
 }
 
-// windowsShellGuidance 是 Windows/PowerShell 的语法引导（#9）。写法上强调「模型
-// 常见错误」而不是罗列完整语法——一句话说明执行器、一组高频对应关系、一条禁用清单。
-const windowsShellGuidance = "当前平台为 Windows：Bash 工具实际以 PowerShell 执行（powershell -NoProfile -NonInteractive -Command），不是 bash。" +
-	"常规 HTTP 请求、并发目录/参数 Fuzz、编解码/哈希/加解密/JWT、正则/JSON/HTML/JS 提取、端口探测及文件检索，请优先直接调用跨平台内置 Go 原生工具（http_request / http_fuzz / codec_crypto / extract_data / net_probe / Grep / Glob / Read），无需经过 PowerShell，也不要为此编写临时 .py 脚本。" +
-	"确需通过 Bash 调用外部命令行工具时请按 PowerShell 语法书写：环境变量用 $env:NAME；调用 curl 必须写 curl.exe（PowerShell 中 curl 是 Invoke-WebRequest 别名）且含 & 的 URL 必须加双引号；不要使用 grep / sed / awk / export / head / tail 等 Unix 专属命令；PowerShell 5.1 不支持 &&，需要串联时用 ; 或分行执行。" +
-	"编码：平台已把命令管道强制为 UTF-8，写文件请显式指定 UTF-8；输出若出现乱码，按编码问题处理（换读法/换工具），不要当成命令失败反复重试。"
-
-// darwinShellGuidance 是 macOS (darwin) 的 BSD 用户态语法引导，避免模型混用 GNU 专属参数。
-const darwinShellGuidance = "当前平台为 macOS (darwin)：Bash 工具使用 POSIX/bash 执行，但系统内置命令行工具为 BSD 变体而非 GNU。" +
-	"常规 HTTP 请求、并发 Fuzz、编解码/加解密、数据提取、二进制头部检查与文件检索，请优先直接调用跨平台内置 Go 原生工具（http_request / http_fuzz / codec_crypto / extract_data / binary_inspect / net_probe / Grep / Glob / Read / Edit）。" +
-	"确需调用系统命令时请注意 BSD 差异：grep 不支持 -P（Perl 正则），请用 -E 或内置 Grep 工具；sed -i 必须显式跟备份后缀（如 sed -i ''）；stat 使用 -f 而非 -c；读取 Mach-O 头部优先用 binary_inspect 或 otool。"
+// shellUnavailableGuidance 用于「一个可用 Shell 都没解析出来」的情形。
+const shellUnavailableGuidance = "本机没有解析出可用的 Shell，Bash 工具会直接返回配置错误（不会静默换用别的执行器）。" +
+	"请到「设置 → 工具执行器」选择一个本机存在的 Shell，或用 ARTEX_SHELL_BIN 指定可执行文件；在此之前请用内置工具（Read / Grep / Glob / http_request / code_exec）完成任务。"

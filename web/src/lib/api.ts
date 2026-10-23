@@ -94,6 +94,7 @@ import type {
   ReportImportResult,
   SessionTokenUsage,
   Settings,
+  ShellSettings,
   Severity,
   ShellCapability,
   SkillCall,
@@ -1345,6 +1346,9 @@ export const api = {
   testCustomTool: (body: { kind: string; exec: Record<string, unknown>; params: Record<string, unknown> }) =>
     post<{ output: string; is_error: boolean }>("/tools/custom/test", body),
   detectPython: () => post<{ python_interpreter: string }>("/settings/python/detect", {}),
+  // 执行器设置：本机可选项要真跑探测（秒级），所以单独一个端点、按需拉取，
+  // 不塞进每次打开设置页都会请求的 /settings。
+  shellSettings: () => get<ShellSettings>("/settings/shell"),
 
   // ---- mcp ----
   mcpServers: () => get<{ servers: MCPServer[] }>("/mcp").then((r) => arr(r.servers)),

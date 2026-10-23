@@ -16,6 +16,7 @@ import {
   ShieldAlertIcon,
   ShieldCheckIcon,
   SparklesIcon,
+  TerminalIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -31,7 +32,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LOCALE_LABELS } from "@/i18n/config";
 import { api } from "@/lib/api";
 import { type ChatSendMode, setChatSendMode, useChatSendMode, useChatSendModeOptions } from "@/lib/chat-send-mode";
-import type { Settings, VerificationCapabilities } from "@/lib/types";
+import type { Settings, ShellSettings, VerificationCapabilities } from "@/lib/types";
 
 import { AboutCard } from "./_components/about-card";
 import { PasswordCard } from "./_components/password-card";
@@ -62,6 +63,12 @@ export default function SystemSettingsPage() {
   const [saving, setSaving] = React.useState(false);
   const [savingKey, setSavingKey] = React.useState(false);
   const [pyInterp, setPyInterp] = React.useState("");
+  // 工具执行器（Bash 用哪个 Shell）。没有 auto：只列本机实测可用的明确选项，
+  // 选项列表要真跑探测，所以单独走 /api/settings/shell 按需拉取。
+  const [shellInfo, setShellInfo] = React.useState<ShellSettings | null>(null);
+  const [shellMode, setShellMode] = React.useState("powershell");
+  const [shellBin, setShellBin] = React.useState("");
+  const [savingShell, setSavingShell] = React.useState(false);
   const [workers, setWorkers] = React.useState("3");
   const [savingWorkers, setSavingWorkers] = React.useState(false);
   // 新建任务的默认 token 预算；输入单位=千 token(k)，存库为原始 token 数。
@@ -184,6 +191,32 @@ export default function SystemSettingsPage() {
       .finally(() => setSavingPriceTable(false));
   };
 
+  // 执行器：解析结果要真跑一次探针，独立加载；失败不阻塞页面其它部分。
+  const loadShell = React.useCallback(() => {
+    api
+      .shellSettings()
+      .then((r) => {
+        setShellInfo(r);
+        setShellMode(r.runtime.mode || r.shell_mode || "powershell");
+        setShellBin(r.shell_bin ?? "");
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // 保存执行器：后端先真跑一次探针，跑不起来返回 400 且不写库——所以这里
+  // 失败时不清空用户输入，直接把它打到 toast 里。
+  const saveShell = () => {
+    setSavingShell(true);
+    api
+      .setSettings({ shell_mode: shellMode, shell_bin: shellBin.trim() })
+      .then(() => {
+        toast.success(t("shell.saved"));
+        loadShell();
+      })
+      .catch((e) => toast.error(t("shell.toastInvalid") + "：" + (e as Error).message))
+      .finally(() => setSavingShell(false));
+  };
+
   const savePython = () => {
     setSaving(true);
     api
@@ -205,6 +238,10 @@ export default function SystemSettingsPage() {
   };
   // 本仓库只提供简体中文一种语言，界面语言与模型输出语言固定为中文，
   // 因此不再提供语言切换器，也不必同步服务器 output_language。
+
+  React.useEffect(() => {
+    loadShell();
+  }, [loadShell]);
 
   React.useEffect(() => {
     api
@@ -978,6 +1015,74 @@ export default function SystemSettingsPage() {
                 {t("save")}
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <TerminalIcon className="size-4" />
+              {t("shell.title")}
+            </CardTitle>
+            <CardDescription>{t("shell.desc")}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="shell-mode">{t("shell.mode")}</Label>
+              <div className="flex items-center gap-2">
+                <Select value={shellMode} onValueChange={setShellMode} disabled={!loaded || savingShell}>
+                  <SelectTrigger id="shell-mode" className="w-64">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* 只渲染本机实测可用的选项：Git Bash 没装就不出现，
+                        也不给「自动」——选了哪个就跑哪个，不会悄悄换掉。 */}
+                    {(shellInfo?.options ?? [])
+                      .filter((o) => o.available)
+                      .map((o) => (
+                        <SelectItem key={o.mode} value={o.mode}>
+                          {o.label}
+                          {o.version ? ` ${o.version}` : ""}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <Button onClick={saveShell} disabled={!loaded || savingShell}>
+                  {t("shell.save")}
+                </Button>
+              </div>
+              <p className="text-muted-foreground text-xs">{t("shell.onlyDetected")}</p>
+              <p className="text-muted-foreground text-xs">{t("shell.noAuto")}</p>
+              <p className="text-muted-foreground text-xs">{t("shell.hint5")}</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="shell-bin">{t("shell.bin")}</Label>
+              <Input
+                id="shell-bin"
+                className="font-mono text-sm"
+                placeholder={t("shell.binPlaceholder")}
+                value={shellBin}
+                disabled={!loaded || savingShell}
+                onChange={(e) => setShellBin(e.target.value)}
+              />
+            </div>
+            {shellInfo && (
+              <div className="text-muted-foreground flex flex-col gap-1 border-t pt-3 text-xs">
+                <span>
+                  {t("shell.current")}：
+                  {shellInfo.runtime.resolved
+                    ? `${shellInfo.runtime.mode} ${shellInfo.runtime.version || ""} — ${shellInfo.runtime.bin}`
+                    : `${t("shell.unavailable")}${shellInfo.runtime.error ? `：${shellInfo.runtime.error}` : ""}`}
+                </span>
+                <span>
+                  {t("shell.pool")}：{t("shell.poolIdle", {
+                    idle: shellInfo.runtime.pool_idle,
+                    target: shellInfo.runtime.pool_target,
+                  })}
+                </span>
+                <span>{t("shell.latency", { ms: shellInfo.runtime.last_latency_ms })}</span>
+              </div>
+            )}
           </CardContent>
         </Card>
 

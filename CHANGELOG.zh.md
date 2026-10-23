@@ -15,6 +15,25 @@
 
 - **废弃独立凭据池，API Key 收敛到供应商行上**：`【凭证】`页签、`/api/llm/credentials` 三条路由、`db/credentials.go`、`server/llm_credentials.go` 一并删除；Key 的唯一事实来源是 `llm_providers.api_key`（读路径 `profileKeyExpr` 从三层 `COALESCE(凭据, 供应商, 模型历史列)` 收敛为两层）。升级时由 `foldCredentialsIntoProviders` 把还绑着凭据的行原样折叠回供应商/模型行再解绑，幂等、在模型回填之前跑，保证同一端点、同一把 Key 的配置仍能正确合并。**`credentials` 表与 `credential_id` 列保留不删**：SQLite 删列要重建整表，在有数据的现场库上得不偿失，留下的空壳没有任何代码读写；键加密仍走 `credential_crypto.go`，`credential.key` 照旧。
 
+### 工具执行层
+
+#### 修复的问题
+
+- **Windows 上 Bash 的执行器不再由 SDK 硬编码**：norma 的 `shellCmd()` 在 Windows 上一律是 `powershell -NoProfile -NonInteractive -Command`，而且本仓库历史上只包装了 worker 的 Bash——chat / planner / mainagent / tool_lean 拿到的是未包装的原始工具，于是同一台机器上「哪条命令能跑对」取决于站在哪个 agent 里。现在装饰点上移到 `SDKDefaultTools()`，全部 agent 走同一套执行器。
+- **超时参数读错键名**：SDK 的 Bash schema 是 `timeout_ms`，历史代码读的是 `timeout`，永远取不到值、一律按 2 分钟跑。模型明确要求 600s 的命令会被提前杀掉，这类「莫名其妙超时」本身就是错误率的一部分。
+
+#### 新增
+
+- **「设置 → 工具执行器」**：PowerShell / CMD / Git Bash 三选一，**没有 auto**，也未做任何静默回落。选项只列本机实测可用的 Shell（Git Bash 没装就不出现），每个候选都真跑一次探针——`%LOCALAPPDATA%\Microsoft\WindowsApps` 下的 MSIX 别名能被 `where` 命中却在 spawn 时报 1312，只能靠真跑排除。解析顺序：自定义路径 / `ARTEX_SHELL_BIN` → `pwsh` → `powershell.exe`。
+- **PowerShell 预热池（常驻会话）**：一个 loader 脚本自持 `[Console]::In.ReadLine()` 循环，每条命令写成一个 `.ps1` 文件、把路径写进 stdin、读到本次会话专属结束标记为止。省掉每条命令 0.82–6.88s 的 .NET 冷启动（`pwsh` 空跑 `exit 0` 约 1.2s）。池补不上时降级为「同 exe 一次性 spawn」并计入 `fallbacks`。cmd / bash 保持一次性 spawn（0.02–0.15s，不值得常驻）。
+- **契约按「模式 + 版本」生成**：PS 5.1 的文案明确写「不支持 `&&`」「`curl` 要写 `curl.exe`」「`>` 默认 UTF-16LE」；PS 7 则说明支持 `&&`。同一段文案不再同时用于两个版本——教错方向的代价是模型写出一条必然失败的命令。
+- **`tool_usage.error_class`**：失败按 `config / dialect / not_found / param / perm / env / timeout / transport` 八类记账，新库建列、老库自动补列。有了它，「Bash 错误率高」才能拆成「多少是写法不对、多少是环境缺依赖」。
+
+#### 其它
+
+- **脚本编码按扩展名分派**：`.ps1` = UTF-8 **带 BOM** + CRLF（5.1 无 BOM 会按系统 ANSI 代码页解码，中文变乱码、em dash 会被解成引号使整段解析失败）；`.bat`/`.cmd` = **不带** BOM + CRLF + `chcp 65001`（BOM 会被并进首行 `@echo off`，第一条命令直接报错）。
+- **后台命令不再偷偷换执行器**：执行器是 PowerShell 时沿用 SDK 的 TaskManager（`TaskOutput` / `TaskStop` / 完成通知都还在）；换成 cmd / Bash 时自己 spawn，如实告知本次不受 `TaskOutput` 管理。
+
 ### 复核
 
 #### 手机端连接

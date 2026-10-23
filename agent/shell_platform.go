@@ -162,46 +162,6 @@ func resultText(res actool.Result) string {
 	return b.String()
 }
 
-// shellContractLine 是随工具描述下发的「一句话契约」：成本一行，收益是模型不必再猜。
-func shellContractLine() string {
-	switch runtime.GOOS {
-	case "windows":
-		return "本机是 Windows：命令由 Windows PowerShell 5.1 执行（powershell -NoProfile -NonInteractive -Command），" +
-			"不是 bash 也不是 cmd——必须按 PowerShell 语法书写（详见工具说明）；写文件用 -Encoding utf8。"
-	case "darwin":
-		return "本机是 macOS：命令由 bash -c 执行，系统命令行工具是 BSD 变体而非 GNU。"
-	default:
-		return "命令由 bash -c 执行。"
-	}
-}
-
-// shellContractBlock 是详细契约，挂在 Prompt 上（随 schema 一起给到模型）。
-func shellContractBlock() string {
-	switch runtime.GOOS {
-	case "windows":
-		return strings.Join([]string{
-			"【执行器：Windows PowerShell 5.1（powershell -NoProfile -NonInteractive -Command）】",
-			"- 重定向：2>/dev/null → 2>$null；>/dev/null → >$null；没有 heredoc（<<EOF），改用 @' ... '@ here-string 或先写文件。",
-			"- 环境变量：VAR=x cmd → $env:VAR='x'; cmd；当前进程用 $env:VAR 读。",
-			"- 串联：PS 5.1 不支持 && / ||，用 `a; if ($?) { b }` 或分行执行；分号总是安全。",
-			"- 不要用 Unix 专属命令：grep→Select-String、sed→-replace、awk→ForEach-Object、head/tail→Select-Object -First/-Last、",
-			"  cat→Get-Content、ls→Get-ChildItem、which→Get-Command、touch→New-Item、cp/mv→Copy-Item/Move-Item、rm -rf→Remove-Item -Recurse -Force。",
-			"- curl 必须写 curl.exe（PowerShell 的 curl 是 Invoke-WebRequest 别名）；含 & 的 URL 要用双引号包住。",
-			"- 引号：单引号里不展开变量，需要展开用双引号；反引号是转义符（不是命令替换），命令替换用 $(...)。",
-			"- 编码：平台已把管道强制成 UTF-8；写文件显式 -Encoding utf8，读非 UTF-8 文件用 Get-Content -Encoding。输出若出现乱码，按编码问题处理，不要当成命令失败重试。",
-			"- 复杂逻辑不要猜语法：改用 python -c \"...\" 一行脚本，或内置原生工具（http_request / http_fuzz / codec_crypto / extract_data / Grep / Glob / Read / Edit）。",
-		}, "\n")
-	case "darwin":
-		return strings.Join([]string{
-			"【执行器：bash -c（macOS，系统工具为 BSD 变体）】",
-			"- grep 不支持 -P，用 -E 或内置 Grep 工具；sed -i 必须跟备份后缀（sed -i ''）；stat 用 -f 而不是 -c。",
-			"- 二进制/头部检查优先用内置工具，而不是拼 strings/objdump 管道。",
-		}, "\n")
-	default:
-		return "【执行器：bash -c】命令按 POSIX/bash 语法书写。"
-	}
-}
-
 // windowsDialectSignals 是「写法不对」的典型报错片段（中英文各覆盖常见措辞）。
 // 只用来决定「要不要追加一条写法提示」，不改变命令本身。
 var windowsDialectSignals = []string{
@@ -214,26 +174,28 @@ var windowsDialectSignals = []string{
 	"missing closing",
 	"缺少",
 	"the ampersand operator",
+	"有效语句分隔符",                            // PS 5.1 遇到 && 的报错
+	"is not a valid statement separator", // 同上（英文）
+	"表达式或语句中包含意外的标记",
+	"unexpected token",
 	"the '<' operator is reserved",
 	"cannot find path",
 	"找不到路径",
 }
 
-// windowsDialectHint 在命令因为「shell 写法不对」而失败时，把正确写法直接塞回给
-// 模型。目的是打断「换个写法再猜一次」的循环：告诉它是执行器不匹配，而不是目标
-// 不存在或工具坏了。
-func windowsDialectHint(out string, isError bool) string {
-	return dialectHintFor(out, isError, runtime.GOOS)
-}
-
-// dialectHintFor 是可测的纯函数版本：goos 显式传入。
-func dialectHintFor(out string, isError bool, goos string) string {
-	if goos != "windows" || !isError || out == "" {
+// shellDialectHint 在命令因为「shell 写法不对」而失败时，把正确写法直接塞回给模型。
+//
+// 目的是打断「换个写法再猜一次」的循环：告诉它是执行器不匹配，而不是目标不存在。
+// 提示内容按当前实际执行器生成——如果用户已经把执行器切成 cmd 或 Git Bash，
+// 继续给一份「2>/dev/null → 2>$null」的 PS 说明只会让模型更迷惑。
+func shellDialectHint(out string, isError bool) string {
+	if !isError || out == "" {
 		return ""
 	}
+	spec := CurrentShellSpec()
 	lower := strings.ToLower(out)
 	hit := false
-	for _, sig := range windowsDialectSignals {
+	for _, sig := range dialectSignalsFor(spec) {
 		if strings.Contains(lower, strings.ToLower(sig)) {
 			hit = true
 			break
@@ -242,13 +204,59 @@ func dialectHintFor(out string, isError bool, goos string) string {
 	if !hit {
 		return ""
 	}
-	return strings.Join([]string{
-		"【写法提示（不是命令/目标的问题）】本机 Bash 工具的执行器是 Windows PowerShell 5.1，不是 bash/cmd。这条多半是写法不对：",
-		"- 2>/dev/null → 2>$null；>/dev/null → >$null",
-		"- VAR=x cmd → $env:VAR='x'; cmd",
-		"- a && b → a; if ($?) { b }（PS 5.1 不支持 &&）",
-		"- grep/sed/awk/head/tail/cat/ls/which/touch 换成 Select-String / -replace / ForEach-Object / Select-Object -First / Get-Content / Get-ChildItem / Get-Command / New-Item",
-		"- curl 写成 curl.exe；含 & 的 URL 加双引号",
-		"拿不准就别猜：改用 python -c \"...\" 或内置原生工具。",
-	}, "\n")
+	switch spec.Mode {
+	case ShellModePowerShell:
+		ps7 := spec.Major() >= 6 || spec.Flavor == "pwsh"
+		lines := []string{
+			"【写法提示（不是命令/目标的问题）】本机 Bash 工具的执行器是 " + powershellDisplayName(spec) + "，不是 bash/cmd。这条多半是写法不对：",
+			"- 2>/dev/null → 2>$null；>/dev/null → >$null",
+			"- VAR=x cmd → $env:VAR='x'; cmd",
+		}
+		if ps7 {
+			lines = append(lines, "- 支持 && / ||；分号仍是更稳的串联方式")
+		} else {
+			lines = append(lines, "- a && b → a; if ($?) { b }（PS 5.1 不支持 &&）")
+		}
+		lines = append(lines,
+			"- grep/sed/awk/head/tail/cat/ls/which/touch → Select-String / -replace / ForEach-Object / Select-Object -First / Get-Content / Get-ChildItem / Get-Command / New-Item",
+			"- curl 写成 curl.exe；含 & 的 URL 加双引号",
+			"拿不准就别猜：改用 python -c \"...\" 或内置原生工具。")
+		return strings.Join(lines, "\n")
+	case ShellModeCmd:
+		return strings.Join([]string{
+			"【写法提示（不是命令/目标的问题）】本机 Bash 工具的执行器是 cmd.exe，不是 bash/PowerShell。这条多半是写法不对：",
+			"- 2>/dev/null → 2>nul；没有 /dev/null",
+			"- VAR=x cmd → set VAR=x && cmd；读取用 %VAR%",
+			"- 没有 grep/sed/awk/head/tail/cat/ls：用 findstr/more/type/dir",
+			"拿不准就别猜：改用 python -c \"...\" 或内置原生工具。",
+		}, "\n")
+	case ShellModeBash:
+		return strings.Join([]string{
+			"【写法提示（不是命令/目标的问题）】本机执行器是 Git for Windows 的 bash：",
+			"- Windows 路径写成 /c/Users/... 形式",
+			"- 没有 sudo/systemctl/apt 这类 Linux 专属命令",
+			"- 调用 Windows 原生程序时写全名（如 curl.exe）",
+		}, "\n")
+	}
+	return ""
+}
+
+// dialectSignalsFor 返回该执行器的「写法不对」信号词。cmd 的报错措辞与 PS 不同，
+// 混用会产生误报（例如 cmd 里 `意外的标记` 不会出现）。
+func dialectSignalsFor(spec ShellSpec) []string {
+	switch spec.Mode {
+	case ShellModeBash:
+		return []string{
+			"command not found",
+			"no such file or directory",
+			"syntax error near unexpected token",
+			"unexpected eof",
+		}
+	case ShellModeCmd:
+		return append([]string{}, windowsDialectSignals...)
+	case ShellModePowerShell:
+		return append([]string{}, windowsDialectSignals...)
+	default:
+		return append([]string{}, windowsDialectSignals...)
+	}
 }

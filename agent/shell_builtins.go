@@ -43,14 +43,32 @@ type crossPlatformBashTool struct {
 func WrapCrossPlatformBash(tools []actool.CoreTool, workDir string, extraEnv []string) []actool.CoreTool {
 	out := make([]actool.CoreTool, len(tools))
 	for i, tl := range tools {
-		if tl != nil && tl.Name() == "Bash" {
-			out[i] = &crossPlatformBashTool{
-				CoreTool: tl,
-				workDir:  workDir,
-				extraEnv: extraEnv,
-			}
-		} else {
+		if tl == nil {
 			out[i] = tl
+			continue
+		}
+		if _, done := tl.(*crossPlatformBashTool); done || tl.Name() != "Bash" {
+			// 幂等：SDKDefaultTools 已经包过一层，worker 再包会多套一层，
+			// 导致契约文案重复、内建原语被走两遍。已有的包装原样返回，
+			// 但如果这次带了 workDir/extraEnv（worker 场景）就补上。
+			if b, ok := tl.(*crossPlatformBashTool); ok {
+				cp := *b
+				if workDir != "" {
+					cp.workDir = workDir
+				}
+				if len(extraEnv) > 0 {
+					cp.extraEnv = extraEnv
+				}
+				out[i] = &cp
+				continue
+			}
+			out[i] = tl
+			continue
+		}
+		out[i] = &crossPlatformBashTool{
+			CoreTool: tl,
+			workDir:  workDir,
+			extraEnv: extraEnv,
 		}
 	}
 	return out
@@ -84,7 +102,7 @@ func (b *crossPlatformBashTool) Call(ctx context.Context, in json.RawMessage, tc
 		// 追加一个 text block；保留既有 text/非 text block、IsError 与 Extra。
 		res.Content = append(append([]llm.ContentBlock(nil), res.Content...), llm.TextBlock(note))
 	}
-	if hint := windowsDialectHint(resultText(res), res.IsError); hint != "" {
+	if hint := shellDialectHint(resultText(res), res.IsError); hint != "" {
 		res.Content = append(append([]llm.ContentBlock(nil), res.Content...), llm.TextBlock(hint))
 	}
 	return res, nil
@@ -116,6 +134,11 @@ func (b *crossPlatformBashTool) call(ctx context.Context, in json.RawMessage, tc
 	}
 	runBg, _ := payload["run_in_background"].(bool)
 	if runBg {
+		if !shellBackgroundDelegable() {
+			// 执行器不是 PowerShell：交给 SDK 会偷偷换成 PowerShell（它写死 shellCmd），
+			// 所以自己起进程，并如实告诉模型这次不受 TaskOutput 管理。
+			return runOwnBackground(ctx, cmdTrimmed, b.workDir, tc), nil
+		}
 		if runtime.GOOS == "windows" {
 			cmd := normalizeWindowsShellCommand(cmdTrimmed)
 			payload["command"] = wrapWindowsCommand(cmd)
@@ -131,9 +154,18 @@ func (b *crossPlatformBashTool) call(ctx context.Context, in json.RawMessage, tc
 		return actool.Text(actool.Capture(tc, out)), nil
 	}
 
+	// 注意键名：SDK 的 Bash schema 用的是 timeout_ms。历史代码读的是 "timeout"，
+	// 于是永远取不到值、一律按 2 分钟跑——模型明确要求 600s 的命令会被提前杀掉，
+	// 这类「莫名其妙超时」本身就是错误率的一部分。两个键都认，先 timeout_ms。
 	timeoutDur := 2 * time.Minute
-	if tms, ok := payload["timeout"].(float64); ok && tms > 0 {
-		timeoutDur = time.Duration(tms) * time.Millisecond
+	for _, key := range []string{"timeout_ms", "timeout"} {
+		if tms, ok := payload[key].(float64); ok && tms > 0 {
+			timeoutDur = time.Duration(tms) * time.Millisecond
+			break
+		}
+	}
+	if timeoutDur > 10*time.Minute {
+		timeoutDur = 10 * time.Minute
 	}
 
 	// 2. 尝试外部编译型工具直调（Windows 下绕过 powershell.exe 冷启动）
@@ -141,20 +173,16 @@ func (b *crossPlatformBashTool) call(ctx context.Context, in json.RawMessage, tc
 		return actool.Text(actool.Capture(tc, out)), nil
 	}
 
-	// 3. 回退底层 Shell 执行器（附带 Windows POSIX 兼容归一化与全局外部进程并发信号量保护）
-	if runtime.GOOS == "windows" {
-		// 归一化（bash 写法 → PowerShell）+ UTF-8 前导 + 真实退出码收尾。
-		payload["command"] = wrapWindowsCommand(normalizeWindowsShellCommand(cmdTrimmed))
-		if nb, err := json.Marshal(payload); err == nil {
-			in = nb
-		}
-	}
+	// 3. 走本仓库的执行器（设置页选的 Shell + 预热池），而不是 SDK 的 shellCmd()。
+	//
+	// 这一步是第二阶段的核心：SDK 的 Bash 在 Windows 上硬编码 powershell，
+	// 既不受设置页控制，也没有常驻会话（每条命令一个 .NET 冷启）。
 	release, err := AcquireExternalProc(ctx)
 	if err != nil {
 		return actool.Errorf("等待命令执行槽位超时: " + err.Error()), nil
 	}
 	defer release()
-	return b.CoreTool.Call(ctx, in, tc)
+	return runShellTool(ctx, cmdTrimmed, b.workDir, b.extraEnv, tc, timeoutDur), nil
 }
 
 // windowsExitWrapEnabled 是 wrapWindowsExitCode 的开关（默认开）。设

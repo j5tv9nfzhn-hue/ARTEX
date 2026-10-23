@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
+
+	"github.com/Autumn-27/artex/agent"
 )
 
 // envToolVersion is one PATH-resolved tool with its first --version line.
@@ -151,19 +153,13 @@ func (s *Server) checkEnvContract(env envSnapshot) (map[string]any, []string) {
 	return contract, warnings
 }
 
+// shellExecutorUsable 判断「当前配置的执行器是否真的可用」。
+//
+// 判据不是 PATH 上有没有某个名字，而是运行时是否已经解析出一份 ShellSpec：
+// 用户可能把执行器切到 E:\Git\bin\bash.exe（不在 PATH），也可能把 pwsh 从
+// PATH 里删掉但配置仍然有效。以解析结果为准才与环境快照的其它字段一致。
 func shellExecutorUsable() bool {
-	var candidates []string
-	if runtime.GOOS == "windows" {
-		candidates = []string{"pwsh", "powershell"}
-	} else {
-		candidates = []string{"bash", "sh"}
-	}
-	for _, name := range candidates {
-		if _, err := exec.LookPath(name); err == nil {
-			return true
-		}
-	}
-	return false
+	return !agent.CurrentShellSpec().Zero()
 }
 
 func dirWritable(dir string) bool {

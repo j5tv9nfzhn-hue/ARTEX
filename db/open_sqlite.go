@@ -152,6 +152,13 @@ var sqliteColumnAdds = []struct {
 		`ALTER TABLE tool_usage ADD COLUMN is_error BOOLEAN NOT NULL DEFAULT 0`,
 	},
 	{
+		// 失败归因(见 agent/shell_tool.go 的 8 类)。历史行没有可回溯的报错文本,
+		// 统一留空串——「不知道」不该被算成任何一类。
+		"tool_usage",
+		"error_class",
+		`ALTER TABLE tool_usage ADD COLUMN error_class TEXT NOT NULL DEFAULT ''`,
+	},
+	{
 		// 供应商标识(模型挂在供应商下)。可空列才能带 REFERENCES(SQLite 的 ADD
 		// COLUMN 限制);回填由 backfillLLMProviders 紧跟其后完成,所以运行期恒非空。
 		"llm_profiles",
