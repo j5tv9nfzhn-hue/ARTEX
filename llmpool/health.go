@@ -158,7 +158,10 @@ func (r *Registry) Trip(id int64, errMsg string, hard bool) (tripped bool) {
 	if hard || (softTrip > 0 && st.Fails >= softTrip) {
 		st.Trips++
 		cool := r.coolFor(st.Trips)
-		if hard && cool < hardCooldown {
+		// 硬失败下限只在「走默认阶梯」时生效。运维显式 SetPolicy 配了固定冷却
+		// 就是想要那个值（比如 90s 快速回探），再拿 30 分钟盖回去等于让这个开关
+		// 失效——默认值只能兜住没表态的情况。
+		if hard && r.cooldown <= 0 && cool < hardCooldown {
 			cool = hardCooldown
 		}
 		st.OpenUntil = time.Now().Add(cool)

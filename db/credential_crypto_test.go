@@ -151,7 +151,16 @@ func TestProfileKeyEncryptedAtRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer d.Exec(`DELETE FROM llm_profiles WHERE id=$1`, id)
+	var pid int64
+	_ = d.QueryRow(`SELECT COALESCE(provider_id,0) FROM llm_profiles WHERE id=$1`, id).Scan(&pid)
+	defer func() {
+		// 供应商是为这条模型自动建的，也要删：留着一条用测试密钥加密的行，后续
+		// 用例（同一个共享测试库）在没装主密钥的情况下读它会整表失败。
+		_, _ = d.Exec(`DELETE FROM llm_profiles WHERE id=$1`, id)
+		if pid > 0 {
+			_ = d.DeleteProvider(pid)
+		}
+	}()
 
 	var raw string
 	if err := d.QueryRow(`SELECT api_key FROM llm_profiles WHERE id=$1`, id).Scan(&raw); err != nil {
@@ -203,4 +212,3 @@ func TestProfileKeyEncryptedAtRest(t *testing.T) {
 		t.Fatalf("legacy plaintext read = %q err=%v, want passthrough", legacy.APIKey, err)
 	}
 }
-

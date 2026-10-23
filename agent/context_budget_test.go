@@ -14,13 +14,13 @@ func TestResolveContextWindowTokens(t *testing.T) {
 		want        int
 		wantClamped bool
 	}{
-		{0, 200000, false},     // 未填 → 默认 200K
-		{128, 128000, false},   // 正常声明
-		{200, 200000, false},   // 正好在上限
-		{256, 200000, true},    // 超上限 → 夹到 200K
-		{1000, 200000, true},   // 线上真实的坑：声明 100 万
-		{8, 32000, false},      // 低于下限 → 抬到 32K（不 clamp，属于纠偏）
-		{-5, 200000, false},    // 负数按未填处理
+		{0, 200000, false},   // 未填 → 默认 200K
+		{128, 128000, false}, // 正常声明
+		{200, 200000, false}, // 正好在上限
+		{256, 200000, true},  // 超上限 → 夹到 200K
+		{1000, 200000, true}, // 线上真实的坑：声明 100 万
+		{8, 32000, false},    // 低于下限 → 抬到 32K（不 clamp，属于纠偏）
+		{-5, 200000, false},  // 负数按未填处理
 	}
 	for _, c := range cases {
 		got, clamped := ResolveContextWindowTokens(c.declared)

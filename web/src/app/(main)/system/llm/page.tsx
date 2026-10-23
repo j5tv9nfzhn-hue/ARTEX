@@ -1377,7 +1377,13 @@ function ProviderCard({
           </div>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground text-xs">
             {provider?.base_url && <code className="truncate font-mono">{provider.base_url}</code>}
-            {provider?.credential_name ? (
+            {provider?.key_error ? (
+              // 读不出 Key 与「没配 Key」是两回事：前者要用户重填或找回主密钥，
+              // 后者才是去填一把新的。混成一句会让人反复填正确的 Key。
+              <span className="text-destructive" title={provider.key_error}>
+                {t("health.keyUnreadable")}
+              </span>
+            ) : provider?.credential_name ? (
               <span>{t("card.credential", { name: provider.credential_name })}</span>
             ) : provider?.api_key_hint ? (
               <span>{provider.api_key_hint}</span>

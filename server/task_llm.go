@@ -477,7 +477,9 @@ func isRetryableStreamError(err error) bool {
 
 var ctxCeilingCache sync.Map // profileID(int64) → tokens(int)
 
-func ctxCeilingKey(profileID int64) string { return "llm_ctx_ceiling:" + strconv.FormatInt(profileID, 10) }
+func ctxCeilingKey(profileID int64) string {
+	return "llm_ctx_ceiling:" + strconv.FormatInt(profileID, 10)
+}
 
 // cachedCeiling 返回该 profile 的观测上限（0 = 还没有观测）。
 func (r *taskLLMRuntime) cachedCeiling(profileID int64) int {

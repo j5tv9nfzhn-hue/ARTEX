@@ -1342,6 +1342,8 @@ export interface LLMProvider {
   session_header_key?: string;
   model_count: number;
   models: LLMProfile[];
+  // 非空 = 存库的 Key 读不出来（主密钥丢失/更换）。只影响显示，重填 Key 即可恢复。
+  key_error?: string;
 }
 
 // ---- LLM 重试策略 ----

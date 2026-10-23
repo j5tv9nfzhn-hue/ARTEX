@@ -750,6 +750,9 @@ type LLMProviderDTO struct {
 	SessionHeaderKey string          `json:"session_header_key,omitempty"`
 	ModelCount       int             `json:"model_count"`
 	Models           []LLMProfileDTO `json:"models"`
+	// KeyError 非空 = 这一行的 Key 存库里读不出来（主密钥丢失/更换）。界面据此
+	// 直说原因，而不是显示成「未配置 Key」让人反复重填。
+	KeyError string `json:"key_error,omitempty"`
 }
 
 func llmProviderDTOs(in []*db.LLMProvider) []LLMProviderDTO {
@@ -767,6 +770,7 @@ func llmProviderDTOs(in []*db.LLMProvider) []LLMProviderDTO {
 			SessionHeaderKey: v.SessionHeaderKey,
 			ModelCount:       v.ModelCount,
 			Models:           llmProfileDTOs(v.Models),
+			KeyError:         v.KeyError,
 		}
 		if v.CredentialID != nil {
 			dto.CredentialID = i64s(*v.CredentialID)

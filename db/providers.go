@@ -39,6 +39,10 @@ type LLMProvider struct {
 	// 前端据此渲染「供应商卡片 + 模型行」，不必再发 N 个请求。
 	ModelCount int           `json:"model_count"`
 	Models     []*LLMProfile `json:"models,omitempty"`
+	// KeyError 非空 = 存库的 Key 读不出来（主密钥丢失或换过）。列表接口把它带
+	// 出去让界面直说原因；真正要发请求的读取方（ProviderByID）会把它升级成错误。
+	// 不这样做的话，一条坏 Key 会让整个设置页 500——连改回正确 Key 的入口都没有。
+	KeyError string `json:"key_error,omitempty"`
 }
 
 var (
@@ -67,9 +71,13 @@ func scanProvider(sc interface{ Scan(...any) error }, v *LLMProvider) error {
 	if credentialEncrypted(stored) {
 		plain, err := decryptCredential(stored)
 		if err != nil {
-			return fmt.Errorf("provider %d: %w", v.ID, err)
+			// 记在行上交给调用方决定：列表页要能显示这一行并让人改它，发请求的
+			// 路径则必须硬失败（空 Key 发出去只会换来一个离原因很远的 401）。
+			v.KeyError = fmt.Sprintf("provider %d: %v", v.ID, err)
+			stored = ""
+		} else {
+			stored = plain
 		}
-		stored = plain
 	}
 	v.APIKey = stored
 	return nil
@@ -124,6 +132,10 @@ func (d *DB) ProviderByID(id int64) (*LLMProvider, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if v.KeyError != "" {
+		// 读不出 Key 就不能拿去发请求：这里的失败要响，不能退化成"没配 Key"。
+		return nil, errors.New(v.KeyError)
 	}
 	return &v, nil
 }

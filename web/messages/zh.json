@@ -2087,7 +2087,8 @@
       },
       "ok": "正常",
       "tripped": "已熔断",
-      "trippedCooldown": "已熔断 · {cooldown}"
+      "trippedCooldown": "已熔断 · {cooldown}",
+      "keyUnreadable": "Key 读不出来（主密钥丢失或更换，重填即可）"
     },
     "page": {
       "empty": "还没有供应商，点击右上角「新建供应商」创建第一个。",

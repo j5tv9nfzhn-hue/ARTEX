@@ -44,8 +44,10 @@ func TestSetPolicyDisablesSoftTrip(t *testing.T) {
 	if !reg.Trip(1, "no credit", true) {
 		t.Fatal("a hard failure must still trip immediately")
 	}
-	if d := time.Until(reg.Get(1).OpenUntil); d < 50*time.Second || d > 60*time.Second {
-		t.Fatalf("cooldown=%v, want the default first rung (~1min)", d)
+	// 硬失败不看阶梯第一档：402/401/404 一分钟后重撞只会拿到同样的错误，
+	// 所以固定压到 hardCooldown（「立即恢复」按钮负责让用户提前解除）。
+	if d := time.Until(reg.Get(1).OpenUntil); d < hardCooldown-time.Minute {
+		t.Fatalf("cooldown=%v, want the hard-failure floor (~%v)", d, hardCooldown)
 	}
 }
 

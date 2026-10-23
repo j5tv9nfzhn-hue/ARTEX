@@ -8,7 +8,7 @@
 - 站点源码即部署内容：`site/` 目录下的静态 HTML / CSS / JS，直接编辑、直接预览、直接部署。
 - 原独立目录 `Desktop\ARTEX-Website` 已整体迁入并改名为 `website`，不保留第二份活跃源码。
 - `../web/` 是产品控制台；本目录是对外官网。
-- 完整维护与发布入口见 [官网维护说明](../docs/website-maintenance.md)。
+- 完整维护与发布入口见 [README 的「独立官网源码」一节](../README.md#独立官网源码)。
 - 历史核对记录见 `deployment/` 与 `reports/`；`DELIVERY.json` 是部署前审核快照，不应当作当前源码校验。
 
 ## 最新部署状态（2026-10-17）

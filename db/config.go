@@ -317,7 +317,7 @@ func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 	if p.ID == 0 {
 		var id int64
 		err := d.QueryRow(`INSERT INTO llm_profiles(provider_id,name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms,input_modalities,credential_id)
-VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,NULL,NULL,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,NULL) RETURNING id`,
+VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,NULL,NULL,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NULL) RETURNING id`,
 			providerID, p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.InputModalities).Scan(&id)
 		if err != nil {
@@ -426,15 +426,18 @@ func (d *DB) resolveProfileProvider(p *LLMProfile) (int64, error) {
 // 「空值也有意义」的字段必须由调用方用指针显式给出，否则不能拿零值去覆盖供应商。
 func (d *DB) profileEndpointPatch(p *LLMProfile) EndpointPatch {
 	var patch EndpointPatch
-	if p.Endpoint != nil {
+	switch {
+	case p.Endpoint != nil:
+		// HTTP 层：只收显式意图，nil 一律当「没提」。
 		patch = *p.Endpoint
-	} else {
-		// Endpoint 为空 = 这个调用方不是 HTTP 层（测试、db 内部调用、server 的
-		// legacy setLLM）。它们按「整行覆盖」的老语义工作：传进来的端点字段就是要
-		// 写进去的值，空串/0 也是。
-		//
-		// HTTP 层永远给 Endpoint 赋值（哪怕是全 nil 的空补丁），所以「新界面只改
-		// 模型、不动端点」与「旧界面连端点一起改」在这里被干净地分开。
+	case p.ProviderID > 0:
+		// 显式指定了归属的调用方（db 层测试、服务端内部）：端点归那条供应商所有。
+		// 「没传 base_url」在这里的意思是「别动它」，不是「清空」——把它也当整行
+		// 覆盖，一次只改模型的保存就会顺手抹掉整家供应商的端点与限速。
+	default:
+		// 旧调用方（既不指定归属、也不是 HTTP 层）：整行覆盖。传进来的端点字段
+		// 就是要写进去的值，空串/0 也是——server 的 legacy saveLLMConfig 与升级
+		// 前的旧客户端依赖这个语义。
 		if p.Format != "" {
 			f := p.Format
 			patch.Format = &f
@@ -443,10 +446,6 @@ func (d *DB) profileEndpointPatch(p *LLMProfile) EndpointPatch {
 		rps, rpm := p.RatePerSecond, p.RatePerMinute
 		patch.BaseURL, patch.Proxy, patch.SessionHeaderKey = &base, &proxy, &header
 		patch.RatePerSecond, patch.RatePerMinute = &rps, &rpm
-	}
-	if patch.Format == nil && p.Format != "" {
-		f := p.Format
-		patch.Format = &f
 	}
 	if patch.APIKey == "" && p.APIKey != "" {
 		patch.APIKey = p.APIKey
