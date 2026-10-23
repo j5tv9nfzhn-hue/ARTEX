@@ -2772,7 +2772,7 @@
       },
       "triggerHint": {
         "approval_pending": "不点它，任务就停在原地等超时。",
-        "error": "任务失败、子代理预算耗尽、AI 回复失败。",
+        "error": "任务失败、子代理步数耗尽（达步数/时长上限）、AI 回复失败。",
         "finding": "任务的产出，任何严重度都提醒。",
         "task_done": "可以去验收，也可以派下一条了。",
         "task_timeout": "任务已经停了，不提醒会以为还在跑。"
@@ -3670,7 +3670,7 @@
       "blocked": "执行出错",
       "deleted": "已删除",
       "done": "已完成",
-      "exhausted": "预算耗尽",
+      "exhausted": "步数耗尽",
       "open": "待领",
       "paused": "已暂停",
       "running": "执行中",

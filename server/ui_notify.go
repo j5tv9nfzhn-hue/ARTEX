@@ -217,7 +217,7 @@ func emitSubagentMilestone(taskID, taskTitle string, intentID int64, state strin
 	case "blocked":
 		level, suffix = "warn", "受阻"
 	case "exhausted":
-		level, suffix = "error", "预算耗尽"
+		level, suffix = "error", "步数耗尽"
 	case "stopped":
 		level, suffix = "warn", "被终止"
 	default:

@@ -177,7 +177,7 @@ func (w *Worker) SetTrafficStore(ts TrafficDirectStore) {
 // settleWrapUpPrompt is injected by the SDK settlement phase when a worker hits its
 // turn/time budget: stop probing, write back what was found, then end with a
 // plain-text one-liner (which becomes this run's displayed result).
-const settleWrapUpPrompt = "本次执行即将因预算耗尽而结束。不要再执行任何命令或探测。请按以下顺序处理：(1) 逐项记录此前已识别但尚未保存的结果：新资产使用 insert_assets，探索结论与事实使用 record_fact，已确认漏洞使用 report_finding。(2) **最后只用一句纯文本**，以简体中文总结做了什么以及得到的核心结论。这句话会作为本次执行结果展示给用户，必须输出。"
+const settleWrapUpPrompt = "本次执行即将因步数/时长上限而结束。不要再执行任何命令或探测。请按以下顺序处理：(1) 逐项记录此前已识别但尚未保存的结果：新资产使用 insert_assets，探索结论与事实使用 record_fact，已确认漏洞使用 report_finding。(2) **最后只用一句纯文本**，以简体中文总结做了什么以及得到的核心结论。这句话会作为本次执行结果展示给用户，必须输出。"
 
 func NewWorker(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int, extra ...actool.CoreTool) *Worker {
 	return &Worker{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns, extraTools: extra}

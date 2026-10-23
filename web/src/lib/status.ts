@@ -42,7 +42,7 @@ const intent: Record<string, StatusMeta> = {
   done: { tone: "green" },
   // blocked = 模型/API/网络故障重试用尽，这条意图基本没真正探成（非目标拦截）。
   blocked: { tone: "red" },
-  // exhausted = 达到步数/时间预算被中途掐断、只写回部分结果（非方向已探尽）。
+  // exhausted = 达到步数/时间上限被中途掐断、只写回部分结果（非方向已探尽，可续跑）。
   exhausted: { tone: "violet" },
   // stopped = 历史软删除状态（保留,历史数据）。
   stopped: { tone: "slate" },

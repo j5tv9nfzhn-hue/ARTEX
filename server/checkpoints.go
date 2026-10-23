@@ -65,7 +65,7 @@ var intentStateLabels = map[string]string{
 	"paused":    "已暂停",
 	"done":      "已完成",
 	"blocked":   "受阻",
-	"exhausted": "预算耗尽",
+	"exhausted": "步数耗尽",
 	"stopped":   "被终止",
 	"deleted":   "已删除",
 }

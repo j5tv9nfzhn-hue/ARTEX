@@ -61,7 +61,7 @@ func looksLikeTransportFailure(text string) bool {
 
 // classifyToolFailure 把一个失败的调用归类到 metrics 的阶段桶里。
 //
-//	timeout   —— ctx 超时/取消（预算耗尽、用户叫停、任务暂停），非工具缺陷
+//	timeout   —— ctx 超时/取消（步数/时长耗尽、用户叫停、任务暂停），非工具缺陷
 //	transport —— 网络/代理层失败，非工具缺陷
 //	exec      —— 其余：工具真的执行失败了（含幂等性未知的 HTTP 4xx/5xx 断言等）
 func classifyToolFailure(res actool.Result, err error, callCtx context.Context) string {

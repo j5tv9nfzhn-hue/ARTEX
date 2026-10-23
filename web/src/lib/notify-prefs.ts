@@ -154,7 +154,7 @@ export interface NotifyEventLike {
  * 事件 → 触发键；不属于「需要人处理」的过程态返回 null。
  *
  * 判断顺序有据：finding / approval_pending 是明确的任务产出与阻塞点；task_done
- * 与 task_timeout 是终态；error 兜底（子代理预算耗尽、AI 回复失败这类 level 才是
+ * 与 task_timeout 是终态；error 兜底（子代理步数耗尽、AI 回复失败这类 level 才是
  * 唯一线索）。任务开始、子代理结算、AI 回复结束都属于过程态，只进列表不打扰。
  */
 export function triggerOf(ev: NotifyEventLike): NotifyTriggerKey | null {
@@ -179,7 +179,7 @@ export function shouldPopup(prefs: NotifyPrefs, ev: NotifyEventLike): boolean {
 }
 
 // 所有卡片都必须到点自动收起：早期版本把 error 的 TTL 设成 0（"严重事件不能被
-// 悄悄吞掉"），结果子代理预算耗尽这类红色卡片会永久钉在屏幕上，连开三条就挡住
+// 悄悄吞掉"），结果子代理步数耗尽这类红色卡片会永久钉在屏幕上，连开三条就挡住
 // 半个屏幕。严重事件的价值在于"及时看见"，不是常驻——列表里仍然留着，随时可回看。
 const TTL_INFO = 5000;
 const TTL_WARN = 8000;

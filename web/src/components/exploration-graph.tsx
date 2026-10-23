@@ -163,7 +163,7 @@ function edgeOpacity(strong: boolean, animated: boolean, freshEdge: boolean): nu
 // - 进行中:蓝色圆点 + 柔和呼吸光晕(animate-pulse,低透明度;reduced-motion 隐藏,见 ExploreNode);
 // - 已完成/达成:低饱和绿点,弱化存在感,不与进行中抢注意力;
 // - 失败(blocked)与 finding.confirmed:severity 红系(单一事实源 lib/severity.ts);
-// - exhausted(预算掐断,非失败)沿用状态徽章的 violet 域色,避免同一节点两处颜色打架;
+// - exhausted(步数/时长耗尽,非失败)沿用状态徽章的 violet 域色,避免同一节点两处颜色打架;
 // - 其余终态(open/stopped/deleted/abandoned/dismissed)不加信号,控制噪声。
 function stateSignal(n: TaskNode): { cls: string; breathe: boolean } | null {
   if (n.inherited) return null;
