@@ -26,9 +26,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# 客户端 parseVersion 只接受纯净三段式：带 -rc.1 / -ko.1 / -global.1 后缀的 tag
+# 客户端 parseVersion 只接受纯净数字段：带 -rc.1 / -ko.1 / -global.1 后缀的 tag
 # 会被判成「不可比较」，所有客户端的一键更新都会静默禁用。所以这里直接拒绝。
-TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+#
+# 段数接受 3 或 4：第四段是「同一个 patch 重发的微修订」（2.4.0 -> 2.4.0.1）。
+TAG_RE = re.compile(r"^v\d+\.\d+\.\d+(\.\d+)?$")
 
 
 def sha256_of(path: Path) -> str:
@@ -43,7 +45,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="生成 Release 更新清单 latest.json")
     ap.add_argument("--dist", required=True, help="存放 *.zip 与 SHA256SUMS 的目录")
     ap.add_argument("--repo", required=True, help="owner/name")
-    ap.add_argument("--tag", required=True, help="必须形如 v1.2.3")
+    ap.add_argument("--tag", required=True, help="必须形如 v1.2.3 或 v1.2.3.4")
     ap.add_argument("--notes", default="", help="Release 说明正文文件（可省略）")
     ap.add_argument("--published-at", default="", help="RFC3339 发布时间（可省略）")
     ap.add_argument("--out", default="", help="输出路径，默认 <dist>/latest.json")
@@ -51,8 +53,8 @@ def main() -> int:
 
     if not TAG_RE.match(args.tag):
         print(
-            f"拒绝发布：tag {args.tag!r} 不是 vX.Y.Z 形式。\n"
-            "客户端只认三段式版本号，带后缀的 tag 会让所有客户端判定为不可比较并禁用一键更新。",
+            f"拒绝发布：tag {args.tag!r} 不是 vX.Y.Z / vX.Y.Z.W 形式。\n"
+            "客户端只认纯数字段版本号（三或四段），带后缀的 tag 会让所有客户端判定为不可比较并禁用一键更新。",
             file=sys.stderr,
         )
         return 2

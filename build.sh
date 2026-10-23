@@ -233,7 +233,7 @@ build_target() {
   fi
   mkdir -p "$(dirname "$output")"
 
-  # 版本号决定客户端能不能比对（纯三段式才可比），更新源决定从哪拿包。
+  # 版本号决定客户端能不能比对（纯数字三或四段才可比），更新源决定从哪拿包。
   ldflags="-s -w -buildid= -X main.version=${ARTEX_BUILD_VERSION}"
   if [ -n "$ARTEX_UPDATE_REPO" ]; then
     ldflags="$ldflags -X github.com/Autumn-27/artex/selfupdate.Repo=${ARTEX_UPDATE_REPO}"

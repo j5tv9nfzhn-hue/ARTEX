@@ -35,14 +35,17 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
-      # 客户端只认 vX.Y.Z：带 -rc.1 / -ko.1 之类后缀的 tag 会被 parseVersion 判成
-      # 不可比较，所有客户端的一键更新会静默禁用。宁可在这一步失败，也不要发出
-      # 一个没人能自动升级的版本。
-      - name: 校验 tag 必须是 vX.Y.Z
+      # 客户端只认 vX.Y.Z 或 vX.Y.Z.W：带 -rc.1 / -ko.1 之类后缀的 tag 会被
+      # parseVersion 判成不可比较，所有客户端的一键更新会静默禁用。宁可在这一步
+      # 失败，也不要发出一个没人能自动升级的版本。
+      #
+      # 第四段是「同一个 patch 重发的微修订」（2.4.0 → 2.4.0.1），只在需要重发
+      # 修好的同版本产物时使用，不替代正常的 patch 递增。
+      - name: 校验 tag 必须是 vX.Y.Z 或 vX.Y.Z.W
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::tag 必须是 vX.Y.Z（三段式），当前为 $GITHUB_REF_NAME"
+          if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            echo "::error::tag 必须是 vX.Y.Z 或 vX.Y.Z.W，当前为 $GITHUB_REF_NAME"
             exit 1
           fi
       - uses: actions/checkout@v7

@@ -121,6 +121,13 @@ func cleanStaged(p Paths) {
 	_ = os.Remove(p.Sum)
 }
 
+// versionParts 是版本号参与比较的段数。
+//
+// 前三段是常规语义版本，第四段是「同一个小版本重发的微修订」：修掉一个只影响
+// 升级路径的 bug、不值得占一个 patch 位时，发 2.4.0.1 而不是 2.4.1。缺省段按 0
+// 补齐，所以 2.4.0 与 2.4.0.0 相等——老版本号不需要回填第四位。
+const versionParts = 4
+
 // CompareVersions 比较两个版本号，返回 -1/0/1（a<b / a==b / a>b）。
 // ok=false 表示至少一边不是可比较的版本号（例如本地开发构建的 "dev" 或
 // git describe 产出的 "0.3.7-2-gabc1234-dirty"），此时调用方应禁用一键更新，
@@ -131,7 +138,7 @@ func CompareVersions(a, b string) (int, bool) {
 	if !aok || !bok {
 		return 0, false
 	}
-	for i := range 3 {
+	for i := range versionParts {
 		if av[i] != bv[i] {
 			if av[i] < bv[i] {
 				return -1, true
@@ -142,26 +149,39 @@ func CompareVersions(a, b string) (int, bool) {
 	return 0, true
 }
 
-// parseVersion 解析 "v0.3.7" / "0.3.7" 形式的版本号为 [3]int。
+// parseVersion 解析 "v0.3.7" / "0.3.7" / "0.3.7.1" 形式的版本号为 [4]int。
 //
-// 只接受纯净的三段式：build.sh 在非 tag 构建时用 git describe 产出
+// 接受 3 段或 4 段，每一段都必须是纯数字（第四段缺省补 0）。多出来的第五段、
+// 任何后缀、空段、带正负号的数字一律判为不可比较。
+//
+// 严格的原因：build.sh 在非 tag 构建时用 git describe 产出
 // "0.3.7-2-gabc1234" 这类带后缀的版本，它们必须被判为不可比较，而不是被当成
 // 0.3.7 —— 否则开发构建会被误判为"已是最新"或被正式版覆盖。
-func parseVersion(s string) ([3]int, bool) {
+func parseVersion(s string) ([4]int, bool) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "v")
 	if s == "" {
-		return [3]int{}, false
+		return [4]int{}, false
 	}
 	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
-		return [3]int{}, false
+	if len(parts) != 3 && len(parts) != 4 {
+		return [4]int{}, false
 	}
-	var out [3]int
+	var out [4]int
 	for i, p := range parts {
+		// 只认 ASCII 数字：strconv.Atoi 会放过 "+1"、"-0" 这类写法，而它们
+		// 不该被当成合法版本段（"-0" 甚至会让 Atoi 返回 0 而不报错）。
+		if p == "" {
+			return [4]int{}, false
+		}
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				return [4]int{}, false
+			}
+		}
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 0 {
-			return [3]int{}, false
+			return [4]int{}, false
 		}
 		out[i] = n
 	}

@@ -564,7 +564,8 @@ signals    go test / 语言检查 / 文档链接（continue-on-error，只报告
 
 #### 8. 版本与发布
 
-- **每版必须发 GitHub Release**，tag 与 Release 同名（`vX.Y.Z`），二者缺一视为该版未发布。
+- **每版必须发 GitHub Release**，tag 与 Release 同名（`vX.Y.Z`，或四段 `vX.Y.Z.W`），二者缺一视为该版未发布。
+- **第四段用于同一 patch 的重发**：`v2.4.0` 修好后又必须换一个 tag 时用 `v2.4.0.1`，不占 patch 位；跨 patch 的正常迭代仍用 `vX.Y.Z`。四段与三段按数字逐段比较（`2.4.0 < 2.4.0.1 < 2.4.1`），客户端更新检测两种都认。
 - 版本被删除后**重发沿用同一版本号**，不递增；前提是新 commit 已经成功推到远端。
 - 更新源白名单只有 `j5tv9nfzhn-hue/ARTEX`：`selfupdate` 只接受该仓库的 Release，且保留**白名单 + SHA256 双闸门**。`jiwoochris/*`、`Autumn-27/artex` 已彻底移除，不得再进入检测或下载链路。
 - 自动更新（安装）**默认关**；自动检测默认开；两者都要有开关，且状态可持久化。
