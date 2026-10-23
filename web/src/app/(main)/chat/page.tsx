@@ -65,21 +65,12 @@ import { mergeActivities } from "@/lib/activity-merge";
 import { deriveAgentPhase } from "@/lib/agent-phase";
 import { api } from "@/lib/api";
 import { shouldSubmitOnKey, useChatSendMode } from "@/lib/chat-send-mode";
+import { useLiveKind } from "@/lib/live-stream";
+import { createLiveStream, type LiveStream, liveSettledBy } from "@/lib/live-stream-store";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
 import { isBtwCommand } from "@/lib/side-questions";
 import type { Activity, Agent, ChatAttachment, Conversation, LLMProfile } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-// settledBy 判定一块实时内容是否已被落库活动接管：接管后就撤掉实时块，
-// 交给同一套回放组件渲染——两边长得一样，所以不会跳样式。
-function settledBy(liveKind: string, activityKind: string): boolean {
-  if (liveKind === "thinking") return activityKind === "thinking" || activityKind === "result";
-  if (liveKind === "text") return activityKind === "text" || activityKind === "result";
-  if (liveKind === "tool_use" || liveKind === "tool_start" || liveKind === "tool_input") {
-    return activityKind === "tool_use";
-  }
-  return false;
-}
 
 // fmtBytes renders a human file size for attachment chips (mirrors transcript.tsx).
 function fmtBytes(n: number): string {
@@ -567,7 +558,32 @@ function DraftChat({
 // ChatView is the right pane for one conversation — mirrors the task detail's
 // main-agent console: header with agent + live badge + token/duration meta, a
 // scroll-stick transcript (chat mode), and the composer.
-function ChatView({
+// ChatPhaseBadge 是头部的唯一状态提示。
+//
+// 它只订阅「实时帧的 kind」这一个字符串（useLiveKind）：一段推理从 30 字涨到
+// 3000 字期间 kind 一直是 thinking，Object.is 相等 → 徽标一次都不重渲染。
+// 之前把整个帧对象放进页面 state，每帧都连带重算状态、token 统计与整条 Transcript，
+// 而徽标和「思考过程」块又各自表达一次「正在推理」，这就是两套状态打架的来源。
+function ChatPhaseBadge({
+  stream,
+  running,
+  lastKind,
+  waitingApproval,
+  lastIsError,
+}: {
+  stream: LiveStream;
+  running: boolean;
+  lastKind?: string;
+  waitingApproval: boolean;
+  lastIsError: boolean;
+}) {
+  const liveKind = useLiveKind(stream);
+  if (!running) return null;
+  const phase = deriveAgentPhase({ running, liveKind, lastKind, waitingApproval, lastIsError });
+  return <AgentPhaseBadge phase={phase} />;
+}
+
+function ChatViewImpl({
   conv,
   agents,
   profiles,
@@ -589,8 +605,12 @@ function ChatView({
   const approvalFocus = useApprovalFocus({ conversationId: conv.id });
   const [messages, setMessages] = React.useState<Activity[]>([]);
   const [running, setRunning] = React.useState(false);
-  // 实时帧：Text 是累计全文，渲染时整体替换（不拼接）。
-  const [liveDelta, setLiveDelta] = React.useState<{ kind: string; text?: string; tool?: string } | null>(null);
+  // 实时帧住在 React 之外（见 lib/live-stream-store.ts）：SSE 每 40ms 一帧，
+  // 进 state 就等于每 40ms 重渲染整个对话页。现在只有订阅它的叶子会变。
+  // useRef(createLiveStream()) 每次渲染都会白造一个实例，所以用惰性初始化。
+  const liveStreamRef = React.useRef<LiveStream | null>(null);
+  if (!liveStreamRef.current) liveStreamRef.current = createLiveStream();
+  const liveStream = liveStreamRef.current;
   const [input, setInput] = React.useState(initial?.input ?? "");
   const [sending, setSending] = React.useState(false);
   const [stopping, setStopping] = React.useState(false);
@@ -624,6 +644,14 @@ function ChatView({
   // conversation-scoped detail fetcher for the reused Transcript renderer.
   const fetchDetail = React.useCallback((seq: number) => api.conversationMsgDetail(conv.id, seq), [conv.id]);
 
+  // rollback 会传给 React.memo 过的 Transcript：对象字面量每次渲染都是新引用，
+  // 会让 memo 失效，所以这里按「真正会变的那个值」缓存。
+  const rollbackReason = running ? tc("msgRollback.busyTurn") : undefined;
+  const rollback = React.useMemo(
+    () => ({ disabledReason: rollbackReason, onRollback: setRollbackTarget }),
+    [rollbackReason],
+  );
+
   // seq of the most-recent TodoWrite tool call (for the Todo popover); null if none.
   const latestTodoSeq = React.useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -649,7 +677,7 @@ function ChatView({
     setMessages([]);
     setHistoryLoaded(false);
     setRunning(false);
-    setLiveDelta(null);
+    liveStream.clear();
     let live = true;
     api
       .conversationHistory(conv.id, 0, HISTORY_PAGE)
@@ -671,7 +699,7 @@ function ChatView({
     return () => {
       live = false;
     };
-  }, [conv.id, reloadToken]);
+  }, [conv.id, reloadToken, liveStream]);
 
   // A trigger or another tab may start a turn while this conversation is open.
   // A false list snapshot must not stop the tail before its final messages load.
@@ -728,30 +756,32 @@ function ChatView({
       // 工具行已由 tool_input 帧带参数，这里不接。
       if (frame.worker && frame.worker !== "chat") return;
       if (frame.kind === "progress") return;
-      setLiveDelta({ kind: frame.kind, text: frame.text, tool: frame.tool });
+      liveStream.push({ kind: frame.kind, text: frame.text, tool: frame.tool });
     });
     es.onmessage = (event) => {
       const step = JSON.parse(event.data) as Activity;
       if (typeof step.seq !== "number") return;
       setMessages((prev) => mergeActivities(prev, [step]));
       cursorRef.current = Math.max(cursorRef.current, step.seq);
-      // 这段内容已落库，撤掉实时块，否则会与刚落库的那条重复显示。
-      setLiveDelta((prev) => (prev && settledBy(prev.kind, step.kind) ? null : prev));
+      // 这段内容已落库，撤掉实时块：否则同一段会出现两份（实时块在底部、落库块
+      // 在上面），两份高度不同，滚动条会来回跳。判定规则见 liveSettledBy。
+      const frame = liveStream.getSnapshot();
+      if (frame && liveSettledBy(frame.kind, step.kind)) liveStream.clear();
     };
     es.onerror = () => {
       // 浏览器自动重连（带 Last-Event-ID）；运行态的 1s 轮询仍在兜底。
     };
     return () => es.close();
-  }, [conv.id, historyLoaded]);
+  }, [conv.id, historyLoaded, liveStream]);
 
-  // 统一状态机：实时帧优先于落库活动，避免“推理 / 正文”互相抢。
-  const phase = deriveAgentPhase({
-    running,
-    liveKind: liveDelta?.kind,
-    lastKind: messages.length ? messages[messages.length - 1].kind : undefined,
-    waitingApproval: messages.length ? messages[messages.length - 1].kind === "intercept_request" : false,
-    lastIsError: messages.length ? messages[messages.length - 1].is_error : false,
-  });
+  // 本轮结束：实时块必须收掉，否则「已停止」之后还挂着一块永远不动的进行中内容。
+  React.useEffect(() => {
+    if (!running) liveStream.clear();
+  }, [running, liveStream]);
+
+  // 最后一条落库活动：状态机（deriveAgentPhase）的另一个输入。实时帧的 kind 由
+  // 徽标自己订阅，不经过这里 —— 否则每来一个 token 都要重算整页。
+  const lastStep = messages.length ? messages[messages.length - 1] : undefined;
 
   const loadFocusPage = React.useCallback(
     (before: number) => api.conversationHistory(conv.id, before, HISTORY_PAGE),
@@ -832,6 +862,13 @@ function ChatView({
     const vp = viewport();
     if (vp) vp.scrollTop = vp.scrollHeight;
   }, [messages, running, viewport, approvalFocus.state]);
+  // 流式追加（每 40ms 一帧）也要贴底，但**不能**为此重渲染整页：LiveTail 直接
+  // 调这个回调做一次滚动写入。用户一旦上滑（atBottomRef=false）就立刻停手。
+  const followBottom = React.useCallback(() => {
+    if (approvalFocus.state || !atBottomRef.current) return;
+    const vp = viewport();
+    if (vp) vp.scrollTop = vp.scrollHeight;
+  }, [approvalFocus.state, viewport]);
 
   // Per-conversation token total, live — same accounting as the main-agent
   // console: completed runs' `result` sum + the in-progress run's latest `usage`.
@@ -1006,7 +1043,13 @@ function ChatView({
         {agent?.description && (
           <span className="min-w-0 truncate text-muted-foreground text-xs">{agent.description}</span>
         )}
-        {running && <AgentPhaseBadge phase={phase} />}
+        <ChatPhaseBadge
+          lastIsError={!!lastStep?.is_error}
+          lastKind={lastStep?.kind}
+          running={running}
+          stream={liveStream}
+          waitingApproval={lastStep?.kind === "intercept_request"}
+        />
         <SideQuestionButton side={side} />
         <CheckpointTimelineButton
           scope="conversation"
@@ -1086,15 +1129,12 @@ function ChatView({
               )}
               <Transcript
                 activity={messages}
-                live={running}
-                liveDelta={liveDelta ?? undefined}
                 chat
                 fetchDetail={fetchDetail}
                 focusedSeq={focusHistory.ready ? approvalFocus.state?.source?.seq : undefined}
-                rollback={{
-                  disabledReason: running ? tc("msgRollback.busyTurn") : undefined,
-                  onRollback: setRollbackTarget,
-                }}
+                liveStream={liveStream}
+                onLiveGrow={followBottom}
+                rollback={rollback}
               />
             </>
           )}
@@ -1350,6 +1390,10 @@ function AgentGroupHeader({
   );
 }
 
+// 对话区本身套 memo：父组件（会话列表）每 2 秒轮询一次，即使数据没变也可能换
+// 引用。memo + 稳定属性之后，空闲状态下的列表轮询不会再碰整个对话树。
+const ChatView = React.memo(ChatViewImpl);
+
 export default function ChatPage() {
   const locale = useLocale();
   const t = useTranslations("chat");
@@ -1393,12 +1437,20 @@ export default function ChatPage() {
   >({});
 
   const conversationListSeq = React.useRef(0);
+  const convsSignature = React.useRef("");
   const reloadConvs = React.useCallback(async () => {
     const seq = ++conversationListSeq.current;
     try {
       const items = await api.conversations();
       if (seq === conversationListSeq.current) {
-        setConvs(items);
+        // 2 秒一次的列表轮询：内容没变就不要 setState。以前每次都塞一个新数组，
+        // 于是 selected 每 2 秒换一个引用、整个对话页跟着重渲染一次 ——
+        // 「什么都没干却在闪」的主因就在这里。
+        const signature = JSON.stringify(items);
+        if (signature !== convsSignature.current) {
+          convsSignature.current = signature;
+          setConvs(items);
+        }
         setConvsLoaded(true);
       }
     } catch {

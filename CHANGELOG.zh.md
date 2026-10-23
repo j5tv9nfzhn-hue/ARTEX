@@ -158,6 +158,21 @@
 - **双击时「已在运行」的提示不再一闪而过**：该路径退出码是 0，脚本不会 `pause`，于是窗口在用户读到原因前就关了。现在 stdout 真的接在控制台时停 6 秒（重定向 / 计划任务 / `ARTEX_NO_PAUSE=1` 立刻返回）。
 - **打包门禁**：`scripts/check-start-scripts.py` 除原有的 BOM / 换行 / `chcp` 位置外，新增结构约束——必须有且只有一处 `goto #_undefined_# … 2>NUL ||` 启动行，且不得出现 `:loop`/`goto loop`、不得设置 `ARTEX_SUPERVISED`、不得用 `< nul` 压 Ctrl-C。`build.sh` 与 Release 工作流都会跑它。
 
+### 对话页流式渲染（闪烁与状态打架）
+
+#### 修复的问题
+
+- **「实时流式中…」三个跳动圆点与「思考过程」同时存在**：这个动画块的条件是 `running && !liveDelta`——两次 SSE 帧之间的空档、工具执行期间（只收到 `progress` 帧）、刚落库清掉实时块的那一瞬间都成立，于是它和屏幕上的推理块各说各话，头部徽标又是第三套说法。现在**删掉这个冗余的加载指示**：状态只由头部徽标表达（`deriveAgentPhase`），内容只由实时块表达，两者互斥。
+- **整屏/区域性反复闪烁**：①`live` 帧（服务端每 40ms 一帧累计全文）直接进 `ChatView` 的 state，每帧重渲染整页——头部、token 统计、整条 `Transcript`（含 `groupSteps` 全量重分组）与自动滚动的 layout effect 全跟着跑；②实时块渲染在 `ExecView` 之外，落库后同段内容改由 `ExecView` 内部的分组渲染，位置与高度都不同，落库那一刻内容上移、滚动条跳动；③会话列表每 2 秒轮询都 `setConvs` 一个新数组，`selected` 换引用 → `ChatView` 整体重渲染，空闲状态下也会周期性地重绘。
+
+#### 重构
+
+- **实时帧搬出 React**：新增 `lib/live-stream-store.ts`（零 React 依赖的外部 store）与 `lib/live-stream.ts`（`useSyncExternalStore` 封装）。写入按 animation frame 合并，`getSnapshot` 在内容不变时返回同一引用——这正是 `useSyncExternalStore` 的硬契约（返回新对象会导致无限重渲染）。
+- **两条订阅通道**：`useLiveFrame` 只给 `LiveTail` 这一个叶子用（跟随 token），`useLiveKind` 只返回 kind 字符串给头部徽标（一段推理从 30 字涨到 3000 字，徽标一次都不重渲染）。状态机与内容彻底解耦：互斥只跟 kind 有关，跟 token 无关。
+- **in-place finalization**：实时块用与落库行**完全相同**的组件与间距（`ThinkingRow` / `AnswerText` / `LiveToolRow`），落库时只是换成 `ExecView` 末尾的同款行，不换皮、不跳高度；每帧只做一次「贴底」滚动写入（`onLiveGrow`），用户上滑立即停手。
+- **`liveSettledBy` 收敛接管规则**：推理/正文互相接管、工具单独一族、`usage`/`round` 不接管。以前只按同 kind 判定，推理之后紧接着落一条正文时，实时块会残留在底部变成重复内容。
+- **减少无谓重渲染**：`ExecView` 与 `ChatView` 套 `React.memo`，`rollback` 对象用 `useMemo` 稳定引用；会话列表轮询先比较 JSON 签名，内容没变就不 `setState`。
+
 ### 分支改动摘要（详见 [CHANGELOG.md](CHANGELOG.md)）
 
 > 本节是本分支相对上游在 Unreleased 期间的整体改动缩影；本节以上各节为逐功能细化条目，完整措辞与文件级依据以 [CHANGELOG.md](CHANGELOG.md) 为准。

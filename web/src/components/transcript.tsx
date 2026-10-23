@@ -35,6 +35,8 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { api } from "@/lib/api";
 import { parseApprovalSummary } from "@/lib/approval-summary";
+import { useLiveFrame } from "@/lib/live-stream";
+import type { LiveStream } from "@/lib/live-stream-store";
 import { resolveToolStatus, TOOL_STATUS_LABEL_KEY, type ToolStatus } from "@/lib/tool-status";
 import type { Activity, InterceptPending } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -911,7 +913,11 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
 
 // ExecView renders an agent execution replay (planner / worker / main agent) in
 // the compact, grouped, expand-to-detail format.
-function ExecView({
+//
+// 外面套一层 React.memo：历史活动只在「有新行落库」时变，实时帧（40ms 一帧）不该
+// 让它重新分组、重新渲染几百行。属性都是稳定引用（fetchDetail 是 useCallback，
+// rollback 由调用方 useMemo）时 memo 才真正生效。
+function ExecViewImpl({
   activity,
   taskId,
   chat,
@@ -978,11 +984,70 @@ function ExecView({
   );
 }
 
+const ExecView = React.memo(ExecViewImpl);
+
+// LiveBlocks 把一帧实时内容渲染成「和落库行一模一样」的样子。
+//
+// 三种 kind 各用同一套组件（ThinkingRow / AnswerText / LiveToolRow），样式与间距
+// 与历史回放完全一致 —— 落库那一刻只是换成 ExecView 末尾的同款行，不换皮、不跳
+// 高度，也就没有「流式结束闪一下」（业界叫 in-place finalization）。
+function LiveBlocks({ frame }: { frame?: { kind: string; text?: string; tool?: string } }) {
+  const t = useTranslations("transcript");
+  if (!frame) return null;
+  if (frame.kind === "thinking" && frame.text) {
+    return <ThinkingRow label={t("kind.thinking")} live text={frame.text} />;
+  }
+  if (frame.kind === "text" && frame.text) {
+    return <AnswerText className="mt-2 mb-3 ml-3" streaming text={frame.text} />;
+  }
+  if ((frame.kind === "tool_use" || frame.kind === "tool_start" || frame.kind === "tool_input") && frame.tool) {
+    return <LiveToolRow args={frame.text ?? ""} tool={frame.tool} />;
+  }
+  if (frame.kind === "progress" && frame.text) {
+    return (
+      <div className="flex items-start gap-1.5 pl-3 text-ui-xs text-muted-foreground">
+        <span className="mt-0.5 shrink-0">
+          <StatusRing status="running" />
+        </span>
+        {frame.tool ? <span className="shrink-0 font-mono opacity-80">{frame.tool}</span> : null}
+        <span className="min-w-0 truncate">{frame.text}</span>
+      </div>
+    );
+  }
+  return null;
+}
+
+// LiveTail 是唯一订阅实时流的叶子组件。
+//
+// 之前实时帧进的是 ChatView 的 state：每 40ms 一次 setState，整页（头部、统计、
+// Transcript 全部分组）跟着重算；再加一个「运行中但还没收到帧」就冒出来的三点
+// 动画，于是既是整屏闪烁，也是「加载动画和思考过程打架」。现在写入走外部 store，
+// 只有这个叶子随 token 重渲染；状态提示由头部徽标用「只订阅 kind」的通道单独负责。
+function LiveTail({ stream, onGrow }: { stream: LiveStream; onGrow?: () => void }) {
+  const frame = useLiveFrame(stream);
+  // 用 ref 持有回调，避免 onGrow 换引用时把「贴底」effect 重跑一遍。
+  const grow = React.useRef(onGrow);
+  React.useEffect(() => {
+    grow.current = onGrow;
+  }, [onGrow]);
+  const kind = frame?.kind;
+  const size = frame?.text?.length ?? 0;
+  // 每帧只做一次「贴底」的滚动写入，不触发 React 渲染。
+  // 依赖里放 kind/size 是**故意**的：effect 体只读 ref，但我们必须「内容变长就重新
+  // 贴底」。Biome 只看到 ref 就建议删依赖，删掉之后流式输出不再跟随滚动。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: kind/size 是重跑触发条件，不是读值
+  React.useLayoutEffect(() => {
+    grow.current?.();
+  }, [kind, size]);
+  return <LiveBlocks frame={frame ?? undefined} />;
+}
+
 // Transcript renders a session's activity as a compact grouped execution replay.
 export function Transcript({
   activity,
-  live,
   liveDelta,
+  liveStream,
+  onLiveGrow,
   taskId,
   chat,
   fetchDetail,
@@ -990,16 +1055,18 @@ export function Transcript({
   rollback,
 }: {
   activity: Activity[];
-  live?: boolean;
-  /** 尚未落库的实时增量（累计全文）：thinking / text / tool_use。 */
+  /** 尚未落库的实时增量（累计全文）：thinking / text / tool_use。旧调用点用。 */
   liveDelta?: { kind: string; text?: string; tool?: string };
+  /** 实时流 store：给了它就不再需要 liveDelta，也不会因为每帧重渲染整棵树。 */
+  liveStream?: LiveStream;
+  /** 实时内容变长时回调（用户本来就在底部时跟随滚动）。 */
+  onLiveGrow?: () => void;
   taskId?: string;
   chat?: boolean;
   fetchDetail?: (seq: number) => Promise<string>;
   focusedSeq?: number;
   rollback?: TranscriptRollback;
 }) {
-  const t = useTranslations("transcript");
   const transcriptRef = React.useRef<HTMLDivElement>(null);
   const [focusPadding, setFocusPadding] = React.useState(0);
   React.useLayoutEffect(() => {
@@ -1029,39 +1096,7 @@ export function Transcript({
         focusedSeq={focusedSeq}
         rollback={rollback}
       />
-      {liveDelta?.kind === "thinking" && !!liveDelta.text && (
-        <ThinkingRow text={liveDelta.text} label={t("kind.thinking")} live />
-      )}
-      {liveDelta?.kind === "text" && !!liveDelta.text && (
-        <AnswerText className="mt-2 mb-3 ml-3" streaming text={liveDelta.text} />
-      )}
-      {liveDelta?.kind === "tool_use" && !!liveDelta.tool && (
-        <LiveToolRow args={liveDelta.text ?? ""} tool={liveDelta.tool} />
-      )}
-      {(liveDelta?.kind === "tool_start" || liveDelta?.kind === "tool_input") && !!liveDelta.tool && (
-        <LiveToolRow args={liveDelta.text ?? ""} tool={liveDelta.tool} />
-      )}
-      {liveDelta?.kind === "progress" && !!liveDelta.text && (
-        <div className="flex items-start gap-1.5 pl-3 text-ui-xs text-muted-foreground">
-          <span className="mt-0.5 shrink-0">
-            <StatusRing status="running" />
-          </span>
-          {liveDelta.tool ? (
-            <span className="shrink-0 font-mono opacity-80">{liveDelta.tool}</span>
-          ) : null}
-          <span className="min-w-0 truncate">{liveDelta.text}</span>
-        </div>
-      )}
-      {live && !liveDelta && (
-        <div className="flex items-center gap-2 pt-1.5 pl-3 text-muted-foreground text-xs">
-          <span className="flex gap-1">
-            <span className="size-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.3s]" />
-            <span className="size-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.15s]" />
-            <span className="size-1.5 animate-bounce rounded-full bg-primary" />
-          </span>
-          {t("streaming")}
-        </div>
-      )}
+      {liveStream ? <LiveTail onGrow={onLiveGrow} stream={liveStream} /> : <LiveBlocks frame={liveDelta} />}
     </div>
   );
 }

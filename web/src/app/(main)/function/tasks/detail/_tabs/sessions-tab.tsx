@@ -2149,7 +2149,6 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                 ) : activity.length || liveDeltaForActive ? (
                   <Transcript
                     activity={activity}
-                    live={active.live}
                     liveDelta={liveDeltaForActive}
                     taskId={taskId}
                     chat={isMain}
