@@ -253,24 +253,55 @@ func HasBackup() bool {
 	return hasLegacyBackup(l)
 }
 
-// CleanupStaging 清掉"不是当前版本"的暂存目录与残留 zip。
+// CleanupStaging 清掉"不是当前版本"的暂存目录与残留安装包。
 // 当前版本的暂存件保留，直到确认成功（便于失败后重试）。
+//
+// 两类垃圾，缺一不可：
+//   - updates/staging/<ver>/  —— 其它版本的暂存目录；
+//   - updates/*.staged.*      —— 散落在 updates 根下的安装包与校验文件。
+//
+// 第二类原先没人管：它们不是目录，也不是旧协议名单里的 .new/.failed/.swap，
+// 于是从旧协议时代留到今天的 artex-rea.staged.exe（约 40MB）一直躺在那里。
 func CleanupStaging(l Layout) {
 	ptr, _ := ReadPointer(l)
-	entries, err := os.ReadDir(l.Staging)
+	if entries, err := os.ReadDir(l.Staging); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if versionKey(ptr.Current) == e.Name() {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(l.Staging, e.Name())); err != nil {
+				logUpdate(l, "清理暂存目录 %s 失败（下次再试）：%v", e.Name(), err)
+			}
+		}
+	}
+	cleanupLooseStaged(l)
+}
+
+// cleanupLooseStaged 删除 updates/ 根下散落的 artex-rea.staged* 文件。
+//
+// 这些是"已经装完、包还留着"的典型残留：安装流程只认 staging/<ver>/，
+// 装在根目录的散件从此无人过问。删不掉（被杀软/索引器短暂占用）只记日志。
+func cleanupLooseStaged(l Layout) {
+	entries, err := os.ReadDir(l.Updates)
 	if err != nil {
 		return
 	}
+	prefix := strings.ToLower(stagedLoosePrefix)
 	for _, e := range entries {
-		if !e.IsDir() {
+		if e.IsDir() || !strings.HasPrefix(strings.ToLower(e.Name()), prefix) {
 			continue
 		}
-		if versionKey(ptr.Current) == e.Name() {
+		target := filepath.Join(l.Updates, e.Name())
+		if err := os.Remove(target); err != nil {
+			if !os.IsNotExist(err) {
+				logUpdate(l, "清理残留安装包 %s 失败（下次再试）：%v", e.Name(), err)
+			}
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(l.Staging, e.Name())); err != nil {
-			logUpdate(l, "清理暂存目录 %s 失败（下次再试）：%v", e.Name(), err)
-		}
+		logUpdate(l, "已清理残留安装包 %s", e.Name())
 	}
 }
 
@@ -294,7 +325,8 @@ func CleanupLegacy(l Layout) {
 			continue
 		}
 		if !strings.Contains(name, ".new") && !strings.Contains(name, ".failed") &&
-			!strings.Contains(name, ".swap") && !strings.HasSuffix(name, ".upgrade.json") {
+			!strings.Contains(name, ".swap") && !strings.Contains(name, bundledRetiredSuffix) &&
+			!strings.HasSuffix(name, ".upgrade.json") {
 			continue
 		}
 		target := filepath.Join(dir, e.Name())

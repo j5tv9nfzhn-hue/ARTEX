@@ -102,9 +102,19 @@ func Bootstrap(version string) (Action, State) {
 		}
 	}
 
-	// 到这里说明既没有待换装的旧协议暂存件，也没有未完成的台账，
-	// 才轮到清理上一轮留下的 .failed/.swap/.new 残留。
+	// 到这里说明既没有待换装的旧协议暂存件，也没有未完成的台账，才轮到清理。
+	// 三条都是幂等的 best-effort，删不掉只记日志，绝不阻断启动：
+	//   CleanupLegacy   上一轮留下的 .failed/.swap/.new/.bundled-* 残留
+	//   CleanupStaging  非当前版本的暂存目录 + updates/ 根下的 *.staged.* 散件
+	//   PruneVersions   只保留 keepVersions 份历史版本（current / previous 永不删）
+	//
+	// 为什么 prune 必须放在启动路径上，而不是只放在 Settle：Settle 只处理
+	// journal ∈ {swapped, applying} 的"升级后首次启动"。绕过 selfupdate 装上去的
+	// 版本（手工放二进制 + 改 pointer.json）永远不会产生这样的台账，于是
+	// PruneVersions 一次都不会跑——2.3.0 / 2.3.1 就是这样各留了 40MB 在盘上。
 	CleanupLegacy(l)
+	CleanupStaging(l)
+	PruneVersions(l, keepVersions)
 	return Continue, State{}
 }
 
@@ -121,22 +131,51 @@ func adoptBundledCore(l Layout, version string) {
 	if v == "unknown" || v == "dev" {
 		return
 	}
-	dst := CorePath(l, v)
-	if _, err := os.Stat(dst); err == nil {
-		return // 已经收好了
-	}
 	src := filepath.Join(l.Root, coreStem+exeExt())
 	if filepath.Clean(src) == filepath.Clean(l.Entry) {
 		return // 自己就是 core，不用再收
 	}
 	if _, err := os.Stat(src); err != nil {
+		return // 发行包没带 core（旧包 / go run / 开发构建）
+	}
+	dst := CorePath(l, v)
+	if _, err := os.Stat(dst); err == nil {
+		// 版本目录里已经有了（收过一次之后又手动解压了发行包）：
+		// 根目录这份是纯副本，直接退休——不能因为"已经收好了"就跳过清理，
+		// 那正是根目录多出 40MB core 的原因。
+		retireBundledCore(l, src)
 		return
 	}
-	if err := copyFileAtomic(src, dst); err != nil {
+	// 走 InstallCore 而不是直接 copyFileAtomic：它会先建好 versions/<ver>/。
+	// 全新安装（解压到空目录后第一次启动）时这个目录还不存在，直接 copy 会
+	// 因为"目标目录缺失"失败，core 就收不进版本目录了。
+	if _, err := InstallCore(l, v, src); err != nil {
 		logUpdate(l, "把发行包自带的 core 收进 versions/%s 失败（下次启动再试）：%v", v, err)
 		return
 	}
 	logUpdate(l, "已把发行包自带的 core 收进 versions/%s", v)
+	retireBundledCore(l, src)
+}
+
+// retireBundledCore 退休"已经收进 versions/ 的根目录 core"。
+//
+// 收进版本目录之后，根目录那份不再被任何东西引用：开始脚本用的是入口
+// （artex-rea），Handoff 走 versions/<ver>/artex-rea-core，升级只往版本目录写。
+// 它唯一的副作用是恒定占用一个二进制的体积（约 40MB），发一次包多一份。
+//
+// 删不掉是常态——有人直接双击过它、或杀软短暂持有句柄。这时改名成
+// artex-rea-core.exe.bundled-<ts>，交给 CleanupLegacy 在下次启动删除。
+func retireBundledCore(l Layout, src string) {
+	if err := os.Remove(src); err == nil {
+		logUpdate(l, "已移除根目录的发行包 core（内容已收进 versions/，不再被任何入口引用）")
+		return
+	}
+	retired := src + bundledRetiredSuffix + time.Now().Format("20060102-150405")
+	if err := os.Rename(src, retired); err != nil {
+		logUpdate(l, "根目录 core 既删不掉也改不了名（下次启动再试）：%v", err)
+		return
+	}
+	logUpdate(l, "根目录 core 已改名为 %s（不再被引用，下次启动清理）", filepath.Base(retired))
 }
 
 // confirmPointerAttempt 处理"指针已切换后的启动"：累计尝试次数，超限自动回滚。

@@ -61,6 +61,16 @@ const (
 
 	entryStem = "artex-rea"
 	coreStem  = "artex-rea-core"
+
+	// bundledRetiredSuffix 是"已收进 versions/、但根目录那份一时删不掉"时的改名后缀。
+	// Windows 上被进程占用的 exe 删不掉是常态，改名几乎总能成功；改完由
+	// CleanupLegacy 在下次启动时按升级残留删掉，不会永远留着。
+	bundledRetiredSuffix = ".bundled-"
+
+	// stagedLoosePrefix 匹配 updates/ 根下散落的安装包（artex-rea.staged.exe、
+	// artex-rea.staged.exe.sha256）。它们不在 staging/<ver>/ 里，既不是目录、
+	// 也不在旧协议残留名单上——三套清理逻辑原先都不认，于是永远留在盘上。
+	stagedLoosePrefix = entryStem + ".staged"
 )
 
 // Layout 是一次升级涉及的全部路径，全部挂在安装根目录下。
@@ -254,7 +264,12 @@ func PruneVersions(l Layout, keep int) {
 	if keep < 2 {
 		keep = 2
 	}
-	ptr, _ := ReadPointer(l)
+	// 指针读不出来就一个字都不删：不知道谁是 current 时，任何一次删除都可能
+	// 删掉正在跑的那个版本。宁可多占一份 40MB，也不要在坏指针上赌。
+	ptr, ok := ReadPointer(l)
+	if !ok || strings.TrimSpace(ptr.Current) == "" {
+		return
+	}
 	all := InstalledVersions(l)
 	if len(all) <= keep {
 		return
@@ -262,6 +277,12 @@ func PruneVersions(l Layout, keep int) {
 	protected := map[string]bool{
 		versionKey(ptr.Current):  true,
 		versionKey(ptr.Previous): true,
+	}
+	// 再加一道保险：真正在跑的那个二进制所在的版本目录。指针被手改过、或指针与
+	// 实际启动的版本暂时不一致时，靠它还兜得住（Windows 上删运行中的 exe 会失败，
+	// 但会刷一屏失败日志，也容易在杀掉进程后的下一轮真的删掉）。
+	if v := runningVersionDir(l); v != "" {
+		protected[v] = true
 	}
 	removed := 0
 	for i, ver := range all {
@@ -278,6 +299,25 @@ func PruneVersions(l Layout, keep int) {
 	if removed > 0 {
 		logUpdate(l, "已清理 %d 个旧版本目录，保留 %d 个", removed, len(all)-removed)
 	}
+}
+
+// runningVersionDir 返回"当前这个进程"的二进制所在的版本目录名。
+//
+// 只在可执行文件确实位于 <root>/versions/<ver>/ 下时返回，否则返回空串
+// （入口在根目录、go run、开发构建都属于后者）。
+func runningVersionDir(l Layout) string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if resolved, e := filepath.EvalSymlinks(exe); e == nil {
+		exe = resolved
+	}
+	dir := filepath.Clean(filepath.Dir(exe))
+	if !strings.EqualFold(filepath.Clean(filepath.Dir(dir)), filepath.Clean(l.Versions)) {
+		return ""
+	}
+	return filepath.Base(dir)
 }
 
 // Handoff 是入口进程的转发：如果 pointer.json 指向的核心程序不是自己，就执行它。
