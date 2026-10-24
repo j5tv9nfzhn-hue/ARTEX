@@ -60,7 +60,7 @@ func guidanceForFlavor(spec agent.ShellSpec) string {
 	// 会拿着一个不存在的工具名去撞墙。工具没了，指引必须跟着改，不能再留旧名字。
 	base := "联网动作（HTTP 发包、并发目录/参数/IDOR 探测、编解码与加解密、正则/JSON/HTML/JS 提取、端口探测）" +
 		"本系统没有专用工具，一律通过本 Shell 用 curl 或现场编写的 Python（requests 库）脚本完成；" +
-		"只有「读写本地文件、按内容或文件名检索」用内置 Read / Grep / Glob / Edit，这类别绕 Shell。" +
+		"读取与检索本地文件用内置 Read / Grep / Glob；写文件按末尾「写文件」那一段执行。" +
 		"Shell 的语法对照见本工具自带的「执行器」说明。"
 	switch spec.Mode {
 	case agent.ShellModePowerShell:

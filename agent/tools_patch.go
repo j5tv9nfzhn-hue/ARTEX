@@ -67,10 +67,10 @@ func newApplyPatchTool() actool.CoreTool {
 	spec.Name = "apply_patch"
 	spec.Description = "在**一次调用**里同时修改多个文件（每个文件可含多处精确字符串替换）。" +
 		"所有编辑先全部在内存中校验，任一 old_string 匹配不上则整个调用不落盘、文件保持原样；全部通过后按文件原子写入，写失败自动回滚。" +
-		"**跨文件改动优先用它，不要连发多个 Edit**；同一文件的多处修改放进同一个 edits 数组，不要拆成多次调用。"
+		"**跨文件改动优先用它，不要把一次改动拆成多次单文件调用**；同一文件的多处修改放进同一个 edits 数组，不要拆成多次调用。"
 	spec.Prompt = "patches 每项是 {file_path, edits:[{old_string,new_string,replace_all}]}。edits 按顺序应用，后一处必须匹配前一处的修改结果。" +
 		"old_string 必须与文件逐字一致（含缩进与空行），默认要求唯一——多处命中会报错，此时多带上文或设 replace_all=true。" +
-		"只修改已存在的文件；新建文件请用 Write。"
+		"只修改已存在的文件；新建文件请用 Shell 重定向或本 agent 的写入工具。"
 	spec.Schema = applyPatchSchema()
 	spec.Concurrent = func(json.RawMessage) bool { return true }
 	spec.Run = runApplyPatch
@@ -137,7 +137,7 @@ func runApplyPatch(_ context.Context, input json.RawMessage, tc *actool.ToolCont
 	for _, t := range targets {
 		info, err := os.Stat(t.path)
 		if err != nil {
-			return actool.Errorf(fmt.Sprintf("错误：无法读取 %s：%v（apply_patch 只改已存在的文件，新建请用 Write）。本次调用未修改任何文件。", t.display, err)), nil
+			return actool.Errorf(fmt.Sprintf("错误：无法读取 %s：%v（apply_patch 只改已存在的文件，新建请改用 Shell 重定向或写入工具）。本次调用未修改任何文件。", t.display, err)), nil
 		}
 		if info.IsDir() {
 			return actool.Errorf(fmt.Sprintf("错误：%s 是目录，不是文件。本次调用未修改任何文件。", t.display)), nil
@@ -260,7 +260,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 func toolBatchSpec() string {
 	return "\n\n**工具调用批量规约（效率红线）**：\n" +
 		"1. **动手前先把这一轮要碰的东西想齐**：彼此独立的读取/检索（多个文件、多个 Glob/Grep）**放在同一条消息里一次发出**，能并行的一律并行——不要读一个、看一眼、再要下一个。\n" +
-		"2. **跨文件改动用一次 `apply_patch`**：一次传入多个 {file_path, edits}，别连发多个 Edit；**同一文件的多处改动**放进同一个 edits 数组（或一次 `MultiEdit`），不要拆成多次调用。\n" +
+		"2. **跨文件改动用一次 `apply_patch`**：一次传入多个 {file_path, edits}，别拆成多次单文件调用；**同一文件的多处改动**放进同一个 edits 数组，不要拆成多次调用。\n" +
 		"3. 只有「下一步依赖上一步的结果」时才拆成多轮往返；串行是你自己造成的，没有任何好处。\n" +
 		"4. `apply_patch` 是全有或全无的：任一编辑匹配不上则整个调用不落盘。因此可以放心一次提交多处改动；失败时按报错重读那一处、改好 old_string 再重试，不要退回「一次改一处」的老路。"
 }

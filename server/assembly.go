@@ -714,6 +714,37 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 				}
 			}
 		}
+		// 写文件的指引按「这个 agent 实际拿到的工具集」生成，而不是在全局文案里写死。
+		// worker 默认被裁掉 Write / Edit / apply_patch（见 agent/worker.go 的 trimSDK），
+		// 但上一版全局文案写着「改用 Read / Grep / Glob / Edit」，模型照着去调不存在的
+		// Write，日志里只留下一句 Error: unknown tool "Write"——文案与工具面不一致，
+		// 是这个错误的唯一来源。
+		hasWrite, hasEdit := false, false
+		for _, t := range out {
+			switch t.Name() {
+			case "Write":
+				hasWrite = true
+			case "Edit", "MultiEdit":
+				hasEdit = true
+			}
+		}
+		writeNote := "\n\n【写文件】本 agent 没有写文件工具：新建或修改文件一律在本 Shell 里用 python 或重定向完成，不要调用工具表里没有的写入工具。"
+		if hasWrite || hasEdit {
+			names := make([]string, 0, 2)
+			if hasWrite {
+				names = append(names, "Write")
+			}
+			if hasEdit {
+				names = append(names, "Edit / MultiEdit")
+			}
+			writeNote = "\n\n【写文件】本 agent 装有 " + strings.Join(names, "、") + "：新建或修改文件优先直接调用它们，不必绕 Shell。"
+		}
+		for i, t := range out {
+			if t.Name() == "Bash" {
+				out[i] = agent.DecorateTool(t, t.Description()+writeNote, t.InputSchema())
+				break
+			}
+		}
 		if note := platformShellNote(); note != "" {
 			for i, t := range out {
 				if t.Name() == "Bash" {
