@@ -168,7 +168,7 @@ func (w *Worker) SetTrafficStore(ts TrafficDirectStore) {
 // settleWrapUpPrompt is injected by the SDK settlement phase when a worker hits its
 // turn/time budget: stop probing, write back what was found, then end with a
 // plain-text one-liner (which becomes this run's displayed result).
-const settleWrapUpPrompt = "本次执行即将因步数/时长上限而结束。不要再执行任何命令或探测。请按以下顺序处理：(1) 调用一次 handoff_patch：把还没做完的下一步、未验证的假设、已经排除的死路各写一行——这些是下一位接手时最值钱的东西，不写就永久丢失。(2) 逐项记录此前已识别但尚未保存的结果：新资产使用 insert_assets，探索结论与事实使用 record_fact，已确认漏洞使用 report_finding。(3) **最后只用一句纯文本**，以简体中文总结做了什么以及得到的核心结论。这句话会作为本次执行结果展示给用户，必须输出。"
+const settleWrapUpPrompt = "本次执行即将因步数/时长上限而结束。不要再执行任何命令或探测。请按以下顺序处理：(1) 若本次工具列表里有 handoff_patch，调用一次（没有就跳过这一步）：把还没做完的下一步、未验证的假设、已经排除的死路各写一行——这些是下一位接手时最值钱的东西，不写就永久丢失。(2) 逐项记录此前已识别但尚未保存的结果：新资产使用 insert_assets，探索结论与事实使用 record_fact，已确认漏洞使用 report_finding。(3) **最后只用一句纯文本**，以简体中文总结做了什么以及得到的核心结论。这句话会作为本次执行结果展示给用户，必须输出。"
 
 func NewWorker(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int, extra ...actool.CoreTool) *Worker {
 	return &Worker{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns, extraTools: extra}
@@ -532,6 +532,11 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// then augment with the agent's visible skills/MCP. During the SDK settlement
 	// phase, active probing tools are hidden via Settlement.DisabledTools.
 	base := append(tsx.WorkerTools(), w.extraTools...)
+	// 交接工具必须真的挂上：worker 的系统提示与收尾提示都要求它「边做边写交接单」，
+	// 而装配里一直没有 handoff_patch（HandoffPatchTool 定义了却没人调用）。提示与工具
+	// 面不同源，模型就照着提示去调一个不存在的工具，白跑一轮再重试一次——实测日志里
+	// 的 unknown tool 就是这么来的。提示与工具面以工具面为准：这里补上。
+	base = append(base, tsx.HandoffPatchTool())
 	// 保留原生 Go 的 Glob 与 Grep 给 worker，并用 WrapCrossPlatformBash 装饰 Bash 工具
 	// （提供进程内 Coreutils 原语、外部安全二进制直调及跨 Worker 全局进程信号量保护）。
 	// P3（见 agent/tool_steering.go）：裁掉 SDK 自带的逃生舱工具。
@@ -583,6 +588,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	if isRE {
 		sysBody = softwareREWorker + softwareREArtifactSpec(runDir) + toolBatchSpec() + langDirective(resolveOutputLang())
 	}
+	// 工具名纪律：提示里提到的工具必须来自本次工具列表（见 tool_lean.go 的
+	// toolNameDiscipline）。放在 RE 分支之后，软逆 worker 也要吃到。
+	sysBody += toolNameDiscipline
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}

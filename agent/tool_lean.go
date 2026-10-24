@@ -14,8 +14,8 @@ import (
 
 // ── 工具面瘦身（架构 P3「工具按阶段裁剪」的第二、三条）─────────────────────────────
 //
-// 阶段分组（recon/verify/exploit）解决的是「不该给的工具别给」，见 WorkerTools。
-// 但一个纯侦察 worker 就算只拿 12 个工具，每个工具的说明仍会整份进请求：实测
+// 动态能力路由（tool_router.go）解决的是「不该给的工具别给」；这里解决第二层
+// 体积：一个 worker 就算只拿十来个工具，每个工具的说明仍会整份进请求：实测
 // 领域工具的 schema 合计 43 KB，其中 40% 是**嵌套参数**的说明文字，32% 是工具
 // 顶层描述。上下文预算是固定的，被说明书吃掉的部分就是模型能用来思考的部分。
 //
@@ -141,7 +141,7 @@ func leanSchema(v any, depth int) any {
 }
 
 // leanTool 是只瘦身「模型看得到的那两样东西」的装饰器：Name/Prompt/权限/调度标志
-// 与 Call 全部委托给原工具，因此阶段裁剪、DB 覆盖、缺省入参注入、审批与计量都
+// 与 Call 全部委托给原工具，因此动态路由、DB 覆盖、缺省入参注入、审批与计量都
 // 不受影响。
 type leanTool struct {
 	actool.CoreTool
@@ -193,7 +193,18 @@ func leanToolList(tools []actool.CoreTool) []actool.CoreTool {
 	// 工具面被整体裁空时不追加 help：没有工具可查的时候再挂一个「查说明书」的入口
 	// 只会让「这个 agent 没有工具」这件事变得不像回事。
 	if !hasHelp && len(out) > 0 {
-		out = append(out, NewToolHelpTool())
+		// 清单必须是**本次挂载面**。以前这里给的是进程级存档（toolDocs 跨 agent、
+		// 跨 run 累积），于是模型看到一堆本次根本没挂的工具，照着调就得到
+		// unknown tool——实测就是这样白跑一轮再把同样的名字重试一次。
+		// get_tool_help 的职责是「查本次能用的工具」，清单与报错都按本次装配生成。
+		names := make([]string, 0, len(out))
+		for _, t := range out {
+			if t != nil {
+				names = append(names, t.Name())
+			}
+		}
+		names = append(names, ToolHelpToolName) // 它自己也是本次可用的工具
+		out = append(out, newToolHelpTool(names))
 	}
 	return out
 }
@@ -213,7 +224,16 @@ func leanSchemaMap(in map[string]any) map[string]any {
 //
 // 它自己也在存档里（见 leanToolList），所以模型可以查它自己——这句自指并不多余：
 // 瘦身后的说明末尾都带 `…`，模型第一反应就是来找这里。
-func NewToolHelpTool() actool.CoreTool {
+func NewToolHelpTool() actool.CoreTool { return newToolHelpTool(nil) }
+
+// newToolHelpTool 返回绑定**本次装配面**的 get_tool_help。
+//
+// mounted 为空时退回存档清单（只有单测与离线工具会走这条分支）。非空时：
+//   - 报错里列的是本次真实可用的工具；
+//   - 存档里有、本次没挂的名字 → 明确说「存在但本次未挂载」，不给模型「再试一次
+//     也许就行」的错觉；
+//   - 名字记错时给一个最接近的候选，把「瞎拼名字」收敛成一次有效重试。
+func newToolHelpTool(mounted []string) actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name: ToolHelpToolName,
 		Description: "按名字取回某个工具的完整说明书（完整描述 + 完整参数 schema，含嵌套字段与枚举）。" +
@@ -238,6 +258,14 @@ func NewToolHelpTool() actool.CoreTool {
 			if name == "" {
 				return actool.Errorf("缺少 name：请传入工具名"), nil
 			}
+			if len(mounted) > 0 && !nameIn(name, mounted) {
+				if _, archived := toolDocs.Load(name); archived {
+					return actool.Errorf(fmt.Sprintf("工具 %q 存在但本次未挂载，调用不了。本次可用的工具有 %d 个：%s",
+						name, len(mounted), strings.Join(mounted, ", "))), nil
+				}
+				return actool.Errorf(fmt.Sprintf("没有名为 %q 的工具。本次可用的工具有 %d 个：%s%s",
+					name, len(mounted), strings.Join(mounted, ", "), closestToolHint(name, mounted))), nil
+			}
 			v, ok := toolDocs.Load(name)
 			if !ok {
 				names := toolDocNames()
@@ -257,6 +285,60 @@ func NewToolHelpTool() actool.CoreTool {
 		},
 	})
 }
+
+// nameIn 报告 name 是否在 names 里（大小写不敏感：模型偶尔会把 Bash 写成 bash）。
+func nameIn(name string, names []string) bool {
+	for _, n := range names {
+		if strings.EqualFold(n, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// closestToolHint 给「名字记错」一个最接近的候选。
+//
+// 实测的浪费长这样：模型想写交接，凭记忆拼出 handoff_patch 之外的变体，拿不到工具
+// 就换个名字再试一次。把最接近的那个名字直接摆出来，一次就能收敛。
+func closestToolHint(name string, names []string) string {
+	best, bestScore := "", 1 // 低于 2 分不提示，免得给一个毫不相干的工具
+	for _, n := range names {
+		if s := toolNameScore(name, n); s > bestScore {
+			best, bestScore = n, s
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf("。最接近的是 %q——如果那才是你要找的，直接用这个名字", best)
+}
+
+// toolNameScore 是轻量相似度：按 _ - . 切词后的公共词加权，再加互相包含的加分。
+// 够用来纠「记错/拼错」，不引第三方依赖。
+func toolNameScore(a, b string) int {
+	la, lb := strings.ToLower(a), strings.ToLower(b)
+	if la == lb {
+		return 100
+	}
+	score := 0
+	for _, tok := range strings.FieldsFunc(la, func(r rune) bool { return r == '_' || r == '-' || r == '.' }) {
+		if len(tok) >= 3 && strings.Contains(lb, tok) {
+			score += len(tok)
+		}
+	}
+	if strings.Contains(lb, la) || strings.Contains(la, lb) {
+		score += 2
+	}
+	return score
+}
+
+// toolNameDiscipline 是给执行型 agent 的一条硬纪律：工具名只能来自本次工具列表。
+//
+// 提示词与工具面是两处独立维护的东西，一旦漂移，模型就会反复去调一个不存在的工具
+// （实测：提示要求 handoff_patch，工具面没挂，于是每一轮都试一次）。纪律解决「不知
+// 道该不该信自己记忆」的问题，get_tool_help 的清单解决「到底有什么」的问题。
+const toolNameDiscipline = "\n\n【工具名纪律】只调用工具列表里存在的工具。名字记不准时先用 `get_tool_help` 查" +
+	"（它的报错会列出本次真实可用的全部工具），不要凭记忆拼名字——调用不存在的工具只会白费一轮。"
 
 // toolDocNames 列出存档里的工具名（排序，便于模型与人工对照）。
 func toolDocNames() []string {
