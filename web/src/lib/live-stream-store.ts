@@ -42,6 +42,35 @@ export type LiveStream = {
   clear: () => void;
 };
 
+/**
+ * 通知频率上限：40ms ≈ 25fps。
+ *
+ * 推理流是最密的一条（一行一行往外吐），rAF 合并只能保证「一帧最多一次通知」，在
+ * 高刷屏上仍是每秒 60~120 次重排。文本比这快没有任何信息增量，只会把主线程占满，
+ * 让高度变化排队——观感就是越写越抽。这里在 rAF 之外再加一道下限：距上次通知不足
+ * 40ms 的写入合并成一次尾随通知（读到的一定是最新快照，不会丢内容）。
+ */
+const MIN_NOTIFY_MS = 40;
+
+function throttleSchedule(scheduler: LiveScheduler, minMs: number): LiveScheduler {
+  let last = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return (notify) => {
+    const wait = minMs - (Date.now() - last);
+    if (wait <= 0) {
+      last = Date.now();
+      scheduler(notify);
+      return;
+    }
+    if (timer !== null) return; // 已有尾随通知在排队：它读的是最新快照
+    timer = setTimeout(() => {
+      timer = null;
+      last = Date.now();
+      notify();
+    }, wait);
+  };
+}
+
 function defaultSchedule(notify: () => void): void {
   if (typeof requestAnimationFrame === "function") {
     requestAnimationFrame(() => notify());
@@ -61,7 +90,9 @@ function sameFrame(a: LiveFrame | null, b: LiveFrame | null): boolean {
  *
  * @param scheduler 合并调度器（默认 requestAnimationFrame；测试可注入同步实现）
  */
-export function createLiveStream(scheduler: LiveScheduler = defaultSchedule): LiveStream {
+export function createLiveStream(
+  scheduler: LiveScheduler = throttleSchedule(defaultSchedule, MIN_NOTIFY_MS),
+): LiveStream {
   let frame: LiveFrame | null = null;
   let scheduled = false;
   const listeners = new Set<() => void>();

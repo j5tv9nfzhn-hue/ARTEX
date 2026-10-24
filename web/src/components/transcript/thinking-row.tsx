@@ -26,6 +26,16 @@ import { cn } from "@/lib/utils";
  *   4. 展开态的 <pre> 自己钉在底部（内层滚动），外层容器高度不变，于是外层滚动条
  *      在推理流式期间完全不动，视觉焦点自然锁在最新一行。
  *
+ * 2026-10-24 二次修复（首字空行 + 偶发高频抖动）：
+ *
+ *   5. 推理正文首行常是空行/行首空格（模型把块起点放在换行之后，服务端每帧给的又是
+ *      累计全文，前导空白一路保留下来）。折叠预览本来就 trim，展开的 <pre> 却是原样
+ *      渲染，于是「点开先看到一条空行、首字缩进」。现在正文统一 trimStart()——只去
+ *      开头，正文内部的缩进与空行属于内容，不动。
+ *   6. 展开态在流式期间用**固定高度**（h-72）。之前是 max-h-72：刚展开时它只有一两行，
+ *      随推理增长一路长到上限，外层容器高度每行变一次，贴底滚动每行追一次，观感就是
+ *      整块区域上下抽。定高之后外层高度从第一帧起就不变，只有内层 <pre> 在自己滚。
+ *
  * 注意：推理从来不走 Markdown（这里是 <pre> 纯文本），所以「Markdown 解析卡住」
  * 不是推理抽搐的原因；真正在做全量 Markdown 的是正文块（见 answer-text.tsx）。
  */
@@ -68,7 +78,9 @@ export function ThinkingRow({
   }, [text]);
 
   const body = React.useMemo(() => {
-    const src = full ?? detail ?? text;
+    // trimStart：推理正文的第一帧几乎总是以换行开头（块边界），展开后就是一条空行 +
+    // 首字缩进。只去前导空白，正文内部的缩进/空行是内容，原样保留。
+    const src = (full ?? detail ?? text).replace(/^\s+/, "");
     return src.length > MAX_BODY_CHARS ? "\u2026" + src.slice(-MAX_BODY_CHARS) : src;
   }, [full, detail, text]);
 
@@ -128,11 +140,17 @@ export function ThinkingRow({
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </span>
       </button>
+      {/* 流式期间定高：外层容器高度不随推理增长变化，只有内层滚动 → 贴底逻辑
+          不必每行追一次，页面不会上下抽。结束后回到 max-h 的自然高度。 */}
       {open && (
         <pre
           ref={preRef}
           onScroll={onPreScroll}
-          className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-ui-xs leading-relaxed [contain:content] [overflow-anchor:none]"
+          className={cn(
+            "mt-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-ui-xs leading-relaxed",
+            "[contain:content] [overflow-anchor:none]",
+            live ? "h-72" : "max-h-72",
+          )}
         >
           {loading && !full ? "\u2026" : body}
         </pre>

@@ -99,9 +99,13 @@ export function useStickToBottom(
     });
   }, [write]);
 
-  // 内容长高（实时流每一帧、详情懒加载展开、图片落位）→ 直接写。
-  // ResizeObserver 回调发生在 layout 之后、paint 之前，所以这里同步写不会出现
-  // 「先画出一帧旧位置、下一帧再纠正」的抖；而它只会因尺寸变化触发，不会自激。
+  // 内容长高（实时流每一帧、详情懒加载展开、图片落位）→ 合并到下一帧再写。
+  //
+  // 2026-10-24：原先在 RO 回调里**同步**写 scrollTop。RO 回调本身就在 layout 之后、
+  // paint 之前，同步改滚动位置会让 Chrome 判定「观察中的几何又被这次回调改动了」，
+  // 于是再排一轮 RO → 又一次写 → 推理流密集推送时就表现为整块区域高频上下抖。
+  // 改成 pin()（rAF 合并、同一帧最多一次）后，写入退到下一个动画帧，不再自激；
+  // 代价只是贴底最多晚一帧，观感上不可见。
   //
   // 容器不是一定在这一刻就存在（选中会话后内容区才渲染），所以挂不上就按帧重试，
   // 最多约 2 秒；refreshKey 变化时重新走一遍整个过程。
@@ -112,7 +116,7 @@ export function useStickToBottom(
       if (!el) return false;
       if (typeof ResizeObserver === "undefined") return true; // 没有 RO 时靠 pin() 兜底
       if (ro) return true;
-      ro = new ResizeObserver(() => write());
+      ro = new ResizeObserver(() => pin());
       ro.observe(el);
       return true;
     };
@@ -130,7 +134,7 @@ export function useStickToBottom(
       ro?.disconnect();
       ro = null;
     };
-  }, [contentRef, write, refreshKey]);
+  }, [contentRef, pin, refreshKey]);
 
   // 用户滚动 → 维护贴底状态；接近顶部 → 拉更早的一页。
   React.useEffect(() => {
