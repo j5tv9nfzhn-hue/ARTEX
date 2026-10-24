@@ -1908,11 +1908,18 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   // 发送键位由系统设置决定（localStorage），默认 Enter 发送。
   const sendMode = useChatSendMode();
   // What the transcript pane should show for the active session.
-  const showLoader = !activeState || (activeState.loading && !activeState.loaded);
+  // 回顾者会话没有活动流可拉（判决台账自带内容，见上面 loadSession 的分支），
+  // 所以 store 里永远不会有它的缓存。这里必须先把回顾者排除掉，否则 activeState
+  // 恒为 undefined，面板会永远停在「加载活动流…」，下面的判决面板根本渲染不到。
+  const showLoader =
+    !isReviewer && (!activeState || (activeState.loading && !activeState.loaded));
   const resolutionForSession = (session: Session): TaskLLMResolution | undefined => {
     if (!llmResolutions || session.inherited || session.role === "system") return undefined;
     if (session.role === "mainagent") return llmResolutions.mainagent;
     if (session.role === "planner") return llmResolutions.planner;
+    // 后台的 llm/resolution 只回 mainagent / planner / worker 三类。回顾者跑的是它
+    // 自己的 agent 配置，拿 worker 的模型顶上等于给用户一个错标签，宁可不显示。
+    if (session.role === "reviewer") return undefined;
     return llmResolutions.worker;
   };
   const activeResolution = resolutionForSession(active);
