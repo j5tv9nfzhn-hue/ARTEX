@@ -363,15 +363,15 @@ func renderHandoffText(rec handoffRecord) string {
 		b.WriteString(strings.TrimSpace(rec.Quota.Report))
 		b.WriteString("\n")
 	}
+	// 只点名真实挂载的工具：get_worker_trace 在 worker 工具面里，get_handoff 不在
+	// （交接单本身已经渲染在上文，再指向一个调不到的工具只会让模型白试一次）。
 	if len(rec.Pointers.TraceRange) == 2 {
-		fmt.Fprintf(&b, "细节：get_handoff(intent_id=%d) 取完整交接单；get_worker_trace(intent_id=%d) 看完整步骤（记录 %d..%d）。\n",
-			rec.Source.IntentID, rec.Source.IntentID, rec.Pointers.TraceRange[0], rec.Pointers.TraceRange[1])
-	} else {
-		fmt.Fprintf(&b, "细节：get_handoff(intent_id=%d) 取完整交接单。\n", rec.Source.IntentID)
+		fmt.Fprintf(&b, "细节：get_worker_trace(intent_id=%d) 可回读完整步骤（记录 %d..%d）。\n",
+			rec.Source.IntentID, rec.Pointers.TraceRange[0], rec.Pointers.TraceRange[1])
 	}
 	out := b.String()
 	if len(out) > 6000 {
-		out = out[:6000] + "\n…（交接单已截断，完整内容见 get_handoff）"
+		out = out[:6000] + "\n…（交接单已截断；需要更细的步骤用 get_worker_trace 回读）"
 	}
 	return out
 }

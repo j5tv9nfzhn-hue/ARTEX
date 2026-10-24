@@ -123,7 +123,6 @@ var controlPlane = map[string]string{
 	"add_finding":    "写回漏洞",
 	"report_finding": "上报漏洞",
 	"list_findings":  "查重",
-	"handoff_patch":  "写交接",
 	"cache_clue":     "写线索缓存",
 	"query_clues":    "查线索缓存（换分支的唯一依据）",
 	"Bash":           "通用恢复手段（路由漏挂时的兜底）",

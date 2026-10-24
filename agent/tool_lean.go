@@ -298,8 +298,8 @@ func nameIn(name string, names []string) bool {
 
 // closestToolHint 给「名字记错」一个最接近的候选。
 //
-// 实测的浪费长这样：模型想写交接，凭记忆拼出 handoff_patch 之外的变体，拿不到工具
-// 就换个名字再试一次。把最接近的那个名字直接摆出来，一次就能收敛。
+// 实测的浪费长这样：模型凭记忆拼出一个近似但不存在工具名，拿不到就换个名字再试
+// 一次。把最接近的那个名字直接摆出来，一次就能收敛。
 func closestToolHint(name string, names []string) string {
 	best, bestScore := "", 1 // 低于 2 分不提示，免得给一个毫不相干的工具
 	for _, n := range names {
@@ -335,7 +335,7 @@ func toolNameScore(a, b string) int {
 // toolNameDiscipline 是给执行型 agent 的一条硬纪律：工具名只能来自本次工具列表。
 //
 // 提示词与工具面是两处独立维护的东西，一旦漂移，模型就会反复去调一个不存在的工具
-// （实测：提示要求 handoff_patch，工具面没挂，于是每一轮都试一次）。纪律解决「不知
+// （实测：提示要求某个工具，工具面没挂，于是每一轮都试一次）。纪律解决「不知
 // 道该不该信自己记忆」的问题，get_tool_help 的清单解决「到底有什么」的问题。
 const toolNameDiscipline = "\n\n【工具名纪律】只调用工具列表里存在的工具。名字记不准时先用 `get_tool_help` 查" +
 	"（它的报错会列出本次真实可用的全部工具），不要凭记忆拼名字——调用不存在的工具只会白费一轮。"
