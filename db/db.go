@@ -110,7 +110,7 @@ var builtinAgents = []builtinAgent{
 	// Reviewer：链路上的独立裁判（第四关）。它不跑 harness 循环、不接受聊天输入，
 	// 只吃 Worker 的原始输出并给出裁决；列在这里是为了让它和其它 Agent 一样
 	// 拥有 DB 行 → 提示词可版本化、可在配置面板里读改。
-	{"reviewer", "Reviewer", "reviewer", "独立裁决者：消化 Worker 的原始输出，产出可执行的判决（advance/pivot/abandon/escalate）。", nil, false, nil},
+	{"reviewer", "Reviewer", "worker", "独立裁决者：消化 Worker 的原始输出，产出可执行的判决（advance/pivot/abandon/escalate）。", nil, false, nil},
 	{"pentest", "渗透测试", "assistant", "独立渗透 agent：一人从侦察→找攻击面→深入利用→验证→收尾走完整条链，自己规划、自己执行、自己对抗式验证。", nil, true, intp(0)},
 }
 

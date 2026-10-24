@@ -467,7 +467,7 @@ func parseReviewerPayload(raw string) (reviewerLLMPayload, bool) {
 	return p, true
 }
 
-func clipRunes(s string, n int) string {
+func clipReviewerText(s string, n int) string {
 	r := []rune(strings.TrimSpace(s))
 	if n > 0 && len(r) > n {
 		return string(r[:n])
@@ -490,7 +490,7 @@ func normalizeReviewerPayload(res *ReviewerResult, p reviewerLLMPayload, sanitiz
 	if res.Confidence > 1 {
 		res.Confidence = 1
 	}
-	res.Summary = clipRunes(p.Summary, 240)
+	res.Summary = clipReviewerText(p.Summary, 240)
 	res.DecidedBy = "llm"
 	res.Sanitized = sanitizerTouched
 
@@ -498,7 +498,7 @@ func normalizeReviewerPayload(res *ReviewerResult, p reviewerLLMPayload, sanitiz
 		if i >= 5 {
 			break
 		}
-		sm := clipRunes(f.Summary, 200)
+		sm := clipReviewerText(f.Summary, 200)
 		if sm == "" {
 			continue
 		}
@@ -512,7 +512,7 @@ func normalizeReviewerPayload(res *ReviewerResult, p reviewerLLMPayload, sanitiz
 		if i >= 8 {
 			break
 		}
-		val := clipRunes(c.Value, 800)
+		val := clipReviewerText(c.Value, 800)
 		if val == "" {
 			continue
 		}
@@ -527,14 +527,14 @@ func normalizeReviewerPayload(res *ReviewerResult, p reviewerLLMPayload, sanitiz
 			conf = "inferred"
 		}
 		res.Clues = append(res.Clues, ReviewerClue{
-			Kind: kind, Key: clipRunes(c.Key, 300), Value: val, Confidence: conf,
+			Kind: kind, Key: clipReviewerText(c.Key, 300), Value: val, Confidence: conf,
 		})
 	}
 	for i, s := range p.CarryOver {
 		if i >= 5 {
 			break
 		}
-		if v := clipRunes(s, 160); v != "" {
+		if v := clipReviewerText(s, 160); v != "" {
 			res.CarryOver = append(res.CarryOver, v)
 		}
 	}
@@ -542,7 +542,7 @@ func normalizeReviewerPayload(res *ReviewerResult, p reviewerLLMPayload, sanitiz
 		if i >= 5 {
 			break
 		}
-		if v := clipRunes(s, 160); v != "" {
+		if v := clipReviewerText(s, 160); v != "" {
 			res.Negative = append(res.Negative, v)
 		}
 	}
@@ -668,7 +668,7 @@ func RenderReviewerDigest(rs []ReviewerResult) string {
 			b.WriteString("\n    · fact(" + f.Confidence + "): " + f.Summary)
 		}
 		for _, c := range r.Clues {
-			b.WriteString("\n    · clue(" + c.Kind + "): " + clipRunes(c.Value, 120))
+			b.WriteString("\n    · clue(" + c.Kind + "): " + clipReviewerText(c.Value, 120))
 		}
 		for _, n := range r.Negative {
 			b.WriteString("\n    · 已证伪: " + n)
