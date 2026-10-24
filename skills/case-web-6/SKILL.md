@@ -1,6 +1,6 @@
 ---
 name: case-web-6
-description: 任务复盘《目标 https：//notegpt.io》：渗透 寻找漏洞 越权提权；关键词：调用 Skill(api-recon) 对 https：//notegpt.io 做前端与接口测绘：抓取首页/JS bu…、对 https：//notegpt.io 做垂直越权与管理面探测：枚举 /admin、/api/admin 等管理端点，…、测试 https：//notegpt.io 的 AI 功能输入面：针对 YouTube/URL 摘要抓取与文件上传功能验…、利用已确认的未授权 SSRF（GET /api/v1/web-convert?url=）把 127…
+description: 任务复盘《目标 https：//notegpt.io》：渗透 寻找漏洞 越权提权；关键词：调用 Skill(performing-api-inventory-and-discovery) 对 https：//notegpt.io 做前端与接口测绘：抓取首页/JS bu…、对 https：//notegpt.io 做垂直越权与管理面探测：枚举 /admin、/api/admin 等管理端点，…、测试 https：//notegpt.io 的 AI 功能输入面：针对 YouTube/URL 摘要抓取与文件上传功能验…、利用已确认的未授权 SSRF（GET /api/v1/web-convert?url=）把 127…
 ---
 
 # 目标 https://notegpt.io · 任务复盘手册
@@ -10,19 +10,19 @@ description: 任务复盘《目标 https：//notegpt.io》：渗透 寻找漏洞
 ## 何时使用
 
 - 目标相近：渗透 寻找漏洞 越权提权
-- 命中关键词/组件/漏洞类型：调用 Skill(api-recon) 对 https://notegpt.io 做前端与接口测绘：抓取首页/JS bu…、对 https://notegpt.io 做垂直越权与管理面探测：枚举 /admin、/api/admin 等管理端点，…、测试 https://notegpt.io 的 AI 功能输入面：针对 YouTube/URL 摘要抓取与文件上传功能验…、利用已确认的未授权 SSRF（GET /api/v1/web-convert?url=）把 127.0.0.1:8000…、深挖 notegpt.io 上传签名链：从 Nuxt 运行时配置、JS bundle 与 sourcemap 中提取 a…、针对 https://notegpt.io 的订阅/套餐/配额业务逻辑做越权提权测试：从定价页与前端 JS 提取升级、支…
+- 命中关键词/组件/漏洞类型：调用 Skill(performing-api-inventory-and-discovery) 对 https://notegpt.io 做前端与接口测绘：抓取首页/JS bu…、对 https://notegpt.io 做垂直越权与管理面探测：枚举 /admin、/api/admin 等管理端点，…、测试 https://notegpt.io 的 AI 功能输入面：针对 YouTube/URL 摘要抓取与文件上传功能验…、利用已确认的未授权 SSRF（GET /api/v1/web-convert?url=）把 127.0.0.1:8000…、深挖 notegpt.io 上传签名链：从 Nuxt 运行时配置、JS bundle 与 sourcemap 中提取 a…、针对 https://notegpt.io 的订阅/套餐/配额业务逻辑做越权提权测试：从定价页与前端 JS 提取升级、支…
 - 分析域：Web 安全
 - 当你面对同类目标、同类受阻信号，或准备重复一条已知路径时，先加载本手册再行动。
 
 ## 已验证的有效路径
 
-1. 调用 Skill(api-recon) 对 https://notegpt.io 做前端与接口测绘：抓取首页/JS bundle/sourcemap，识别框架指纹与后端 API 域名（如 api.notegpt.io），枚举 REST/GraphQL 端点、鉴权头、隐藏管理接口，产出可测试的接口清单（产出事实 3 条）
-2. 对 https://notegpt.io 做垂直越权与管理面探测：枚举 /admin、/api/admin 等管理端点，测试普通账号访问管理接口、角色/权限字段篡改、JWT 与 Cookie 会话签名篡改，验证能否提升为管理员权限；调用 Skill(web-vuln-tactics) 与 http_fuzz（产出事实 1 条）
-3. 测试 https://notegpt.io 的 AI 功能输入面：针对 YouTube/URL 摘要抓取与文件上传功能验证 SSRF（尝试读取云元数据 169.254.169.254 等内网地址）及任意文件读取/上传风险；调用 Skill(web-vuln-tactics) 的 ssrf_cloud 经验卡片配合 http_request 验证（产出事实 1 条）
+1. 调用 Skill(performing-api-inventory-and-discovery) 对 https://notegpt.io 做前端与接口测绘：抓取首页/JS bundle/sourcemap，识别框架指纹与后端 API 域名（如 api.notegpt.io），枚举 REST/GraphQL 端点、鉴权头、隐藏管理接口，产出可测试的接口清单（产出事实 3 条）
+2. 对 https://notegpt.io 做垂直越权与管理面探测：枚举 /admin、/api/admin 等管理端点，测试普通账号访问管理接口、角色/权限字段篡改、JWT 与 Cookie 会话签名篡改，验证能否提升为管理员权限；调用 Skill(performing-web-application-penetration-test) 与 http_fuzz（产出事实 1 条）
+3. 测试 https://notegpt.io 的 AI 功能输入面：针对 YouTube/URL 摘要抓取与文件上传功能验证 SSRF（尝试读取云元数据 169.254.169.254 等内网地址）及任意文件读取/上传风险；调用 Skill(performing-web-application-penetration-test) 的 ssrf_cloud 经验卡片配合 http_request 验证（产出事实 1 条）
 4. 利用已确认的未授权 SSRF（GET /api/v1/web-convert?url=）把 127.0.0.1:8000 当内网代理深度打穿：枚举 Django/DRF 内部路由（/admin/、/admin/login/、/api/、/api/v1/、/api/docs、/swagger、/redoc、/api/schema、/__debug__/、/static/、/media/、/health、/metrics 等），利用 HTML 正文回显读取内部页面（DRF 可浏览 API/Swagger UI/Django admin 均为 HTML，可被正…（产出事实 2 条）
 5. 深挖 notegpt.io 上传签名链：从 Nuxt 运行时配置、JS bundle 与 sourcemap 中提取 app_id 与 secretKey 实际值，按已还原的 HMAC-SHA256 签名规则（排序 key=value 拼接 + t/app_id）离线计算 sign，验证未登录能否通过 /api/v1/upload/sign-url 与 /api/v1/upload/multi/init 取得上传凭据并完成任意文件上传，重点测试 object_key 篡改/覆盖他人文件、HTML/SVG 上传导致同域存储型 XSS 或内容伪造；调用 Sk…（产出事实 1 条）
-6. 针对 https://notegpt.io 的订阅/套餐/配额业务逻辑做越权提权测试：从定价页与前端 JS 提取升级、支付回调、优惠码/邀请返利、credit 相关接口，注册普通账号后测试 plan/tier/credits/会员到期时间等字段篡改、支付回调（Stripe checkout/webhook 状态）伪造与优惠码复用，验证能否未付费获得 Pro 或更高权限（与 #360 的管理员角色/JWT 方向不同，聚焦付费墙与业务状态机）；调用 Skill(web-vuln-tactics) 与 tactical_kb(vuln_patterns) 配合…（产出事实 1 条）
-7. 深挖 https://notegpt.io/api/v2/audio-extract/start 匿名 URL 输入面（与 web-convert SSRF 不同的处理链，疑似调用 yt-dlp 子进程）：测试 URL 参数的命令/参数注入（以 - 开头的伪 URL、--exec、分号/管道/反引号/换行注入）、yt-dlp 特殊协议与本地路径处理，并借助外部可控回连或响应差异/耗时判断盲 SSRF 与命令执行，确认能否从 Web 面拿到服务器命令执行权限；调用 Skill(web-vuln-tactics) 与 http_request 验证（产出事实 1 条）
+6. 针对 https://notegpt.io 的订阅/套餐/配额业务逻辑做越权提权测试：从定价页与前端 JS 提取升级、支付回调、优惠码/邀请返利、credit 相关接口，注册普通账号后测试 plan/tier/credits/会员到期时间等字段篡改、支付回调（Stripe checkout/webhook 状态）伪造与优惠码复用，验证能否未付费获得 Pro 或更高权限（与 #360 的管理员角色/JWT 方向不同，聚焦付费墙与业务状态机）；调用 Skill(performing-web-application-penetration-test) 与 tactical_kb(vuln_patterns) 配合…（产出事实 1 条）
+7. 深挖 https://notegpt.io/api/v2/audio-extract/start 匿名 URL 输入面（与 web-convert SSRF 不同的处理链，疑似调用 yt-dlp 子进程）：测试 URL 参数的命令/参数注入（以 - 开头的伪 URL、--exec、分号/管道/反引号/换行注入）、yt-dlp 特殊协议与本地路径处理，并借助外部可控回连或响应差异/耗时判断盲 SSRF 与命令执行，确认能否从 Web 面拿到服务器命令执行权限；调用 Skill(performing-web-application-penetration-test) 与 http_request 验证（产出事实 1 条）
 8. 针对 https://notegpt.io 的认证与账号恢复状态机做账户接管（水平/垂直越权）验证：专攻事实 368 明确遗留的未测假设——POST /api/v1/auth/email/register/confirm 与 /api/v1/auth/email/reset-password 中 body 的 email 与 JWT claims（email/sub/password_fgpt）是否强绑定：用自己账号的合法 token 配他人邮箱提交、篡改 body email 的大小写/别名(+)/首尾空格变体、同一 reset token 重复使用与…（产出事实 1 条）
 9. 针对 https://notegpt.io 的第三方社交登录/OAuth 账号绑定流程做账户接管（水平越权）验证：先从登录页与前端 JS 确认 Google/Apple 等 OAuth 入口及回调端点（含 api.notegpt.io 上的 /auth/oauth、/callback 等），测试 state 参数缺失或可固定导致的登录 CSRF、redirect_uri 未校验导致的 code/token 外泄、OAuth 回调中 email 未验证即与已有账号合并/绑定（用攻击者可控社交账号绑定受害者邮箱实现接管）、id_token 的 aud/iss…（产出事实 1 条）
 10. 利用已确认的未授权 SSRF（GET /api/v1/web-convert?url=）做内网横向与云凭证窃取，突破 #364 只盯 127.0.0.1:8000 路由枚举的局限：以响应差异（Connection refused 的 traceback / "webpage is not text format" / 正文回显 / 客户端 30s 超时）为 oracle，定向探测 Docker/K8s 常见内网地址（172.17.0.1-10、172.18.0.1、10.96.0.1、10.0.0.1 等）上的关键端口（6379 Redis、3306 M…（产出事实 2 条）
@@ -83,11 +83,11 @@ description: 任务复盘《目标 https：//notegpt.io》：渗透 寻找漏洞
 
 ## 本任务实际加载过的技能
 
-- `web-vuln-tactics`：83 次
-- `api-recon`：27 次
+- `performing-web-application-penetration-test`：83 次
+- `performing-api-inventory-and-discovery`：27 次
 - `playwright-cli`：17 次
-- `reverse-engineering`：6 次
-- `expert-triage-pivot`：3 次
+- `reverse-engineering-malware-with-ghidra`：6 次
+- `performing-web-application-vulnerability-triage`：3 次
 
 ## 复用步骤
 

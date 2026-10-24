@@ -10,21 +10,21 @@ description: 任务复盘《目标地址 https：//aimlapi.com》：渗透找出
 ## 何时使用
 
 - 目标相近：渗透找出上游持有的 用于直接调用全部模型的上游API KEY明文以及上游端点URL
-- 命中关键词/组件/漏洞类型：Unauthorized Object Storage Access / Broken Access Control (…、生产环境 MinIO 对象存储（cdn.aimlapi.com）匿名可列举可读取用户生成内容、broken_access_control、cdn-staging.aimlapi.com 对象存储桶匿名可列举与对象直读（阿里云 OSS）、broken_access_control / 未授权 S3(阿里云OSS) 对象存储桶列举与跨租户生成物直读、调用 Skill(api-recon) 对 https://api.aimlapi.com 做 OpenAI 兼容接口全…
+- 命中关键词/组件/漏洞类型：Unauthorized Object Storage Access / Broken Access Control (…、生产环境 MinIO 对象存储（cdn.aimlapi.com）匿名可列举可读取用户生成内容、broken_access_control、cdn-staging.aimlapi.com 对象存储桶匿名可列举与对象直读（阿里云 OSS）、broken_access_control / 未授权 S3(阿里云OSS) 对象存储桶列举与跨租户生成物直读、调用 Skill(performing-api-inventory-and-discovery) 对 https://api.aimlapi.com 做 OpenAI 兼容接口全…
 - 分析域：Web 安全
 - 当你面对同类目标、同类受阻信号，或准备重复一条已知路径时，先加载本手册再行动。
 
 ## 已验证的有效路径
 
-1. 调用 Skill(api-recon) 对 https://api.aimlapi.com 做 OpenAI 兼容接口全量测绘与鉴权/越权矩阵：抓取 /openapi.json、/docs、/swagger、/redoc 与 /v1/* 路由（models、chat/completions、images/generations、audio、embeddings、threads、assistants、files、batches、usage、billing、finetune）逐条测未授权可达性、BOLA/越权与 CORS 组合（已实测 GET /v1/mod…（产出事实 1 条）
-2. 调用 Skill(reverse-engineering) + Skill(api-recon) 做公开渠道与前端源码的凭据泄露收割（与线上接口探测机理不同）：① 对已抓取的 https://aimlapi.com 及 hidden/docs 站 bundle、内联脚本、.map 做 Grep，匹配上游 key 模式（sk-、sk-ant-、AIza、xai-、hf_、r8_、Bearer）与 app_base_url/base_url/UPSTREAM/OPENAI_API_KEY/ANTHROPIC_API_KEY 明文；② 用 aimlapi 专属…（产出事实 1 条）
-3. 调用 Skill(web-vuln-tactics)（vuln_patterns: ssrf_cloud）+ Skill(api-recon) 打 https://api.aimlapi.com 的服务端错误回显与 SSRF 面，直接逼出上游凭据：构造畸形/超长/非法 model、坏 JSON、无效 Authorization 触发异常分支，对比不同 provider 的报错差异，观察响应体/头是否回显上游 provider 名、上游 base URL 或 key；并对 url/image_url/audio_url/webhook 等参数测 SSRF，…（产出事实 1 条）
-4. 调用 Skill(api-recon) + Skill(web-vuln-tactics) 测绘 AIML API 的【控制台/账户面】app.aimlapi.com 及 auth./admin./billing./pay.aimlapi.com（与在跑的 hidden 营销站、api 接口矩阵机理不同）：先用 Playwright/browser MCP 渲染 app.aimlapi.com 确认真实应用与前端 XHR，尝试自助注册/登录进入控制台，枚举 /app/keys、/keys、/api-keys、/providers、/models、/set…（产出事实 2 条）
-5. 调用 Skill(api-recon) + Skill(web-vuln-tactics) 探测 AIML API 的【基础设施/监控子域】：grafana.aimlapi.com、prometheus.aimlapi.com、backend.aimlapi.com、dev.aimlapi.com、staging.aimlapi.com、s3.aimlapi.com（DNS 已枚举出但从未探测）。先以 Host 头区分是否为 Cloudflare 泛解析（逐个改 Host 请求 104.21.92.106/172.67.191.233 看响应差异）；对 …（产出事实 1 条）
-6. 调用 Skill(api-recon) + Skill(web-vuln-tactics) 探测 fact 995 新登记、且意图 992 未覆盖的 staging 资产 https://api-staging.aimlapi.com 与 https://app-staging.aimlapi.com：先用 fact 995 泄露的 /docs-json?endpoint=internal/decisions&model=typesafe/jev 等内部端点 oracle 枚举 staging 内部路由，逐条测未授权业务/内部端点、调试与配置泄露（.en…（产出事实 1 条）
-7. 调用 Skill(api-recon) 系统性枚举 https://api.aimlapi.com/docs-json 的 schema 预言机（?endpoint=&model=）：遍历 internal/* 系列与 fact 993/995 泄露的全部 provider source key（openai/opentree/xai/google/alibaba/minimax/moonshot/baidu/togetherai 及 internal/decisions、internal/speech-to-text/submit 等）组合，构建完整的…（产出事实 1 条）
-8. 调用 Skill(case-web-9)（deepai.org 同目标「上游模型供应商API URL与API KEY明文」复盘）+ Skill(api-recon)+Skill(web-vuln-tactics)：对 aimlapi.com 做 Cloudflare 源站穿透/CF Access 绕过——从证书透明度(crt.sh)、被动 DNS、SPF/MX/TXT、mail/smtp/origin/direct 等子域与非 CF 的 A 记录、历史解析记录挖掘真实源站 IP；再以 Host: 头直连源站绕过 CF/WAF 与 dev/staging …（产出事实 2 条）
-9. 调用 Skill(api-recon)+Skill(case-web-9)：对 aimlapi.com 做被动子域枚举（crt.sh 证书透明度 + 常见命名 jenkins/gitlab/git/ci/cd/drone/argocd/k8s/vault/nexus/harbor/registry/minio/backup/db/redis/sentry/sonar）并逐个探测未授权访问、默认凭据与配置泄露，重点在 CI/CD 流水线、密钥库(Vault)、制品库中收割 .env / deploy 配置 / 上游 provider API KEY 明文与…（产出事实 1 条）
+1. 调用 Skill(performing-api-inventory-and-discovery) 对 https://api.aimlapi.com 做 OpenAI 兼容接口全量测绘与鉴权/越权矩阵：抓取 /openapi.json、/docs、/swagger、/redoc 与 /v1/* 路由（models、chat/completions、images/generations、audio、embeddings、threads、assistants、files、batches、usage、billing、finetune）逐条测未授权可达性、BOLA/越权与 CORS 组合（已实测 GET /v1/mod…（产出事实 1 条）
+2. 调用 Skill(reverse-engineering-malware-with-ghidra) + Skill(performing-api-inventory-and-discovery) 做公开渠道与前端源码的凭据泄露收割（与线上接口探测机理不同）：① 对已抓取的 https://aimlapi.com 及 hidden/docs 站 bundle、内联脚本、.map 做 Grep，匹配上游 key 模式（sk-、sk-ant-、AIza、xai-、hf_、r8_、Bearer）与 app_base_url/base_url/UPSTREAM/OPENAI_API_KEY/ANTHROPIC_API_KEY 明文；② 用 aimlapi 专属…（产出事实 1 条）
+3. 调用 Skill(performing-web-application-penetration-test)（vuln_patterns: ssrf_cloud）+ Skill(performing-api-inventory-and-discovery) 打 https://api.aimlapi.com 的服务端错误回显与 SSRF 面，直接逼出上游凭据：构造畸形/超长/非法 model、坏 JSON、无效 Authorization 触发异常分支，对比不同 provider 的报错差异，观察响应体/头是否回显上游 provider 名、上游 base URL 或 key；并对 url/image_url/audio_url/webhook 等参数测 SSRF，…（产出事实 1 条）
+4. 调用 Skill(performing-api-inventory-and-discovery) + Skill(performing-web-application-penetration-test) 测绘 AIML API 的【控制台/账户面】app.aimlapi.com 及 auth./admin./billing./pay.aimlapi.com（与在跑的 hidden 营销站、api 接口矩阵机理不同）：先用 Playwright/browser MCP 渲染 app.aimlapi.com 确认真实应用与前端 XHR，尝试自助注册/登录进入控制台，枚举 /app/keys、/keys、/api-keys、/providers、/models、/set…（产出事实 2 条）
+5. 调用 Skill(performing-api-inventory-and-discovery) + Skill(performing-web-application-penetration-test) 探测 AIML API 的【基础设施/监控子域】：grafana.aimlapi.com、prometheus.aimlapi.com、backend.aimlapi.com、dev.aimlapi.com、staging.aimlapi.com、s3.aimlapi.com（DNS 已枚举出但从未探测）。先以 Host 头区分是否为 Cloudflare 泛解析（逐个改 Host 请求 104.21.92.106/172.67.191.233 看响应差异）；对 …（产出事实 1 条）
+6. 调用 Skill(performing-api-inventory-and-discovery) + Skill(performing-web-application-penetration-test) 探测 fact 995 新登记、且意图 992 未覆盖的 staging 资产 https://api-staging.aimlapi.com 与 https://app-staging.aimlapi.com：先用 fact 995 泄露的 /docs-json?endpoint=internal/decisions&model=typesafe/jev 等内部端点 oracle 枚举 staging 内部路由，逐条测未授权业务/内部端点、调试与配置泄露（.en…（产出事实 1 条）
+7. 调用 Skill(performing-api-inventory-and-discovery) 系统性枚举 https://api.aimlapi.com/docs-json 的 schema 预言机（?endpoint=&model=）：遍历 internal/* 系列与 fact 993/995 泄露的全部 provider source key（openai/opentree/xai/google/alibaba/minimax/moonshot/baidu/togetherai 及 internal/decisions、internal/speech-to-text/submit 等）组合，构建完整的…（产出事实 1 条）
+8. 调用 Skill(case-web-9)（deepai.org 同目标「上游模型供应商API URL与API KEY明文」复盘）+ Skill(performing-api-inventory-and-discovery)+Skill(performing-web-application-penetration-test)：对 aimlapi.com 做 Cloudflare 源站穿透/CF Access 绕过——从证书透明度(crt.sh)、被动 DNS、SPF/MX/TXT、mail/smtp/origin/direct 等子域与非 CF 的 A 记录、历史解析记录挖掘真实源站 IP；再以 Host: 头直连源站绕过 CF/WAF 与 dev/staging …（产出事实 2 条）
+9. 调用 Skill(performing-api-inventory-and-discovery)+Skill(case-web-9)：对 aimlapi.com 做被动子域枚举（crt.sh 证书透明度 + 常见命名 jenkins/gitlab/git/ci/cd/drone/argocd/k8s/vault/nexus/harbor/registry/minio/backup/db/redis/sentry/sonar）并逐个探测未授权访问、默认凭据与配置泄露，重点在 CI/CD 流水线、密钥库(Vault)、制品库中收割 .env / deploy 配置 / 上游 provider API KEY 明文与…（产出事实 1 条）
 10. 调用 Skill(case-web-9)（同主题 CDN 跨租户直读复盘）+ Skill(wasm-cloud-saas-tactics) 深挖 https://cdn.aimlapi.com 的 S3 兼容对象存储面：fact 999 已证实其为 S3 风格对象存储（错误体 NoSuchKey XML + X-Amz-Id-2/X-Amz-Request-Id 头，CORS ACAO:*，对象键形如 /generations/<animal>/<ts>-<uuid>.<ext>），且无人测过。围绕「跨租户/未授权读取他人生成物」目标：枚举可列举的桶与目…（产出事实 1 条、漏洞 1 条）
 
 ## 关键事实与证据
@@ -56,14 +56,14 @@ description: 任务复盘《目标地址 https：//aimlapi.com》：渗透找出
 - `extract_data`：调用 62 次，失败 2 次；示例：C:\Users\Administrator\Desktop\ARTEX程序\data\tasks\10\recon\home.html；{"mode": "regex", "file_path": "C:\\Users\\Administrator\\Desktop\\ARTEX程序\\data\\tasks\\10\\i986\\docsjson.txt", "expression": "\"(/[a-zA-Z0-9_\\-/{}.]+)\":\\{…
 - `Grep`：调用 61 次，失败 5 次；示例：{"pattern": "sk-|sk-ant-|AIza|xai-|hf_|r8_|OPENAI_API_KEY|ANTHROPIC_API_KEY|api_key|apiKey|Bearer |base_url|baseUrl|UPSTREAM|_URL", "path": "C:\\Users\\Administ…；{"pattern": "(?i)(upstream|base_url|baseUrl|api_key|apiKey|OPENAI_API_KEY|ANTHROPIC|bearer|sk-[a-zA-Z0-9])", "path": "C:\\Users\\Administrator\\Desktop\\ARTEX程序…
 - `http_fuzz`：调用 55 次，失败 0 次；示例：{"url_template": "https://hidden.aimlapi.com/{{FUZZ}}", "payloads": ["login", "dashboard", "keys", "api-keys", "providers", "models", "settings", "admin", "app"…；{"url_template": "https://aimlapi-pricing-ssr.aimlapi-price-sync.workers.dev/{{FUZZ}}", "payloads": ["", "new.json", "new-models.js", "prices", "prices.json", "…
-- `Skill`：调用 33 次，失败 1 次；示例：{"name": "case-web-9"}；{"name": "api-recon"}
+- `Skill`：调用 33 次，失败 1 次；示例：{"name": "case-web-9"}；{"name": "performing-api-inventory-and-discovery"}
 - `Read`：调用 27 次，失败 7 次；示例：C:\Users\Administrator\Desktop\ARTEX程序\data\tasks\10\i987\recon_app\api_static.txt；i988\i988_extract_models\package\data\providers.json
 - `dns_probe`：调用 26 次，失败 0 次；示例：lookup；{"domain": "aimlapi.com", "mode": "subdomain_enum", "subdomains": ["api", "app", "hidden", "docs", "console", "dashboard", "admin", "dev", "staging", "internal"…
 
 ## 失败、误区与止损
 
-- 意图「调用 Skill(reverse-engineering)+Skill(api-recon)+Skill(exploit-kb-patterns)：人类指令的【最终定点逆向】，只打唯一未被覆盖的新面，不重跑已证伪战术。①【官方浏览器插件（核心新面）】在 Chrome Web Store / Edge Addons / Firefox Add-ons 检索并下载 AI/ML API 的官方扩展（关键词 "AI/ML API"、"aimlapi"、"aimlapi.com"、"ai-ml-api"），解包 .crx/.xpi（必要时用 browser MCP…」状态 paused：无显式原因，复用前先确认前置条件
-- 意图「调用 Skill(api-recon)+Skill(web-vuln-tactics)（vuln_patterns: auth_mfa/bola_idor）深挖事实 1017 已穿透 CF、可直连源站 15.235.43.160 但只测过未认证状态的 dev 环境控制面：以 Host: dev.aimlapi.com 直连源站渲染 https://dev.aimlapi.com/app（Nuxt3 dev 控制台，无需 CF Access）走完整自助注册/登录（auth-dev 后端 /v1/auth/*，含 dev Google OAuth clien…」状态 exhausted：无显式原因，复用前先确认前置条件
+- 意图「调用 Skill(reverse-engineering-malware-with-ghidra)+Skill(performing-api-inventory-and-discovery)+Skill(performing-cve-prioritization-with-kev-catalog)：人类指令的【最终定点逆向】，只打唯一未被覆盖的新面，不重跑已证伪战术。①【官方浏览器插件（核心新面）】在 Chrome Web Store / Edge Addons / Firefox Add-ons 检索并下载 AI/ML API 的官方扩展（关键词 "AI/ML API"、"aimlapi"、"aimlapi.com"、"ai-ml-api"），解包 .crx/.xpi（必要时用 browser MCP…」状态 paused：无显式原因，复用前先确认前置条件
+- 意图「调用 Skill(performing-api-inventory-and-discovery)+Skill(performing-web-application-penetration-test)（vuln_patterns: auth_mfa/bola_idor）深挖事实 1017 已穿透 CF、可直连源站 15.235.43.160 但只测过未认证状态的 dev 环境控制面：以 Host: dev.aimlapi.com 直连源站渲染 https://dev.aimlapi.com/app（Nuxt3 dev 控制台，无需 CF Access）走完整自助注册/登录（auth-dev 后端 /v1/auth/*，含 dev Google OAuth clien…」状态 exhausted：无显式原因，复用前先确认前置条件
 - 意图「调用 Skill(playwright-cli)/browser MCP 渲染并探测 Cookie 域指向的真实应用宿主 https://hidden.aimlapi.com（与营销站 aimlapi.com 非同源，疑似控制台/内部应用）：确认应用类型后枚举登录/注册/控制台路由（/login、/dashboard、/keys、/api-keys、/providers、/models、/settings、/admin）与前端 XHR，测未授权可达与垂直越权，重点定位「上游 provider 配置 / API Key 管理」页面是否匿名或低权限即可读——…」状态 exhausted：无显式原因，复用前先确认前置条件
 - `http_request` 出现 30 次工具错误：先核对参数、授权、网络与目标状态，不要原样重试。
 - `Bash` 出现 8 次工具错误：先核对参数、授权、网络与目标状态，不要原样重试。
@@ -80,11 +80,11 @@ description: 任务复盘《目标地址 https：//aimlapi.com》：渗透找出
 
 ## 本任务实际加载过的技能
 
-- `api-recon`：31 次
-- `web-vuln-tactics`：24 次
+- `performing-api-inventory-and-discovery`：31 次
+- `performing-web-application-penetration-test`：24 次
 - `wasm-cloud-saas-tactics`：9 次
 - `case-web-9`：5 次
-- `reverse-engineering`：3 次
+- `reverse-engineering-malware-with-ghidra`：3 次
 - `playwright-cli`：2 次
 
 ## 复用步骤

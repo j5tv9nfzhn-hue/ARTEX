@@ -16,7 +16,7 @@ description: 任务复盘《目标vpn代理网站 https：//civpn.com》：渗�
 
 ## 已验证的有效路径
 
-1. 对 https://civpn.com 做主站前端与接口测绘并取得【自有低权账号】的鉴权凭据，为后续越权与支付链提供可复现基线。调用 Skill(api-recon)：抓取 /en/、/zh/、/es/ 等全部语言目录静态页与全部 JS bundle，正则提取 API 基址与路由表，用 http_request/http_fuzz 验证 /api/v1/guest/comm/config（V2Board 指纹 app_description="V2Board is best!"）、/api/v1/guest/*、/api/v1/user/*、/api/v…（产出事实 3 条）
+1. 对 https://civpn.com 做主站前端与接口测绘并取得【自有低权账号】的鉴权凭据，为后续越权与支付链提供可复现基线。调用 Skill(performing-api-inventory-and-discovery)：抓取 /en/、/zh/、/es/ 等全部语言目录静态页与全部 JS bundle，正则提取 API 基址与路由表，用 http_request/http_fuzz 验证 /api/v1/guest/comm/config（V2Board 指纹 app_description="V2Board is best!"）、/api/v1/guest/*、/api/v1/user/*、/api/v…（产出事实 3 条）
 2. 对 https://civpn.com 的付费订阅开通链做业务逻辑审计并实际达成【未支付开通付费套餐】（目标 1713）。先用自有低权账号走完整下单流（POST /api/v1/user/order/save {plan_id,period} → /api/v1/user/order/checkout → 支付网关 → 回调），重点检查：支付网关是否在生产残留 testMode（GET 网关首页看 testMode 字段）、submit/notify 是否不验签或不校验签名与订单/金额绑定、订单状态机能否被伪造为已支付(status=3)、是否存在 co…（产出事实 6 条、漏洞 2 条）
 
 ## 关键事实与证据
@@ -53,7 +53,7 @@ description: 任务复盘《目标vpn代理网站 https：//civpn.com》：渗�
 
 - 意图「以【免费组账号 vs 已付费账号】做纵向付费校验对比，验证 civpn.com 上是否存在仅靠前端/plan_id 判断的付费专属内容或接口，能被低权免费账号直接读取或操作（目标 1712 的『绕过付费校验读取订阅相关数据』纵向维度）。做法：注册一个全新免费账号（POST /api/v1/passport/auth/register；若验证码受限，可复用 C:\Users\Administrator\Desktop\ARTEX程序\data\tasks\24\i1715、i1716 目录里已注册账号的凭据），用它与已付费账号（civpn_pay_audi…」状态 stopped：无显式原因，复用前先确认前置条件
 - 意图「对支付网关 https://pay.vpngap.com 做【无鉴权横向面】越权测试，目标是拿到【非授权用户】的订单/订阅数据或替他人改其订阅状态（目标 1712）。已知网关为自建 Express 应用（GET / → {"service":"VPNGap Pay","version":"1.0.0","testMode":true}）、既不验签也不绑定金额，POST /pay/{trade_no}/submit 仅带 address 即 5~8 秒后自动回调把订单置 status=3（fact 1718/1720），因此它的订单面极可能完全不校验归属。…」状态 stopped：无显式原因，复用前先确认前置条件
-- 意图「以自有低权账号对 https://civpn.com 用户面做越权矩阵（BOLA/IDOR/垂直绕过），目标是读取未授权用户的账户与订阅数据（目标 1712）。若无账号先用临时邮箱自行注册一个低权账号。调用 Skill(web-vuln-tactics) 并用 tactical_kb(vuln_patterns=bola_idor) 取手法：以裸 JWT authorization 头遍历 /api/v1/user/order/fetch?trade_no=、/api/v1/user/order/detail?id=、/api/v1/user/info?…」状态 stopped：无显式原因，复用前先确认前置条件
+- 意图「以自有低权账号对 https://civpn.com 用户面做越权矩阵（BOLA/IDOR/垂直绕过），目标是读取未授权用户的账户与订阅数据（目标 1712）。若无账号先用临时邮箱自行注册一个低权账号。调用 Skill(performing-web-application-penetration-test) 并用 tactical_kb(vuln_patterns=bola_idor) 取手法：以裸 JWT authorization 头遍历 /api/v1/user/order/fetch?trade_no=、/api/v1/user/order/detail?id=、/api/v1/user/info?…」状态 stopped：无显式原因，复用前先确认前置条件
 - 意图「扩展 civpn.com 资产面：子域枚举 + 源站 IP 还原 + 非 Cloudflare 服务面探测。已知 api.civpn.com 无 A 记录、主站为 Cloudflare 前置（301 → /en/），故 API/支付/邮件归档面板等真实服务面很可能不在常规命名或走源站直连。用 dns_probe/证书透明性枚举子域（api/civ-api/panel/pay/mail/sub/admin/user/node/dashboard 等 + www 前缀变体），对解析到的源站候选 IP 用 net_probe 扫描 80/443/3000/80…」状态 stopped：无显式原因，复用前先确认前置条件
 - `http_request` 出现 5 次工具错误：先核对参数、授权、网络与目标状态，不要原样重试。
 - `Bash` 出现 8 次工具错误：先核对参数、授权、网络与目标状态，不要原样重试。
@@ -63,8 +63,8 @@ description: 任务复盘《目标vpn代理网站 https：//civpn.com》：渗�
 ## 本任务实际加载过的技能
 
 - `case-web-info-leak-ato-unauth-20`：6 次
-- `web-vuln-tactics`：4 次
-- `api-recon`：1 次
+- `performing-web-application-penetration-test`：4 次
+- `performing-api-inventory-and-discovery`：1 次
 - `case-web-7`：1 次
 - `playwright-cli`：1 次
 

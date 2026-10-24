@@ -63,7 +63,7 @@ description: 任务复盘《目标VPN代理网站 https：//vpngap.com 与 https
 - 意图「以【免费组账号 vs 已付费账号】做纵向付费校验对比」「对支付网关做无鉴权横向面越权」「扩展资产面子域枚举 + 源站 IP 还原」状态 stopped：复用前先确认前置条件
 - `http_request` 出现 112 次工具错误、`Bash` 32+8 次、`net_probe` 18 次、`mcp__browser__browser_evaluate` 3 次：先核对参数、授权、网络与目标状态，不要原样重试
 - 同一请求上下文连续三次相同负反馈会触发 3-Strike 止损：必须换资源/参数/路径，或明确记录阻塞，禁止机械重放
-- 曾调用 Skill(playwright-cli) 的浏览器出口意图状态 exhausted：本平台浏览器自动化已改用 Skill(camoufox) + camoufox-cli，禁止回退 playwright/Chromium 路径
+- 曾调用 Skill(playwright-cli) 的浏览器出口意图状态 exhausted：本平台浏览器自动化已改用 原生工具 + camoufox-cli，禁止回退 playwright/Chromium 路径
 
 ## 人工提示与决策
 
@@ -75,8 +75,8 @@ description: 任务复盘《目标VPN代理网站 https：//vpngap.com 与 https
 ## 本矩阵任务实际加载过的技能
 
 - case-web-info-leak-ato-unauth-20：6 次（任务 #24 直接复用本矩阵前案）
-- web-vuln-tactics：4 次
-- api-recon：1 次
+- performing-web-application-penetration-test：4 次
+- performing-api-inventory-and-discovery：1 次
 - case-web-7：1 次
 - playwright-cli：1 次（现已由 camoufox 替代，禁止回退）
 

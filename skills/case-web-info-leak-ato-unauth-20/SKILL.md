@@ -17,7 +17,7 @@ description: 任务复盘《目标VPN代理网站 https：//vpngap.com》：渗�
 ## 已验证的有效路径
 
 1. 把 mail.vpngap.com:3000 的 Flask 邮件面板当作【服务器端出口/SSRF 中转】去够被封禁的 api.vpngap.com：面板所在主机 175.41.26.30 与 API 源站可能同机房、内网不受出口 IP 封禁。先用 http_request 枚举面板的出站请求类路由（/api/send 的 webhook/url 字段、/api/preview、/api/fetch、/api/proxy、/api/test、附件/图片 URL 渲染等），确认是否存在服务端可控出站请求；一旦确认存在，就用该能力以服务器身份取回 http:…（产出事实 3 条）
-2. 在可直接访问的主站 https://vpngap.com（Cloudflare 后、主页已测绘）深挖【嵌入式节点/订阅/代理地址】：调用 Skill(api-recon) 抓 robots.txt、sitemap.xml 及 /en/、/zh/、/es/ 等全部语言目录下所有静态页与 blog/tutorial/plan/download/account 页，再用 extract_data/正则全量搜索 vmess://、ss://、trojan://、vless://、hysteria2://、subscribe?token=[已脱敏] IP:端口、c…（产出事实 2 条）
+2. 在可直接访问的主站 https://vpngap.com（Cloudflare 后、主页已测绘）深挖【嵌入式节点/订阅/代理地址】：调用 Skill(performing-api-inventory-and-discovery) 抓 robots.txt、sitemap.xml 及 /en/、/zh/、/es/ 等全部语言目录下所有静态页与 blog/tutorial/plan/download/account 页，再用 extract_data/正则全量搜索 vmess://、ss://、trojan://、vless://、hysteria2://、subscribe?token=[已脱敏] IP:端口、c…（产出事实 2 条）
 
 ## 关键事实与证据
 
@@ -50,7 +50,7 @@ description: 任务复盘《目标VPN代理网站 https：//vpngap.com》：渗�
 - `http_fuzz`：调用 37 次，失败 1 次；示例：{"concurrency": 12, "filter_status": [404], "method": "GET", "payloads": ["api", "api/", "api/v1", "api/v1/", "api/users", "api/user", "api/config", "api/health…；{"concurrency": 12, "filter_status": [404], "method": "GET", "payloads": ["api", "api/", "api/v1", "api/pay", "api/payment", "api/create-payment", "api/checkout…
 - `mcp__browser__browser_evaluate`：调用 35 次，失败 3 次；示例：{"function": "() => { const keys = Object.keys(window).filter(k => /api|config|base|url|token|auth|vpn/i.test(k)); return {keys: keys, env: Object.keys(window).…；{"function": "() => { const s = window.SiteAPI; return { type: typeof s, keys: Object.keys(s||{}), own: Object.getOwnPropertyNames(s||{}), proto: s ? Object.get…
 - `node_detail`：调用 30 次，失败 0 次；示例：{"id": 1413}；{"id": 1414}
-- `Skill`：调用 28 次，失败 0 次；示例：{"name": "case-web-7"}；{"name": "reverse-engineering"}
+- `Skill`：调用 28 次，失败 0 次；示例：{"name": "case-web-7"}；{"name": "reverse-engineering-malware-with-ghidra"}
 
 ## 失败、误区与止损
 
@@ -82,11 +82,11 @@ description: 任务复盘《目标VPN代理网站 https：//vpngap.com》：渗�
 
 ## 本任务实际加载过的技能
 
-- `web-vuln-tactics`：16 次
-- `api-recon`：10 次
+- `performing-web-application-penetration-test`：16 次
+- `performing-api-inventory-and-discovery`：10 次
 - `case-web-7`：10 次
 - `case-web-13`：4 次
-- `exploit-kb-patterns`：3 次
+- `performing-cve-prioritization-with-kev-catalog`：3 次
 - `playwright-cli`：1 次
 
 ## 复用步骤

@@ -16,8 +16,8 @@ description: 任务复盘《目标 https：//www.vpnhood.com/zh/free-vpn/》：�
 
 ## 已验证的有效路径
 
-1. 对 https://www.vpnhood.com 做站点侧接口面测绘：抓取 /zh/free-vpn/ 及主要页面与 JS/静态资源，提取引用的 API 地址、子域、下载链接与 login/account 入口；响应头 Server: cloudflare 且带 x-github-request-id/x-fastly/varnish 特征，需确认是否 GitHub Pages 托管并检查其源仓库与 github.io 备用域暴露面，为定位后端服务奠基。建议调用 Skill(api-recon)。（产出事实 1 条）
-2. 枚举 vpnhood.com 的子域与关联基础设施（DNS/证书透明度/常见命名 api、token、vpn、panel、dashboard、admin 等），定位免费 VPN 服务的后端 API/Token 服务器与运营面板，并对存活 HTTP 服务做基础指纹与探测，为后续越权测试提供真实目标。建议调用 Skill(scopesentry-mcp) 下发子域扫描，或原生 DNS/net_probe 查询。（产出事实 1 条）
+1. 对 https://www.vpnhood.com 做站点侧接口面测绘：抓取 /zh/free-vpn/ 及主要页面与 JS/静态资源，提取引用的 API 地址、子域、下载链接与 login/account 入口；响应头 Server: cloudflare 且带 x-github-request-id/x-fastly/varnish 特征，需确认是否 GitHub Pages 托管并检查其源仓库与 github.io 备用域暴露面，为定位后端服务奠基。建议调用 Skill(performing-api-inventory-and-discovery)。（产出事实 1 条）
+2. 枚举 vpnhood.com 的子域与关联基础设施（DNS/证书透明度/常见命名 api、token、vpn、panel、dashboard、admin 等），定位免费 VPN 服务的后端 API/Token 服务器与运营面板，并对存活 HTTP 服务做基础指纹与探测，为后续越权测试提供真实目标。建议调用 原生工具 下发子域扫描，或原生 DNS/net_probe 查询。（产出事实 1 条）
 3. 对 https://api.vpnhood.com 做实战化鉴权/越权测试：完整拉取公开 OpenAPI(/openapi/v1.json) 枚举全部端点与鉴权要求，直测未授权访问与 BOLA/IDOR（projects/{projectId}/access-tokens、servers、team/users、farm-token-repos、export-csv 等 id 型接口），设法取得有效 Bearer（signup、Google idToken 校验缺陷、managementCode 匿名兑换），并测管理侧高危接口（servers/{id}/i…（产出事实 1 条）
 4. 对 https://account.vpnhood.com 与 https://whmcs-dev.vpnhood.com 的 WHMCS 认证面做攻击实测：聚焦自定义 Google 登录插件 /modules/addons/vpnhoodsignin/api.php（仅接受 POST；client_id=866504584967-tqcpfv49rihl6rr2q7vobkhcvr0oth9k.apps.googleusercontent.com 已泄露），测试 OAuth state/redirect_uri 操纵、idToken 重放与认证逻辑绕过…（产出事实 2 条）
 5. 深挖 console.vpnhood.com（VpnHood! MANAGER）与 mcode/mcode2（VpnHood! SELLER）三个 Azure SWA + Blazor WASM 管理/销售面板：抓取 /_framework/*.dll、staticwebapp.config.json、appsettings*.json 及 SWA 默认域（proud-forest-0346aa81e / purple-hill-0d196cd1e / black-sea-078917f1e.4.azurestaticapps.net）资源，反编译 WA…（产出事实 2 条）
@@ -59,9 +59,9 @@ description: 任务复盘《目标 https：//www.vpnhood.com/zh/free-vpn/》：�
 - 意图「对 674/680 确认的 VpnHood 真 Portal API（https://account.vpnhood.com/modules/addons/vpnhoodiap/api.php，匿名可达、无 /api.php 的 Invalid IP 门禁）从枚举推进到利用层：①认证深挖——/v1/auth/sessions 参数裁剪与错误语义差异（packageName、store 枚举 googleplay|appstore|microsoft|web）、方法/内容类型/Host 混淆，找未授权会话或降门槛路径；②password-reset 全流程…」状态 stopped：无显式原因，复用前先确认前置条件
 - 意图「获取 vpnhood 平台『真实低权凭据』并随即跑越权矩阵：①用 #588 已注册的真实 Firebase 账号（ph.sec.i588@mailinator.com / Ph!Pentest588x7，项目 paymenthood3，可直接换真实 idToken）直测 api.vpnhood.com 的 /api/authentication/signin|signup 对真实 idToken 的接受性（观察 aud/iss 校验差异）；②从 vpnhood 客户端制品提取其 Firebase/Google 配置（公开 signin-url 泄露的 c…」状态 exhausted：无显式原因，复用前先确认前置条件
 - 意图「历史快照与第三方泄露源搜索（突破“无匿名凭据”瓶颈；与 569 分工——569 审官方源码，本方向走历史数据与外部泄露）：①Wayback/CDX 抓取 api.vpnhood.com（openapi/scalar 文档）、console/mcode/mcode2 的 appsettings*.json/staticwebapp.config.json 及历史门户（my、account-stage 等）快照，diff 找已下线配置、旧端点与泄露密钥；②用 grep.app/sourcegraph/搜索引擎检索 VpnHood/GrayMint/VpnHo…」状态 exhausted：无显式原因，复用前先确认前置条件
-- 意图「对 paymenthood.com 支付基础设施（checkout/api/console/crypto/docs 子域与 Firebase 项目 paymenthood3）做越权与配置缺陷测试：核验 Firebase RTDB/Firestore 公开读取规则与前端配置泄露、checkout 订单流程 IDOR/价格篡改/支付回调伪造，目标是支付逻辑漏洞或敏感数据泄露。建议调用 Skill(web-vuln-tactics)，并用 tactical_kb(past_findings) 检索历史同类支付漏洞打法。」状态 stopped：无显式原因，复用前先确认前置条件
-- 意图「检索 VpnHood 的 GitHub 开源仓库（github.com/vpnhood 组织、发布物与公开文档）及公开资料，研究免费服务 token 下发、服务器发现与鉴权模型，梳理可对活体服务实测的接口与越权/提权候选（如 token 生成、服务器列表接口的鉴权缺陷）。建议调用 Skill(exploit-kb-patterns) 与 Skill(reverse-engineering)。」状态 exhausted：无显式原因，复用前先确认前置条件
-- 意图「从 www.vpnhood.com/zh/free-vpn/ 页面的下载链接获取 Windows/Android 免费 VPN 客户端安装包，用 binary_inspect 与 Skill(reverse-engineering) 做静态逆向，提取内嵌的 API/Token 服务器地址、服务器节点列表、密钥与协议细节，直接指向『可用节点/代理地址』目标。」状态 exhausted：无显式原因，复用前先确认前置条件
+- 意图「对 paymenthood.com 支付基础设施（checkout/api/console/crypto/docs 子域与 Firebase 项目 paymenthood3）做越权与配置缺陷测试：核验 Firebase RTDB/Firestore 公开读取规则与前端配置泄露、checkout 订单流程 IDOR/价格篡改/支付回调伪造，目标是支付逻辑漏洞或敏感数据泄露。建议调用 Skill(performing-web-application-penetration-test)，并用 tactical_kb(past_findings) 检索历史同类支付漏洞打法。」状态 stopped：无显式原因，复用前先确认前置条件
+- 意图「检索 VpnHood 的 GitHub 开源仓库（github.com/vpnhood 组织、发布物与公开文档）及公开资料，研究免费服务 token 下发、服务器发现与鉴权模型，梳理可对活体服务实测的接口与越权/提权候选（如 token 生成、服务器列表接口的鉴权缺陷）。建议调用 Skill(performing-cve-prioritization-with-kev-catalog) 与 Skill(reverse-engineering-malware-with-ghidra)。」状态 exhausted：无显式原因，复用前先确认前置条件
+- 意图「从 www.vpnhood.com/zh/free-vpn/ 页面的下载链接获取 Windows/Android 免费 VPN 客户端安装包，用 binary_inspect 与 Skill(reverse-engineering-malware-with-ghidra) 做静态逆向，提取内嵌的 API/Token 服务器地址、服务器节点列表、密钥与协议细节，直接指向『可用节点/代理地址』目标。」状态 exhausted：无显式原因，复用前先确认前置条件
 - `http_request` 出现 10 次工具错误：先核对参数、授权、网络与目标状态，不要原样重试。
 - `Bash` 出现 7 次工具错误：先核对参数、授权、网络与目标状态，不要原样重试。
 - `Grep` 出现 5 次工具错误：先核对参数、授权、网络与目标状态，不要原样重试。
@@ -78,10 +78,10 @@ description: 任务复盘《目标 https：//www.vpnhood.com/zh/free-vpn/》：�
 
 ## 本任务实际加载过的技能
 
-- `web-vuln-tactics`：16 次
-- `reverse-engineering`：8 次
-- `api-recon`：4 次
-- `exploit-kb-patterns`：2 次
+- `performing-web-application-penetration-test`：16 次
+- `reverse-engineering-malware-with-ghidra`：8 次
+- `performing-api-inventory-and-discovery`：4 次
+- `performing-cve-prioritization-with-kev-catalog`：2 次
 - `playwright-cli`：2 次
 - `scopesentry-mcp`：1 次
 
