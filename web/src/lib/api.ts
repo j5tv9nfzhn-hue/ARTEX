@@ -1200,18 +1200,9 @@ export const api = {
   // 级联删除：该供应商名下的模型一并删掉，models_deleted = 被带走的模型数。
   deleteLLMProvider: (id: string) =>
     del<{ deleted: string; models_deleted?: number }>(`/llm/providers/${id}`),
-  // 把一条模型挪到另一家供应商下（端点随之改变，能力快照会被作废）。
+  // 把一条模型挪到另一家供应商下（端点随之改变）。
   moveLLMProfileProvider: (id: string, providerID: number) =>
     post<{ ok: boolean }>(`/llm/profiles/${id}/provider`, { provider_id: providerID }),
-  // 手动重新探测模型能力（窗口 / 最大输出 / 模态 / 推理档位）。
-  probeLLMProfile: (id: string) =>
-    post<{
-      ok: boolean;
-      error?: string;
-      caps?: LLMProfile["caps"];
-      effective_context_window_k?: number;
-      context_window_detected?: boolean;
-    }>(`/llm/profiles/${id}/probe`, {}),
   activateLLMProfile: (id: string) => post<{ ok: boolean }>("/llm/profiles/active", { id: Number(id) }),
   // 轮询链的实际顺序 + 各配置的熔断状态。
   llmPool: () => get<LLMPoolStatus>("/llm/pool"),

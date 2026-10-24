@@ -65,25 +65,35 @@ func TestDecideMaxTokens(t *testing.T) {
 		wantStandDown bool
 	}{
 		{
-			// 常见路径：200K 窗口、32K 请求、短输入 → 什么都不改。
-			name:          "within-limits",
+			// 用户没填上限：harness 兜底发来的 32768 被清回 0，字段省略，
+			// 由端点自己的默认值决定——不再把输出锁死在 32K。
+			name:          "upstream-default",
 			cfg:           Config{ContextWindowK: 200},
 			promptChars:   8000, // est 2007
+			asked:         32768,
+			wantEffective: 0,
+			wantReason:    "upstream_default",
+		},
+		{
+			// Anthropic 的 max_tokens 是必填字段，清成 0 会被兜成 8192，故保持原样。
+			name:          "anthropic-keeps-request",
+			cfg:           Config{ContextWindowK: 200, Format: llm.FormatAnthropic},
+			promptChars:   8000,
 			asked:         32768,
 			wantEffective: 32768,
 			wantReason:    "within_limits",
 		},
 		{
-			// 模型只能出 8K，配置写了 64K：按模型上限压下来（这正是真实网关上 400 的成因）。
-			name:          "model-max-output",
-			cfg:           Config{ContextWindowK: 200, MaxOutputDetected: 8192},
+			// 窗口够、用户手填了 64K：按手填值发，不再被任何「模型上限」压回去。
+			name:          "user-filled-kept",
+			cfg:           Config{ContextWindowK: 200, MaxTokens: 65536},
 			promptChars:   8000,
 			asked:         65536,
-			wantEffective: 8192,
-			wantReason:    "model_max_output",
+			wantEffective: 65536,
+			wantReason:    "within_limits",
 		},
 		{
-			// 配置没超模型能力，但长输入把窗口吃掉大半：按剩余空间压。
+			// 长输入把窗口吃掉大半：按剩余空间压（与模型自身能力无关）。
 			name:          "window-headroom",
 			cfg:           Config{ContextWindowK: 32},
 			promptChars:   4000, // est 1007 → headroom = 32000-1007-2048 = 28945
@@ -114,7 +124,7 @@ func TestDecideMaxTokens(t *testing.T) {
 		{
 			// 小上限保持小：内部摘要（800）绝不被抬到 4096。
 			name:          "never-raise",
-			cfg:           Config{ContextWindowK: 200, MaxOutputDetected: 8192},
+			cfg:           Config{ContextWindowK: 200},
 			promptChars:   4000,
 			asked:         800,
 			wantEffective: 800,
@@ -128,24 +138,6 @@ func TestDecideMaxTokens(t *testing.T) {
 			asked:         0,
 			wantEffective: 0,
 			wantReason:    "unset",
-		},
-		{
-			// 被模型能力压到 4K 以下是真上限，照发，不做 floor 保护。
-			name:          "small-model-cap-kept",
-			cfg:           Config{ContextWindowK: 200, MaxOutputDetected: 1024},
-			promptChars:   4000,
-			asked:         32000,
-			wantEffective: 1024,
-			wantReason:    "model_max_output",
-		},
-		{
-			// 两条约束同时命中，取更小的那条。
-			name:          "both-constraints",
-			cfg:           Config{ContextWindowK: 32, MaxOutputDetected: 8192},
-			promptChars:   84000, // est ≈ 21007 → headroom = 32000-21007-2048 = 8945 → 仍大于 8192
-			asked:         32768,
-			wantEffective: 8192,
-			wantReason:    "model_max_output",
 		},
 	}
 	for _, c := range cases {
@@ -190,23 +182,24 @@ func (p *maxtokensCaptureProvider) Complete(_ context.Context, req llm.Completio
 }
 
 func TestClampProviderAppliesDecision(t *testing.T) {
+	// 窗口装得下：请求原样透传，不再按任何「模型输出上限」压。
 	inner := &maxtokensCaptureProvider{}
-	prov := &clampProvider{inner: inner, cfg: Config{ContextWindowK: 200, MaxOutputDetected: 4096}}
+	prov := &clampProvider{inner: inner, cfg: Config{ContextWindowK: 200}}
 
 	_, _, _, err := prov.Complete(context.Background(), asciiReq(4000, 32000))
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if inner.got.MaxTokens != 4096 {
-		t.Fatalf("inner MaxTokens = %d, want 4096（应被模型上限钳制）", inner.got.MaxTokens)
+	if inner.got.MaxTokens != 32000 {
+		t.Fatalf("inner MaxTokens = %d, want 32000（无上限钳制）", inner.got.MaxTokens)
 	}
 
-	// 流式走同一套决策。
+	// 窗口装不下：按余量往下压，流式走同一套决策。
 	inner2 := &maxtokensCaptureProvider{}
-	sp := &clampProvider{inner: inner2, cfg: Config{ContextWindowK: 200, MaxOutputDetected: 4096}}
+	sp := &clampProvider{inner: inner2, cfg: Config{ContextWindowK: 32}}
 	for range sp.Stream(context.Background(), asciiReq(4000, 32000)) {
 	}
-	if inner2.got.MaxTokens != 4096 {
-		t.Fatalf("stream inner MaxTokens = %d, want 4096", inner2.got.MaxTokens)
+	if inner2.got.MaxTokens != 28945 {
+		t.Fatalf("stream inner MaxTokens = %d, want 28945（按窗口余量钳制）", inner2.got.MaxTokens)
 	}
 }

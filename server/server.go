@@ -516,14 +516,9 @@ func (s *Server) loadLLMConfig() (agent.Config, bool) {
 	}
 	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
 	cfg.RatePerSecond, cfg.RatePerMinute = p.RatePerSecond, p.RatePerMinute
-	// 窗口用「实际」而非「声明」：实测值优先，用户声明只在更小时生效。
-	// 这条是上下文压缩能否按时触发的关键——线上曾经因为声明 1000K、实际 128K
-	// 让阈值停在 800K，8 天一次都没压过。
-	cfg.ContextWindowK = p.EffectiveContextWindowK()
-	cfg.ContextWindowDetected = p.ContextWindowDetected()
-	// 输出上限同理：探测到的模型上限只用来给请求的 max_tokens 封顶，
-	// 不参与压缩阈值（见 agent/maxtokens.go）。
-	cfg.MaxOutputDetected = p.MaxOutputTokens()
+	// 窗口只认用户手填的值（留空则由 CompactionWindow 用默认值）：不再有任何
+	// 探测值参与，填 1000K 就按 1000K 压缩。
+	cfg.ContextWindowK = p.ContextWindowK
 	cfg.ThinkingType = p.ThinkingType
 	cfg.ReasoningEffort = p.ReasoningEffort
 	cfg.Stream = p.Streaming
@@ -697,13 +692,8 @@ func (s *Server) loadProfileConfig(id int64) (agent.Config, bool) {
 	}
 	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
 	cfg.RatePerSecond, cfg.RatePerMinute = p.RatePerSecond, p.RatePerMinute
-	// 同 loadLLMConfig：窗口取「实测优先、声明当上限」，否则手填错一个数字
-	// 就会让压缩阈值停在永远够不到的地方。
-	cfg.ContextWindowK = p.EffectiveContextWindowK()
-	cfg.ContextWindowDetected = p.ContextWindowDetected()
-	// 输出上限同理：探测到的模型上限只用来给请求的 max_tokens 封顶，
-	// 不参与压缩阈值（见 agent/maxtokens.go）。
-	cfg.MaxOutputDetected = p.MaxOutputTokens()
+	// 同 loadLLMConfig：窗口只认用户手填的值。
+	cfg.ContextWindowK = p.ContextWindowK
 	cfg.ThinkingType = p.ThinkingType
 	cfg.ReasoningEffort = p.ReasoningEffort
 	cfg.Stream = p.Streaming
@@ -1188,7 +1178,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/llm/profiles/{id}", s.pgDeleteProfile)
 	mux.HandleFunc("POST /api/llm/profiles/active", s.pgActivateProfile)
 	// 能力探测：窗口/输出/模态/推理档位从供应商端点取，替代手填。
-	mux.HandleFunc("POST /api/llm/profiles/{id}/probe", s.pgProbeProfile)
 	// 模型改挂供应商（建错位置 / 回填后手工归并）。
 	mux.HandleFunc("POST /api/llm/profiles/{id}/provider", s.pgMoveProfileProvider)
 	// 供应商：模型的上游端点。旧接口 /api/llm/profiles 继续可用且返回扁平配置，

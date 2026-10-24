@@ -76,18 +76,6 @@ function cooldownText(secs: number) {
   return `${Math.ceil(secs / 60)}min`;
 }
 
-// 一条模型实际会发出去的输出上限。真正调用时后端还会再按「窗口 − 输入 − margin」
-// 钳一次（只降不升、溢出即放弃钳制交给溢出恢复），这里只推演「配置 vs 模型上限」
-// 这一层——它正是用户在设置页能直接改坏的那一层：填超了会被静默压到上限，
-// 界面上必须看得见压成了多少，否则「我明明填了 64K」会变成长期的口径纠纷。
-function effectiveMaxOutput(p: LLMProfile): { value: number; cap: number; configured: number; capped: boolean } {
-  const configured = Math.max(0, p.max_tokens ?? 0);
-  const cap = Math.max(0, p.caps?.max_output_tokens ?? 0);
-  if (configured <= 0) return { value: cap, cap, configured, capped: false };
-  if (cap <= 0) return { value: configured, cap, configured, capped: false };
-  return { value: Math.min(configured, cap), cap, configured, capped: configured > cap };
-}
-
 // 一个模型在卡片上显示的「是否正常」。没填 Key 的模型根本发不出请求，比熔断更该
 // 先说；其余状态来自轮询的熔断记录（轮询关着时不会产生新记录，此时「正常」=
 // 没有已知故障）。文案走 i18n（llmPage.health.*），所以把 t 传进来由调用方注入。
@@ -593,7 +581,6 @@ function ModelSheet({
   const [retry, setRetry] = React.useState<LLMRetryOverride>(ZERO_OVERRIDE); // 本模型的重试覆盖;全 0=跟随全局
   // 声明的扩展输入模态(image/audio/pdf);空数组 = 未声明,后端按模型名保守推断。
   const [modalities, setModalities] = React.useState<ExtraModality[]>([]);
-  const [probing, setProbing] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [models, setModels] = React.useState<string[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
@@ -642,13 +629,6 @@ function ModelSheet({
   const endpoint = providers.find((v) => v.id === pid);
   const format = endpoint?.format ?? "anthropic";
   const profileId = profile ? Number(profile.id) : undefined;
-  // 生效上限跟随输入框实时推演（而不是等保存后回读），否则用户改了数字却看不到
-  // 「其实会被压到多少」，这条提示就白写了。cap 来自能力快照，没探测过时为 0。
-  const cap = Math.max(0, profile?.caps?.max_output_tokens ?? 0);
-  const asked = Math.max(0, Number(maxTokens) || 0);
-  const effValue = asked > 0 ? (cap > 0 ? Math.min(asked, cap) : asked) : cap;
-  const capped = asked > 0 && cap > 0 && asked > cap;
-
   async function loadModels() {
     if (loadingModels) return;
     setLoadingModels(true);
@@ -675,26 +655,6 @@ function ModelSheet({
       toast.error(t("profile.toast.loadModelsError", { msg: (e as Error).message }));
     } finally {
       setLoadingModels(false);
-    }
-  }
-
-  // 手动重新探测：窗口 / 最大输出 / 模态 / 推理档位。成功后重新拉列表，
-  // 让「生效上限」与压缩口径立刻按新能力显示。
-  async function reprobe() {
-    if (!profile || probing) return;
-    setProbing(true);
-    try {
-      const r = await api.probeLLMProfile(profile.id);
-      if (r.ok) {
-        toast.success(t("model.reprobeOk", { k: Math.round(r.effective_context_window_k ?? 0) }));
-        onSaved(profile.id);
-      } else {
-        toast.error(t("model.reprobeFailed", { msg: r.error ?? t("profile.toast.unknown") }));
-      }
-    } catch (e) {
-      toast.error(t("model.reprobeFailed", { msg: (e as Error).message }));
-    } finally {
-      setProbing(false);
     }
   }
 
@@ -916,44 +876,6 @@ function ModelSheet({
               />
             </div>
 
-            {/* 能力探测结果 + 重新探测按钮。快照存在 settings 里而不是列上，
-                这里的值就是压缩与上限实际会用的那一份。 */}
-            <div className="grid gap-1 border-t pt-3 text-xs">
-              {profile?.caps?.context_tokens ? (
-                <p className="text-muted-foreground leading-relaxed">
-                  {t("profile.caps.detected")}：
-                  {Math.round((profile.caps.context_tokens ?? 0) / 1000)}K
-                  {profile.caps.max_output_tokens ? ` · ${t("profile.caps.output")} ${profile.caps.max_output_tokens}` : ""}
-                  {profile.caps.input_modalities?.length
-                    ? ` · ${t("profile.caps.modalities")} ${profile.caps.input_modalities.join(" / ")}`
-                    : ""}
-                  {profile.caps.reasoning
-                    ? ` · ${t("profile.caps.reasoning")}${
-                        profile.caps.reasoning_efforts?.length ? " " + profile.caps.reasoning_efforts.join(" / ") : ""
-                      }`
-                    : ""}
-                  {profile.caps.source ? ` · ${profile.caps.source}` : ""}
-                  {profile.effective_context_window_k
-                    ? ` · ${t("profile.caps.effective")} ${profile.effective_context_window_k}K`
-                    : ""}
-                </p>
-              ) : (
-                <p className="text-muted-foreground leading-relaxed">{t("model.noCaps")}</p>
-              )}
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground">{profile?.caps?.probed_at ?? ""}</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7"
-                  disabled={!profile || probing}
-                  onClick={() => void reprobe()}
-                >
-                  {probing ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
-                  {t("model.reprobe")}
-                </Button>
-              </div>
-            </div>
           </div>
 
           <div className="grid gap-3 rounded-lg border p-3">
@@ -1006,14 +928,6 @@ function ModelSheet({
                 placeholder="0"
               />
             </div>
-            {/* 生效上限：填超了会被模型上限压回去，界面上必须看得见压成了多少。 */}
-            <p className="text-muted-foreground text-xs leading-relaxed">
-              {capped
-                ? t("model.effectiveMaxCapped", { configured: asked, cap, n: effValue })
-                : effValue > 0
-                  ? t("model.effectiveMax", { n: effValue, configured: asked > 0 ? asked : cap, cap })
-                  : t("model.effectiveMaxUnknown")}
-            </p>
             <div className="flex items-center justify-between gap-4 border-t pt-3">
               <div className="grid gap-0.5">
                 <Label className="text-sm">{t("profile.maxTokensField.label")}</Label>
@@ -1105,27 +1019,23 @@ function ProviderCard({
   models,
   health,
   poolOn,
-  probingId,
   onEditProvider,
   onDeleteProvider,
   onAddModel,
   onEditModel,
   onDeleteModel,
   onActivate,
-  onProbe,
 }: {
   provider: LLMProvider | null;
   models: LLMProfile[];
   health: Map<string, LLMPoolMember>;
   poolOn: boolean;
-  probingId: string | null;
   onEditProvider: (v: LLMProvider) => void;
   onDeleteProvider: (v: LLMProvider) => void;
   onAddModel: (v: LLMProvider | null) => void;
   onEditModel: (p: LLMProfile) => void;
   onDeleteModel: (p: LLMProfile) => void;
   onActivate: (p: LLMProfile) => void;
-  onProbe: (p: LLMProfile) => void;
 }) {
   const t = useTranslations("llmPage");
 
@@ -1224,7 +1134,7 @@ function ProviderCard({
       <div className="divide-y">
         {models.map((p) => {
           const h = healthOf(p);
-          const eff = effectiveMaxOutput(p);
+          const eff = Math.max(0, p.max_tokens ?? 0);
           return (
             // biome-ignore lint/a11y/useSemanticElements: 行内含自己的操作按钮，用原生 <button> 会造成按钮嵌套（非法 HTML）
             <div
@@ -1258,12 +1168,8 @@ function ProviderCard({
                 </div>
                 <code className="mt-0.5 block truncate font-mono text-muted-foreground text-xs">{p.model}</code>
                 <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground text-xs">
-                  {(p.effective_context_window_k || p.context_window_k) && (
-                    <span>{t("card.windowK", { k: p.effective_context_window_k ?? p.context_window_k ?? 0 })}</span>
-                  )}
-                  {/* 输出上限显示「生效值」而不是原样的配置值：两者不一致时用户
-                      看到的就是真正发出去的那个数。 */}
-                  {eff.value > 0 && <span>{t("card.maxTokens", { n: eff.value })}</span>}
+                  {p.context_window_k ? <span>{t("card.windowK", { k: p.context_window_k })}</span> : null}
+                  {eff > 0 && <span>{t("card.maxTokens", { n: eff })}</span>}
                   {p.reasoning_effort && (
                     <span>
                       {t("card.thinking", {
@@ -1293,24 +1199,6 @@ function ProviderCard({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-7"
-                  aria-label={t("model.reprobe")}
-                  title={t("model.reprobe")}
-                  disabled={probingId === p.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onProbe(p);
-                  }}
-                >
-                  {probingId === p.id ? (
-                    <Loader2Icon className="size-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCwIcon className="size-3.5" />
-                  )}
-                </Button>
                 <Button
                   size="sm"
                   variant="outline"
@@ -1368,7 +1256,6 @@ export default function LLMPage() {
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
-  const [probingId, setProbingId] = React.useState<string | null>(null);
   // 待确认删除的供应商。非空 = 确认框打开；删除逻辑本身不依赖这个 state。
   const [deletingProvider, setDeletingProvider] = React.useState<LLMProvider | null>(null);
 
@@ -1482,24 +1369,6 @@ export default function LLMPage() {
     }
   }
 
-  async function probe(p: LLMProfile) {
-    if (probingId) return;
-    setProbingId(p.id);
-    try {
-      const r = await api.probeLLMProfile(p.id);
-      if (r.ok) {
-        toast.success(t("model.reprobeOk", { k: Math.round(r.effective_context_window_k ?? 0) }));
-        await load();
-      } else {
-        toast.error(t("model.reprobeFailed", { msg: r.error ?? t("profile.toast.unknown") }));
-      }
-    } catch (e) {
-      toast.error(t("model.reprobeFailed", { msg: (e as Error).message }));
-    } finally {
-      setProbingId(null);
-    }
-  }
-
   const poolOn = pool?.enabled ?? false;
 
   return (
@@ -1539,14 +1408,12 @@ export default function LLMPage() {
                 models={grouped.byProv.get(v.id) ?? []}
                 health={health}
                 poolOn={poolOn}
-                probingId={probingId}
                 onEditProvider={openProvider}
                 onDeleteProvider={(x) => void removeProvider(x)}
                 onAddModel={(x) => openModel(null, x?.id ?? "")}
                 onEditModel={(p) => openModel(p, p.provider_id ?? "")}
                 onDeleteModel={(p) => void removeModel(p)}
                 onActivate={(p) => void activate(p)}
-                onProbe={(p) => void probe(p)}
               />
             ))}
             {grouped.orphans.length > 0 && (
@@ -1555,14 +1422,12 @@ export default function LLMPage() {
                 models={grouped.orphans}
                 health={health}
                 poolOn={poolOn}
-                probingId={probingId}
                 onEditProvider={openProvider}
                 onDeleteProvider={() => undefined}
                 onAddModel={(x) => openModel(null, x?.id ?? "")}
                 onEditModel={(p) => openModel(p, "")}
                 onDeleteModel={(p) => void removeModel(p)}
                 onActivate={(p) => void activate(p)}
-                onProbe={(p) => void probe(p)}
               />
             )}
             {providers.length === 0 && grouped.orphans.length === 0 && (

@@ -2135,17 +2135,10 @@
     },
     "model": {
       "activate": "设为激活",
-      "effectiveMax": "生效上限 {n} token（配置 {configured}、模型上限 {cap}，取小）",
-      "effectiveMaxCapped": "配置 {configured} 超过模型上限 {cap}，实际按 {n} 发送",
-      "effectiveMaxUnknown": "生效上限由服务端默认值决定（尚未探测到模型上限）",
       "moveHint": "保存后该模型立即改用新供应商的端点与 Key。",
       "providerRequired": "先选一个供应商：端点与 Key 都归它管，模型不能没有归属。",
-      "noCaps": "尚未探测到能力，压缩与输出上限暂按声明值计算。",
       "providerHint": "决定这条模型用哪个端点、哪把 Key、哪份限速。改到这里等于把模型挪到另一家供应商下。",
       "providerLabel": "所属供应商",
-      "reprobe": "重新探测能力",
-      "reprobeFailed": "探测失败：{msg}",
-      "reprobeOk": "探测完成：窗口 {k}K",
       "deleteAria": "删除该模型"
     },
     "provider": {
@@ -2193,13 +2186,6 @@
         "label": "Base URL（可选）"
       },
       "create": "新建",
-      "caps": {
-        "detected": "实测窗口",
-        "output": "最大输出",
-        "modalities": "输入模态",
-        "reasoning": "推理档位",
-        "effective": "实际按此压缩"
-      },
       "cw": "上下文窗口(K)",
       "descEdit": "修改后点击保存；激活配置保存后对全部 Agent 立即生效。",
       "descNew": "新建后不会自动激活，请在卡片上「设为激活」以启用。",

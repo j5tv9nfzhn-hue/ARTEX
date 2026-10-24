@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/Autumn-27/artex/llmprobe"
 )
 
 // ---------- LLM profiles ----------
@@ -73,11 +71,6 @@ type LLMProfile struct {
 	// 运行时路由读 EffectiveInputModalities():配置不支持的附件必须显式报错,
 	// 绝不静默丢弃、也不硬塞进纯文本请求。见 db/modalities.go。
 	InputModalities string `json:"input_modalities"`
-	// Caps 是最近一次能力探测的结果(窗口/输出/模态/推理档位)。它不是
-	// llm_profiles 的列:探测缓存走 settings(llm_caps:<id>),由
-	// db/capabilities.go 在读取时旁挂上来。零值 = 没探测过。
-	Caps llmprobe.Capabilities `json:"caps,omitempty"`
-
 	// ---- 供应商(重构后新增) ----
 	// ProviderID 指向 llm_providers:模型的端点/鉴权/端点级限速都从那里来。
 	// 本结构体仍然是「铺平」的——上面的 Format/BaseURL/Proxy/APIKey/Rate* 由读
@@ -177,7 +170,6 @@ func (d *DB) ListProfiles() ([]*LLMProfile, error) {
 		if err := scanProfile(rows, &p.APIKeyHint, &p); err != nil {
 			return nil, err
 		}
-		d.attachCaps(&p)
 		out = append(out, &p)
 	}
 	return out, rows.Err()
@@ -193,7 +185,6 @@ func (d *DB) ActiveProfile() (*LLMProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.attachCaps(&p)
 	return &p, nil
 }
 
@@ -208,7 +199,6 @@ func (d *DB) ProfileByID(id int64) (*LLMProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.attachCaps(&p)
 	return &p, nil
 }
 
@@ -232,7 +222,6 @@ ORDER BY p.is_default DESC, p.priority DESC, p.id ASC`)
 		if err := scanProfile(rows, &p.APIKey, &p); err != nil {
 			return nil, err
 		}
-		d.attachCaps(&p)
 		out = append(out, &p)
 	}
 	return out, rows.Err()
@@ -281,13 +270,6 @@ func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 	p.APIKeyHint = v.APIKeyHint
 
 	r := p.Retry.Clamped()
-	prevModel := ""
-	var prevProvider int64
-	if p.ID > 0 {
-		// 读失败不阻断保存：探测缓存不能变成写路径的硬依赖。
-		_ = d.QueryRow(`SELECT model,COALESCE(provider_id,0) FROM llm_profiles WHERE id=$1`, p.ID).
-			Scan(&prevModel, &prevProvider)
-	}
 
 	if p.ID == 0 {
 		var id int64
@@ -314,12 +296,6 @@ WHERE id=$19`,
 	// 「只平铺 llm_profiles」的读取方（备份导出、外部脚本、旧二进制）仍然自洽。
 	if err := d.mirrorProviderToProfiles(providerID); err != nil {
 		return p.ID, err
-	}
-	// 模型换了、或者换了供应商（端点跟着变）→ 上一份能力快照属于旧端点/旧模型，
-	// 留着只会用旧上限去钳新端点。界面上「把模型挪到另一家供应商」走的正是这条
-	// 路径（保存时带 provider_id），所以这里必须和 MoveProfileToProvider 一样清掉。
-	if prevModel != "" && (prevModel != p.Model || prevProvider != providerID) {
-		_ = d.ClearModelCaps(p.ID)
 	}
 	return p.ID, nil
 }

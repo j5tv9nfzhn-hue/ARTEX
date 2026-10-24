@@ -140,8 +140,7 @@ func (d *DB) ProviderByID(id int64) (*LLMProvider, error) {
 // 写完之后做两件事，都是为了让「存储规范化」对其它读路径不可见：
 //   - 把端点字段镜像回该供应商下所有 profile 的历史列（老版本二进制、外部脚本
 //     直接读 llm_profiles 时仍然自洽）；
-//   - 端点身份（format / base_url）变了就作废这些模型的能力快照——旧端点探到
-//     的窗口对新端点没有意义。
+//   - 端点身份变了只影响「请求发去哪」，窗口与输出上限仍按用户手填的值走。
 func (d *DB) SaveProvider(v *LLMProvider) (int64, error) {
 	if v == nil {
 		return 0, errors.New("空的供应商")
@@ -211,7 +210,8 @@ WHERE id=$10`,
 		return id, err
 	}
 	if prevFormat != "" && (prevFormat != v.Format || prevBase != v.BaseURL) {
-		_ = d.clearProviderCaps(id)
+		// 能力探测已移除：端点变更不再需要作废任何快照。判断保留，因为
+		// prevFormat/prevBase 仍是「这次保存把端点改动了」的唯一落点。
 	}
 	return id, nil
 }
@@ -237,30 +237,6 @@ api_key=(SELECT v.api_key FROM llm_providers v WHERE v.id=$1),
 api_key_hint=(SELECT v.api_key_hint FROM llm_providers v WHERE v.id=$1)
 WHERE provider_id=$1`, providerID)
 	return err
-}
-
-// clearProviderCaps 作废某供应商下所有模型的能力快照（端点变了 → 旧快照无意义）。
-func (d *DB) clearProviderCaps(providerID int64) error {
-	rows, err := d.Query(`SELECT id FROM llm_profiles WHERE provider_id=$1`, providerID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		_ = d.ClearModelCaps(id)
-	}
-	return nil
 }
 
 // DeleteProvider removes an empty provider. Providers with models are refused:
@@ -460,8 +436,7 @@ func (d *DB) uniqueProviderName(base string) (string, error) {
 // MoveProfileToProvider 把一条模型改挂到另一家供应商。
 //
 // 用途：建模型时选错了供应商，或者在回填之后想把同端点下的几条模型并到一起。
-// 端点随之改变，所以这条模型的能力快照必须作废——否则新端点会继续沿用旧端点探到
-// 的窗口与输出上限。
+// 端点随之改变，但它的大小仍然只由用户手填的窗口/输出上限决定。
 func (d *DB) MoveProfileToProvider(profileID, providerID int64) error {
 	if profileID <= 0 || providerID <= 0 {
 		return ErrProviderNotFound
@@ -483,7 +458,6 @@ func (d *DB) MoveProfileToProvider(profileID, providerID int64) error {
 	if err := d.mirrorProviderToProfiles(providerID); err != nil {
 		return err
 	}
-	_ = d.ClearModelCaps(profileID)
 	return nil
 }
 

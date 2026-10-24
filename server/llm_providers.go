@@ -104,7 +104,7 @@ func (s *Server) pgDeleteProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 // pgMoveProfileProvider 把一条模型挪到另一家供应商下（建错位置时不用重建配置）。
-// 端点随之改变，所以这条模型的能力快照要作废。
+// 端点随之改变，窗口/输出上限照旧由用户手填的那两个值决定。
 func (s *Server) pgMoveProfileProvider(w http.ResponseWriter, r *http.Request) {
 	pg := s.pg(w)
 	if pg == nil {

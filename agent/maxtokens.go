@@ -7,15 +7,16 @@ package agent
 //
 //	配太大 → 请求直接被拒：Anthropic 3.7/4 起 prompt+max_tokens 超出窗口不再自动
 //	         下调，直接 400；vLLM/SGLang 也是超了 max_model_len 就拒绝、不裁剪。
-//	         线上更常见的是「配置 64K、模型只吃 8K」这种能力错配，一样 400。
 //	钳太狠 → 回答被截成半句甚至空白：思考型模型先把 max_tokens 烧在 thinking 上，
 //	         正文一个 token 都轮不到（finish=length、content 为空）。opencode 曾经
 //	         把整条链路上限写死 32K（#29363/#20078/#1735），kilocode 则因为估算偏差
 //	         把 max_tokens 塌到 1024（#14959）——都是同一个错误的两面。
 //
-// 所以规则只有一条：三层上限取最小，只降不升，逼到墙角就 stand down。
+// 所以规则只有一条：只按窗口余量往下压，只降不升，逼到墙角就 stand down。
+// 模型自己能出多少 token 交给上游回答，不在这里猜——猜错的那一侧（把 1M 模型的
+// 输出锁在 32K）比超限 400 更难排查，因为界面上看不出是谁改小的。
 //
-//	effective = min(requested, 模型输出上限, 窗口 − 估算输入 − 余量)
+//	effective = min(requested, 窗口 − 估算输入 − 余量)
 //
 // 「逼到墙角」指 remaining < floor（floor = min(requested, 4096)）。这时不发那个
 // 注定被截断的小上限，而是原样发出去，让 400/413 走既有的上下文溢出自愈路径
@@ -42,7 +43,6 @@ import (
 	"fmt"
 	"iter"
 	"log"
-	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -67,22 +67,26 @@ const (
 type maxTokensDecision struct {
 	Requested int    // 调用方想发多少（0 = 不设限）
 	Effective int    // 实际发多少（0 = 字段省略）
-	Reason    string // unset / no_data / stand_down_overflow / stand_down_headroom / model_max_output / window_headroom
+	Reason    string // unset / upstream_default / no_data / stand_down_overflow / stand_down_headroom / window_headroom
 	Window    int    // 本次判定使用的上下文窗口（token）
 	EstInput  int    // 估算的输入 token（system + messages + tools）
 	Margin    int    // 预留余量
 	StandDown bool   // true = 判定为「不该钳」，请求按原样发出
 }
 
-// OutputCeiling 返回模型自身的单次输出上限（0 = 未知）。
-// 只认供应商上报/内建目录的实测值：用户配置（Config.MaxTokens）由调用方自己落进
-// 请求，不在这里再当一次上限——否则「连接测试固定要 8192」这种内部调用会被用户的
-// 小配置误伤，推理模型思考到一半就断，测试报「无回复」而实际配置是好的。
-func (c Config) OutputCeiling() int {
-	if c.MaxOutputDetected > 0 {
-		return c.MaxOutputDetected
+// harnessDefaultMaxTokens 是 norma harness 在 Options.MaxTokens=0 时兜底发出来的值
+// （harness/query.go maxTokens）。它和「用户手填 32768」在请求上无法区分，但用户手填
+// 时 Config.MaxTokens 就是 32768，所以下面的判断不会误伤手填值。
+const harnessDefaultMaxTokens = 32768
+
+// prefersUpstreamDefault 判断这次请求的上限是不是只来自 harness 的兜底。
+// Anthropic 的 max_tokens 是必填字段（适配器会兜成 8192，比 32K 更糟），所以那一支
+// 保持原样，只对 OpenAI 系协议生效——那里的字段是 omitempty，清成 0 就等于不发送。
+func (c Config) prefersUpstreamDefault(requested int) bool {
+	if c.MaxTokens != 0 || requested != harnessDefaultMaxTokens {
+		return false
 	}
-	return 0
+	return c.Format != llm.FormatAnthropic
 }
 
 // decideMaxTokens 是本文件的全部策略，纯函数（不读配置以外的状态），便于单测。
@@ -116,34 +120,26 @@ func (c Config) decideMaxTokens(req llm.CompletionRequest) maxTokensDecision {
 		return d
 	}
 
-	eff := req.MaxTokens
-	reason := ""
-	if capTokens := c.OutputCeiling(); capTokens > 0 && eff > capTokens {
-		eff = capTokens
-		reason = "model_max_output"
-	}
-	if eff > headroom {
-		eff = headroom
-		if reason != "" {
-			reason += "+window_headroom"
-		} else {
-			reason = "window_headroom"
+	if req.MaxTokens > headroom {
+		// 下限保护：被窗口逼到 4K 以下说明这一轮本来就装不下，发个小值只会把
+		// 「溢出」变成「空回复」——改为 stand down，原样发出去交给溢出自愈。
+		if floor := min(req.MaxTokens, clampFloorTokens); headroom < floor {
+			d.Reason = "stand_down_headroom"
+			d.StandDown = true
+			return d
 		}
-	}
-	if eff >= req.MaxTokens {
-		d.Reason = "within_limits" // 两条上限都没碰到：不动
+		d.Effective = headroom
+		d.Reason = "window_headroom"
 		return d
 	}
-	// 下限保护：只对被「窗口」逼下来的时候生效。被模型能力逼下来的是真上限
-	// （比如 2K 输出的老模型），照发；被窗口逼到 4K 以下则说明这一轮本来就装不下，
-	// 发个小值只会把「溢出」变成「空回复」。
-	if floor := min(req.MaxTokens, clampFloorTokens); eff < floor && strings.Contains(reason, "window_headroom") {
-		d.Reason = "stand_down_headroom"
-		d.StandDown = true
+	// 窗口装得下、又没被任何上限压过：用户没填上限就让字段消失（由端点默认值
+	// 决定），填了就按填的发。
+	if c.prefersUpstreamDefault(req.MaxTokens) {
+		d.Effective = 0
+		d.Reason = "upstream_default"
 		return d
 	}
-	d.Effective = eff
-	d.Reason = reason
+	d.Reason = "within_limits"
 	return d
 }
 

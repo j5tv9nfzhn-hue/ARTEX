@@ -2323,9 +2323,6 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	// profile's key/model/priority/pool_exclude edit reshapes the chain, so the
 	// engine's provider has to be rebuilt either way.
 	s.reapplyActiveProfile()
-	// 保存后异步探一次模型能力（模型没变且快照新鲜会自动跳过）。
-	// 起在响应之前，但不阻塞返回——探测慢不该拖住设置页。
-	s.probeProfileAsync(pg, id)
 	writeJSON(w, 200, map[string]any{"id": id, "provider_id": i64s(p.ProviderID)})
 }
 

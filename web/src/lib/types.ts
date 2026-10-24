@@ -1290,25 +1290,6 @@ export interface LLMProfile {
   rate_per_second: number;
   rate_per_minute: number;
   context_window_k?: number;
-  // ---- 能力探测（后端 llmprobe 自动填）----
-  // 供应商端点上报的模型能力；没探测过时整个 caps 缺省。
-  caps?: {
-    context_tokens?: number;
-    max_output_tokens?: number;
-    input_modalities?: string[];
-    output_modalities?: string[];
-    reasoning?: boolean;
-    reasoning_efforts?: string[];
-    tools?: boolean;
-    // provider=端点实测 | catalog=内建目录 | defaults=保守默认 | local=本机推理进程
-    source?: string;
-    model?: string;
-    probed_at?: string;
-    notes?: string[];
-  };
-  // 压缩与用量展示实际使用的窗口（K）：实测优先，与上面的声明值取小。
-  effective_context_window_k?: number;
-  context_window_detected?: boolean;
   // 思考开关(thinking.type): ""=不发送(默认) | "disabled"=关闭 | "enabled"=开启
   thinking_type?: string;
   // 思考强度: ""=不发送(默认) | "low"/"medium"/"high"/"xhigh"/"max"

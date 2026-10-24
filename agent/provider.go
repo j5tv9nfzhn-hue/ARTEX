@@ -46,10 +46,6 @@ type Config struct {
 	// ContextWindowK is the model's context window in K tokens, used to size
 	// compaction thresholds. 0 = default; see CompactionWindow.
 	ContextWindowK int
-	// ContextWindowDetected 表示 ContextWindowK 来自实测（供应商端点上报，
-	// 见 llmprobe 包），而不是用户手填。实测值不受 200K 信任上限约束——
-	// 需要怀疑的是手填值（线上真实事故：声明 1000K、实际 128K，压缩永不触发）。
-	ContextWindowDetected bool
 	// ThinkingType 独立控制思考「开关」字段(thinking.type):
 	//   "" = 不发送(默认,兼容不支持该字段的模型); "disabled" = 显式关闭;
 	//   "enabled" = 开启. 与 ReasoningEffort 完全解耦——有些接口没有 thinking 字段、
@@ -64,21 +60,17 @@ type Config struct {
 	// 某些网关糟糕的 SSE 实现(空帧、思考字段丢帧),代价是失去运行中的实时进度/实时
 	// token 计数。映射为 agentcore.Options.NonStreaming = !Stream。
 	Stream bool
-	// MaxTokens 是单次回复的输出上限(token)。0 = 不单独设限——norma harness 会把
-	// 请求值兜底为 32768(harness/query.go maxTokens():Options.MaxTokens>0 才用本值),
-	// 所以 0 并非「不发送上限」。与 ContextWindowK 不同:后者是模型总容量,只在本地
-	// 用来算压缩阈值,不出现在请求里;本值随每次请求发出。映射为 agentcore.Options.MaxTokens。
+	// MaxTokens 是单次回复的输出上限(token)。0 = 用户没填：请求里的上限字段会被
+	// 省略(见 maxtokens.go 的 upstream_default),由端点自己的默认值决定——不写死
+	// 任何魔数。>0 = 按手填值发,只受窗口余量钳制。与 ContextWindowK 不同:后者是
+	// 模型总容量,只在本地用来算压缩阈值,不出现在请求里;本值随每次请求发出。
+	// 映射为 agentcore.Options.MaxTokens。
 	MaxTokens int
 	// MaxTokensField 选择 MaxTokens 用哪个请求字段名,仅对 format=openai 生效:
 	//   "" = max_tokens(默认); "max_completion_tokens" = 新字段。
 	// OpenAI 推理模型(o 系列/GPT-5)只认后者,收到 max_tokens 会直接报
 	// unsupported_parameter;而多数兼容网关只认前者,故不做自动推断,交由用户按端点选。
 	MaxTokensField string
-	// MaxOutputDetected 是供应商上报的单次输出上限（llmprobe.Capabilities.
-	// MaxOutputTokens），0 = 未知。它只用来给请求的 max_tokens 封顶：用户配置可以更小，
-	// 但不能更大——请求超过模型上限时，Anthropic 3.7/4 与 vLLM 都是直接 400，
-	// 而不是像老模型那样自动下调。钳制逻辑见 maxtokens.go。
-	MaxOutputDetected int
 	// SessionHeaderKey,非空时,让每次 LLM 请求带上一个自定义 HTTP 头,头名为该值、
 	// 头值为【当前会话的 session id】(chat 会话=conv-<id>,worker=exp<x>-worker-i<intent>
 	// 等,见 WorkerSessionID)。用于某些按 session-id 头做提示缓存/粘性路由的网关。
@@ -122,20 +114,8 @@ const (
 // CompactionWindow returns the model context window in TOKENS for compaction
 // thresholds, resolved from the user-configured size (ContextWindowK). 0/unset →
 // a 200K default; otherwise clamped to [32K, 1M] so compaction stays effective.
+// 这里只认用户填的值：没有任何探测/推断出来的窗口能覆盖它。
 func (c Config) CompactionWindow() int {
-	// 实测窗口：供应商自己报的数，直接采信，只做 [32K, 1M] 的物理区间夹取。
-	// 这一支存在的原因很具体——1M 窗口的模型不该被 200K 的「防手滑上限」
-	// 压成 1/5，那会让压缩提前到 20% 使用率。
-	if c.ContextWindowDetected && c.ContextWindowK > 0 {
-		k := c.ContextWindowK
-		if k < minWindowK {
-			k = minWindowK
-		}
-		if k > maxWindowK {
-			k = maxWindowK
-		}
-		return k * 1000
-	}
 	tokens, clamped := ResolveContextWindowTokens(c.ContextWindowK)
 	if clamped {
 		warnWindowClamped(c.ContextWindowK, tokens)

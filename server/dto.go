@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/llmprobe"
 	"github.com/Autumn-27/artex/traffic"
 )
 
@@ -666,15 +665,6 @@ type LLMProfileDTO struct {
 	// 运行时实际生效的能力 = 声明优先，未声明按模型名保守推断
 	// (db.LLMProfile.EffectiveInputModalities)。前端据此显示「实际支持」徽章。
 	EffectiveInputModalities string `json:"effective_input_modalities"`
-	// ---- 能力探测（llmprobe）----
-	// Caps 是最近一次探测到的模型能力（窗口/输出/模态/推理档位）；
-	// 零值 = 没探测过，前端不显示徽章。
-	Caps llmprobe.Capabilities `json:"caps,omitempty"`
-	// EffectiveContextWindowK 是压缩与用量展示实际使用的窗口（K）：
-	// 实测值优先，与用户声明取小。和 context_window_k（用户声明）分开显示，
-	// 才能一眼看出「填的数」和「实际用的数」不是一回事。
-	EffectiveContextWindowK int  `json:"effective_context_window_k"`
-	ContextWindowDetected   bool `json:"context_window_detected"`
 	// ---- 供应商归属（重构后）----
 	// 界面按供应商分组时用这两个字段；老客户端忽略它们即可，行为不受影响。
 	ProviderID   string `json:"provider_id,omitempty"`
@@ -706,10 +696,6 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 
 		InputModalities:          p.InputModalities,
 		EffectiveInputModalities: p.EffectiveInputModalities(),
-
-		Caps:                    p.Caps,
-		EffectiveContextWindowK: p.EffectiveContextWindowK(),
-		ContextWindowDetected:   p.ContextWindowDetected(),
 
 		ProviderID:   providerIDString(p.ProviderID),
 		ProviderName: p.ProviderName,
