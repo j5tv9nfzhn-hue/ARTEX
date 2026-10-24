@@ -152,11 +152,11 @@ type ReviewerInput struct {
 //	Qwen3.8-Flash-Next                 p50 58.1s err 3.0%               ← 太慢，不适合逐意图
 //
 // Reviewer 与主 Worker 用**不同模型族**更好：同族对同一批盲区会给出同一个错判。
-var ReviewerLLM func(ctx context.Context, system, user string) (string, error)
+var ReviewerLLM func(ctx context.Context, taskID, system, user string) (string, error)
 
 // ReviewerCall 是可注入的模型调用形态。ReviewerInput.LLM 非空时优先用它，
 // 否则回落到包级 ReviewerLLM（server 启动时接线）。
-type ReviewerCall func(ctx context.Context, system, user string) (string, error)
+type ReviewerCall func(ctx context.Context, taskID, system, user string) (string, error)
 
 // ReviewerEvidence 是清洗后的证据快照（只读）。Raw 永远不会出现在这里：
 // 落库前已经过 SanitizeReviewerText，读取时还会再洗一次。
@@ -586,7 +586,7 @@ func Review(ctx context.Context, in ReviewerInput) ReviewerResult {
 		return res
 	}
 
-	out, err := call(ctx, reviewerSystemPrompt(), buildReviewerUser(in, tail, last))
+	out, err := call(ctx, in.TaskID, reviewerSystemPrompt(), buildReviewerUser(in, tail, last))
 	if err != nil {
 		res.Verdict = VerdictPivot
 		res.DecidedBy = "fallback"

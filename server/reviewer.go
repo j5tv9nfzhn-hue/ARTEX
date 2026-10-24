@@ -28,6 +28,10 @@ import (
 // errReviewerNoStore 表示 Reviewer 依赖的存储/服务句柄还没就绪。
 var errReviewerNoStore = errors.New("reviewer: store not ready")
 
+// db 侧的 reviewer 台账方法挂在 *db.ExplorationStore 上，而它们的键全部来自入参，
+// 不读 store 自己的 expID；唯一依赖 expID 的是 Clues()（线索要记来源探索）。
+// 所以除 Clues 外的取用一律走 Exploration(0)，语义等价——别"顺手"传个 id 进去。
+
 var reviewerHookOnce sync.Once
 
 // installReviewerHooks 把「意图 id → 判决摘要」的查询接到 agent 的注入面上。
@@ -42,7 +46,7 @@ func (e *Engine) installReviewerHooks() {
 		}
 		agent.ReviewerEvidenceTouch = func(refID int64) {
 			if e != nil && e.m != nil && e.m.pg != nil {
-				if err := e.m.pg.TouchReviewerEvidence(refID); err != nil {
+				if err := e.m.pg.Exploration(0).TouchReviewerEvidence(refID); err != nil {
 					log.Printf("[reviewer] 证据 %d 访问记账失败: %v", refID, err)
 				}
 			}
@@ -55,7 +59,7 @@ func (e *Engine) reviewerBriefsForIntents(ids []int64) map[int64]agent.ReviewerB
 	if e == nil || e.m == nil || e.m.pg == nil || len(ids) == 0 {
 		return nil
 	}
-	rows, err := e.m.pg.ReviewerVerdictsByIntents(ids)
+	rows, err := e.m.pg.Exploration(0).ReviewerVerdictsByIntents(ids)
 	if err != nil {
 		log.Printf("[reviewer] 取判决摘要失败: %v", err)
 		return nil
@@ -149,7 +153,7 @@ func (e *Engine) runReviewerForIntent(t *Task, intent *db.Node, runID int64, rec
 	in.LLM = agent.ReviewerLLM
 	// 证据落库：存的是**清洗后**的快照，raw 不进表。
 	in.SaveEvidence = func(kind, body string) (int64, error) {
-		return e.m.pg.PutReviewerEvidence(tid, intent.ID, runID, kind, body)
+		return e.m.pg.Exploration(t.ExpID).PutReviewerEvidence(tid, intent.ID, runID, kind, body)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -162,7 +166,7 @@ func (e *Engine) runReviewerForIntent(t *Task, intent *db.Node, runID int64, rec
 	negJSON, _ := json.Marshal(res.Negative)
 	evidenceJSON, _ := json.Marshal(res.EvidenceRef)
 
-	_, err := e.m.pg.PutReviewerVerdict(db.ReviewerVerdictInput{
+	_, err := e.m.pg.Exploration(t.ExpID).PutReviewerVerdict(db.ReviewerVerdictInput{
 		TaskID:        tid,
 		ExplorationID: t.ExpID,
 		IntentID:      intent.ID,
@@ -205,7 +209,7 @@ func reviewerStateOf(rec handoffRecord) string {
 // writeReviewerClues 把判决里的线索写进 clues 表（W3 的落点）。
 // kind 必须先落在 db 的合法枚举里，否则会被 NormalizeClue 降级成 note。
 func (e *Engine) writeReviewerClues(t *Task, intent *db.Node, res agent.ReviewerResult) {
-	store := e.m.pg.Clues()
+	store := e.m.pg.Exploration(t.ExpID).Clues()
 	if store == nil {
 		return
 	}
@@ -249,7 +253,7 @@ func (e *Engine) loaderEvidence(refID int64) (agent.ReviewerEvidence, error) {
 	if e == nil || e.m == nil || e.m.pg == nil {
 		return agent.ReviewerEvidence{}, errReviewerNoStore
 	}
-	row, err := e.m.pg.GetReviewerEvidence(refID)
+	row, err := e.m.pg.Exploration(0).GetReviewerEvidence(refID)
 	if err != nil {
 		return agent.ReviewerEvidence{}, err
 	}
@@ -333,7 +337,7 @@ func (e *Engine) awaitReviewerVerdict(t *Task, intent *db.Node, runID int64, d t
 	}
 	deadline := time.Now().Add(d)
 	for {
-		ok, err := e.m.pg.HasReviewerVerdict(runID)
+		ok, err := e.m.pg.Exploration(t.ExpID).HasReviewerVerdict(runID)
 		if err == nil && ok {
 			reviewerGateSucceed()
 			return true
@@ -351,7 +355,7 @@ func (e *Engine) awaitReviewerVerdict(t *Task, intent *db.Node, runID int64, d t
 // 返回 false 表示连这条都写不进去（必须停摆，不得唤醒）。
 func (e *Engine) degradeReviewerVerdict(t *Task, intent *db.Node, runID int64, why string) bool {
 	tid, _ := strconv.ParseInt(t.ID, 10, 64)
-	_, err := e.m.pg.PutReviewerVerdict(db.ReviewerVerdictInput{
+	_, err := e.m.pg.Exploration(t.ExpID).PutReviewerVerdict(db.ReviewerVerdictInput{
 		TaskID:        tid,
 		ExplorationID: t.ExpID,
 		IntentID:      intent.ID,
