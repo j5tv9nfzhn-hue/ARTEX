@@ -16,27 +16,39 @@ function useThrottledText(text: string, ms: number): string {
   const latest = React.useRef(text);
   const lastAt = React.useRef(0);
   const timer = React.useRef<number | null>(null);
+  const raf = React.useRef<number | null>(null);
   latest.current = text;
+
+  // 提交动作统一落到「下一帧」：定时器只说明窗口到了，真正挂载发生在
+  // requestAnimationFrame 里，与实时流的批量刷新同一个节拍。否则会出现
+  // 「半帧 setState → 同一帧内又被新 token 顶掉 → 一帧两次重排」，视觉上就是正文在闪。
+  const commit = React.useCallback(() => {
+    if (raf.current !== null) return;
+    raf.current = window.requestAnimationFrame(() => {
+      raf.current = null;
+      lastAt.current = Date.now();
+      setShown(latest.current);
+    });
+  }, []);
 
   React.useEffect(() => {
     if (shown === text) return;
     const wait = Math.max(0, ms - (Date.now() - lastAt.current));
     if (wait === 0) {
-      lastAt.current = Date.now();
-      setShown(text);
+      commit();
       return;
     }
     if (timer.current !== null) return; // 已有定时器在等，到点取最新值
     timer.current = window.setTimeout(() => {
       timer.current = null;
-      lastAt.current = Date.now();
-      setShown(latest.current);
+      commit();
     }, wait);
-  }, [text, shown, ms]);
+  }, [text, shown, ms, commit]);
 
   React.useEffect(
     () => () => {
       if (timer.current !== null) window.clearTimeout(timer.current);
+      if (raf.current !== null) window.cancelAnimationFrame(raf.current);
     },
     [],
   );

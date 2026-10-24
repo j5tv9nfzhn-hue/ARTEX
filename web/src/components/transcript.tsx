@@ -1030,16 +1030,36 @@ function LiveTail({ stream, onGrow }: { stream: LiveStream; onGrow?: () => void 
   React.useEffect(() => {
     grow.current = onGrow;
   }, [onGrow]);
-  const kind = frame?.kind;
-  const size = frame?.text?.length ?? 0;
-  // 每帧只做一次「贴底」的滚动写入，不触发 React 渲染。
-  // 依赖里放 kind/size 是**故意**的：effect 体只读 ref，但我们必须「内容变长就重新
-  // 贴底」。Biome 只看到 ref 就建议删依赖，删掉之后流式输出不再跟随滚动。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: kind/size 是重跑触发条件，不是读值
+  // 「贴底」只看真实 DOM 高度，不看 token 计数。
+  //
+  // 之前这里依赖 frame.text.length：SSE 每 40ms 一帧，而正文 markdown 被节流到 120ms
+  // 才重绘，于是滚动写入比内容更新快 3 倍以上，并且每次都拿旧布局算位置——外部表现
+  // 就是流式期间整块区域上下抖动。改成 ResizeObserver 之后，只有内容真的长高了才滚
+  // 一次，滚动写入次数与真实重排次数严格 1:1，多余的重排消失。
+  const boxRef = React.useRef<HTMLDivElement>(null);
+  const lastHeight = React.useRef(-1);
   React.useLayoutEffect(() => {
-    grow.current?.();
-  }, [kind, size]);
-  return <LiveBlocks frame={frame ?? undefined} />;
+    const el = boxRef.current;
+    if (!el) return;
+    const settle = () => {
+      const h = el.offsetHeight;
+      if (h === lastHeight.current) return;
+      lastHeight.current = h;
+      grow.current?.();
+    };
+    settle();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(settle);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // 实时块始终挂在同一个宿主节点上：kind 从 thinking 切到 text 时只替换内部组件，
+  // 外层节点不重建，避免整块区域重新挂载带来的「闪一下」。
+  return (
+    <div data-live-tail="" ref={boxRef}>
+      <LiveBlocks frame={frame ?? undefined} />
+    </div>
+  );
 }
 
 // Transcript renders a session's activity as a compact grouped execution replay.
