@@ -90,7 +90,8 @@ const (
 // 都挂着同一段 <tool_steering> 残留物，长跑任务里模型侧也被同一段字反复冲刷。
 // 现在注入与展示分开处理：
 //   - 注入侧：同一任务只说 bashSteerBudget 次（见 noteBashPythonSteer）；
-//   - 展示侧：capture.go 落库前用 stripSteerNotes 剥掉，界面只剩真正的命令输出。
+//   - 展示侧：capture.go 落库前用 stripModelHints 剥掉（同一套规则也覆盖
+//     <skill_recall>，见 modelHintTags），界面只剩真正的命令输出。
 const (
 	steerOpenTag  = "<tool_steering>"
 	steerCloseTag = "</tool_steering>"
@@ -449,29 +450,41 @@ func noteBashPythonSteer(ctx context.Context, cmd string) string {
 	return note
 }
 
-// stripSteerNotes 剥掉工具结果里的转向提示，只用于**落库与界面**；模型侧看到的
-// 内容不变（剥离发生在 capture 写 Activity 之前）。
+// modelHintTags 是所有「只给模型看、不该进活动流」的提示块（开标签, 闭标签）。
+// 新增同类提示时把标签加进来即可——落库侧不必再改。
+//
+// 判据是「这段话是给模型的指令，不是工具的输出」：转向提示（tool_steering）说
+// 下次该换哪个工具，技能再加载提示（skill_recall）说该去取回哪份技能正文，两者
+// 对界面读者都不是命令结果，混进 Detail 就是每条命令都挂着的一段残留文案。
+var modelHintTags = [][2]string{
+	{steerOpenTag, steerCloseTag},
+	{"<skill_recall>", "</skill_recall>"},
+}
+
+// stripModelHints 剥掉工具结果里的模型提示块，只用于**落库与界面**；模型侧看到
+// 的内容不变（剥离发生在 capture 写 Activity 之前）。
 //
 // 处理两种形态：
-//   - <tool_steering>…</tool_steering> 段（Bash 追加的 text block）；
+//   - 成对标签包起来的段（tool_steering / skill_recall 追加的 text block）；
 //   - http_* 结果 JSON 里的 "tool_steering" 键（整行删除，并修掉可能的尾逗号）。
 //
 // 没有闭合标记时按「输出被截断」处理，从标记处切到结尾——宁可少显示，也不让半截
 // 标记留在界面上。
-func stripSteerNotes(s string) string {
-	if s == "" || !strings.Contains(s, "tool_steering") {
+func stripModelHints(s string) string {
+	if s == "" {
 		return s
 	}
-	for {
-		start := strings.Index(s, steerOpenTag)
-		if start < 0 {
+	for _, tag := range modelHintTags {
+		open, shut := tag[0], tag[1]
+		for strings.Contains(s, open) {
+			start := strings.Index(s, open)
+			if rel := strings.Index(s[start:], shut); rel >= 0 {
+				s = s[:start] + s[start+rel+len(shut):]
+				continue
+			}
+			s = s[:start] // 截断的输出：切到结尾
 			break
 		}
-		if rel := strings.Index(s[start:], steerCloseTag); rel >= 0 {
-			s = s[:start] + s[start+rel+len(steerCloseTag):]
-			continue
-		}
-		s = s[:start]
 	}
 	if strings.Contains(s, steerJSONKey) {
 		var b strings.Builder

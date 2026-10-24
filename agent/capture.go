@@ -163,9 +163,10 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			}
 			flush()
 			out := blocksText(ev.ToolResult.Content)
-			// 界面与落库只留真正的工具输出：转向提示是给模型的一次性指令，
-			// 混进 Detail 就成了每条命令都挂着的一段残留文案（见 stripSteerNotes）。
-			visible := stripSteerNotes(out)
+			// 界面与落库只留真正的工具输出：转向提示、技能再加载提示都是给模型的
+			// 一次性指令，混进 Detail 就成了每条命令都挂着的一段残留文案
+			// （见 stripModelHints 与 modelHintTags）。
+			visible := stripModelHints(out)
 			delete(awaiting, ev.ToolResult.ToolUseID)
 			if _, known := toolNames[ev.ToolResult.ToolUseID]; !known {
 				// 有 ID 但在本轮没有对应 tool_use（例如恢复会话带出的旧结果）：
@@ -332,8 +333,8 @@ func approvalHistory(messages []llm.Message) []db.InterceptContextEntry {
 				entry.Kind, entry.Tool, entry.ToolUseID, entry.Text = "tool_use", block.Name, block.ID, string(block.Input)
 			case llm.BlockToolResult:
 				entry.Kind, entry.ToolUseID, entry.IsError = "tool_result", block.ToolUseID, block.IsError
-				// 裁决上下文同样不该出现转向提示：它是给执行模型的，不是证据。
-				entry.Text = stripSteerNotes(blocksText(block.Content))
+				// 裁决上下文同样不该出现模型提示：它们是给执行模型的，不是证据。
+				entry.Text = stripModelHints(blocksText(block.Content))
 			default:
 				continue
 			}
