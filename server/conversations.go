@@ -678,6 +678,8 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 				if ctx.Err() != nil {
 					finishStatus, finishReason = "stopped", convVerifyStoppedOrClosed
 				}
+				// 第六阶段：结论由引擎从最终回复解析并落库（模型已无写结论工具）。
+				s.captureVerificationVerdict(c.ID)
 				s.finishVerification(v.ID, finishStatus, finishReason)
 			}()
 			if ctx.Err() != nil {
@@ -710,6 +712,8 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 				if ctx.Err() != nil {
 					finishStatus, finishReason = "stopped", convRetestStoppedOrClosed
 				}
+				// 第六阶段：同上，复测结论由引擎解析落库。
+				s.captureRetestVerdict(c.ID)
 				s.finishRetest(r.ID, finishStatus, finishReason)
 			}()
 			if ctx.Err() != nil {

@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,7 +47,7 @@ const (
 	verifySampleRateEnv = "ARTEX_VERIFY_SAMPLE_RATE"
 )
 
-var errVerifyAgentMissing = "复核 Agent 未启用：请在 Agent 页面启用 verifier，并确认它绑定了 get_finding_verification_context 与 record_finding_verification_result"
+var errVerifyAgentMissing = "复核 Agent 未启用：请在 Agent 页面启用 verifiercord_finding_verification_result"
 
 // verifyQueue 是进程级待复核队列。用 Server 字段而不是包级变量，
 // 这样集成测试里多个 Server 实例互不干扰。
@@ -138,15 +137,9 @@ func (s *Server) startVerification(ctx context.Context, findingID int64, reason,
 	if a == nil || !a.Enabled {
 		return nil, false, errors.New(errVerifyAgentMissing)
 	}
-	for _, key := range []string{"get_finding_verification_context", "record_finding_verification_result"} {
-		t, err := pg.GetTool(key)
-		if err != nil {
-			return nil, false, err
-		}
-		if t == nil || !t.Enabled || !slices.Contains(t.Agents, a.Key) {
-			return nil, false, errors.New("复核工具未就绪：" + key)
-		}
-	}
+	// 第六阶段：复核的取证与结论读写工具已从工具面物理删除（模型不再持有），
+	// 上下文由引擎在会话开头注���、结论由引擎在会话收敛时解析落库，
+	// 因此这里不再要求这两个工具存在。
 	if s.resolveChatAgent(&db.Conversation{AgentKey: a.Key}) == nil {
 		return nil, false, errors.New(s.chatUnavailableReason())
 	}

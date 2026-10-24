@@ -270,7 +270,13 @@ func findingAssetIDsContainExpr() string {
 }
 
 func (r *FindingRetest) InitialMessage() string {
-	msg := fmt.Sprintf("请复测漏洞 #%d。先调用 get_finding_retest_context 读取本会话关联的原始证据与约束，再执行针对性验证，最后调用 record_finding_retest_result 保存结论。", r.FindingID)
+	// 第六阶段：读取上下文与保存结论的工具已从工具面删除。
+	// 上下文由引擎在会话开头注入，结论由引擎在会话收敛时解析最终回复的 JSON 落库。
+	msg := fmt.Sprintf("请复测漏洞 #%d。本会话关联的漏洞、发起时的证据/PoC/报告、资产、原任务约束及补充说明，"+
+		"系统已在会话开头直接提供给你（你没有任何工具，也不需要调用工具去读）。只复测这个漏洞。\n\n"+
+		"执行结束时输出唯一结论 JSON（不要 Markdown 围栏）："+
+		`{"verdict":"reproduced|fixed|inconclusive","summary":"...","evidence":"<Markdown：复测步骤、实际观察、与原证据的差异及结论依据>"}`+
+		"，系统会据此保存。", r.FindingID)
 	if r.Notes != "" {
 		msg += "\n\n本次复测补充说明：\n" + r.Notes
 	}

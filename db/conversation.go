@@ -249,6 +249,18 @@ RETURNING id`, convID, utf8Clean(a.Worker), utf8Clean(a.Kind), utf8Clean(a.Tool)
 	return id, err
 }
 
+// LastConversationResult 取会话最后一条收尾结果正文（kind='result' 的 detail）。
+//
+// 第六阶段：复核/复测的结论工具已从工具面删除，结论改为引擎在会话收敛时
+// 从模型最终回复里解析，这里提供读取入口。
+func (d *DB) LastConversationResult(convID int64) (string, error) {
+	var body string
+	err := d.QueryRow(`SELECT COALESCE(NULLIF(detail,''), summary, '') FROM conversation_activities
+		WHERE conversation_id=$1 AND kind='result' AND reverted_at IS NULL
+		ORDER BY id DESC LIMIT 1`, convID).Scan(&body)
+	return body, err
+}
+
 // ConvTokenTotal 返回一条会话累计的计量用量（input+output），口径与任务预算
 // （db.TaskTokenTotal）一致：只统计 kind='result' 的收尾行，缓存读/写不计入。
 //
