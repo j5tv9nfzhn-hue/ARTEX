@@ -154,11 +154,7 @@ func (e *Engine) finishIntentRun(runID int64, t *Task, intent *db.Node, started 
 	// Reviewer 的裁决在 saveHandoff 内部同步落库。这里再挡一道硬闸门：
 	// 任何一处 t.Notify() 唤醒 Planner 之前，判决必须在库里。
 	// 返回 false 只有一种可能——连降级判决都写不进去，那就停摆，绝不放行。
-	//
-	// 等待上限 reviewerGateWait 由 Reviewer 的判定预算推导（见 server/reviewer.go）：
-	// 原来写死 5s，一旦判定因为慢模型/限流跑到 5s 之后，闸门就会先把这轮判成
-	// 「等待超时 → 本 run 作废」，等于自己把还在跑的判定废掉。
-	if !e.awaitReviewerVerdict(t, intent, runID, reviewerGateWait) {
+	if !e.awaitReviewerVerdict(t, intent, runID, 5*time.Second) {
 		log.Printf("[handoff] task %s 意图 #%d run %d：情报闸门无法落库，拒绝唤醒 Planner（任务停摆待人工介入）",
 			t.ID, intent.ID, runID)
 		return
