@@ -54,6 +54,7 @@ import type {
   HarnessScan,
   IntentAsset,
   IntentHandoffView,
+  ReviewerVerdict,
   InterceptApprovalFilter,
   InterceptApprovalRow,
   InterceptDetail,
@@ -679,6 +680,11 @@ export const api = {
   detachTaskAsset: (taskId: string, assetId: number) => del<{ detached: number }>(`/tasks/${taskId}/assets/${assetId}`),
   taskIntentAssets: (taskId: string) =>
     get<{ assets: IntentAsset[] }>(`/tasks/${taskId}/intent-assets`).then((r) => arr(r.assets)),
+  // 回顾者（Reviewer）判决台账：任务面板「回顾者」分区的唯一数据源，只读。
+  taskReviewerVerdicts: (taskId: string) =>
+    get<{ verdicts: ReviewerVerdict[] }>(`/tasks/${taskId}/reviewer-verdicts`).then((r) =>
+      arr(r.verdicts),
+    ),
 
   // ---- companies (企业 + 资产范围；归属唯一来源) ----
   companies: () => get<Company[]>("/companies").then(arr),

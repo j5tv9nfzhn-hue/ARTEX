@@ -926,7 +926,7 @@ export interface LogLine {
   text: string;
 }
 
-export type SessionRole = "mainagent" | "planner" | "worker" | "system";
+export type SessionRole = "mainagent" | "planner" | "worker" | "system" | "reviewer";
 export type SessionStatus = "running" | "paused" | "done" | "blocked" | "exhausted" | "pending" | "stopped" | "deleted";
 
 // Daily token aggregate bucket (GET /api/tokens/daily).
@@ -1033,6 +1033,30 @@ export interface WorkerTokenStat {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+}
+
+// Reviewer 判决台账的一行（GET /api/tasks/{id}/reviewer-verdicts）。
+// 内容已由后端 agent.SanitizeReviewerText 清洗：raw_bytes 只是原始长度，
+// 原始报文不进表，facts/clues/carry/negative 都是 JSON 字符串。
+export interface ReviewerVerdict {
+  id: number;
+  task_id: number;
+  exploration_id: number;
+  intent_id: number;
+  run_id: number;
+  verdict: "advance" | "pivot" | "abandon" | "escalate" | string;
+  attribution: string;
+  confidence: number;
+  decided_by: "rules" | "llm" | "fallback" | string;
+  summary: string;
+  facts_json: string;
+  clues_json: string;
+  carry_json: string;
+  negative_json: string;
+  sanitized: boolean;
+  raw_bytes: number;
+  evidence_json: string;
+  created_at: string;
 }
 
 export interface Session {

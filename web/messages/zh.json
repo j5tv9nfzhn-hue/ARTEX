@@ -3107,7 +3107,8 @@
       "sourceTask": "来源 #{id}"
     },
     "list": {
-      "title": "会话列表"
+      "title": "会话列表",
+      "toggleAria": "折叠或展开「{role}」分区"
     },
     "newMain": {
       "aria": "新建主 Agent 会话",
@@ -3132,7 +3133,7 @@
       "planner": "规划 Planner",
       "system": "系统审计",
       "worker": "Worker",
-      "reviewer": "Reviewer"
+      "reviewer": "回顾者 Reviewer"
     },
     "sse": {
       "live": "实时",
@@ -3155,7 +3156,8 @@
     "title": {
       "main": "主 Agent · 会话 #{n}",
       "planner": "规划 Planner · 态势研判",
-      "system": "系统事件 · LLM 故障转移"
+      "system": "系统事件 · LLM 故障转移",
+      "reviewer": "回顾者 · 意图 #{id}"
     },
     "toast": {
       "createSessionFailed": "新建会话失败：{msg}",
@@ -3198,6 +3200,32 @@
       "execSession": "Worker 执行会话",
       "loadOlder": "加载更早的 Worker",
       "noRunning": "暂无运行中的 Worker 会话。"
+    },
+    "reviewer": {
+      "empty": "本意图还没有回顾者判决。Worker 一轮跑完并写下交接单后，回顾者才会给出结论。",
+      "showAll": "展开全部 {n} 条判决",
+      "collapse": "收起",
+      "summary": "判决摘要",
+      "noSummary": "（回顾者没有给出摘要）",
+      "attribution": "归因",
+      "confidence": "置信度",
+      "decidedBy": "判定方式",
+      "sanitized": "输入已清洗",
+      "facts": "事实",
+      "clues": "线索",
+      "carry": "遗留问题",
+      "negative": "阴性结论",
+      "evidence": "证据快照",
+      "intent": "意图 #{id}",
+      "run": "run #{id}",
+      "rawBytes": "原始 {n} 字节",
+      "verdict": {
+        "advance": "推进 advance",
+        "pivot": "换打法 pivot",
+        "abandon": "放弃 abandon",
+        "escalate": "上交 escalate",
+        "unknown": "其他判定"
+      }
     }
   },
   "settingsPage": {

@@ -18,6 +18,7 @@ import {
   PlusIcon,
   RadioIcon,
   RotateCwIcon,
+  ScaleIcon,
   ShieldAlertIcon,
   SquareIcon,
   Trash2Icon,
@@ -82,6 +83,7 @@ import type {
   SessionTokenUsage,
   TaskLLMResolution,
   TaskLLMResolutions,
+  ReviewerVerdict,
   TaskNode,
   TokenTotal,
 } from "@/lib/types";
@@ -254,6 +256,111 @@ function fmtDuration(ms: number): string {
   return `${h}h${String(m % 60).padStart(2, "0")}m`;
 }
 
+// ReviewerVerdictPanel 渲染一条判决的全部内容（只读）。
+//
+// 为什么不做成「会话/对话」形态：Reviewer 不是聊天 Agent，它一次 run 只产出一条
+// 结构化判决，做成气泡流会伪造出一段并不存在的对话。这里按台账字段原样呈现，
+// facts/clues/carry/negative 都是后端清洗过的 JSON 字符串，解析失败时就落回原文。
+function ReviewerVerdictPanel({ v }: { v: ReviewerVerdict }) {
+  const t = useTranslations("sessions");
+  const listOf = (raw: string): string[] => {
+    try {
+      const parsed = JSON.parse(raw || "[]");
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((x) => (typeof x === "string" ? x : JSON.stringify(x)));
+    } catch {
+      return raw ? [raw] : [];
+    }
+  };
+  const facts = listOf(v.facts_json);
+  const clues = listOf(v.clues_json);
+  const carry = listOf(v.carry_json);
+  const negative = listOf(v.negative_json);
+  const evidence = listOf(v.evidence_json);
+  const verdictKey = ["advance", "pivot", "abandon", "escalate"].includes(v.verdict)
+    ? v.verdict
+    : "unknown";
+  const verdictTone =
+    v.verdict === "advance"
+      ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+      : v.verdict === "abandon"
+        ? "border-destructive/40 text-destructive"
+        : "border-amber-500/40 text-amber-600 dark:text-amber-400";
+
+  const Section = ({ title, items }: { title: string; items: string[] }) =>
+    items.length ? (
+      <div className="grid gap-1">
+        <div className="font-medium text-muted-foreground text-xs">{title}</div>
+        <ul className="grid gap-1">
+          {items.map((it, i) => (
+            <li
+              key={`${title}-${i}-${it.slice(0, 12)}`}
+              className="rounded-md border bg-muted/30 px-2 py-1 text-xs leading-relaxed"
+            >
+              {it}
+            </li>
+          ))}
+        </ul>
+      </div>
+    ) : null;
+
+  return (
+    <div className="mx-auto grid w-full max-w-3xl gap-3 px-1 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className={cn("font-mono text-xs uppercase", verdictTone)}>
+          {t(`reviewer.verdict.${verdictKey}`)}
+        </Badge>
+        <Badge variant="outline" className="font-normal text-xs">
+          {t("reviewer.attribution")}: {v.attribution || "—"}
+        </Badge>
+        <Badge variant="outline" className="font-normal text-xs tabular-nums">
+          {t("reviewer.confidence")}: {Math.round((v.confidence ?? 0) * 100)}%
+        </Badge>
+        <Badge variant="outline" className="font-normal text-xs">
+          {t("reviewer.decidedBy")}: {v.decided_by || "—"}
+        </Badge>
+        {v.sanitized && (
+          <Badge variant="outline" className="border-amber-500/40 font-normal text-amber-600 text-xs dark:text-amber-400">
+            {t("reviewer.sanitized")}
+          </Badge>
+        )}
+      </div>
+
+      <div className="rounded-lg border bg-card px-3 py-2">
+        <div className="mb-1 font-medium text-muted-foreground text-xs">{t("reviewer.summary")}</div>
+        <p className="text-sm leading-relaxed">{v.summary || t("reviewer.noSummary")}</p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Section title={t("reviewer.facts")} items={facts} />
+        <Section title={t("reviewer.clues")} items={clues} />
+        <Section title={t("reviewer.carry")} items={carry} />
+        <Section title={t("reviewer.negative")} items={negative} />
+      </div>
+
+      {evidence.length > 0 && (
+        <div className="grid gap-1">
+          <div className="font-medium text-muted-foreground text-xs">{t("reviewer.evidence")}</div>
+          <div className="flex flex-wrap gap-1">
+            {evidence.map((e, i) => (
+              <Badge key={`ev-${i}-${e}`} variant="outline" className="font-mono text-xs">
+                ref {e}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-3 text-muted-foreground text-xs">
+        <span>{t("reviewer.intent", { id: v.intent_id })}</span>
+        <span>{t("reviewer.run", { id: v.run_id })}</span>
+        <span className="tabular-nums">{t("reviewer.rawBytes", { n: v.raw_bytes })}</span>
+        <span>{v.created_at}</span>
+      </div>
+    </div>
+  );
+}
+
 // Role labels moved to the `sessions.role.*` message catalog (resolved at render in
 // SessionsTab); only the icon stays here since it is not a translatable string.
 const roleMeta = {
@@ -261,6 +368,7 @@ const roleMeta = {
   planner: { icon: BrainIcon },
   worker: { icon: RadioIcon },
   system: { icon: HistoryIcon },
+  reviewer: { icon: ScaleIcon },
 } as const;
 
 // The main-agent session is the interactive entry point of this tab and has no
@@ -318,6 +426,7 @@ function keyForSession(s: Session): string {
   if (s.role === "mainagent") return `main:${s.seg ?? 0}`;
   if (s.role === "planner") return "plan";
   if (s.role === "system") return "system";
+  if (s.role === "reviewer") return `reviewer:${s.id}`;
   return `intent:${s.intent_id}`;
 }
 
@@ -555,6 +664,20 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   // 点标题栏可展开选会话，选完自动收起。桌面端不受影响（lg 起始终展开）。
   const [listOpen, setListOpen] = React.useState(false);
   const [workerFilter, setWorkerFilter] = React.useState<"all" | "running" | "paused" | "blocked">("all");
+  // 回顾者判决：台账是只读的，按需轮询即可（不接 SSE——判决是低频事件）。
+  const [reviewerVerdicts, setReviewerVerdicts] = React.useState<ReviewerVerdict[]>([]);
+  const [reviewerExpanded, setReviewerExpanded] = React.useState(false);
+  // 分区折叠：五栏（主/规划/回顾者/Worker/审计）在小屏上会把列表撑爆，
+  // 所以每个分区头都可折叠，折叠状态按 role 记；默认全展开，行为与旧版一致。
+  const [collapsedRoles, setCollapsedRoles] = React.useState<Set<string>>(() => new Set());
+  const toggleRole = React.useCallback((role: string) => {
+    setCollapsedRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  }, []);
   // Per-session lazily-loaded caches, keyed by session_key (main | plan | intent:<id>).
   const [store, setStore] = React.useState<SessionStore>({});
   // Worker sessions derived from exploration intents (paged past the old 300 cap).
@@ -1239,6 +1362,43 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     return grouped;
   }, [intentAssets]);
 
+  // ── 回顾者判决 ────────────────────────────────────────────────────────────────
+  // 判决是低频事件（每个 worker run 一条），不进 SSE，轮询足够；
+  // 失败静默保持上一批，不弹错——面板读不到判决不该打断任务操作。
+  React.useEffect(() => {
+    let alive = true;
+    setReviewerVerdicts([]);
+    const pull = () => {
+      api
+        .taskReviewerVerdicts(taskId)
+        .then((rows) => {
+          if (alive) setReviewerVerdicts(rows);
+        })
+        .catch(() => {});
+    };
+    pull();
+    const timer = window.setInterval(pull, 15000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [taskId]);
+
+  // 一条判决 = 一个只读会话；标题带意图号，状态跟随判决结论。
+  const reviewerSessions = React.useMemo<Session[]>(
+    () =>
+      reviewerVerdicts.map((v) => ({
+        id: `s-reviewer-${v.id}`,
+        role: "reviewer",
+        title: t("title.reviewer", { id: v.intent_id }),
+        status:
+          v.verdict === "advance" ? "done" : v.verdict === "abandon" ? "stopped" : "paused",
+        live: false,
+        last_activity: v.created_at,
+      })),
+    [reviewerVerdicts, t],
+  );
+
   const workerSessions = React.useMemo(() => allIntents.map(intentToSession), [allIntents]);
   const intentsHasMore = hasLoadedOlderIntentsPage ? olderIntentsHasMore : firstIntentsHasMore;
 
@@ -1341,17 +1501,19 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     const items = [
       ...mainSessions,
       { ...PLANNER_SESSION, title: t("title.planner"), live: plannerLive },
+      ...reviewerSessions,
       ...workerSessions,
       { ...SYSTEM_SESSION, title: t("title.system") },
     ];
     const located = focusSession ?? retainedSession;
     if (located && !items.some((s) => s.id === located.id)) items.push(located);
     return items;
-  }, [mainSessions, workerSessions, plannerLive, focusSession, retainedSession, t]);
+  }, [mainSessions, reviewerSessions, workerSessions, plannerLive, focusSession, retainedSession, t]);
 
   const grouped = {
     mainagent: sessions.filter((s) => s.role === "mainagent"),
     planner: sessions.filter((s) => s.role === "planner"),
+    reviewer: sessions.filter((s) => s.role === "reviewer"),
     worker: sessions.filter((s) => s.role === "worker"),
     system: sessions.filter((s) => s.role === "system"),
   };
@@ -1367,6 +1529,10 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const isMain = active.role === "mainagent";
   const isPlanner = active.role === "planner";
   const isSystem = active.role === "system";
+  const isReviewer = active.role === "reviewer";
+  const activeVerdict = isReviewer
+    ? (reviewerVerdicts.find((v) => `s-reviewer-${v.id}` === active.id) ?? null)
+    : null;
   const activeKey = keyForSession(active);
   // 只把属于当前会话的增量交给 Transcript：
   //   - worker 会话按 intent_id 对（后端 number / Session string，统一转字符串比）；
@@ -1413,7 +1579,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   React.useEffect(() => {
     activeKeyRef.current = activeKey;
     const st = store[activeKey];
-    if (!st || (!st.loaded && !st.loading)) {
+    if (active.role === "reviewer") {
+      // 判决台账自带内容，没有活动流可拉；拉了只会得到一个空的 history 请求。
+    } else if (!st || (!st.loaded && !st.loading)) {
       loadSession(activeKey);
     } else if (st.unread) {
       patchStore(activeKey, (s) => ({ ...s, unread: 0 }));
@@ -1869,19 +2037,45 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             )}
           >
             <div className="flex w-full flex-col gap-3 p-2">
-              {(["mainagent", "planner", "system", "worker"] as const).map((role) => {
+              {(["mainagent", "planner", "reviewer", "worker", "system"] as const).map((role) => {
                 const rawItems = grouped[role];
                 if (!rawItems.length) return null;
-                const items =
+                let items =
                   role === "worker" && workerFilter !== "all"
                     ? rawItems.filter((s) => s.id === activeId || s.status === workerFilter)
                     : rawItems;
+                // 回顾者可能积累几十上百条判决，默认只展示最近 8 条，
+                // 否则这个分区会把下面所有分区挤出可视区。
+                if (role === "reviewer" && !reviewerExpanded && items.length > 8) {
+                  items = items.slice(0, 8);
+                }
                 const Meta = roleMeta[role];
+                const collapsed = collapsedRoles.has(role);
                 return (
                   <div key={role} className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-1.5 px-2 py-1 font-semibold text-muted-foreground text-xs tracking-tight">
+                      <button
+                        type="button"
+                        onClick={() => toggleRole(role)}
+                        aria-expanded={!collapsed}
+                        aria-label={t("list.toggleAria", { role: t(`role.${role}`) })}
+                        title={t("list.toggleAria", { role: t(`role.${role}`) })}
+                        className="-ml-1 flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+                      >
+                        <ChevronDownIcon
+                          className={cn(
+                            "size-3 transition-transform",
+                            collapsed && "-rotate-90",
+                          )}
+                        />
+                      </button>
                       <Meta.icon className="size-3.5 text-primary/80" />
                       <span>{t(`role.${role}`)}</span>
+                      {role === "reviewer" && (
+                        <span className="ml-auto rounded-full bg-muted px-1.5 py-0.2 font-mono text-[10px] text-muted-foreground tabular-nums">
+                          {rawItems.length}
+                        </span>
+                      )}
                       {role === "worker" && (
                         <span className="ml-auto rounded-full bg-muted px-1.5 py-0.2 font-mono text-[10px] text-muted-foreground tabular-nums">
                           {rawItems.length}
@@ -1905,6 +2099,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         </button>
                       )}
                     </div>
+                    {!collapsed && (
+                      <>
                     {role === "worker" && rawItems.length > 3 && (
                       <div className="mb-1 flex flex-wrap items-center gap-1 px-2">
                         {(["all", "running", "paused", "blocked"] as const).map((fKey) => {
@@ -1969,6 +2165,22 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         )}
                         {t("worker.loadOlder")}
                       </button>
+                    )}
+                    {role === "reviewer" && rawItems.length > 8 && (
+                      <button
+                        type="button"
+                        onClick={() => setReviewerExpanded((v) => !v)}
+                        className="mt-0.5 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-muted-foreground text-xs hover:bg-accent/50"
+                      >
+                        <ChevronDownIcon
+                          className={cn("size-3.5 transition-transform", reviewerExpanded && "rotate-180")}
+                        />
+                        {reviewerExpanded
+                          ? t("reviewer.collapse")
+                          : t("reviewer.showAll", { n: rawItems.length })}
+                      </button>
+                    )}
+                      </>
                     )}
                   </div>
                 );
@@ -2146,6 +2358,16 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                       {t("transcript.retry")}
                     </Button>
                   </div>
+                ) : isReviewer ? (
+                  activeVerdict ? (
+                    <ReviewerVerdictPanel v={activeVerdict} />
+                  ) : (
+                    <EmptyState
+                      compact
+                      illustration="chat"
+                      title={t("reviewer.empty")}
+                    />
+                  )
                 ) : activity.length || liveDeltaForActive ? (
                   <Transcript
                     activity={activity}
