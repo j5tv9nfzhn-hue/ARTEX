@@ -19,12 +19,13 @@ import (
 	actool "github.com/Autumn-27/norma/tool"
 )
 
-// maxNativeMCPToolSchemas is the maximum number of directly-visible MCP tools whose
-// full JSON Schemas are exposed directly in the model's native tools list (in addition
-// to being callable via ExecuteExtraTool). Keeping directly-visible MCP tools native
-// up to this threshold allows models to call mcp__<Server>__<Tool> directly on Turn 1
-// without an extra discovery round-trip.
-const maxNativeMCPToolSchemas = 40
+// maxNativeMCPToolSchemas caps how many MCP tools may be exposed as native schemas.
+//
+// 它必须 <= DB tools 白名单规模：白名单是模型可见工具面的**唯一**权威，任何
+// 允许「白名单之外再多给 N 个 schema」的阈值都等于给 MCP 开了一条绕过白名单的
+// 后门（第七阶段审计 P1-1：原值 40 比白名单 25 还宽 60%，导致该降级分支永久
+// 失效）。超出的部分仍然可经 ExecuteExtraTool 按需调用，只是不再常驻 schema。
+const maxNativeMCPToolSchemas = 25
 
 // maxCompanionRefBytes caps the total bytes of references/*.md auto-injected when
 // a multi-file skill package is invoked via Skill({"name":"..."}).
