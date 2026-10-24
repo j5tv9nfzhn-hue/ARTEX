@@ -163,6 +163,9 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			}
 			flush()
 			out := blocksText(ev.ToolResult.Content)
+			// 界面与落库只留真正的工具输出：转向提示是给模型的一次性指令，
+			// 混进 Detail 就成了每条命令都挂着的一段残留文案（见 stripSteerNotes）。
+			visible := stripSteerNotes(out)
 			delete(awaiting, ev.ToolResult.ToolUseID)
 			if _, known := toolNames[ev.ToolResult.ToolUseID]; !known {
 				// 有 ID 但在本轮没有对应 tool_use（例如恢复会话带出的旧结果）：
@@ -172,8 +175,8 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			lastTool.done(ev.ToolResult.ToolUseID)
 			auditTrace.Complete(ev.ToolResult.ToolUseID, out, ev.ToolResult.IsError)
 			rec(db.Activity{Kind: "tool_result", Tool: toolNames[ev.ToolResult.ToolUseID], ToolUseID: ev.ToolResult.ToolUseID,
-				IsError: ev.ToolResult.IsError, Summary: firstLine(out, 200), Detail: out,
-				Metadata: toolStatusMetadata(out)})
+				IsError: ev.ToolResult.IsError, Summary: firstLine(visible, 200), Detail: visible,
+				Metadata: toolStatusMetadata(visible)})
 		case harness.KindProgress:
 			// 工具跑到一半的进度（tool.ProgressInfo，只有文字没有 ID）。只走实时通道，让
 			// 界面那行有东西在动；落库口径不变——进度是观感，不是执行结论。找不到对应
@@ -328,7 +331,9 @@ func approvalHistory(messages []llm.Message) []db.InterceptContextEntry {
 			case llm.BlockToolUse:
 				entry.Kind, entry.Tool, entry.ToolUseID, entry.Text = "tool_use", block.Name, block.ID, string(block.Input)
 			case llm.BlockToolResult:
-				entry.Kind, entry.ToolUseID, entry.Text, entry.IsError = "tool_result", block.ToolUseID, blocksText(block.Content), block.IsError
+				entry.Kind, entry.ToolUseID, entry.IsError = "tool_result", block.ToolUseID, block.IsError
+				// 裁决上下文同样不该出现转向提示：它是给执行模型的，不是证据。
+				entry.Text = stripSteerNotes(blocksText(block.Content))
 			default:
 				continue
 			}

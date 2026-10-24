@@ -92,13 +92,14 @@ func (b *crossPlatformBashTool) Prompt() string {
 //   - 写法不对导致的失败追加一条「正确写法」提示（见 windowsDialectHint）；
 //   - 逃生通道转向：模型在 Bash 里写/跑 Python 脚本时点名可替代的原生工具
 //     （回归证据：某安装 http_request 占全部调用的 49.4%，见 agent/tool_steering.go）。
+//     每个任务只说一次（noteBashPythonSteer），不随命令条数累加。
 func (b *crossPlatformBashTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 	res, err := b.call(ctx, in, tc)
 	if err != nil {
 		return res, err
 	}
 	res = utf8Result(res)
-	if note := pythonScriptSteer(bashCommandOf(in)); note != "" {
+	if note := noteBashPythonSteer(ctx, bashCommandOf(in)); note != "" {
 		// 追加一个 text block；保留既有 text/非 text block、IsError 与 Extra。
 		res.Content = append(append([]llm.ContentBlock(nil), res.Content...), llm.TextBlock(note))
 	}

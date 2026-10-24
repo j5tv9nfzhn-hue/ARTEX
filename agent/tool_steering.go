@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	actool "github.com/Autumn-27/norma/tool"
+
+	"github.com/Autumn-27/artex/intercept"
 )
 
 // 工具选择转向（数据驱动）。
@@ -78,6 +81,26 @@ const (
 	nativeHTTPSequence = "http_sequence"
 	nativeHTTPFuzz     = "http_fuzz"
 	nativeWebRecon     = "web_recon"
+)
+
+// 转向提示的边界标记、注入预算与展示剥离。
+//
+// 这段文案是**给模型的转向指令**，不是命令输出的一部分。第一版每次 Bash 写/跑
+// Python 都追加一遍：它随工具结果写进 Activity.Detail，于是界面里每展开一条命令
+// 都挂着同一段 <tool_steering> 残留物，长跑任务里模型侧也被同一段字反复冲刷。
+// 现在注入与展示分开处理：
+//   - 注入侧：同一任务只说 bashSteerBudget 次（见 noteBashPythonSteer）；
+//   - 展示侧：capture.go 落库前用 stripSteerNotes 剥掉，界面只剩真正的命令输出。
+const (
+	steerOpenTag  = "<tool_steering>"
+	steerCloseTag = "</tool_steering>"
+	// bashSteerBudget 每个任务说几次 Python 转向提示。一次足够——工具清单已经
+	// 随结果给过模型，重复只是噪声。
+	bashSteerBudget = 1
+	// bashSteerStateCap 记账表上限，超过整表清空（与 skillRecall 同口径）。
+	bashSteerStateCap = 512
+	// steerJSONKey 是 http_* 把提示塞进结果 JSON 时用的字段名。
+	steerJSONKey = `"tool_steering"`
 )
 
 // httpPattern 是「这一串请求到底在干什么」的判定，决定提示里点名哪个工具。
@@ -395,6 +418,74 @@ func pythonScriptSteer(cmd string) string {
 	b.WriteString("下一次同类操作请直接调用上述工具；仅当确需外部二进制（sqlmap / nmap / nuclei 等）时才用 Bash。\n")
 	b.WriteString("</tool_steering>")
 	return b.String()
+}
+
+var (
+	bashSteerMu   sync.Mutex
+	bashSteerSeen = map[string]int{} // 任务 ID → 已说次数
+)
+
+// noteBashPythonSteer 是 Bash 工具 Call 的唯一入口：先判形态，再按任务记账。
+//
+// 无任务上下文（单元测试、独立会话）时不去重——那种场景没有「同一任务」的概念。
+func noteBashPythonSteer(ctx context.Context, cmd string) string {
+	note := pythonScriptSteer(cmd)
+	if note == "" {
+		return ""
+	}
+	taskID := intercept.TaskIDFromContext(ctx)
+	if taskID == "" {
+		return note
+	}
+	bashSteerMu.Lock()
+	defer bashSteerMu.Unlock()
+	if len(bashSteerSeen) > bashSteerStateCap {
+		bashSteerSeen = map[string]int{}
+	}
+	if bashSteerSeen[taskID] >= bashSteerBudget {
+		return ""
+	}
+	bashSteerSeen[taskID]++
+	return note
+}
+
+// stripSteerNotes 剥掉工具结果里的转向提示，只用于**落库与界面**；模型侧看到的
+// 内容不变（剥离发生在 capture 写 Activity 之前）。
+//
+// 处理两种形态：
+//   - <tool_steering>…</tool_steering> 段（Bash 追加的 text block）；
+//   - http_* 结果 JSON 里的 "tool_steering" 键（整行删除，并修掉可能的尾逗号）。
+//
+// 没有闭合标记时按「输出被截断」处理，从标记处切到结尾——宁可少显示，也不让半截
+// 标记留在界面上。
+func stripSteerNotes(s string) string {
+	if s == "" || !strings.Contains(s, "tool_steering") {
+		return s
+	}
+	for {
+		start := strings.Index(s, steerOpenTag)
+		if start < 0 {
+			break
+		}
+		if rel := strings.Index(s[start:], steerCloseTag); rel >= 0 {
+			s = s[:start] + s[start+rel+len(steerCloseTag):]
+			continue
+		}
+		s = s[:start]
+	}
+	if strings.Contains(s, steerJSONKey) {
+		var b strings.Builder
+		for _, line := range strings.Split(s, "\n") {
+			if strings.Contains(line, steerJSONKey+":") {
+				continue
+			}
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+		s = strings.ReplaceAll(b.String(), ",\n}", "\n}")
+		s = strings.ReplaceAll(s, ",\r\n}", "\r\n}")
+	}
+	return strings.TrimRight(s, "\n")
 }
 
 // ---- 原生工具路由 ----
