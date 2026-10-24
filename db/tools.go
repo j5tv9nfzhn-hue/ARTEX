@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
 )
 
 // Tool is one row of the built-in tool catalog. key + handler live in code; this
@@ -115,6 +117,27 @@ ON CONFLICT (key) DO UPDATE
 // migrations to propagate a code schema change (SeedTool is first-insert-only, so a new
 // parameter added in code otherwise never reaches an already-seeded row). No-op for
 // custom tools or unknown keys.
+// PurgeNonOfficialTools 删除所有不在白名单内的系统内置工具行（第六阶段工具面精简）。
+// 只处理 system=true 的内置工具，用户自定义工具（system=false）不受影响。
+// 返回被删除的行数。
+func (d *DB) PurgeNonOfficialTools(keep []string) (int64, error) {
+	if len(keep) == 0 {
+		return 0, nil
+	}
+	ph := make([]string, 0, len(keep))
+	args := make([]any, 0, len(keep))
+	for i, k := range keep {
+		ph = append(ph, fmt.Sprintf("$%d", i+1))
+		args = append(args, k)
+	}
+	q := fmt.Sprintf(`DELETE FROM tools WHERE system AND key NOT IN (%s)`, strings.Join(ph, ","))
+	res, err := d.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
 func (d *DB) RefreshToolDefaults(key, desc string, schema json.RawMessage) error {
 	if len(schema) == 0 {
 		schema = json.RawMessage("{}")

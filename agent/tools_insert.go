@@ -640,14 +640,16 @@ func splitLines(s string) []string {
 	return out
 }
 
-// SetPhase 设置本 run 的阶段(recon/verify/exploit;其它值视为不限制)。
+// SetPhase 设置本 run 的阶段标签(recon/verify/exploit;其它值视为未判定)。
+// 它只作日志/观测信号，不再决定 WorkerTools 返回哪些工具。
 func (t *ToolSet) SetPhase(phase string) { t.phase = normalizeWorkerPhase(phase) }
 
-// SetIntentHint 传入本 run 对应意图的可读文字(小写)，供阶段内的专用工具裁剪使用。
+// SetIntentHint 保存本 run 对应意图的可读文字(小写)供观测与兼容。实际能力路由
+// 使用 worker 经 context 传给 AugmentTools 的 workerRouteText，不在这里预裁。
 func (t *ToolSet) SetIntentHint(text string) { t.intentHint = text }
 
-// normalizeWorkerPhase 把外部传入的阶段名收敛到三个合法值,未知值一律当「不限制」——
-// 阶段只用来裁工具面,拼错一个词不该让 worker 少一半能力。
+// normalizeWorkerPhase 把外部传入的阶段名收敛到三个合法值,未知值一律当「未判定」——
+// 标签拼错不该改变 worker 的候选能力目录。
 func normalizeWorkerPhase(phase string) string {
 	switch strings.ToLower(strings.TrimSpace(phase)) {
 	case workerPhaseRecon:
@@ -660,108 +662,47 @@ func normalizeWorkerPhase(phase string) string {
 	return ""
 }
 
-// 阶段取值。工具面按阶段分组的理由:worker 的 system prompt 里塞着整份工具定义,
-// 一个纯侦察的 worker 拿着 fuzz/利用工具既花 token 又容易被带跑偏(实测通用工具吞掉
-// 专用工具是主要问题)。阶段是「意图自己声明的」,缺省不限制,所以老流程不变。
+// 阶段取值。它们现在只是意图的粗粒度标签：planner 显式声明时可作为路由文字
+// 的弱信号，推断值用于日志/观测。工具是否下发由 RouteToolFace 按意图与工具
+// 自述的重叠度决定，不再按这三个标签分组。
 const (
 	workerPhaseRecon   = "recon"
 	workerPhaseVerify  = "verify"
 	workerPhaseExploit = "exploit"
 )
 
-// WorkerTools 按意图阶段注入工具面。阶段为空/未知 → 全量(与历史行为一致)。
+// WorkerTools 返回完整的 worker 候选目录。
+//
+// phase 与 intentHint 不再在这里裁工具：静态阶段面会让后续动态路由永远看不见
+// 被提前删掉的能力。最终下发面由 AugmentTools 在合并 MCP/Skill、执行 ToolResolve
+// 后交给 RouteToolFace 按当前意图统一选择；没有 route intent 的目录型调用仍能
+// 拿到完整目录。
 func (t *ToolSet) WorkerTools() []actool.CoreTool {
-	switch t.phase {
-	case workerPhaseRecon:
-		return []actool.CoreTool{
-			t.insertAssets(), t.listAssets(),
-			t.webReconTool(), t.dnsProbeTool(), t.netProbeTool(), t.httpRequestTool(),
-			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(), t.nodeDetail(),
-			// add_finding 必须给:侦察本身就常常直接坐实一个漏洞(暴露的 .git/actuator、
-			// 未授权接口、目录列表)。此前 recon 只有 list_findings,一旦验证到漏洞,
-			// worker 只能退而 record_fact,漏洞不进漏洞表——表现就是"明明找到了却没报"。
-			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
-			// 线索缓存：侦察是「材料」的最大产出方，也是复用方（先看别人扫到了什么）。
-			t.cacheClueTool(), t.queryCluesTool(),
-		}
-	case workerPhaseVerify:
-		return []actool.CoreTool{
-			t.humanVerificationTool(), t.verificationSolveTool(), t.verificationCapabilitiesTool(), t.verificationFlowTool(),
-			t.httpRequestTool(), t.binaryInspectTool(), t.extractDataTool(), t.codecCryptoTool(),
-			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(), t.nodeDetail(),
-			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
-			t.cacheClueTool(), t.queryCluesTool(),
-		}
-	case workerPhaseExploit:
-		// 利用阶段是工具面最胖的一档（18.1 KB）。这里再按意图文字摘掉「只服务
-		// 单一能力」的专用工具：意图没提 fuzz/加解密/结构化提取/二进制，就不挂
-		// 对应工具——通用替代品（http_sequence / http_request / bash）都还在，
-		// 写入与回报类工具一个不动。判断不了（hint 为空）时原样全给。
-		return pruneSpecialistTools([]actool.CoreTool{
-			t.httpFuzzTool(), t.httpSequenceTool(), t.httpRequestTool(),
-			t.codecCryptoTool(), t.extractDataTool(), t.binaryInspectTool(),
-			t.insertAssets(), t.listAssets(),
-			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(), t.nodeDetail(),
-			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
-			t.cacheClueTool(), t.queryCluesTool(),
-			t.aiChatProbeTool(), t.docInjectTool(),
-		}, t.intentHint)
-	}
 	return t.allWorkerTools()
 }
 
-// allWorkerTools 是阶段为空时的完整工具面(原 WorkerTools 的实现)。
+// allWorkerTools 是 worker 的完整候选目录。是否真正下发给某个 run，由
+// AugmentTools 末端的动态能力路由决定。
 func (t *ToolSet) allWorkerTools() []actool.CoreTool {
+	// 第六阶段：与官方 WorkerTools(8) 逐项一致。
 	return []actool.CoreTool{
-		// list_findings 保留：报漏洞前先查本任务已确认漏洞，避免重复上报同一漏洞。
-		t.listFindings(),
-		t.addFinding(), t.recordFact(),
-		// asset management (handlers guard nil store internally)。
-		// add_company_scope 不给 worker：定义企业资产范围属规划/主控/Auto 的职责，worker 只执行探索。
+		t.listFindings(), t.addFinding(), t.recordFact(),
 		t.insertAssets(), t.listAssets(),
-		// 跨 work 回看：worker 也可复用其他 work 的观察，避免重复劳动。
-		// search_all_worker_traces：不必先知道 intent_id，按关键字全局捞命中步骤；
-		// get_worker_trace：锁定某条 work 后列步骤/就地搜/取完整内容。
 		t.searchAllWorkerTraces(), t.getWorkerTrace(),
-		// get_handoff：接着某条没跑完的意图继续时，取它的结构化交接单（事实层）。
-		// handoff_patch：运行中就把「下一步/假设/负结果」写成可交接的结构（主观层）。
-		// read_trace_range：按活动 id 区间回读原始步骤（交接单里给了 trace_range）。
-		t.getHandoff(), t.handoffPatch(), t.readTraceRange(),
-		// 任务与线索缓存（外挂记忆体）：材料写进库，不塞聊天上下文。
-		t.cacheClueTool(), t.queryCluesTool(),
-		// node_detail：worker 拿到 intent_id/节点 id 后可查该节点完整详情（配合上面的回看）。
 		t.nodeDetail(),
-		// 原生 Go 渗透测试执行工具：直接在进程内完成 HTTP 发包、受控并发 Fuzz、编解码/加解密/JWT、
-		// 结构化数据提取与端口/Banner 探测，消除临时 .py 脚本与跨平台 Shell 转义开销。
-		t.httpRequestTool(), t.httpFuzzTool(), t.httpSequenceTool(), t.webReconTool(),
-		// 诱导面：多轮话术套取 + 带隐藏指令的文档（AI 解析链路的两类入口）。
-		t.aiChatProbeTool(), t.docInjectTool(),
-		t.humanVerificationTool(), t.verificationSolveTool(), t.verificationCapabilitiesTool(), t.verificationFlowTool(), t.binaryInspectTool(), t.codecCryptoTool(), t.extractDataTool(), t.netProbeTool(), t.dnsProbeTool(), t.tacticalKBTool(),
-		// 以下工具仍【不给】worker，只留给 planner/main（读上下文、跨 work 复盘是规划职责，
-		// worker 只做单条意图的执行与写回）：list_facts / list_companies / list_worker_traces。
 	}
 }
 
 // MainAgentTools returns the human-interface tool set.
 func (t *ToolSet) MainAgentTools() []actool.CoreTool {
+	// 第六阶段：与官方 MainAgentTools(20) 逐项一致。
 	return []actool.CoreTool{
-		t.verificationCapabilitiesTool(), t.binaryInspectTool(), t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
-		t.expandDigest(), // cold-digest §6.1
-		t.getWorkerOutput(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(),
-		t.abandonIntent(), t.searchAllWorkerTraces(), t.addHint(), t.addIntent(),
-		// kill_work / restart_work / steer_work：人可结束指定 work、重启已终止/受阻/耗尽的
-		// work、或对运行中 work 实时纠偏（不打断、不丢进展）——完整的 worker 管理能力。
-		t.killWorkTool(), t.restartWorkTool(), t.steerWorkTool(),
-		// set_goals：人可在运行时给本任务补一个新的最终目标（规划者据此重判是否达成）。
-		t.setGoals(),
-		// set_constraints：人可在运行时给本任务补/改操作约束（allow/deny），约束 planner/worker 的探索边界。
-		t.setConstraints(),
-		// asset management (handlers guard nil store internally)
-		t.insertAssets(), t.addCompanyScope(), t.listAssets(),
-		t.addFinding(), t.recordFact(),
-		t.addTaskScope(),
-		// list_untested_assets：按需查本任务范围内未测资产(类型+分页)，自行决定补测。
-		t.listUntestedAssets(),
+		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.expandDigest(),
+		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(),
+		t.addHint(), t.addIntent(), t.setGoals(), t.setConstraints(),
+		t.insertAssets(), t.addCompanyScope(), t.addTaskScope(),
+		t.listAssets(), t.listUntestedAssets(),
+		t.addFinding(), t.recordFact(), t.steerWorkTool(),
 	}
 }
 

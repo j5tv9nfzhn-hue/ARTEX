@@ -67,24 +67,7 @@ func (s *Server) hostTools() ([]actool.CoreTool, map[string][]string) {
 // orchestrationTools returns the cross-task tool set. Bound per-agent via the
 // tools table (default: no binding — opt-in for orchestration agents).
 func (s *Server) orchestrationTools() []actool.CoreTool {
-	return []actool.CoreTool{
-		s.toolListTasks(),
-		s.toolListLLMProfiles(),
-		s.toolSpawnTask(),
-		s.toolPauseTask(),
-		s.toolGetTaskGraph(),
-		s.toolListTaskFindings(),
-		s.toolAddHint(),
-		s.toolGetWorkerTrace(),
-		s.toolListWorkerTraces(),
-		s.toolSearchWorkerTraces(),
-		s.toolKillWorker(),
-		s.toolRestartWorker(),
-		s.toolGetTaskNodeDetail(),
-		s.toolUpdateFindingReport(),
-		s.toolGetFindingTraffic(),
-		s.toolBindFindingTraffic(),
-	}
+	return nil
 }
 
 // --- schema helpers ---
@@ -530,56 +513,18 @@ func (s *Server) deriveTaskStatus(t *Task) string {
 // are bindable per-agent (default: bound to nobody — opt-in for orchestration
 // agents). First-insert only, like the traffic seeds.
 func (s *Server) seedOrchestrationTools() {
-	for _, tool := range s.softwareAnalysisTools() {
-		schema, err := json.Marshal(tool.InputSchema())
-		if err == nil {
-			_ = s.m.pg.SeedTool(tool.Name(), tool.Description(), schema, json.RawMessage(`["worker","planner","mainagent"]`))
-		}
+	// 第六阶段：工具面精简为官方 25 个。
+	// 1. 不再 seed 任务编排 / 平台 / 软件分析类工具；
+	// 2. 一次性净化 tools 表中不在官方白名单内的 system 工具行，
+	//    防止历史行（SeedTool 是上抛式写入）继续对模型可见。
+	n, err := s.m.pg.PurgeNonOfficialTools(agent.OfficialToolKeys())
+	if err != nil {
+		log.Printf("[tools] 工具面净化失败: %v", err)
+		return
 	}
-
-	// task-op + platform tools default-bind to the built-in Auto agent (它天生用来
-	// 操作平台)。SeedTool 首插入生效;老库已 seed 的行由 seedAutoDefaultBindings 补绑。
-	autoAgents, _ := json.Marshal([]string{"auto"})
-	for _, t := range s.orchestrationTools() {
-		schema, _ := json.Marshal(t.InputSchema())
-		bindings := autoAgents
-		if t.Name() == "bind_finding_traffic" {
-			bindings = json.RawMessage(`["reporter"]`)
-		}
-		_ = s.m.PG().SeedTool(t.Name(), t.Description(), schema, bindings)
+	if n > 0 {
+		log.Printf("[tools] 工具面已精简：删除 %d 个非官方工具", n)
 	}
-	for _, t := range s.platformTools() {
-		schema, _ := json.Marshal(t.InputSchema())
-		_ = s.m.PG().SeedTool(t.Name(), t.Description(), schema, autoAgents)
-	}
-	s.refreshBuiltinToolSchemas()
-	s.refreshOverlapToolDescriptions()
-	// 内容寻址的工具目录同步：老库里「运维没改过」的工具说明自动对齐到代码默认值。
-	// 取代「一次性 flag + 白名单」——后者刷过一次就再也拿不到新版说明，是三端行为漂移的来源。
-	s.syncToolCatalog()
-	s.seedAutoDefaultBindings()
-	s.seedPlannerDefaultBindings()
-	s.seedPlannerListAssetsBinding()
-	s.seedCompanyScopeRebind()
-	s.seedWorkerReadToolsUnbind() // list_facts/list_companies/list_worker_traces 从 worker 默认解绑(一次性)
-	s.seedWorkerReadbackRebind()  // 修复旧迁移误删：把 search_all_worker_traces/get_worker_trace/node_detail 补绑回 worker(一次性)
-	s.seedAutoReportFindingBinding()
-	s.seedMainAgentWorkControlBindings() // kill_work/restart_work 补绑 mainagent(一次性)
-	s.unbindGoalMetDefault()
-	s.reseedGoalsPrompt()             // goals 提示词加入「抽操作约束」步 → 旧库追加一版新默认(一次性)
-	s.reseedMainAgentPrompt()         // mainagent 提示词加入「目标达成后 add_intent 反问是否建目标」与 Skill/MCP 路由(一次性)
-	s.reseedPlannerPrompt()           // planner 提示词:重写「0 意图」正当理由 + 量化验收核对 + Skill/MCP 标注(一次性)
-	s.reseedWorkerPrompt()            // worker 提示词:原生 Go 工具集 + 3-Strike 止损 + Skill/MCP 主动调用(一次性)
-	s.reseedPentestAndAutoPrompts()   // pentest/auto 提示词:加入 Skill/tactical_kb/MCP 主动调用规约(一次性)
-	s.seedDefaultSkillVisibility()    // 7 个内置专家技能包补齐默认 agent 可见性绑定(一次性)
-	s.seedSkillEvolutionBindings()    // human-verification 技能可见性 + 自主沉淀/审阅工具默认绑定(一次性)
-	s.seedReporterAgent()             // 预置“报告撰写” Agent、工具绑定与 finding 触发器，一次性初始化。
-	s.upgradeReporterTriggerMessage() // 老库补迁移:让 reporter 回传 evidence_version(一次性)
-	s.seedFindingTrafficTools()       // 增加可选证据参数及只读证据工具，保留用户配置
-	s.seedFindingWorkflowTools()
-	// 注：pentest 的默认工具绑定无需迁移——BuiltinToolSeeds 在全新初始化时就把
-	// list_assets/insert_assets/report_finding/list_findings/list_companies 连同
-	// pentest 一起 seed 好了（项目尚无旧库，不做迁移）。
 }
 
 // refreshBuiltinToolSchemas propagates code schema/description changes on the

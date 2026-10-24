@@ -42,14 +42,10 @@ func builtinToolsByAgent() map[string][]actool.CoreTool {
 		"goals": {ts.setGoals(), ts.setConstraints()},
 		// auto 默认绑漏洞上报 + 资产管理工具，其他域工具可在 UI 按需勾选。
 		// 新库由此 seed 写入；老库由 seedAutoDefaultBindings 迁移。
-		"auto": {ts.addFinding(), ts.insertAssets(), ts.addCompanyScope(), ts.listAssets(), ts.listCompanies(), ts.tacticalKBTool()},
+		"auto": {ts.addFinding(), ts.insertAssets(), ts.addCompanyScope(), ts.listAssets(), ts.listCompanies()},
 		// pentest（独立渗透 agent）默认绑：查资产 / 插资产 / 报漏洞 / 查漏洞 / 查企业 + 全套原生渗透与知识库工具。
 		// 新库由此 seed 写入；老库由 seedPentestDefaultBindings 迁移。
-		"pentest": {
-			ts.listAssets(), ts.insertAssets(), ts.addFinding(), ts.listFindings(), ts.listCompanies(),
-			ts.httpRequestTool(), ts.httpFuzzTool(), ts.httpSequenceTool(), ts.webReconTool(),
-			ts.humanVerificationTool(), ts.verificationSolveTool(), ts.verificationCapabilitiesTool(), ts.verificationFlowTool(), ts.codecCryptoTool(), ts.extractDataTool(), ts.netProbeTool(), ts.dnsProbeTool(), ts.tacticalKBTool(),
-		},
+		"pentest": {ts.listAssets(), ts.insertAssets(), ts.addFinding(), ts.listFindings(), ts.listCompanies()},
 	}
 }
 
@@ -64,6 +60,26 @@ var defaultUnbound = map[string]bool{"goal_met": true}
 
 // BuiltinToolSeeds 把各 agent 的内置工具集去重合并成 seed 列表：同名工具（如 list_assets
 // 多个 agent 都有）合成一条，Agents 取并集；defaultUnbound 里的工具则强制绑定为空。
+// OfficialToolKeys 返回第六阶段冻结的官方工具白名单（25 个，与 jiwoochris/artex-ko
+// 的 PlannerTools ∪ WorkerTools ∪ MainAgentTools 逐项一致）。
+// 它是"模型可见工具面"的唯一真相：启动时据此净化 tools 表，任何不在名单内的
+// system 工具行都会被物理删除。
+func OfficialToolKeys() []string {
+	return []string{
+		// 图 / 事实 / 目标（Planner 与 MainAgent 共享）
+		"graph_overview", "list_findings", "list_facts", "node_detail", "expand_digest",
+		"get_worker_output", "get_worker_trace", "search_all_worker_traces",
+		"list_goals", "add_intent", "prove_goal", "goal_met",
+		"kill_work", "steer_work",
+		"add_hint", "set_goals", "set_constraints",
+		// 资产 / 公司 / 范围
+		"insert_assets", "list_assets", "list_companies", "list_untested_assets",
+		"add_company_scope", "add_task_scope",
+		// 发现 / 事实写回
+		"report_finding", "record_fact",
+	}
+}
+
 func BuiltinToolSeeds() []ToolSeed {
 	byAgent := builtinToolsByAgent()
 	order := []string{"mainagent", "goals", "planner", "worker", "auto", "pentest"}

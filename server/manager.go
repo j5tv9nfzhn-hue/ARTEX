@@ -703,10 +703,7 @@ func (m *Manager) SetWebSearch(on bool, backend string, braveKey, tavilyKey, pro
 // traffic tools, gated by the global capture switch: empty when capture is off, so
 // no agent gets traffic_search/traffic_get regardless of binding.
 func (m *Manager) HostTools() []actool.CoreTool {
-	if m.traffic == nil || !m.TrafficEnabled() {
-		return nil
-	}
-	return m.traffic.Tools()
+	return nil
 }
 
 func (m *Manager) Assets() *pgdb.AssetStore  { return m.assets }

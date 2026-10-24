@@ -2319,30 +2319,13 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 
 // PlannerTools is the read + intent-generation + goal-judgement tool set.
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
+	// 第六阶段：模型可见工具面 = 官方 25 个。本 face 与 jiwoochris/artex-ko 的 PlannerTools 逐项一致。
 	return []actool.CoreTool{
-		t.verificationCapabilitiesTool(), t.binaryInspectTool(), t.recordFact(),
-		t.graphOverview(), t.overviewSlice(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.tacticalKBTool(),
-		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
-		t.expandDigest(),
-		t.getWorkerOutput(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(),
-		// abandon_intent：显式放弃一条分支（闭集理由 + 证据校验），是「不做了」的唯一合法出口；
-		// 它不产生证据，因此不能用来绕过目标判定。
-			// fetch_evidence：Planner 唯一的回溯通道（只读、只读洗过的快照、
-		// 单次上限 4000 字符）。默认不调，仅在对 Reviewer 判决存疑时用。
-		t.fetchEvidence(), t.abandonIntent(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
-		t.killWorkTool(), t.restartWorkTool(), t.steerWorkTool(),
-		// report_finding：规划态势研判时若自身已确证漏洞，可直接登记（与 worker 同工具）。
-		t.addFinding(),
-		// list_companies：查看企业列表 + scope + 资产数（拿 company_id / 理解归属范围）。
-		t.listCompanies(),
-		// list_assets：规划时按 DSL 检索全资产库（配合 list_untested_assets 的"范围内未测"视角，
-		// 补上"按域名/指纹/端口/状态码等条件在整库里查"的能力）。
-		t.listAssets(),
-		// add_company_scope：规划时可把域名/IP/CIDR/ICP/关键词纳入某公司的资产范围（自动认领命中资产）。
-		t.addCompanyScope(),
-		// add_task_scope：主动把整根域/整公司/某子域/IP 纳入本任务测试范围(覆盖度分母)。
-		t.addTaskScope(),
-		// list_untested_assets：按需查本任务范围内未测资产(类型+分页)，自行决定补测。
-		t.listUntestedAssets(),
+		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.expandDigest(),
+		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(),
+		t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
+		t.killWorkTool(), t.steerWorkTool(),
+		t.addFinding(), t.listCompanies(), t.listAssets(),
+		t.addCompanyScope(), t.addTaskScope(), t.listUntestedAssets(),
 	}
 }

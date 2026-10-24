@@ -14,7 +14,6 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/intercept"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -159,51 +158,7 @@ func (s *Server) startFindingRetest(w http.ResponseWriter, r *http.Request) {
 // Both tools derive the finding from server-owned conversation context. Tool
 // arguments cannot redirect a result into a different finding or conversation.
 func (s *Server) findingRetestTools() []actool.CoreTool {
-	return []actool.CoreTool{
-		roTool("get_finding_retest_context", "读取当前复测会话关联的漏洞证据快照、复测状态、补充说明与当前任务约束。无参数，只能读取本会话。",
-			objSchema(map[string]any{}), func(ctx context.Context, _ json.RawMessage) (actool.Result, error) {
-				r, err := s.m.pg.FindingRetestForConversation(ctx, intercept.ConvIDFromContext(ctx))
-				if err != nil {
-					return actool.Errorf(err.Error()), nil
-				}
-				if r == nil {
-					return actool.Errorf("当前会话未关联复测记录，请从漏洞详情发起复测"), nil
-				}
-				var constraints []db.Constraint
-				f, err := s.m.pg.GetFinding(r.FindingID)
-				if err != nil {
-					return actool.Errorf(err.Error()), nil
-				}
-				if f != nil && f.TaskID != nil {
-					if task, ok := s.m.Task(strconv.FormatInt(*f.TaskID, 10)); ok {
-						constraints, err = task.Store.ListConstraints()
-						if err != nil {
-							return actool.Errorf(err.Error()), nil
-						}
-					}
-				}
-				return jsonResult(map[string]any{"retest": r, "current_constraints": constraints})
-			}),
-		wrTool("record_finding_retest_result", "为当前复测会话保存唯一结论；原漏洞证据与报告保持不变。会话成功结束且结论为 fixed 时，系统自动将漏洞状态改为已修复；其他结论保留原状态。必须提供本次实际检查的证据，无法确认时写明阻塞原因。",
-			objSchema(map[string]any{
-				"verdict":  map[string]any{"type": "string", "enum": []string{"reproduced", "fixed", "inconclusive"}},
-				"summary":  strParam("本次复测结论摘要"),
-				"evidence": strParam("Markdown：本次实际步骤、观察、对照、结论依据；无法确认则列出已检查内容和阻塞原因"),
-			}, "verdict", "summary", "evidence"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
-				var a struct {
-					Verdict  string `json:"verdict"`
-					Summary  string `json:"summary"`
-					Evidence string `json:"evidence"`
-				}
-				if err := json.Unmarshal(in, &a); err != nil {
-					return actool.Errorf(err.Error()), nil
-				}
-				if err := s.m.pg.RecordFindingRetestResult(ctx, intercept.ConvIDFromContext(ctx), a.Verdict, a.Summary, a.Evidence); err != nil {
-					return actool.Errorf(err.Error()), nil
-				}
-				return jsonResult(map[string]any{"saved": true, "verdict": a.Verdict})
-			}),
-	}
+	return nil
 }
 
 // Seed the editable agent atomically, without an automatic discovery trigger.

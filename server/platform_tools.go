@@ -18,21 +18,7 @@ import (
 // seed 进 tools 表、默认绑定 auto,经 hostTools 注入。复用现有 db/文件系统逻辑。
 
 func (s *Server) platformTools() []actool.CoreTool {
-	return []actool.CoreTool{
-		s.toolCreateSkill(),
-		s.toolUpdateSkillFile(),
-		s.toolListSkillGaps(),
-		s.toolProposeSkill(),
-		s.toolListSkillProposals(),
-		s.toolReviewSkillProposal(),
-		s.toolDistillTaskSkill(),
-		s.toolDistillReportSkill(),
-		s.toolCreateCustomTool(),
-		s.toolUpdateCustomTool(),
-		s.toolCreateMCP(),
-		s.toolUpdateMCP(),
-		s.toolDeleteAssetsByHost(),
-	}
+	return nil
 }
 
 // platformToolKeys are the tool keys the Auto agent gets bound by default.

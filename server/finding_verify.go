@@ -15,7 +15,6 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/intercept"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -257,55 +256,7 @@ func (s *Server) listActiveFindingVerifications(w http.ResponseWriter, r *http.R
 // verified」以外的动作；而 verified 这一步是 db.FinishFindingVerification 在会话
 // 成功结束后做的，工具本身也改不了 validation。
 func (s *Server) findingVerifyTools() []actool.CoreTool {
-	return []actool.CoreTool{
-		roTool("get_finding_verification_context", "读取当前复核会话关联的发现原文、上报者证据、关联资产、复核状态与任务约束。无参数，只能读取本会话。",
-			objSchema(map[string]any{}), func(ctx context.Context, _ json.RawMessage) (actool.Result, error) {
-				v, err := s.m.pg.FindingVerificationForConversation(ctx, intercept.ConvIDFromContext(ctx))
-				if err != nil {
-					return actool.Errorf(err.Error()), nil
-				}
-				if v == nil {
-					return actool.Errorf("当前会话未关联复核记录，请从漏洞详情发起复核"), nil
-				}
-				var constraints []db.Constraint
-				f, err := s.m.pg.GetFinding(v.FindingID)
-				if err != nil {
-					return actool.Errorf(err.Error()), nil
-				}
-				if f != nil && f.TaskID != nil {
-					if task, ok := s.m.Task(strconv.FormatInt(*f.TaskID, 10)); ok {
-						constraints, err = task.Store.ListConstraints()
-						if err != nil {
-							return actool.Errorf(err.Error()), nil
-						}
-					}
-				}
-				return jsonResult(map[string]any{
-					"verification":        v,
-					"snapshot":            v.Snapshot,
-					"current_constraints": constraints,
-				})
-			}),
-		wrTool("record_finding_verification_result", "为当前复核会话保存唯一结论。只有 verified 才会把该发现计入资产真值与报告正文；refuted 标记为不成立；inconclusive 表示无法确认（发现仍是未复核）。必须提供本次独立检查的证据。",
-			objSchema(map[string]any{
-				"verdict":  map[string]any{"type": "string", "enum": []string{"verified", "refuted", "inconclusive"}},
-				"summary":  strParam("本次复核结论摘要"),
-				"evidence": strParam("Markdown：独立复现/推翻的实际步骤、观察、与上报证据的差异；无法确认则列出已检查内容与阻塞原因"),
-			}, "verdict", "summary", "evidence"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
-				var a struct {
-					Verdict  string `json:"verdict"`
-					Summary  string `json:"summary"`
-					Evidence string `json:"evidence"`
-				}
-				if err := json.Unmarshal(in, &a); err != nil {
-					return actool.Errorf(err.Error()), nil
-				}
-				if err := s.m.pg.RecordFindingVerificationResult(ctx, intercept.ConvIDFromContext(ctx), a.Verdict, a.Summary, a.Evidence); err != nil {
-					return actool.Errorf(err.Error()), nil
-				}
-				return jsonResult(map[string]any{"saved": true, "verdict": a.Verdict})
-			}),
-	}
+	return nil
 }
 
 // seedFindingVerifier 与 seedFindingRetester 同构：工具入库按 agent 绑定、agent 与
