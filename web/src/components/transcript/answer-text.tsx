@@ -10,6 +10,48 @@ import { cn } from "@/lib/utils";
 // 既能看出“打字机”效果，又不会把主线程占满。
 const RENDER_EVERY_MS = 120;
 
+// ---- 流式正文的分块增量渲染 -------------------------------------------------
+//
+// 之前每 120ms 把「累计全文」整段丢给 react-markdown：正文跑到几千字，就是每秒 8
+// 次全量解析 + 全量 DOM diff，长任务把主线程占住，高度变化只能排队处理——视觉上
+// 正文在抽。现在按「最近一个空行」把文本切成两段：
+//   - 稳定前缀（写完的段落）→ 交给 Markdown，并用 memo 锁住：前缀字符串没变就不重新
+//     解析，所以每帧成本从 O(全文) 降到 O(新增的一行)；
+//   - 未完成的尾巴 → 直接当纯文本渲染，不做任何 Markdown 解析。
+// 切点若落在未闭合的代码块里就往前退，保证前缀本身是自洽的。
+
+/** 前缀里是否有未闭合的 ``` 代码块。 */
+function fenceOpen(s: string): boolean {
+  let n = 0;
+  let i = s.indexOf("```");
+  while (i !== -1) {
+    n++;
+    i = s.indexOf("```", i + 3);
+  }
+  return n % 2 === 1;
+}
+
+/**
+ * splitStableMarkdown 把流式文本切成「可以定稿的前缀」+「还没写完的尾巴」。
+ *
+ * 只认空行作切点：段内换行可能是列表/引用/表格的一部分，切在段中会让前缀解析出
+ * 半截结构，视觉上比不切更抖。找不到合适的切点（比如整段都在一个代码块里）就整段
+ * 当尾巴，先按纯文本显示，等代码块闭合再升级成 Markdown。
+ */
+export function splitStableMarkdown(text: string): { stable: string; tail: string } {
+  let cut = text.lastIndexOf("\n\n");
+  // 退让次数设上限：极端输入（超长代码块里全是空行）不至于退化成 O(n^2)。
+  for (let guard = 0; cut > 0 && guard < 16; guard++) {
+    const head = text.slice(0, cut);
+    if (!fenceOpen(head)) return { stable: head, tail: text.slice(cut + 2) };
+    cut = text.lastIndexOf("\n\n", cut - 1);
+  }
+  return { stable: "", tail: text };
+}
+
+/** 前缀字符串没变时直接跳过解析——这正是把「每帧全量解析」变没的关键。 */
+const MemoMarkdown = React.memo(Markdown);
+
 /** 把频繁变化的文本压到 ms 一次：领先写一次，之后每 ms 至少一次，取最新值。 */
 function useThrottledText(text: string, ms: number): string {
   const [shown, setShown] = React.useState(text);
@@ -78,7 +120,15 @@ export function AnswerText({
   className?: string;
 }) {
   const shown = useThrottledText(text, streaming ? RENDER_EVERY_MS : 0);
-  const body = streaming ? repairStreamMarkdown(shown) : shown;
+  const split = React.useMemo(
+    () => (streaming ? splitStableMarkdown(shown) : { stable: shown, tail: "" }),
+    [streaming, shown],
+  );
+  // 修复只在「前缀真的变了」（= 又定稿一段）时跑一次，而不是每帧都扫一遍全文。
+  const stable = React.useMemo(
+    () => (streaming && split.stable ? repairStreamMarkdown(split.stable) : split.stable),
+    [streaming, split.stable],
+  );
   return (
     <div
       className={cn(
@@ -89,7 +139,17 @@ export function AnswerText({
         className,
       )}
     >
-      {isError ? <span>{body}</span> : <Markdown text={body} />}
+      {isError ? (
+        <span>
+          {split.stable}
+          {split.tail}
+        </span>
+      ) : (
+        <>
+          {stable ? <MemoMarkdown text={stable} /> : null}
+          {split.tail ? <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{split.tail}</div> : null}
+        </>
+      )}
       {streaming && (
         <span
           aria-hidden

@@ -1023,40 +1023,18 @@ function LiveBlocks({ frame }: { frame?: { kind: string; text?: string; tool?: s
 // Transcript 全部分组）跟着重算；再加一个「运行中但还没收到帧」就冒出来的三点
 // 动画，于是既是整屏闪烁，也是「加载动画和思考过程打架」。现在写入走外部 store，
 // 只有这个叶子随 token 重渲染；状态提示由头部徽标用「只订阅 kind」的通道单独负责。
-function LiveTail({ stream, onGrow }: { stream: LiveStream; onGrow?: () => void }) {
+function LiveTail({ stream }: { stream: LiveStream }) {
   const frame = useLiveFrame(stream);
-  // 用 ref 持有回调，避免 onGrow 换引用时把「贴底」effect 重跑一遍。
-  const grow = React.useRef(onGrow);
-  React.useEffect(() => {
-    grow.current = onGrow;
-  }, [onGrow]);
-  // 「贴底」只看真实 DOM 高度，不看 token 计数。
-  //
-  // 之前这里依赖 frame.text.length：SSE 每 40ms 一帧，而正文 markdown 被节流到 120ms
-  // 才重绘，于是滚动写入比内容更新快 3 倍以上，并且每次都拿旧布局算位置——外部表现
-  // 就是流式期间整块区域上下抖动。改成 ResizeObserver 之后，只有内容真的长高了才滚
-  // 一次，滚动写入次数与真实重排次数严格 1:1，多余的重排消失。
-  const boxRef = React.useRef<HTMLDivElement>(null);
-  const lastHeight = React.useRef(-1);
-  React.useLayoutEffect(() => {
-    const el = boxRef.current;
-    if (!el) return;
-    const settle = () => {
-      const h = el.offsetHeight;
-      if (h === lastHeight.current) return;
-      lastHeight.current = h;
-      grow.current?.();
-    };
-    settle();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(settle);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
   // 实时块始终挂在同一个宿主节点上：kind 从 thinking 切到 text 时只替换内部组件，
   // 外层节点不重建，避免整块区域重新挂载带来的「闪一下」。
+  //
+  // 这里不再自己挂 ResizeObserver + onGrow：贴底滚动已由 useStickToBottom 在外层内容
+  // 容器上统一负责（它的 RO 天然覆盖这个尾巴）。多挂一个观察者等于同一帧多一次
+  // scrollHeight 读取 + 一次 scrollTop 写入，两个写入者互相拽，就是抽搐。
+  // [contain:content] 把推理/正文的尺寸变化关在这个子树里，不让它触发整条
+  // transcript 的重新布局。
   return (
-    <div data-live-tail="" ref={boxRef}>
+    <div data-live-tail="" className="[contain:content]">
       <LiveBlocks frame={frame ?? undefined} />
     </div>
   );
@@ -1067,7 +1045,6 @@ export function Transcript({
   activity,
   liveDelta,
   liveStream,
-  onLiveGrow,
   taskId,
   chat,
   fetchDetail,
@@ -1079,8 +1056,6 @@ export function Transcript({
   liveDelta?: { kind: string; text?: string; tool?: string };
   /** 实时流 store：给了它就不再需要 liveDelta，也不会因为每帧重渲染整棵树。 */
   liveStream?: LiveStream;
-  /** 实时内容变长时回调（用户本来就在底部时跟随滚动）。 */
-  onLiveGrow?: () => void;
   taskId?: string;
   chat?: boolean;
   fetchDetail?: (seq: number) => Promise<string>;
@@ -1105,7 +1080,10 @@ export function Transcript({
   return (
     <div
       ref={transcriptRef}
-      className="flex flex-col gap-1"
+      // 关掉浏览器自己的 scroll anchoring：内容变高时它会把锚点往上顶，和我们的
+      // 贴底写入抢同一个位置，表现出来就是整块区域上下抽。贴底逻辑统一由
+      // useStickToBottom 负责，这里只把浏览器的自动行为按掉。
+      className="flex flex-col gap-1 [overflow-anchor:none]"
       style={focusPadding ? { paddingBlock: focusPadding } : undefined}
     >
       <ExecView
@@ -1116,7 +1094,7 @@ export function Transcript({
         focusedSeq={focusedSeq}
         rollback={rollback}
       />
-      {liveStream ? <LiveTail onGrow={onLiveGrow} stream={liveStream} /> : <LiveBlocks frame={liveDelta} />}
+      {liveStream ? <LiveTail stream={liveStream} /> : <LiveBlocks frame={liveDelta} />}
     </div>
   );
 }

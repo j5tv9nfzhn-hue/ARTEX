@@ -70,6 +70,7 @@ import { createLiveStream, type LiveStream, liveSettledBy } from "@/lib/live-str
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
 import { isBtwCommand } from "@/lib/side-questions";
 import type { Activity, Agent, ChatAttachment, Conversation, LLMProfile } from "@/lib/types";
+import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import { cn } from "@/lib/utils";
 
 // fmtBytes renders a human file size for attachment chips (mirrors transcript.tsx).
@@ -803,7 +804,6 @@ function ChatViewImpl({
 
   // ---- transcript auto-scroll (open → bottom; stick to bottom unless scrolled up) ----
   const contentRef = React.useRef<HTMLDivElement | null>(null);
-  const atBottomRef = React.useRef(true);
   const viewport = React.useCallback(
     () => (contentRef.current?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null) ?? null,
     [],
@@ -835,40 +835,25 @@ function ChatViewImpl({
       loadingMoreRef.current = false;
     }
   }, [conv.id, viewport]);
-  React.useEffect(() => {
-    const vp = viewport();
-    if (!vp) return;
-    const onScroll = () => {
-      if (approvalFocus.state && !focusHistory.ready) return;
-      atBottomRef.current = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 60;
-      if (vp.scrollTop <= 80) void loadEarlier(); // near top → pull an older page
-    };
-    vp.addEventListener("scroll", onScroll, { passive: true });
-    return () => vp.removeEventListener("scroll", onScroll);
-  }, [viewport, loadEarlier, approvalFocus.state, focusHistory.ready]);
+  // 贴底滚动统一走 lib/use-stick-to-bottom。这里原来有**三个**独立的 scrollTop 写入者
+  // （滚动事件、messages/running 的 layout effect、实时流回调），再加上浏览器自身的
+  // scroll anchoring，同一帧里两套系统抢同一个滚动位置——推理流每 40ms 推高一次容器，
+  // 观感就是整块区域上下抽搐。现在只剩一个写入口，同一帧最多写一次，用户一上滑就停手。
+  const { pin: followBottom, reset: resetToBottom } = useStickToBottom(contentRef, {
+    paused: Boolean(approvalFocus.state && !focusHistory.ready),
+    onNearTop: () => void loadEarlier(),
+    refreshKey: conv.id,
+  });
   // open/switch a conversation → jump to the latest (bottom)
   // biome-ignore lint/correctness/useExhaustiveDependencies: changing conversations intentionally retriggers the scroll reset.
   React.useLayoutEffect(() => {
-    const vp = viewport();
-    if (vp) {
-      vp.scrollTop = vp.scrollHeight;
-      atBottomRef.current = true;
-    }
-  }, [conv.id, viewport]);
+    resetToBottom();
+  }, [conv.id, resetToBottom]);
   // new activity → stick to bottom only if the user is already pinned there
   // biome-ignore lint/correctness/useExhaustiveDependencies: message and running changes intentionally retrigger bottom anchoring.
   React.useLayoutEffect(() => {
-    if (approvalFocus.state || !atBottomRef.current) return;
-    const vp = viewport();
-    if (vp) vp.scrollTop = vp.scrollHeight;
-  }, [messages, running, viewport, approvalFocus.state]);
-  // 流式追加（每 40ms 一帧）也要贴底，但**不能**为此重渲染整页：LiveTail 直接
-  // 调这个回调做一次滚动写入。用户一旦上滑（atBottomRef=false）就立刻停手。
-  const followBottom = React.useCallback(() => {
-    if (approvalFocus.state || !atBottomRef.current) return;
-    const vp = viewport();
-    if (vp) vp.scrollTop = vp.scrollHeight;
-  }, [approvalFocus.state, viewport]);
+    followBottom();
+  }, [messages, running, followBottom]);
 
   // Per-conversation token total, live — same accounting as the main-agent
   // console: completed runs' `result` sum + the in-progress run's latest `usage`.
@@ -1133,7 +1118,6 @@ function ChatViewImpl({
                 fetchDetail={fetchDetail}
                 focusedSeq={focusHistory.ready ? approvalFocus.state?.source?.seq : undefined}
                 liveStream={liveStream}
-                onLiveGrow={followBottom}
                 rollback={rollback}
               />
             </>

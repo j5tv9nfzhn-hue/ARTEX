@@ -87,6 +87,7 @@ import type {
   TaskNode,
   TokenTotal,
 } from "@/lib/types";
+import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import { cn } from "@/lib/utils";
 
 // resolutionLabel names the LLM a session runs on. The badge shows this alone and
@@ -1759,54 +1760,30 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     () => (contentRef.current?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null) ?? null,
     [],
   );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId intentionally rebinds the scroll listener.
-  React.useEffect(() => {
-    const vp = viewport();
-    if (!vp) return;
-    const onScroll = () => {
-      if (approvalFocus.state && !focusHistory.ready) return;
-      atBottomRef.current = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 60;
-      if (vp.scrollTop <= 80) loadEarlier(activeKeyRef.current, viewport); // near top → older page
-    };
-    vp.addEventListener("scroll", onScroll, { passive: true });
-    return () => vp.removeEventListener("scroll", onScroll);
-  }, [viewport, activeId, loadEarlier, approvalFocus.state, focusHistory.ready]);
+  // 贴底滚动统一走 lib/use-stick-to-bottom：本标签页原来有三个独立的 scrollTop 写入者
+  // （滚动事件、activity 的 layout effect、内容 ResizeObserver），与浏览器自身的
+  // scroll anchoring 抢同一个位置，这是推理流式期间整块区域抽搐的根因。现在只有一个
+  // 写入口，同一帧最多写一次。atBottomRef 仍由外部持有——上面的会话裁剪逻辑要看它。
+  const { pin: pinBottom, reset: resetBottom } = useStickToBottom(contentRef, {
+    paused: Boolean(approvalFocus.state),
+    atBottomRef,
+    onNearTop: () => loadEarlier(activeKeyRef.current, viewport),
+    refreshKey: activeId,
+  });
   // open/switch a session → jump to the latest (bottom)
   // biome-ignore lint/correctness/useExhaustiveDependencies: activeId intentionally scrolls a newly selected session.
   React.useLayoutEffect(() => {
-    const vp = viewport();
-    if (vp && !approvalFocus.state) {
-      vp.scrollTop = vp.scrollHeight;
-      atBottomRef.current = true;
-    }
-  }, [activeId, viewport, approvalFocus.state]);
+    if (approvalFocus.state) return;
+    resetBottom();
+  }, [activeId, resetBottom, approvalFocus.state]);
   // new activity → stick to bottom only if the user is already pinned there
   // biome-ignore lint/correctness/useExhaustiveDependencies: activity growth intentionally drives live-edge scrolling.
   React.useLayoutEffect(() => {
-    if (approvalFocus.state || !atBottomRef.current) return;
-    const vp = viewport();
-    if (vp) vp.scrollTop = vp.scrollHeight;
-  }, [activity, viewport, approvalFocus.state]);
-  // Lazy detail loads (AnswerBlock / ToolBlock / Markdown) grow the content AFTER the
-  // activity array settles, WITHOUT changing its reference — so the layout effects
-  // above never re-fire and a freshly opened session would leave its last message
-  // scrolled partly off-screen (the final answer expands from a one-line summary to
-  // full markdown below the fold). A ResizeObserver re-pins to the bottom on any
-  // height change while the user is still at the bottom, so opening the main agent
-  // lands on the last message fully shown. contentRef's div is always mounted, so the
-  // observer catches the transcript mounting + each detail expanding.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId intentionally rebinds the observer to the new session's content.
-  React.useEffect(() => {
-    const el = contentRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
-      if (approvalFocus.state || !atBottomRef.current) return;
-      const vp = viewport();
-      if (vp) vp.scrollTop = vp.scrollHeight;
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [activeId, viewport, approvalFocus.state]);
+    pinBottom();
+  }, [activity, pinBottom]);
+  // 「详情懒加载把内容撑高、但 activity 引用没变」这种事现在由 useStickToBottom 内部
+  // 的 ResizeObserver 兜住：它观察的就是 contentRef 这个容器，于是打开会话、加载详情、
+  // 实时流长高走的是同一条贴底路径，不再有第二个观察者跟它抢滚动位置。
 
   function stop() {
     if (stopping) return;
