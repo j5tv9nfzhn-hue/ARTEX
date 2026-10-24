@@ -3057,6 +3057,13 @@ func parseActivitySession(sess string) (db.ActivitySessionFilter, bool) {
 		return db.ActivitySessionFilter{Main: true, MainSeg: &seg}, true
 	case sess == "plan":
 		return db.ActivitySessionFilter{Worker: "planner"}, true
+	case strings.HasPrefix(sess, "review:"):
+		// 回顾者：(run_id) → 一条判决的判定过程。run_id 由交接单 run 派生，全局唯一。
+		run, err := strconv.ParseInt(strings.TrimPrefix(sess, "review:"), 10, 64)
+		if err != nil || run <= 0 {
+			return db.ActivitySessionFilter{}, false
+		}
+		return db.ActivitySessionFilter{ReviewRun: &run}, true
 	case strings.HasPrefix(sess, "intent:"):
 		id, err := strconv.ParseInt(strings.TrimPrefix(sess, "intent:"), 10, 64)
 		if err != nil {

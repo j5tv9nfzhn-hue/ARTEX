@@ -1668,10 +1668,18 @@ type ActivitySessionFilter struct {
 	NodeID  *int64
 	Main    bool // main-agent session
 	MainSeg *int // segment for the main session (nil == current, resolved by caller; 0 == original)
+	// ReviewRun 选中一次 Reviewer run 的过程行：worker='reviewer' 且 metadata.run_id
+	// 相等。回顾者一次 run 一条判决，用 run_id 定位比用意图定位准——同一意图复测
+	// 会再来一个 run，按意图取会把两次判定搅在一起。
+	ReviewRun *int64
 }
 
 func (f ActivitySessionFilter) cond(argStart int) (string, []any) {
 	switch {
+	case f.ReviewRun != nil:
+		// json_valid 兜住历史行的空/坏 metadata：否则 json_extract 会直接报错，
+		// 整个回顾者会话的历史都打不开。
+		return fmt.Sprintf(" AND worker='reviewer' AND json_valid(metadata) AND json_extract(metadata,'$.run_id')=$%d", argStart), []any{*f.ReviewRun}
 	case f.NodeID != nil:
 		return fmt.Sprintf(" AND node_id=$%d", argStart), []any{*f.NodeID}
 	case f.Main:

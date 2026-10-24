@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -154,6 +155,17 @@ func (e *Engine) runReviewerForIntent(t *Task, intent *db.Node, runID int64, rec
 	// 证据落库：存的是**清洗后**的快照，raw 不进表。
 	in.SaveEvidence = func(kind, body string) (int64, error) {
 		return e.m.pg.Exploration(t.ExpID).PutReviewerEvidence(tid, intent.ID, runID, kind, body)
+	}
+	// 判定过程也落活动流：回顾者面板要和规划者一样能看见「读了什么、凭什么判」，
+	// 而不是只有一条结论。行按 run_id 隔离（同一意图复测会产生多个 run，按意图
+	// 取会把两次判定搅在一起），前端用 review:<run_id> 打开这一条。
+	reviewNode := intent.ID
+	reviewMeta := json.RawMessage(fmt.Sprintf(`{"run_id":%d}`, runID))
+	in.Emit = func(a db.Activity) {
+		a.Worker = "reviewer"
+		a.NodeID = &reviewNode
+		a.Metadata = reviewMeta
+		e.emitActivity(t, a)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

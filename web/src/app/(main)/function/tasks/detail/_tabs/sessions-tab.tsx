@@ -167,6 +167,12 @@ function sessionKeyOf(a: Activity): string {
   if (a.worker === "system" || a.kind === "llm_switch" || a.kind === "llm_failover") return "system";
   if (a.worker === "mainagent") return `main:${a.main_seg ?? 0}`; // one key per conversation segment
   if (a.worker === "planner") return "plan";
+  // 回顾者的过程行也带 intent_id，但它的归属是那一次判定（run），不是 Worker
+  // 会话——先在这里截住，否则实时帧会把判定过程混进 Worker 的记录里。
+  if (a.worker === "reviewer") {
+    const run = Number(a.metadata?.run_id ?? 0);
+    return run > 0 ? `review:${run}` : "unknown";
+  }
   if (a.intent_id) return `intent:${a.intent_id}`;
   return "unknown";
 }
@@ -427,7 +433,9 @@ function keyForSession(s: Session): string {
   if (s.role === "mainagent") return `main:${s.seg ?? 0}`;
   if (s.role === "planner") return "plan";
   if (s.role === "system") return "system";
-  if (s.role === "reviewer") return `reviewer:${s.id}`;
+  // 回顾者：一次判定 = 一条会话，用 run_id 定位它的过程行（review:<run>）。
+  // run_id 缺失的历史判决退回旧 key —— 那条 key 不参与加载，面板只显示结论。
+  if (s.role === "reviewer") return s.run_id ? `review:${s.run_id}` : `reviewer:${s.id}`;
   return `intent:${s.intent_id}`;
 }
 
@@ -1391,6 +1399,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       reviewerVerdicts.map((v) => ({
         id: `s-reviewer-${v.id}`,
         role: "reviewer",
+        run_id: v.run_id,
         title: t("title.reviewer", { id: v.intent_id }),
         status:
           v.verdict === "advance" ? "done" : v.verdict === "abandon" ? "stopped" : "paused",
@@ -1581,7 +1590,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     activeKeyRef.current = activeKey;
     const st = store[activeKey];
     if (active.role === "reviewer") {
-      // 判决台账自带内容，没有活动流可拉；拉了只会得到一个空的 history 请求。
+      // 回顾者的判定过程也是活动行（worker=reviewer，按 run 隔离），走与规划者
+      // 同一条加载路径；没有 run_id 的历史判决没有过程可拉，只显示结论。
+      if (active.run_id && (!st || (!st.loaded && !st.loading))) loadSession(activeKey);
     } else if (!st || (!st.loaded && !st.loading)) {
       loadSession(activeKey);
     } else if (st.unread) {
@@ -1625,7 +1636,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     // same SSE stream (worker="mainagent") as every agent step — no client-side
     // optimistic echo, hence no fabricated seq that could collide with real DB ids.
     if (isMain) return items;
-    if (isPlanner || isSystem) return items;
+    // 回顾者与规划者同构：按 id 顺序展示自己的判定步骤，结论是最后一条 result。
+    if (isPlanner || isSystem || isReviewer) return items;
     // Worker session: the intent leads the transcript as a right-aligned "user"-style
     // message (the task handed to this worker), followed by its execution steps.
     const intentTitle = sessionMeta.get(active.id)?.title ?? active.title;
@@ -1643,6 +1655,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     isMain,
     isPlanner,
     isSystem,
+    isReviewer,
     activeState,
     active.id,
     active.title,
@@ -1908,11 +1921,11 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   // 发送键位由系统设置决定（localStorage），默认 Enter 发送。
   const sendMode = useChatSendMode();
   // What the transcript pane should show for the active session.
-  // 回顾者会话没有活动流可拉（判决台账自带内容，见上面 loadSession 的分支），
-  // 所以 store 里永远不会有它的缓存。这里必须先把回顾者排除掉，否则 activeState
-  // 恒为 undefined，面板会永远停在「加载活动流…」，下面的判决面板根本渲染不到。
-  const showLoader =
-    !isReviewer && (!activeState || (activeState.loading && !activeState.loaded));
+  // 回顾者的过程行是按需加载的：只有正在拉、且还没拉到过时才显示加载态。
+  // 没有 run_id 的历史判决根本不发请求，不能让它停在「加载活动流…」。
+  const showLoader = isReviewer
+    ? !!(activeState?.loading && !activeState?.loaded)
+    : !activeState || (activeState.loading && !activeState.loaded);
   const resolutionForSession = (session: Session): TaskLLMResolution | undefined => {
     if (!llmResolutions || session.inherited || session.role === "system") return undefined;
     if (session.role === "mainagent") return llmResolutions.mainagent;
@@ -2348,15 +2361,19 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                     </Button>
                   </div>
                 ) : isReviewer ? (
-                  activeVerdict ? (
-                    <ReviewerVerdictPanel v={activeVerdict} />
-                  ) : (
-                    <EmptyState
-                      compact
-                      illustration="chat"
-                      title={t("reviewer.empty")}
-                    />
-                  )
+                  // 与规划者同构：上面是判定过程（读单 → 规则命中/灰区 → 证据快照
+                  // → 模型兜底），最后才是结论卡。过程为空（本次改动之前落库的历史
+                  // 判决）时只显示结论。
+                  <div className="flex flex-col gap-3">
+                    {activity.length > 0 && (
+                      <Transcript activity={activity} taskId={taskId} chat={false} />
+                    )}
+                    {activeVerdict ? (
+                      <ReviewerVerdictPanel v={activeVerdict} />
+                    ) : (
+                      <EmptyState compact illustration="chat" title={t("reviewer.empty")} />
+                    )}
+                  </div>
                 ) : activity.length || liveDeltaForActive ? (
                   <Transcript
                     activity={activity}

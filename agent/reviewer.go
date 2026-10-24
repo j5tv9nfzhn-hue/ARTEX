@@ -38,6 +38,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/Autumn-27/artex/db"
 )
 
 const (
@@ -140,6 +143,31 @@ type ReviewerInput struct {
 	LLM ReviewerCall
 	// SaveEvidence 把清洗后的快照落库并返回 id；nil 表示不提供取证通道。
 	SaveEvidence func(kind, body string) (int64, error)
+	// Emit 把判定过程写成活动行。回顾者是一次规则+模型的短 run，过程本身就是
+	// 用户要看的证据：读了什么、规则凭什么判、模型说了什么。nil = 不落活动流
+	// （单测与无引擎场景）。
+	Emit func(db.Activity)
+}
+
+// emit / emitA 是 nil 安全的写活动口，Review 里每条过程都走它。
+func (in ReviewerInput) emit(kind, summary, detail string) {
+	in.emitA(db.Activity{Kind: kind, Summary: summary, Detail: detail})
+}
+
+func (in ReviewerInput) emitA(a db.Activity) {
+	if in.Emit == nil {
+		return
+	}
+	in.Emit(a)
+}
+
+// reviewerIDsText 把证据 id 列表拼成「12、13」，避免把 Go 切片语法漏到界面上。
+func reviewerIDsText(ids []int64) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%d", id))
+	}
+	return strings.Join(parts, "、")
 }
 
 // ReviewerLLM 是轻量模型的插槽。为 nil 时 Reviewer 只用规则引擎（确定性、零成本、
@@ -552,7 +580,19 @@ func normalizeReviewerPayload(res *ReviewerResult, p reviewerLLMPayload, sanitiz
 //
 // 它永不返回 error：收尾阶段任何失败都不该反过来影响任务收尾本身，最差的结果
 // 是一条低置信的 pivot。
+// Review 跑一次判定。判定过程逐条写成活动行（worker=reviewer，metadata 带 run_id），
+// 前端据此渲染与规划者同构的过程视图；最后补一条 result 作为结论行。
 func Review(ctx context.Context, in ReviewerInput) ReviewerResult {
+	res := reviewCore(ctx, in)
+	in.emitA(db.Activity{
+		Kind:    "result",
+		Summary: fmt.Sprintf("判决 %s（%s · 置信 %.2f · %s）", res.Verdict, res.Attribution, res.Confidence, res.DecidedBy),
+		Detail:  res.Summary,
+	})
+	return res
+}
+
+func reviewCore(ctx context.Context, in ReviewerInput) ReviewerResult {
 	rawTail := strings.Join(in.Tail, "\n")
 	rawLast := in.LastOutput
 	tail, t1 := SanitizeReviewerText(rawTail, reviewerTextMax)
@@ -563,10 +603,27 @@ func Review(ctx context.Context, in ReviewerInput) ReviewerResult {
 	sanitized := t1 || t2
 	rawBytes := len(rawTail) + len(rawLast)
 
+	in.emit("text", fmt.Sprintf("收到交接单：意图 #%d · run %d · 终态 %s · 工具 %d 次（%d 次报错）· 写回 %d 事实 / %d 资产 / %d 漏洞",
+		in.IntentID, in.RunID, in.EndState, in.ToolCalls, in.ToolErrors,
+		in.Wrote.Facts, in.Wrote.Assets, in.Wrote.Findings), tail)
+	if sanitized {
+		in.emit("text", fmt.Sprintf("原文已清洗（去控制字符 / 指令型行 / 图片信标），raw %d 字节", rawBytes), "")
+	}
+
 	res, decided := RuleReviewer(in)
 	res.Sanitized = sanitized
 	res.RawBytes = rawBytes
+	if decided {
+		in.emit("text", fmt.Sprintf("规则引擎命中：直接判 %s —— %s", res.Verdict, res.Summary), "")
+	} else {
+		in.emit("text", "规则引擎判不出来（灰区），转模型兜底", "")
+	}
 	res.EvidenceRef = persistReviewerEvidence(in, tail, last)
+	if len(res.EvidenceRef) > 0 {
+		in.emit("text", "证据快照已落库： #"+reviewerIDsText(res.EvidenceRef)+"（清洗后，供后续定向取证）", "")
+	} else {
+		in.emitA(db.Activity{Kind: "text", IsError: true, Summary: "未生成证据快照：本任务未接取证通道"})
+	}
 	if decided {
 		return res
 	}
@@ -576,6 +633,7 @@ func Review(ctx context.Context, in ReviewerInput) ReviewerResult {
 		call = ReviewerLLM
 	}
 	if call == nil {
+		in.emitA(db.Activity{Kind: "text", IsError: true, Summary: "未接模型，无法兜底：降级为 pivot（低置信）"})
 		res.Verdict = VerdictPivot
 		res.Attribution = AttrNone
 		res.Confidence = 0.4
@@ -586,8 +644,14 @@ func Review(ctx context.Context, in ReviewerInput) ReviewerResult {
 		return res
 	}
 
-	out, err := call(ctx, in.TaskID, reviewerSystemPrompt(), buildReviewerUser(in, tail, last))
+	prompt := buildReviewerUser(in, tail, last)
+	in.emit("text", "调用模型兜底（灰区才走模型）", prompt)
+	started := time.Now()
+	out, err := call(ctx, in.TaskID, reviewerSystemPrompt(), prompt)
+	elapsed := time.Since(started)
 	if err != nil {
+		in.emitA(db.Activity{Kind: "text", IsError: true,
+			Summary: fmt.Sprintf("模型调用失败（%d ms）：%v", elapsed.Milliseconds(), err)})
 		res.Verdict = VerdictPivot
 		res.DecidedBy = "fallback"
 		res.Confidence = 0.3
@@ -596,8 +660,11 @@ func Review(ctx context.Context, in ReviewerInput) ReviewerResult {
 		res.Sanitized = sanitized
 		return res
 	}
+	in.emit("text", fmt.Sprintf("模型返回 %d 字节（%d ms）", len(out), elapsed.Milliseconds()),
+		clipReviewerText(out, 4000))
 	p, ok := parseReviewerPayload(out)
 	if !ok {
+		in.emitA(db.Activity{Kind: "text", IsError: true, Summary: "模型输出不可解析：降级为 pivot（低置信）"})
 		res.Verdict = VerdictPivot
 		res.DecidedBy = "fallback"
 		res.Confidence = 0.3

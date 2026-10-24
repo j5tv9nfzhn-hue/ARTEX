@@ -753,6 +753,9 @@ export interface Activity {
     // 已用是本轮输入口径（input + cache 读写）。缺失则前端不显示容量环。
     context_window?: number;
     context_used?: number;
+    // 回顾者过程行的归属：一次判定一个 run。前端用它把行路由到 review:<run>
+    // 那条会话，避免落进同意图的 Worker 会话里。
+    run_id?: number;
   };
   source_task_id?: string;
   inherited?: boolean;
@@ -1062,6 +1065,8 @@ export interface ReviewerVerdict {
 export interface Session {
   id: string;
   role: SessionRole;
+  // 回顾者会话：一次判定对应一个 run，用它拉这场判定的过程活动行。
+  run_id?: number;
   title: string;
   status: SessionStatus;
   live: boolean;
