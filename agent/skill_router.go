@@ -36,7 +36,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		nativeTools: []string{"http_request"},
 		title:       "人机验证、挑战识别与有界免费 PoW 求解",
 		keywords:    []string{"captcha", "turnstile", "cloudflare", "人机验证", "验证码", "黄色云", "橙色云", "altcha", "anubis", "pbkdf2", "proof of work"},
-		action:      "加载 Skill(human-verification)，先用 human_verification_capabilities 核对可用协议/helper，再识别响应；human_verification_solve 支持明确的 ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis，flow 支持端到端及 protocol_only。可选 fingerprint_profile 依赖独立 Go helper，缺失不自动下载；不重复失败策略、不默认转人工。",
+		action:      "加载 Skill(human-verification)，按技能包列出的协议清单核对本机可用方案，再识别响应；技能包覆盖 ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis 的解法。可选 fingerprint_profile 依赖独立 Go helper，缺失不自动下载；不重复失败策略、不默认转人工。",
 	},
 	{
 		skillName:   "ai-gateway-logic",
@@ -82,7 +82,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 			"api", "swagger", "openapi", "graphql", "actuator", "wsdl", "wadl",
 			"接口", "端点", "endpoint", "rest", "v1/", "v2/", "jwt", "bola", "idor",
 		},
-		action: "优先调用 `Skill({\"name\":\"api-recon\"})` 加载 API 侦察 SOP，并配合 `web_recon` / `http_fuzz` / `http_request` 探测文档端点与越权参数。",
+		action: "优先调用 `Skill({\"name\":\"api-recon\"})` 加载 API 侦察 SOP，并用 curl 或现场编写的 Python 脚本探测文档端点与越权参数。",
 	},
 	{
 		skillName:   "camoufox",

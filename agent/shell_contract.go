@@ -65,7 +65,7 @@ func shellContractBlock() string {
 				"- 不要用 Unix 专属命令：grep→Select-String、sed→-replace、awk→ForEach-Object、head/tail→Select-Object -First/-Last、cat→Get-Content、ls→Get-ChildItem、which→Get-Command。",
 				"- curl 优先写 curl.exe（避免不同环境里被别名为 Invoke-WebRequest）；含 & 的 URL 用双引号包住。",
 				"- 编码：平台已把管道强制为 UTF-8；写文件用 -Encoding utf8，读非 UTF-8 文件显式给 -Encoding。输出出现乱码按编码问题处理，不要当成命令失败重试。",
-				"- 复杂逻辑不要猜语法：改用 python -c \"...\" 或内置工具（http_request / code_exec / Grep / Read / Edit）。",
+				"- 复杂逻辑不要猜语法：改用 python -c \"...\" 或 Read / Grep / Glob / Edit 这类文件工具。",
 			}, "\n")
 		}
 		return strings.Join([]string{
@@ -77,7 +77,7 @@ func shellContractBlock() string {
 			"- curl 必须写 curl.exe（PS 5.1 的 curl 是 Invoke-WebRequest 别名）；含 & 的 URL 用双引号包住。",
 			"- 编码：平台已把管道强制为 UTF-8；**`>` 和 Out-File 默认写 UTF-16LE**，写文本文件显式 `-Encoding utf8`。输出出现乱码按编码问题处理，不要当成命令失败重试。",
 			"- 引号：单引号不展开变量，要展开用双引号；反引号是转义符，命令替换用 $(...)。",
-			"- 复杂逻辑不要猜语法：改用 python -c \"...\" 或内置工具（http_request / code_exec / Grep / Read / Edit）。",
+			"- 复杂逻辑不要猜语法：改用 python -c \"...\" 或 Read / Grep / Glob / Edit 这类文件工具。",
 		}, "\n")
 	case ShellModeCmd:
 		return strings.Join([]string{
@@ -88,7 +88,7 @@ func shellContractBlock() string {
 			"- 没有 grep/sed/awk/head/tail/cat/ls：用 findstr、more、type、dir；复杂文本处理改用 python -c 或内置工具。",
 			"- 路径用反斜杠；含空格的路径要加双引号。",
 			"- 编码：平台已执行 chcp 65001（UTF-8）；输出乱码按编码问题处理，不要当成命令失败重试。",
-			"- 复杂逻辑不要猜语法：改用 python -c \"...\" 或内置工具（http_request / Grep / Read / Edit）。",
+			"- 复杂逻辑不要猜语法：改用 python -c \"...\" 或 Read / Grep / Glob / Edit 这类文件工具。",
 		}, "\n")
 	case ShellModeBash:
 		out := []string{
@@ -100,9 +100,9 @@ func shellContractBlock() string {
 				"- 这是 Git for Windows 的 bash：Windows 路径要写成 /c/Users/... 形式，原生的 Windows 程序仍可直接调用（如 curl.exe）。",
 				"- 没有 sudo / systemctl / apt 等 Linux 专属命令；包管理用 winget/choco，若本机有。")
 		}
-		out = append(out, "- 复杂逻辑不要硬拼一行：写脚本或改用内置工具（http_request / Grep / Read / Edit）。")
+		out = append(out, "- 复杂逻辑不要硬拼一行：写脚本或改用 Read / Grep / Glob / Edit 这类文件工具。")
 		return strings.Join(out, "\n")
 	default:
-		return "【执行器：未解析】当前无法确定用哪个 Shell 执行命令。Bash 调用会返回配置错误；请改用内置原生工具（Read / Grep / Glob / http_request / code_exec）完成同样的事，不要重试 Bash。"
+		return "【执行器：未解析】当前无法确定用哪个 Shell 执行命令，Bash 调用会返回配置错误。先去「设置 → 工具执行 → Shell」选一个本机真实存在的 Shell；在此之前只剩 Read / Grep / Glob 能读文件，联网与命令类工作都做不了，不要重试 Bash。"
 	}
 }

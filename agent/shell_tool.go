@@ -231,7 +231,7 @@ func shellErrorHint(class, command string, out shellOutcome) string {
 			msg += out.Err.Error() + "。"
 		}
 		msg += "请在「设置 → 工具执行 → Shell」里选择一个本机确实存在的 Shell，或设置环境变量 ARTEX_SHELL_BIN 指向可执行文件后重启。"
-		msg += "在此之前不要重试 Bash：改用内置工具（Read / Grep / Glob / http_request / code_exec）。"
+		msg += "在此之前不要重试 Bash：可先用 Read / Grep / Glob 读文件；需要联网或执行命令时，必须先修好执行器。"
 		return msg
 	case ErrClassTimeout:
 		return "【超时】命令在预算内没有结束，已被终止（不是命令写错了）。" +
