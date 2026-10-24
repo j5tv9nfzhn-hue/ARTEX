@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-rem ARTEX-REA 局域网模式入口（Windows）
+rem ARTEX-HYDRA 局域网模式入口（Windows）
 rem
 rem 双击它就等于 start.bat -lan：监听 :8787，同一个 Wi-Fi 下的手机能直接连。
 rem 带 -lan 启动走「接管」分支：旧实例还在也能接过来，不用先手动关窗口。

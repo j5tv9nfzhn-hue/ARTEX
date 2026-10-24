@@ -1,4 +1,4 @@
-// Command artex runs the ARTEX-REA backend: the dual SQLite graph stores,
+// Command artex runs the ARTEX-HYDRA backend: the dual SQLite graph stores,
 // the event-driven exploration engine, and the JSON HTTP API consumed by the
 // shadcn/ui frontend.
 package main
@@ -59,7 +59,7 @@ const banner = `
 // printBanner writes the startup banner + version/runtime info to stdout.
 func printBanner(addr string) {
 	fmt.Print(banner)
-	fmt.Println("  ARTEX-REA  ·  AI 自主渗透测试系统与逆向工程指挥中枢")
+	fmt.Println("  ARTEX-HYDRA  ·  AI 自主渗透测试与自适应编排指挥中枢")
 	fmt.Printf("  版本 %s  ·  %s/%s  ·  %s  ·  监听地址 %s\n\n",
 		version, runtime.GOOS, runtime.GOARCH, runtime.Version(), addr)
 }
@@ -90,7 +90,7 @@ func run() int {
 		lan       = flag.Bool("lan", false, "开放局域网访问（等于 -addr :8787），供手机端 App 连接")
 		dataDir   = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
 		proxy     = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
-		resetPass = flag.Bool("reset-password", false, "重置 ARTEX-REA 管理员密码后退出；新密码取自 ARTEX_RESET_NEWPASS，未设置则交互输入")
+		resetPass = flag.Bool("reset-password", false, "重置管理员密码后退出；新密码取自 ARTEX_RESET_NEWPASS，未设置则交互输入")
 		takeover  = flag.Bool("takeover", false, "端口被另一个 ARTEX 实例占用时夺取它（默认不抢占，直接退出）")
 		selfTest  = flag.Bool("self-test", false, "仅做启动自检并退出（升级流程的冒烟测试入口，不占端口/不开库/不出网）")
 	)
@@ -276,7 +276,7 @@ func run() int {
 	}
 
 	go func() {
-		log.Printf("ARTEX-REA %s backend listening on %s (data=%s, workers=%d)", version, listenAddr, *dataDir, mgr.Workers())
+		log.Printf("ARTEX-HYDRA %s backend listening on %s (data=%s, workers=%d)", version, listenAddr, *dataDir, mgr.Workers())
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			if isAddrInUse(err) {
 				reportPortInUse(listenAddr, err)
@@ -320,7 +320,7 @@ func run() int {
 // reportRunningElsewhere 处理"已经有一个 ARTEX 在跑"：只报告地址，不抢占、不杀进程。
 // 这是双击第二次、或更新后旧实例还在收尾时的正常路径，不是错误。
 func reportRunningElsewhere(addr string) {
-	fmt.Printf("\n  ARTEX-REA 已在运行：http://%s\n", displayAddr(addr))
+	fmt.Printf("\n  ARTEX-HYDRA 已在运行：http://%s\n", displayAddr(addr))
 	fmt.Println("  本次启动直接退出，没有动那个实例；要停止它请回到它的控制台按 Ctrl-C。")
 	holdConsole(6 * time.Second)
 }

@@ -456,7 +456,7 @@ flowchart LR
 
 #### 1. 源码唯一位置
 
-项目源码只存在于工作副本 `C:\Users\Administrator\Desktop\ARTEX-REA`（及其远端 `j5tv9nfzhn-hue/ARTEX`）。所有改动直接落在该目录，不另建副本、不在别处「另起一份工程」。
+项目源码只存在于工作副本 `C:\Users\Administrator\Desktop\ARTEX-HYDRA`（及其远端 `j5tv9nfzhn-hue/ARTEX`）。所有改动直接落在该目录，不另建副本、不在别处「另起一份工程」。
 
 #### 2. 本机不做任何测试 / 编译 / 构建 / 打包
 

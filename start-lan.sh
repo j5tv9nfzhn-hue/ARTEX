@@ -1,5 +1,5 @@
 #!/bin/sh
-# ARTEX-REA 局域网模式入口（Linux / macOS）
+# ARTEX-HYDRA 局域网模式入口（Linux / macOS）
 #
 # 等价于 ./start.sh -lan：监听 :8787，手机在同一个 Wi-Fi 下能连上。
 # 已经有实例在跑也没关系：带 -lan 启动会接管旧实例。

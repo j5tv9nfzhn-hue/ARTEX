@@ -255,7 +255,7 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" \
               --draft --verify-tag \
-              --title "ARTEX-REA ${GITHUB_REF_NAME}" \
+              --title "ARTEX-HYDRA ${GITHUB_REF_NAME}" \
               --notes-file dist/RELEASE_NOTES.md
           fi
       - name: 上传 zip 与校验和

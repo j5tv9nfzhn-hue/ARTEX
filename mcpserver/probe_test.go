@@ -50,7 +50,7 @@ func TestProbeDiscover(t *testing.T) {
 		case "server/discover":
 			writeResult(w, id, map[string]any{
 				"resultType":       "complete",
-				"serverInfo":       map[string]any{"name": "artex", "title": "ARTEX-REA", "version": "9.9.9"},
+				"serverInfo":       map[string]any{"name": "artex", "title": "ARTEX-HYDRA", "version": "9.9.9"},
 				"protocolVersions": []string{"2026-07-28", "2025-06-18"},
 			})
 		case "tools/list":
@@ -67,7 +67,7 @@ func TestProbeDiscover(t *testing.T) {
 	if !info.Alive {
 		t.Fatalf("应当探活成功: %+v", info)
 	}
-	if info.Name != "artex" || info.Title != "ARTEX-REA" || info.Version != "9.9.9" {
+	if info.Name != "artex" || info.Title != "ARTEX-HYDRA" || info.Version != "9.9.9" {
 		t.Fatalf("serverInfo 解析错: %+v", info)
 	}
 	if info.Tools != 3 {

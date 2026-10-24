@@ -167,7 +167,7 @@ func lanEnsureFirewall(port string) string {
 		return "skipped"
 	}
 	cmd := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
-		"name=ARTEX-REA", "dir=in", "action=allow", "protocol=TCP", "localport="+port)
+		"name=ARTEX-HYDRA", "dir=in", "action=allow", "protocol=TCP", "localport="+port)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
@@ -190,5 +190,5 @@ func lanFirewallCommand(port string) string {
 	if runtime.GOOS != "windows" {
 		return ""
 	}
-	return `netsh advfirewall firewall add rule name="ARTEX-REA" dir=in action=allow protocol=TCP localport=` + port
+	return `netsh advfirewall firewall add rule name="ARTEX-HYDRA" dir=in action=allow protocol=TCP localport=` + port
 }

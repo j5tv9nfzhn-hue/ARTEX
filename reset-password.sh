@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ARTEX-REA 管理员密码重置脚本。
+# ARTEX-HYDRA 管理员密码重置脚本。
 #
-# 登录用户名固定为 ARTEX-REA；新密码以 bcrypt 哈希写入 SQLite 库的 settings 表。
+# 登录用户名固定为 ARTEX-HYDRA（后端同时接受旧名 ARTEX-REA / ARTEX）；新密码以 bcrypt 哈希写入 SQLite 库的 settings 表。
 # 本脚本是 artex-rea 可执行程序 `-reset-password` 的薄封装：定位程序（或回退
 # `go run ./cmd/artex`），交互输入新密码，经环境变量 ARTEX_RESET_NEWPASS
 # 传给程序——密码不出现在进程 argv，也不写入任何文件。
@@ -92,7 +92,7 @@ info "使用：${CMD[*]} -reset-password"
 # 获取新密码（不进 argv；经 ARTEX_RESET_NEWPASS 传给程序）。
 if [[ -z "$NEWPASS" ]]; then
   [[ -t 0 ]] || die "未指定 -p 且标准输入不是终端，无法交互输入新密码"
-  read -r -s -p "输入新密码，用户名固定为 ARTEX-REA：" NEWPASS; echo >&2
+  read -r -s -p "输入新密码，用户名固定为 ARTEX-HYDRA：" NEWPASS; echo >&2
   [[ -n "$NEWPASS" ]] || die "密码不能为空"
   read -r -s -p "再次输入以确认：" NEWPASS2; echo >&2
   [[ "$NEWPASS" == "$NEWPASS2" ]] || die "两次输入不一致"
@@ -101,7 +101,7 @@ fi
 
 # 确认与执行（结果提示由程序本身打印，退出码原样透传）。
 if [[ "$ASSUME_YES" -ne 1 ]]; then
-  read -r -p "确认重置 ARTEX-REA 管理员密码？[y/N]" ans
+  read -r -p "确认重置 ARTEX-HYDRA 管理员密码？[y/N]" ans
   [[ "$ans" == "y" || "$ans" == "Y" ]] || die "已取消"
 fi
 

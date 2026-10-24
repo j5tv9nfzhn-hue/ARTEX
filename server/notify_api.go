@@ -33,7 +33,7 @@ const (
 const (
 	notifyTestName    = "测试消息 · 渠道配置正常"
 	notifyTestClass   = "测试连接"
-	notifyTestSummary = "这是 ARTEX-REA 通知渠道测试消息。收到此消息表示渠道配置正常。"
+	notifyTestSummary = "这是 ARTEX-HYDRA 通知渠道测试消息。收到此消息表示渠道配置正常。"
 )
 
 // notifyChannelDTO 是渠道的对外表述。

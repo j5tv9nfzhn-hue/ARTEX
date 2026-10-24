@@ -19,7 +19,7 @@ import (
 const resetPasswordEnv = "ARTEX_RESET_NEWPASS"
 
 // runResetPassword implements `artex-rea -reset-password`: open the SQLite store, write
-// a new bcrypt hash for the fixed ARTEX-REA admin account, and exit.
+// a new bcrypt hash for the fixed ARTEX-HYDRA admin account, and exit.
 //
 // It runs as a one-shot ahead of every server boot step — no port to claim, no
 // self-update to apply, no background worker — because an operator locked out of a
@@ -55,7 +55,7 @@ func runResetPassword() int {
 		}
 		return 1
 	}
-	fmt.Println("✓ ARTEX-REA 管理员密码已重置，请以 ARTEX-REA 和新密码登录，无需重启服务。")
+	fmt.Println("✓ ARTEX-HYDRA 管理员密码已重置，请以 ARTEX-HYDRA 和新密码登录，无需重启服务。")
 	fmt.Println("  既有会话 token 立即失效（签名密钥由密码哈希派生）。若用于账户被抢占后的恢复，请同时检查自定义工具、MCP、LLM 与通知配置。")
 	return 0
 }
@@ -66,7 +66,7 @@ func readNewPassword() (string, error) {
 	if v := os.Getenv(resetPasswordEnv); v != "" {
 		return v, nil
 	}
-	first, err := promptSecret("输入新密码（登录用户名固定为 ARTEX-REA）：")
+	first, err := promptSecret("输入新密码（登录用户名固定为 ARTEX-HYDRA）：")
 	if err != nil {
 		return "", err
 	}

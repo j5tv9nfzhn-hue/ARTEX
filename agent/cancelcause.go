@@ -36,7 +36,7 @@ var (
 	AbortPausedOnReload = cause("paused_on_reload", "后端恢复了任务的暂停状态",
 		"后端启动时根据数据库中持久化的状态恢复了任务暂停。本次运行被取消；正常情况下恢复阶段没有正在运行的 Agent")
 	AbortPausedOnStartup = cause("paused_on_startup", "重启后任务默认未自动运行",
-		"ARTEX-REA 重启后不会自动恢复任务运行——避免上游 LLM 等外部依赖暂不可用时产生连续报错。未终态任务一律以暂停态载入，在任务页点击「恢复」后继续执行")
+		"ARTEX-HYDRA 重启后不会自动恢复任务运行——避免上游 LLM 等外部依赖暂不可用时产生连续报错。未终态任务一律以暂停态载入，在任务页点击「恢复」后继续执行")
 	AbortPausedByTokenBudget = cause("paused_by_token_budget", "任务 Token 预算已用尽",
 		"任务累计 token 用量达到任务级预算上限，预算闸在 worker run 结束/planner 每轮结束时自动暂停了任务；正在运行的意图会退回 frontier(open)。在任务设置中调高或清空预算后恢复即可继续")
 	AbortGoalMet = cause("goal_met", "规划者判定任务目标已达成",

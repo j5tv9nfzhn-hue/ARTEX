@@ -105,7 +105,7 @@ func mcpBuild(owner *Server, tiers []mcpserver.Tier, guard *mcpserver.FileGuard,
 
 	return mcpserver.New(mcpserver.Config{
 		Name:         "artex",
-		Title:        "ARTEX-REA",
+		Title:        "ARTEX-HYDRA",
 		Version:      BuildVersion,
 		Instructions: mcpInstructions() + mcpHostHints(),
 		Tiers:        tiers,
@@ -121,7 +121,7 @@ func mcpBuild(owner *Server, tiers []mcpserver.Tier, guard *mcpserver.FileGuard,
 
 func mcpInstructions() string {
 	return strings.Join([]string{
-		"ARTEX-REA MCP 服务器。它不是工具箱，而是一个可以被你指挥的执行体。",
+		"ARTEX-HYDRA MCP 服务器。它不是工具箱，而是一个可以被你指挥的执行体。",
 		"你不直接操作目标；涉及资产、二进制、漏洞验证的一切，都交给它做。",
 		"",
 		"【角色】你是分析指挥员，ARTEX 是执行者。",

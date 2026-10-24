@@ -14,7 +14,7 @@ import (
 func fixture() *Server {
 	return New(Config{
 		Name:         "artex",
-		Title:        "ARTEX-REA",
+		Title:        "ARTEX-HYDRA",
 		Version:      "test",
 		Instructions: "用 artex 的工具做验证。",
 		Tiers:        []Tier{L0, L1},

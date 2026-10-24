@@ -1,7 +1,7 @@
 {
   "name": "artex-dsh",
   "version": "0.1.0",
-  "description": "ARTEX-REA 的 DSH 原生插件：把样本分诊、资产图与验证工具挂进 DeepSeek Harness",
+  "description": "ARTEX-HYDRA 的 DSH 原生插件：把样本分诊、资产图与验证工具挂进 DeepSeek Harness",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {

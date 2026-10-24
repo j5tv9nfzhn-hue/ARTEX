@@ -57,7 +57,7 @@ func printLanHint(addr string) {
 	}
 	if runtime.GOOS == "windows" {
 		fmt.Print("  防火墙：首次连不上先放行入站端口，例如\n")
-		fmt.Print("    netsh advfirewall firewall add rule name=\"ARTEX-REA\" dir=in action=allow protocol=TCP localport=" + lanPort(addr) + "\n")
+		fmt.Print("    netsh advfirewall firewall add rule name=\"ARTEX-HYDRA\" dir=in action=allow protocol=TCP localport=" + lanPort(addr) + "\n")
 	}
 	fmt.Print("  安全：只在可信局域网开放；隔离/公网场景请用 TLS 反向代理，不要把端口直接暴露到互联网。\n\n")
 }

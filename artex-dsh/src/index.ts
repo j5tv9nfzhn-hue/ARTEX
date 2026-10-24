@@ -1,4 +1,4 @@
-// artex-dsh —— ARTEX-REA 的 DSH（DeepSeek Harness）原生插件。
+// artex-dsh —— ARTEX-HYDRA 的 DSH（DeepSeek Harness）原生插件。
 //
 // 与走官方 @deepseek-ai/dsh-mcp-client 桥接相比，这个插件多拿三件东西：
 //   1. 干净的工具名（artex_binscan，而不是 mcp__artex__file_identify）；
@@ -374,7 +374,7 @@ export function apply(ctx: Context, config: ArtexConfig = {}) {
     anyCtx.systemPrompt.add({
       id: "artex",
       text:
-        "本机跑着 ARTEX-REA（渗透/逆向攻坚工具箱）。需要『这条路径到底通不通』时，用 artex_* 工具拿证据，" +
+        "本机跑着 ARTEX-HYDRA（渗透与安全分析工具箱）。需要『这条路径到底通不通』时，用 artex_* 工具拿证据，" +
         "而不是凭感觉下结论：样本先 artex_binscan，资产与历史结论先 artex_assets / artex_findings，" +
         "主动探测只在授权范围内用 artex_recon / artex_web。所有结论都要附工具返回的证据片段。",
     });

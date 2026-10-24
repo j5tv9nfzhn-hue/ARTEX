@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ARTEX-REA cross-platform release builder.
+# ARTEX-HYDRA cross-platform release builder.
 #
 # The default mode builds one target and embeds the already-exported frontend.
 # `./build.sh --release` builds and packages all supported desktop/server targets.

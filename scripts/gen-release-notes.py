@@ -176,7 +176,7 @@ def main() -> int:
             headline_bits.append(f"{counts[key]} {label}")
     tail = [f"{counts[k]} 项{label}" for k, label in (("refactor", "重构"), ("ci", "构建改动"), ("docs", "文档")) if counts.get(k)]
 
-    header = [f"# ARTEX-REA {args.tag}", ""]
+    header = [f"# ARTEX-HYDRA {args.tag}", ""]
     if prev:
         summary = f"> 自 `{prev}` 起共 **{len(rows)}** 个提交"
     else:

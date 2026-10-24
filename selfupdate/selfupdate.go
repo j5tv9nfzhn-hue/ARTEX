@@ -1,4 +1,4 @@
-// Package selfupdate implements ARTEX-REA 的页面一键更新：从 GitHub Release 拉取新版
+// Package selfupdate implements ARTEX-HYDRA 的页面一键更新：从 GitHub Release 拉取新版
 // 二进制、校验、暂存，并在下次启动时原子换装。
 //
 // 整体分工（见 start.sh / start.bat）：

@@ -1035,7 +1035,7 @@ func (s *Server) tryDistillReportWithLLM(
 	digest.WriteString("\n【原始报告摘录】:\n")
 	digest.WriteString(string(rawRunes))
 
-	sysPrompt := `你是 ARTEX-REA 顶级攻防与逆向技能架构师。
+	sysPrompt := `你是 ARTEX-HYDRA 顶级攻防与安全分析技能架构师。
 你的任务是将用户导入的外部渗透/逆向报告（TXT / JSON / MD）提炼为一份高质量、可泛化复用的【实战过程推导与防踩坑技能手册（SKILL.md 正文）】。
 
 核心原则（极其重要）：

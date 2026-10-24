@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-rem ARTEX-REA 启动脚本（Windows）
+rem ARTEX-HYDRA 启动脚本（Windows）
 rem
 rem 用法：
 rem   start.bat                 前台运行，Ctrl-C 直接退出

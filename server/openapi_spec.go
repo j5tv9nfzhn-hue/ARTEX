@@ -14,7 +14,7 @@ func (s *Server) apiOpenAPI(w http.ResponseWriter, r *http.Request) {
 const openapiSpec = `{
   "openapi": "3.1.0",
   "info": {
-    "title": "ARTEX-REA Protocol Facade",
+    "title": "ARTEX-HYDRA Protocol Facade",
     "version": "artex-rea.p1",
     "description": "Codex app-server 风格的 Thread/Turn/Item/Approval 协议面（薄壳转发+聚合）。所有 /api/protocol/* 均在既有 REST 之上，经同一鉴权与同一业务处理器执行；data 字段为上游处理器原始响应的再封装。领域 REST（/api/tasks /api/exploration /api/intercept 等）继续全量可用。"
   },

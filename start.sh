@@ -1,5 +1,5 @@
 #!/bin/sh
-# ARTEX-REA 启动脚本（Unix / Docker ENTRYPOINT，现在是可选兜底）
+# ARTEX-HYDRA 启动脚本（Unix / Docker ENTRYPOINT，现在是可选兜底）
 #
 # 不装这个脚本也能用：artex-rea 自己会做单实例仲裁，更新装好后也会自己拉起
 # 新进程重启。只有想让它崩溃后也自动重开时才需要这个脚本。

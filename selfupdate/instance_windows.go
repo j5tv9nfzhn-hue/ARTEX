@@ -26,7 +26,7 @@ func lockObjectName(root, kind string) (string, error) {
 		return "", fmt.Errorf("安装目录未知，无法命名实例锁")
 	}
 	sum := sha256.Sum256([]byte(clean))
-	return fmt.Sprintf(`Local\ARTEX-REA-%s-%s`, kind, hex.EncodeToString(sum[:8])), nil
+	return fmt.Sprintf(`Local\ARTEX-HYDRA-%s-%s`, kind, hex.EncodeToString(sum[:8])), nil
 }
 
 func acquireNamedLock(root, kind string, wait time.Duration) (func(), LockState, error) {

@@ -49,7 +49,7 @@ export const auth = {
       if (parts.length !== 3) return null;
       // base64url → base64
       const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-      // sub 是**登录凭据名**（历史值是 "ARTEX"，后端同时接受 ARTEX / ARTEX-REA），
+      // sub 是**登录凭据名**（历史值是 "ARTEX"，后端同时接受 ARTEX-HYDRA / ARTEX-REA / ARTEX），
       // 拿它当昵称会让左下角和左上角标题对不上。展示名统一取 APP_CONFIG.name
       // 这个唯一来源，凭据名单独留在 username 里——两者语义不同，不该混用。
       const username: string = payload.sub ?? "artex-rea";

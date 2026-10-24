@@ -1,6 +1,6 @@
 # artex-dsh
 
-ARTEX-REA 的 [DSH（DeepSeek Harness）](https://github.com/deepseek-ai/dsh) 原生插件。
+ARTEX-HYDRA 的 [DSH（DeepSeek Harness）](https://github.com/deepseek-ai/dsh) 原生插件。
 它把 ARTEX 的样本分诊、资产图与验证能力直接挂成 DSH 的工具，不用绕
 `mcp__artex__*` 这层命名。
 

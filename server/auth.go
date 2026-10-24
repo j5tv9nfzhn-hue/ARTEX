@@ -106,7 +106,7 @@ func randomToken(n int) (string, error) {
 	return string(buf), nil
 }
 
-// signJWT issues a 7-day HS256 token for user ARTEX-REA.
+// signJWT issues a 7-day HS256 token for the fixed admin account.
 func signJWT(key []byte) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "ARTEX-REA",
@@ -605,7 +605,7 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 	// Always run the bcrypt comparison so a wrong username costs the same as a
 	// wrong password (no username oracle, no timing shortcut).
 	pwErr := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password))
-	validUser := req.Username == "ARTEX-REA" || req.Username == "ARTEX"
+	validUser := req.Username == "ARTEX-HYDRA" || req.Username == "ARTEX-REA" || req.Username == "ARTEX"
 	if !validUser || pwErr != nil {
 		s.limiter().fail(key)
 		log.Printf(logT("[auth] 登录失败 (client=%s)"), clientLogID(r))
