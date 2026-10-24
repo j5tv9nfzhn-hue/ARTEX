@@ -2039,7 +2039,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             <div className="flex w-full flex-col gap-3 p-2">
               {(["mainagent", "planner", "reviewer", "worker", "system"] as const).map((role) => {
                 const rawItems = grouped[role];
-                if (!rawItems.length) return null;
+                // 回顾者分区常驻：判决为空时也保留栏位并给出说明，
+                // 否则"没有判决"与"没有这个角色"在界面上无法区分。
+                if (!rawItems.length && role !== "reviewer") return null;
                 let items =
                   role === "worker" && workerFilter !== "all"
                     ? rawItems.filter((s) => s.id === activeId || s.status === workerFilter)
@@ -2165,6 +2167,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         )}
                         {t("worker.loadOlder")}
                       </button>
+                    )}
+                    {role === "reviewer" && !rawItems.length && (
+                      <div className="px-2 py-1 text-muted-foreground text-xs">{t("reviewer.noneYet")}</div>
                     )}
                     {role === "reviewer" && rawItems.length > 8 && (
                       <button

@@ -3225,7 +3225,8 @@
         "abandon": "放弃 abandon",
         "escalate": "上交 escalate",
         "unknown": "其他判定"
-      }
+      },
+      "noneYet": "本任务还没有判决：Worker 跑完一轮并写下交接单后，回顾者才会介入。"
     }
   },
   "settingsPage": {
