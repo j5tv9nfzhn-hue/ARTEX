@@ -865,6 +865,11 @@ const (
 )
 
 func (e *Engine) emitActivity(t *Task, r db.Activity) db.Activity {
+	// 调了不存在的工具也要进账本：meteredTool 只包住解析成功的工具，这类调用走不到
+	// 它，过去只在 activity 里留一行，账面错误率因此偏低。
+	if unknownToolResult(r) {
+		e.meterUnknownTool(t, r)
+	}
 	id, err := e.appendActivity(t, r)
 	if err != nil {
 		// NO LONGER SILENT: dropping a record breaks command↔result pairing in the

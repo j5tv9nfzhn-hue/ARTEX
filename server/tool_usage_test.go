@@ -23,6 +23,21 @@ func (r *recordingToolUsage) InsertToolUsage(row *db.ToolUsage) error {
 	return r.err
 }
 
+func TestUnknownToolResultMetered(t *testing.T) {
+	// SDK 对未注册工具的回复不经过 meteredTool，只能从 activity 上认出来。
+	row := db.Activity{Kind: "tool_result", Tool: "Write", IsError: true, Detail: `Error: unknown tool "Write"`}
+	if !unknownToolResult(row) {
+		t.Fatal("未识别出 unknown tool")
+	}
+	normal := db.Activity{Kind: "tool_result", Tool: "Bash", IsError: true, Detail: "命令不存在"}
+	if unknownToolResult(normal) {
+		t.Fatal("普通失败被误判成 unknown tool")
+	}
+	if unknownToolResult(db.Activity{Kind: "tool_use", Tool: "Write"}) {
+		t.Fatal("tool_use 不该进账")
+	}
+}
+
 func TestMeterToolRecordsAttributionAndDelegates(t *testing.T) {
 	calls := 0
 	base := actool.Build(actool.Spec{

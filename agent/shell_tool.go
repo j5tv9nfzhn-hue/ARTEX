@@ -73,6 +73,11 @@ const (
 	// 拒绝（任务 27）。它必须单独成类——否则「额度打满」会被算进 Bash 的错误率里，
 	// 把真实失败率污染掉，也无法据此调阈值。
 	ErrClassQuota = "quota"
+	// ErrClassUnknownTool 是第 10 类：模型调用了本 agent 工具集里根本没有的工具
+	// （例如 worker 没有 Write，模型却照着旧文案去调）。它既不是参数写错，也不是
+	// 环境缺依赖，而是「文案许诺了不存在的工具」。单独成类，这类回归才会在账本上
+	// 一眼可见，而不是被摊进 env 里再也拆不开。
+	ErrClassUnknownTool = "unknown_tool"
 )
 
 // ClassifyShellFailure 把一次执行结果归到 8 类之一。返回空串表示「命令正常失败」
@@ -158,6 +163,12 @@ func looksLikeParamFailure(body string) bool {
 		"参数错误",
 		"缺少参数",
 		"invalid value",
+		// 参数契约错误的中文说法。它们过去落到 env 分支，把「调用方没给必填项」
+		// 误诊成「这台机器缺依赖」——list_assets 的「dsl 不能为空」就是这么错的。
+		"不能为空",
+		"必填",
+		"未传 ",
+		"不允许无条件",
 	} {
 		if strings.Contains(body, sig) {
 			return true
@@ -259,6 +270,7 @@ func ErrorClassLegend() []map[string]string {
 		{"class": ErrClassTimeout, "label": "超时/被取消"},
 		{"class": ErrClassTransport, "label": "网络/代理失败"},
 		{"class": ErrClassQuota, "label": "意图工具额度用尽"},
+		{"class": ErrClassUnknownTool, "label": "调用了不存在的工具"},
 	}
 }
 
@@ -272,6 +284,12 @@ func ErrorClassOf(res actool.Result, err error, callCtx context.Context) string 
 	if err != nil {
 		if callCtx != nil && (callCtx.Err() == context.DeadlineExceeded || callCtx.Err() == context.Canceled) {
 			return ErrClassTimeout
+		}
+		// 非 Shell 工具返回的 error 不该一律算环境缺失：参数契约错误（「必填」
+		// 「不能为空」「未传」）占了这类失败的大头，算成 env 会把「调用方参数写错」
+		// 误诊成「机器缺依赖」，错误率就再也拆不开了。仍然兜底到 env，保持旧口径。
+		if class := classifyErrorText(err.Error()); class != errClassNone {
+			return class
 		}
 		return ErrClassEnv
 	}
@@ -293,6 +311,11 @@ func ClassifyToolError(err error) string {
 // classifyErrorText 是 8 类判定的唯一实现：从结果/错误文本推导类别。
 func classifyErrorText(text string) string {
 	lower := strings.ToLower(text)
+	// 「调了不存在的工具」必须先于参数判定：报错文本里往往带着引号包起来的工具名，
+	// 再往下走容易被当成参数错误。
+	if strings.Contains(lower, "unknown tool") || strings.Contains(text, "未知工具") {
+		return ErrClassUnknownTool
+	}
 	// 额度闸门的拒绝最优先：它不是工具/执行器的问题，是预算问题。
 	if strings.HasPrefix(strings.TrimSpace(text), "【额度】") {
 		return ErrClassQuota

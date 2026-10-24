@@ -306,6 +306,24 @@ func TestErrorClassOfTransportNotBlamedOnTool(t *testing.T) {
 	}
 }
 
+func TestErrorClassOfUnknownToolIsItsOwnClass(t *testing.T) {
+	// worker 被裁掉了 Write，模型照着旧文案去调，SDK 只回一句 unknown tool。
+	// 这类失败既不是参数写错也不是环境缺依赖，必须单独成类。
+	res := actool.Errorf(`Error: unknown tool "Write"`)
+	if got := ErrorClassOf(res, nil, context.Background()); got != ErrClassUnknownTool {
+		t.Fatalf("得到 %q", got)
+	}
+}
+
+func TestErrorClassOfParamNotEmpty(t *testing.T) {
+	// 非 Shell 工具的参数契约错误过去被一律记成 env，把「调用方参数写错」误诊成
+	// 「机器缺依赖」——list_assets 的「dsl 不能为空」就是这么被算错的。
+	err := errors.New("未传 id/ids 时 dsl 不能为空：不允许无条件查询全部资产")
+	if got := ErrorClassOf(actool.Result{}, err, context.Background()); got != ErrClassParam {
+		t.Fatalf("得到 %q", got)
+	}
+}
+
 // TestBashToolWiring 覆盖「工具层 → 执行器」这条接线本身。
 //
 // 这一层最容易出错而不被单元测试发现：执行器单独测是好的，但工具若还接在 SDK 的
