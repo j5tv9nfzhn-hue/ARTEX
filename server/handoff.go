@@ -151,6 +151,14 @@ func (e *Engine) finishIntentRun(runID int64, t *Task, intent *db.Node, started 
 		}
 	}
 	e.saveHandoff(t, intent, runID, started, reason, state, stopReason, wrote)
+	// Reviewer 的裁决在 saveHandoff 内部同步落库。这里再挡一道硬闸门：
+	// 任何一处 t.Notify() 唤醒 Planner 之前，判决必须在库里。
+	// 返回 false 只有一种可能——连降级判决都写不进去，那就停摆，绝不放行。
+	if !e.awaitReviewerVerdict(t, intent, runID, 5*time.Second) {
+		log.Printf("[handoff] task %s 意图 #%d run %d：情报闸门无法落库，拒绝唤醒 Planner（任务停摆待人工介入）",
+			t.ID, intent.ID, runID)
+		return
+	}
 	// P2：坏终态 → 立刻按策略决定「立即重跑 / 退避重跑 / 转人工」。
 	// 成功则把回炉账本清掉（这条分支不再欠账）。paused 两者都不是：
 	// 它会被恢复路径重新放回 frontier，不需要走回炉策略。
@@ -272,6 +280,9 @@ func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time
 		RenderText:    renderHandoffText(rec),
 		MechSHA256:    hex.EncodeToString(sum[:]),
 	}
+	// Reviewer 是 Worker 与 Planner 之间唯一的通道：交接单里的原始 tail / last_output / L2 自注先交给 Reviewer，
+	// 由它清洗成 Fact / Clue / Verdict 后再给 Planner。Planner 永远不读这张单子。
+	e.runReviewerForIntent(t, intent, runID, rec)
 	if _, err := e.m.pg.SaveIntentHandoff(h); err != nil {
 		log.Printf("[handoff] task %s 意图 #%d 保存交接单失败: %v", t.ID, intent.ID, err)
 	}

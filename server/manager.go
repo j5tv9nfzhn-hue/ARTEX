@@ -434,6 +434,9 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		log.Printf("[llmusage] create table: %v", err)
 	}
 	// 任务与线索缓存（外挂记忆体）：资产/端点/密钥/报错的结构化落库。
+	if err := pg.EnsureReviewerVerdictTable(); err != nil {
+		log.Printf("[reviewer] 建判决台账表失败: %v", err)
+	}
 	if err := pg.EnsureClueCacheTables(); err != nil {
 		log.Printf("[clue] create clue cache table: %v", err)
 	}

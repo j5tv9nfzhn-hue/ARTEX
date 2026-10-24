@@ -766,6 +766,14 @@ deletable AS (
 	}
 	// llm_usage (the token metering ledger) is intentionally NOT deleted with the
 	// task — it is kept as historical accounting even after the task is gone.
+	// Reviewer 的证据快照是冷数据，但会随任务量线性增长；任务被真删时一并清掉，
+	// 避免孤儿行长期占着库。判决表同删（它没有独立留存价值）。
+	if _, err := tx.Exec(`DELETE FROM reviewer_evidence WHERE task_id=$1`, id); err != nil {
+		return result, err
+	}
+	if _, err := tx.Exec(`DELETE FROM reviewer_verdicts WHERE task_id=$1`, id); err != nil {
+		return result, err
+	}
 	if _, err := tx.Exec(`DELETE FROM tasks WHERE id=$1`, id); err != nil {
 		return result, err
 	}

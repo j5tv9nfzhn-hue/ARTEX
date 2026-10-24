@@ -63,6 +63,12 @@ WHERE relation.source_task_id=$1 LIMIT 1`, taskID).Scan(&dependent)
 	if _, err := tx.Exec(`DELETE FROM intercept_pending WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(taskID, 10)); err != nil {
 		return err
 	}
+	// 归档即冷存：证据快照不进归档包，直接清掉。恢复后的旧判决仍在，
+	// 但它的 evidence_ref 会失效——fetch_evidence 会明确报「未找到快照」，
+	// 属于可接受的降级（判决本身仍可采信）。
+	if _, err := tx.Exec(`DELETE FROM reviewer_evidence WHERE task_id=$1`, taskID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(taskID, 10)); err != nil {
 		return err
 	}

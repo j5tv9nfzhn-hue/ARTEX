@@ -3131,7 +3131,8 @@
       "mainagent": "主 Agent",
       "planner": "规划 Planner",
       "system": "系统审计",
-      "worker": "Worker"
+      "worker": "Worker",
+      "reviewer": "Reviewer"
     },
     "sse": {
       "live": "实时",

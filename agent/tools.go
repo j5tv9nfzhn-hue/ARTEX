@@ -78,12 +78,11 @@ type ToolSet struct {
 	GoalMet   bool
 	Reason    string
 	writes    WriteCounts
-	// phase 是本条意图声明的执行阶段(recon/verify/exploit;空 = 不限制)。只影响
-	// worker 注入哪些工具(见 WorkerTools)，不影响权限与审批。
+	// phase 是本条意图的执行阶段标签(recon/verify/exploit;空 = 未判定)。只作
+	// 日志/观测信号，不决定 worker 工具面，也不影响权限与审批。
 	phase string
-	// intentHint 是本条意图的可读文字(summary + expected_evidence，小写)。exploit
-	// 阶段内部再按它裁剪「只服务单一能力」的专用工具(fuzz/crypto/extract/binary)，
-	// 见 intent_phase.go。空 = 不裁剪。
+	// intentHint 是本条意图的可读文字(summary + expected_evidence，小写)，供观测
+	// 与兼容保留。实际动态路由使用 workerRouteText 经 context 传入 AugmentTools。
 	intentHint string
 	// intentsAdded 记录本 ToolSet 生命周期内成功派发的意图数(planner 一轮一实例)。
 	// planner.Plan 用它做 0 意图契约的硬校验:0 意图 + 目标未达成 + 无在跑意图 =
@@ -545,6 +544,27 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	// recent_facts：非折叠事实里最新的一窗（≤N，factNodes 按 id 降序即最新在前）。已折进
 	// digest 且仍冷的（hidden）走 cold_digests，不在此重复。每条 {id, summary, from_intent?,
 	// confidence?}；evidence 等详情用 node_detail(id)。更早的用 list_facts 翻。
+	// ── Reviewer 是 Planner 唯一的情报入口 ──
+	// 本窗口内涉及的意图先取一次判决：有判决的只注入判决，
+	// 没判决的其 fact 正文不进注入面，只留一个计数。
+	var reviewed map[int64]bool
+	verdictBriefs := map[int64]ReviewerBrief{}
+	if ReviewerVerdictsForIntents != nil {
+		ids := make([]int64, 0, len(factNodes))
+		seenIntent := map[int64]bool{}
+		for _, n := range factNodes {
+			if from := factFrom[n.ID]; from > 0 && !seenIntent[from] {
+				seenIntent[from] = true
+				ids = append(ids, from)
+			}
+		}
+		verdictBriefs = ReviewerVerdictsForIntents(ids)
+		reviewed = make(map[int64]bool, len(verdictBriefs))
+		for id := range verdictBriefs {
+			reviewed[id] = true
+		}
+	}
+	unreviewedFacts := 0
 	const recentFactsCap = 20
 	recentFacts := make([]map[string]any, 0, recentFactsCap)
 	for _, n := range factNodes {
@@ -553,6 +573,12 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		}
 		if hidden(n.ID) {
 			continue // 已折进 digest 且仍冷 —— 见 cold_digests
+		}
+		if reviewed != nil {
+			if from := factFrom[n.ID]; from > 0 && !reviewed[from] {
+				unreviewedFacts++
+				continue
+			}
 		}
 		m := compactNode(n)
 		if from := factFrom[n.ID]; from > 0 {
@@ -569,6 +595,35 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		recentFacts = append(recentFacts, m)
 	}
 	out["recent_facts"] = recentFacts
+	if unreviewedFacts > 0 {
+		out["facts_unreviewed"] = unreviewedFacts
+	}
+	if len(verdictBriefs) > 0 {
+		ids := make([]int64, 0, len(verdictBriefs))
+		for id := range verdictBriefs {
+			ids = append(ids, id)
+		}
+		for i := 1; i < len(ids); i++ {
+			for j := i; j > 0 && ids[j] < ids[j-1]; j-- {
+				ids[j], ids[j-1] = ids[j-1], ids[j]
+			}
+		}
+		briefs := make([]map[string]any, 0, len(ids))
+		for _, id := range ids {
+			b := verdictBriefs[id]
+			m := map[string]any{
+				"intent_id": id, "verdict": b.Verdict, "attribution": b.Attribution,
+				"summary": b.Summary, "confidence": b.Confidence,
+				"facts": b.Facts, "clues": b.Clues, "negative": b.Negative,
+			}
+			// evidence_ref 是 fetch_evidence 的唯一入参来源；不放进来那个工具就是摆设。
+			if len(b.Evidence) > 0 {
+				m["evidence_ref"] = b.Evidence
+			}
+			briefs = append(briefs, m)
+		}
+		out["reviewer_verdicts"] = briefs
+	}
 	// recent_done_intents：非折叠的已结束意图里最新的一窗（≤N，recentDone 已按 id 降序）。
 	// 更早的看 done_intents_total 计数 + node_detail(id)。
 	const recentDoneCap = 12
@@ -1101,8 +1156,9 @@ type intentItem struct {
 	AssetIDs  []json.RawMessage `json:"asset_ids"`
 	ParentIDs []json.RawMessage `json:"parent_ids"`
 	Priority  int               `json:"priority"`
-	// Phase 是可选的执行阶段：recon（侦察）/verify（验证）/exploit（利用）。填了之后
-	// worker 只注入该阶段的工具（更省 token、更聚焦）；省略 = 全量工具面。
+	// Phase 是可选的粗粒度阶段标签：recon（侦察）/verify（验证）/exploit（利用）。
+	// 它只作动态路由的弱信号与观测，不决定 worker 的工具清单；省略时可由意图
+	// 文字推断标签，最终工具面仍由 RouteToolFace 动态选择。
 	Phase string `json:"phase"`
 	// ExpectedEvidence 是这条方向的「验收证据」：跑完之后应该拿到什么，才算法完成了。
 	// 它进意图节点的 payload，worker 收尾与后续复核都按它判断，避免「跑了一堆但说不清
@@ -1274,7 +1330,7 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"asset_ids":         map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
 			"parent_ids":        map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
 			"priority":          intp("优先级 0-10，默认5"),
-			"phase":             str("可选：这条方向的执行阶段——recon(侦察) / verify(验证) / exploit(利用)。填了之后 worker 只拿到该阶段的工具（更省 token、选工具更准）；不确定或纯侦察就省略。"),
+			"phase":             str("可选：粗粒度阶段标签——recon(侦察) / verify(验证) / exploit(利用)，只作动态工具路由的弱信号与观测，不决定工具清单。worker 的工具面按 summary、expected_evidence 与目标资产形态动态选择；不确定就省略，不要为了凑工具硬填。"),
 			"expected_evidence": str("跑完这条方向应当拿到什么证据，才算真的完成（一句话，如“登录口回显 SQL 报错并能读出库名”）。写清它，worker 收尾和独立复核都按它判断；纯侦察方向可省略。"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
@@ -2271,7 +2327,9 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.getWorkerOutput(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(),
 		// abandon_intent：显式放弃一条分支（闭集理由 + 证据校验），是「不做了」的唯一合法出口；
 		// 它不产生证据，因此不能用来绕过目标判定。
-		t.abandonIntent(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
+			// fetch_evidence：Planner 唯一的回溯通道（只读、只读洗过的快照、
+		// 单次上限 4000 字符）。默认不调，仅在对 Reviewer 判决存疑时用。
+		t.fetchEvidence(), t.abandonIntent(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
 		t.killWorkTool(), t.restartWorkTool(), t.steerWorkTool(),
 		// report_finding：规划态势研判时若自身已确证漏洞，可直接登记（与 worker 同工具）。
 		t.addFinding(),

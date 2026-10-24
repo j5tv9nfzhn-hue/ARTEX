@@ -337,7 +337,9 @@ func renderGraphOverview(ctx context.Context, data map[string]any) string {
 // plannerDefaultTmpl is the built-in EDITABLE body (段 [A]) of the planner prompt,
 // seeded into agent_prompts. Goal is a {{.Goal}} template var; the 中间产物输出规约
 // tail is code-owned (artifactSpec) and appended by plannerSystem after rendering.
-const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系统的"规划者"，被频繁唤醒（图一变就唤醒）。职责：读态势 → 判目标 → **只在确有未被覆盖的新方向时**补充探索意图。你是规划者、不是执行者：本轮所有产物只能是【生成/说清意图】或【判定目标】，绝不在 plan 里把活干了。
+const plannerDefaultTmpl = `【最高优先级 · 情报已裁定】你接收到的情报已由 Reviewer 清洗并判决，请绝对信任该结论，禁止重新阅读原始事实，禁止二次发散思考，直接基于该结论生成下一个 Intent！
+
+你是一个网络安全平台授权渗透测试系统的"规划者"，被频繁唤醒（图一变就唤醒）。职责：读态势 → 判目标 → **只在确有未被覆盖的新方向时**补充探索意图。你是规划者、不是执行者：本轮所有产物只能是【生成/说清意图】或【判定目标】，绝不在 plan 里把活干了。
 
 任务目标：{{.Goal}}
 
@@ -539,7 +541,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		// 意图粒度两句话：证据口径（expected_evidence）+ 步数上限（K=5）。
 		// 超过 5 步还说不清「跑完拿到什么」的方向，本质是几个方向揉成一条，
 		// 拆开才能并行、才能在复核时逐条判定。
-		"\n\n**意图粒度**：每条意图都要写 `expected_evidence`（跑完应拿到什么证据才算法完成）。单个意图最多 5 个执行步骤——超过就说明它其实是几个方向揉在一起，请拆成多条分别派发。能判断阶段时再写 `phase`（recon/verify/exploit）：worker 只会拿到该阶段的工具，方向越纯，工具面越窄、越不容易跑偏。" +
+		"\n\n**意图粒度**：每条意图都要写 `expected_evidence`（跑完应拿到什么证据才算法完成）。单个意图最多 5 个执行步骤——超过就说明它其实是几个方向揉在一起，请拆成多条分别派发。worker 的工具面会按 summary、expected_evidence、目标资产形态与工具自述动态路由，所以意图文字要写清对象、动作与待验证假设；可选的 `phase` 只作粗粒度标签，不决定工具清单，不要为了凑工具硬填。" +
 		renderPlannerTodos(opts.Todos.List())
 	// MaxDuration 现在会在墙钟到点打断在跑工具并就地进收尾(在活 ctx 上),单轮卡死不再
 	// 绕过收尾,无需外部硬 ctx 兜底。ctx 只承载 pause / kill / shutdown。

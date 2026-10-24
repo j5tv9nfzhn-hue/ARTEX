@@ -28,16 +28,19 @@ package agent
 // 与 Tool Attention（arXiv:2604.21816）的对应关系：
 //   - ISO 分数        → 词项向量余弦（离线二进制跑不了 embedding 模型；论文自己的
 //                        消融里 TF-IDF 只比 MiniLM 低 8.1pp）
-//   - 状态门控        → 控制面工具常驻 + 判不出来时退回全量面
-//   - 两阶段惰性加载  → Description 瘦身（tool_lean.go）+ get_tool_help 兜底
+//   - 状态门控        → ToolResolve 的 agent 绑定/禁用先行过滤，再由本层做相关性
+//                        选择；协议控制面不参与能力名额竞争
+//   - 两阶段惰性加载  → Description 瘦身（tool_lean.go）+ get_tool_help 按需取完整
+//                        schema。被摘掉的工具不会被 get_tool_help 重新提升为可调用
+//                        工具；需要换面时应由新意图重新路由。
 //
 // ── 安全阀（比省 token 更重要）──────────────────────────────────────────────
 //
 //   - 意图文字为空 / 与目录无实质交集 → 原样全量下发，一个都不摘；
-//   - 控制面工具（写回、回报、交接、恢复）永远在——少一个 worker 有结论也交不
-//     出来，那比多花几千 token 严重得多；
-//   - 最少保留 toolRouteMinTools 个工具：证据只决定「裁到哪」，不该把工具面裁到
-//     只剩一个专用工具（它一坏就没有退路）；
+//   - 控制面工具（写回、回报、交接、恢复）永远在，但不占 Top-N 名额——少一个
+//     worker 有结论也交不出来，那比多花几千 token 严重得多；
+//   - Top-N 与最小面只统计非控制面的能力工具：证据只决定「裁到哪」，不该把
+//     能力面裁到只剩一个专用工具（它一坏就没有退路）；
 //   - ARTEX_TOOL_ROUTE=0 一键关回旧行为（排障用）。
 
 import (
@@ -85,9 +88,12 @@ func routeIntentFrom(ctx context.Context) string {
 }
 
 const (
-	// toolRouteTopNDefault 是默认每次下发的工具数上限。18 与 Tool Attention 的
-	// k 同量级：再多，模型的工具选择准确率开始掉；再少，跨面任务会在中途缺工具。
-	toolRouteTopNDefault = 18
+	// toolRouteTopNDefault 是默认每次下发的非控制面能力工具上限。Tool Attention
+	// 的模拟里 k=10 已接近饱和；再多，模型的工具选择准确率开始掉；再少，跨面
+	// 任务会在中途缺工具。控制面工具另行常驻，不占这 10 个名额。
+	toolRouteTopNDefault = 10
+	// toolRouteTopNMax 是环境变量也不得突破的能力面上限。
+	toolRouteTopNMax = 10
 	// toolRouteMinEvidence 是「这次意图真的说到了这个工具」的门槛，单位是
 	// 「最高特异性词的当量」：mass = Σ(命中词项 idf / 目录最大 idf)。
 	//
@@ -104,10 +110,10 @@ const (
 	//   record_fact 的"汇总成一条事实"，纯属巧合）
 	// 1.2 落在 0.84 与 1.44 之间：真实意图过得去，巧合过不去。
 	toolRouteMinEvidence = 1.2
-	// toolRouteMinTools 是最小可用面：证据只决定「裁到哪」，不该裁到只剩一个
-	// 专用工具——那个工具要是坏了/被 WAF 拦了，worker 连换个方式试的余地都没有。
-	// 不足这个数时按余弦次序补齐（补进来的都是与意图有一点关联的工具，不是随机）。
-	toolRouteMinTools = 6
+	// toolRouteMinTools 是非控制面能力工具的最小可用面：证据只决定「裁到哪」，
+	// 不该裁到只剩一个专用工具——那个工具要是坏了/被 WAF 拦了，worker 连换个
+	// 方式试的余地都没有。不足这个数时按余弦次序补齐正分工具，不是随机补。
+	toolRouteMinTools = 5
 )
 
 // controlPlane 是协议面，不是侦察流程：没有它们，worker 就算测出了东西也交不
@@ -122,6 +128,9 @@ var controlPlane = map[string]string{
 	"query_clues":    "查线索缓存（换分支的唯一依据）",
 	"Bash":           "通用恢复手段（路由漏挂时的兜底）",
 	"Read":           "读取中间产物",
+	// fetch_evidence 是 Planner 唯一的反投毒回溯通道。能力面(Top-N)可以裁掉别的，
+	// 这个不行：它一旦被裁，判决被污染时整条链就没有任何纠错手段。
+	"fetch_evidence": "反投毒取证通道（受限只读，常驻）",
 }
 
 // toolRouteEnabled 读开关，默认开。ARTEX_TOOL_ROUTE=0/false/off 关闭。
@@ -133,7 +142,7 @@ func toolRouteEnabled() bool {
 	return true
 }
 
-// toolRouteTopN 读上限，ARTEX_TOOL_ROUTE_TOPN 可覆盖（夹在 6..120）。
+// toolRouteTopN 读上限，ARTEX_TOOL_ROUTE_TOPN 可覆盖（夹在 5..10）。
 func toolRouteTopN() int {
 	raw := strings.TrimSpace(os.Getenv("ARTEX_TOOL_ROUTE_TOPN"))
 	if raw == "" {
@@ -146,8 +155,8 @@ func toolRouteTopN() int {
 	if n < toolRouteMinTools {
 		n = toolRouteMinTools
 	}
-	if n > 120 {
-		n = 120
+	if n > toolRouteTopNMax {
+		n = toolRouteTopNMax
 	}
 	return n
 }
@@ -203,21 +212,55 @@ func toolRouteDoc(t actool.CoreTool) string {
 	b.WriteString(name + " " + name + " " + name + " ")
 	b.WriteString(t.Description())
 	if s := t.InputSchema(); s != nil {
-		if props, ok := s["properties"].(map[string]any); ok {
-			// map 遍历顺序随机，但向量化对顺序不敏感（只是加词），无需排序。
-			for k, v := range props {
+		appendSchemaRouteText(&b, s, 0)
+	}
+	return b.String()
+}
+
+// appendSchemaRouteText 递归收集 schema 里真正携带语义的部分：各级 description、
+// 属性名与字符串枚举。type/object/properties 这类结构词不写入向量，避免所有工具
+// 都被同一批 JSON 样板词稀释。map 遍历顺序随机，但向量化对顺序不敏感。
+func appendSchemaRouteText(b *strings.Builder, v any, depth int) {
+	if depth > 16 {
+		return // 外部 MCP schema 不可信：深度封顶，避免畸形嵌套把路由拖死。
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		if d, ok := x["description"].(string); ok {
+			b.WriteString(" ")
+			b.WriteString(d)
+		}
+		if props, ok := x["properties"].(map[string]any); ok {
+			for k, prop := range props {
 				b.WriteString(" ")
 				b.WriteString(k)
-				if m, ok := v.(map[string]any); ok {
-					if d, ok := m["description"].(string); ok {
-						b.WriteString(" ")
-						b.WriteString(d)
-					}
+				appendSchemaRouteText(b, prop, depth+1)
+			}
+		}
+		for _, key := range []string{"items", "additionalProperties", "anyOf", "oneOf", "allOf"} {
+			if child, ok := x[key]; ok {
+				appendSchemaRouteText(b, child, depth+1)
+			}
+		}
+		if enum, ok := x["enum"].([]any); ok {
+			for _, e := range enum {
+				if s, ok := e.(string); ok {
+					b.WriteString(" ")
+					b.WriteString(s)
 				}
 			}
 		}
+		if enum, ok := x["enum"].([]string); ok {
+			for _, s := range enum {
+				b.WriteString(" ")
+				b.WriteString(s)
+			}
+		}
+	case []any:
+		for _, e := range x {
+			appendSchemaRouteText(b, e, depth+1)
+		}
 	}
-	return b.String()
 }
 
 // routeCatalog 是「一次路由」的目录快照：文档频率与 IDF 只在这批工具上统计。
@@ -383,12 +426,30 @@ func RankTools(intent string, tools []actool.CoreTool) []routeHit {
 // 返回顺序保持原始顺序（不是相关度顺序）：同一组工具每次都以同样的顺序出现在
 // 提示里，prompt cache 的前缀才稳定。
 func RouteToolFace(intent string, tools []actool.CoreTool) []actool.CoreTool {
+	return routeToolFace(intent, tools, nil)
+}
+
+// routeToolFace 是 RouteToolFace 的实现。alwaysKeep 里的名字与控制面一样不占
+// 原生 schema 的 Top-N 名额：AugmentTools 用它保住 DeferredInfo 指向的工具——
+// 那些工具的 schema 本就被 SDK 扣住、只经 Search/ExecuteExtraTool 惰性加载，
+// 路由若把 CoreTool 本体摘掉，DeferredTools 名单与 Skill 解锁都会指向空处。
+func routeToolFace(intent string, tools []actool.CoreTool, alwaysKeep map[string]bool) []actool.CoreTool {
 	if !toolRouteEnabled() || len(tools) == 0 {
 		return tools
 	}
+	resident := func(name string) bool {
+		_, isControl := controlPlane[name]
+		return isControl || alwaysKeep[name]
+	}
 	topN := toolRouteTopN()
-	if len(tools) <= topN {
-		return tools // 目录本来就小，裁了反而是负收益（省不下多少，却多一次判断）
+	candidateCount := 0
+	for _, t := range tools {
+		if !resident(t.Name()) {
+			candidateCount++
+		}
+	}
+	if candidateCount <= topN {
+		return tools // 能力目录本来就小，裁了反而是负收益（省不下多少，却多一次判断）
 	}
 	intent = strings.TrimSpace(intent)
 	if intent == "" {
@@ -396,10 +457,19 @@ func RouteToolFace(intent string, tools []actool.CoreTool) []actool.CoreTool {
 	}
 
 	hits := RankTools(intent, tools)
-	keep := make(map[int]bool, topN+len(controlPlane))
-	selected := 0
+	keep := make(map[int]bool, topN+len(controlPlane)+len(alwaysKeep))
+	// 控制面与 deferred 常驻面永远在：即使证据为 0 也不摘，且不占能力 Top-N 名额。
+	for i, t := range tools {
+		if resident(t.Name()) {
+			keep[i] = true
+		}
+	}
+	selected := 0 // 只统计需要原生下发 schema 的非控制面能力工具
 	best := 0.0
 	for _, h := range hits {
+		if resident(h.name) {
+			continue
+		}
 		if h.evidence > best {
 			best = h.evidence
 		}
@@ -412,26 +482,20 @@ func RouteToolFace(intent string, tools []actool.CoreTool) []actool.CoreTool {
 		keep[h.idx] = true
 		selected++
 	}
-	// 控制面永远在：即使证据为 0 也不摘。
-	for i, t := range tools {
-		if _, ok := controlPlane[t.Name()]; ok {
-			keep[i] = true
-		}
-	}
 	if selected == 0 {
-		// 意图与整份工具目录没有实质交集（闲聊、纯目标名、新领域）。此时裁剪
+		// 意图与能力目录没有实质交集（闲聊、纯目标名、新领域）。此时裁剪
 		// 等于让 worker 闭着眼睛干活，宁可多花几千 token。
 		log.Printf("[tools] 意图与工具目录无实质匹配（最高证据 %.2f < %.2f），本次退回全量面：意图=%q",
 			best, toolRouteMinEvidence, truncRunesLog(intent, 40))
 		return tools
 	}
-	// 最小可用面：补到 toolRouteMinTools（控制面工具本来就常驻，不重复计）。
+	// 最小可用面：只补非控制面的正分能力工具，补到 toolRouteMinTools。
 	if selected < toolRouteMinTools {
 		for _, h := range hits {
 			if selected >= toolRouteMinTools {
 				break
 			}
-			if keep[h.idx] || h.score <= 0 {
+			if resident(h.name) || keep[h.idx] || h.score <= 0 {
 				continue
 			}
 			keep[h.idx] = true
@@ -448,8 +512,8 @@ func RouteToolFace(intent string, tools []actool.CoreTool) []actool.CoreTool {
 			dropped = append(dropped, t.Name())
 		}
 	}
-	log.Printf("[tools] 能力路由 n=%d/%d 证据=%.2f 意图=%q 摘掉=%s",
-		len(out), len(tools), best, truncRunesLog(intent, 40), strings.Join(dropped, ","))
+	log.Printf("[tools] 能力路由 能力=%d/%d 总面=%d/%d 证据=%.2f 意图=%q 摘掉=%s",
+		selected, candidateCount, len(out), len(tools), best, truncRunesLog(intent, 40), strings.Join(dropped, ","))
 	return out
 }
 

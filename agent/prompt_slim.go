@@ -307,6 +307,7 @@ func marshalOverviewCapped(data map[string]any, maxBytes int) string {
 	// 去打同一个点——这正是"越跑越笨、效率越来越低"的体感来源之一。
 	order := []string{
 		"task", "goals", "open_intents", "running_intents", "finding_list", "findings_total",
+		"reviewer_verdicts", "facts_unreviewed",
 		"recent_facts", "recent_done_intents", "frontier_open", "done_intents_total",
 		"facts", "hints", "coverage", "cold_digests", "cold_digests_more", "related_tasks",
 	}

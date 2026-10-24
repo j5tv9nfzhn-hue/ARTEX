@@ -278,6 +278,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s.initSideQuestions()
 	// AI 自我进化沉淀：任务终态/删除时把可复用的路径、证据与失败模式整理成技能。
 	// 钩子按调用时的设置决定「只生成提议」还是「直接落盘」，无需重启。
+	// Reviewer 的模型兑底接到 taskLLMRuntime：用 "reviewer" 角色解析（未绑定则回落任务链/全局），
+	// 所以它的调用会像其他角色一样计量、被熔断接住。
+	agent.ReviewerLLM = s.reviewerComplete
 	s.installSkillCuratorHooks()
 	// 应用内通知：把「漏洞落库」这条（唯一发生在 db 包的）业务时刻接上内存事件流。
 	// 其余三个收敛点（任务终态 / 子代理结算 / AI 回复结束）都在 server 包内直接发。
