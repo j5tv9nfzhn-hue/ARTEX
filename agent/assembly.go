@@ -73,6 +73,11 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 	//     不压」会让体积随谁改过而漂移；
 	//   - 之前：guardPanic 仍是最外层，入参纠偏/超时/计数这些边界行为不变。
 	// 瘦身只改 Description/InputSchema，并在末尾追加常驻的 get_tool_help 兜底。
+	// 能力路由放在瘦身之前：路由要读完整的 Description 才能判准，瘦身把说明
+	// 截到 72 字之后再做匹配，等于拿残句去猜语义。
+	if intent := routeIntentFrom(ctx); intent != "" {
+		out = RouteToolFace(intent, out)
+	}
 	if leanEnabled() {
 		out = leanToolList(out)
 	}
@@ -199,7 +204,7 @@ func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.T
 		metrics.ObserveToolError(name, classifyToolFailure(res, err, callCtx))
 	}
 	if g.breaker != nil {
-		res = g.breaker.inspect(name, in, res, err)
+		res = g.breaker.inspect(callCtx, name, in, res, err)
 	}
 	// 软提醒 / 强制收尾指令随本次 tool_result 一起进入对话流。
 	if len(budgetExtra) > 0 {

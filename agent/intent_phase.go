@@ -51,6 +51,33 @@ func intentSignalText(n *db.Node) string {
 	return strings.ToLower(strings.TrimSpace(p.Summary + " " + p.ExpectedEvidence))
 }
 
+// workerRouteText 拼出「这条意图到底要干什么」的完整文本，供能力路由打分。
+//
+// 比 intentSignalText 多两样：planner 显式声明的 phase（模型自己写的阶段词是
+// 强信号），以及意图挂的资产类型/名称（"扫描 piax-api 的登录接口"里的主语同样
+// 决定该挂 net_probe 还是 http_sequence）。仍然只是「意图自己的文字」——不引入
+// 任何按目标/按网站的规则表。
+func workerRouteText(n *db.Node) string {
+	base := intentSignalText(n)
+	if n == nil || len(n.Payload) == 0 {
+		return base
+	}
+	var p struct {
+		Phase      string   `json:"phase"`
+		Target     string   `json:"target"`
+		URL        string   `json:"url"`
+		Endpoints  []string `json:"endpoints"`
+		AssetNames []string `json:"asset_names"`
+	}
+	if err := json.Unmarshal(n.Payload, &p); err != nil {
+		return base
+	}
+	parts := []string{base, p.Phase, p.Target, p.URL}
+	parts = append(parts, p.Endpoints...)
+	parts = append(parts, p.AssetNames...)
+	return strings.ToLower(strings.TrimSpace(strings.Join(parts, " ")))
+}
+
 // 关键词表。中文按「动词/动作名词」取，英文只取足够独特的词（避免 pe 命中 spec
 // 这类子串误判）。命中即计数，不看位置。
 var (

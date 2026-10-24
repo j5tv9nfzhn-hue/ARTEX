@@ -21,7 +21,7 @@ func TestLoopBreakerGatesBeforeFourthSameContextCall(t *testing.T) {
 		result := actool.Text(`{"status":422,"body":"rejected","body_truncated":false}`)
 		result.Extra = []llm.Message{llm.UserText("preserve guidance")}
 		result.Content = append(result.Content, llm.ContentBlock{Type: llm.BlockThinking, Thinking: "preserve non-text"})
-		result = lb.inspect("http_request", in, result, nil)
+		result = lb.inspect(context.Background(), "http_request", in, result, nil)
 		release()
 		if len(result.Extra) != 1 || result.Content[1].Type != llm.BlockThinking {
 			t.Fatal("result structure lost")
@@ -53,7 +53,7 @@ func TestLoopBreakerDoesNotInterpretOpaqueOrTruncatedOutput(t *testing.T) {
 		if blocked != nil {
 			t.Fatal("truncated result tripped gate")
 		}
-		lb.inspect("http_request", in, actool.Text(`{"status":500,"body":"partial","body_truncated":true}`), nil)
+		lb.inspect(context.Background(), "http_request", in, actool.Text(`{"status":500,"body":"partial","body_truncated":true}`), nil)
 		release()
 	}
 	if loopTargetKey("Bash", json.RawMessage(`{"command":"echo 422"}`)) != "" {

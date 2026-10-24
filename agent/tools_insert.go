@@ -681,6 +681,8 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 			// 未授权接口、目录列表)。此前 recon 只有 list_findings,一旦验证到漏洞,
 			// worker 只能退而 record_fact,漏洞不进漏洞表——表现就是"明明找到了却没报"。
 			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
+			// 线索缓存：侦察是「材料」的最大产出方，也是复用方（先看别人扫到了什么）。
+			t.cacheClueTool(), t.queryCluesTool(),
 		}
 	case workerPhaseVerify:
 		return []actool.CoreTool{
@@ -688,6 +690,7 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 			t.httpRequestTool(), t.binaryInspectTool(), t.extractDataTool(), t.codecCryptoTool(),
 			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(), t.nodeDetail(),
 			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
+			t.cacheClueTool(), t.queryCluesTool(),
 		}
 	case workerPhaseExploit:
 		// 利用阶段是工具面最胖的一档（18.1 KB）。这里再按意图文字摘掉「只服务
@@ -700,6 +703,8 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 			t.insertAssets(), t.listAssets(),
 			t.searchAllWorkerTraces(), t.getWorkerTrace(), t.getHandoff(), t.handoffPatch(), t.readTraceRange(), t.nodeDetail(),
 			t.listFindings(), t.addFinding(), t.recordFact(), t.tacticalKBTool(),
+			t.cacheClueTool(), t.queryCluesTool(),
+			t.aiChatProbeTool(), t.docInjectTool(),
 		}, t.intentHint)
 	}
 	return t.allWorkerTools()
@@ -722,11 +727,15 @@ func (t *ToolSet) allWorkerTools() []actool.CoreTool {
 		// handoff_patch：运行中就把「下一步/假设/负结果」写成可交接的结构（主观层）。
 		// read_trace_range：按活动 id 区间回读原始步骤（交接单里给了 trace_range）。
 		t.getHandoff(), t.handoffPatch(), t.readTraceRange(),
+		// 任务与线索缓存（外挂记忆体）：材料写进库，不塞聊天上下文。
+		t.cacheClueTool(), t.queryCluesTool(),
 		// node_detail：worker 拿到 intent_id/节点 id 后可查该节点完整详情（配合上面的回看）。
 		t.nodeDetail(),
 		// 原生 Go 渗透测试执行工具：直接在进程内完成 HTTP 发包、受控并发 Fuzz、编解码/加解密/JWT、
 		// 结构化数据提取与端口/Banner 探测，消除临时 .py 脚本与跨平台 Shell 转义开销。
 		t.httpRequestTool(), t.httpFuzzTool(), t.httpSequenceTool(), t.webReconTool(),
+		// 诱导面：多轮话术套取 + 带隐藏指令的文档（AI 解析链路的两类入口）。
+		t.aiChatProbeTool(), t.docInjectTool(),
 		t.humanVerificationTool(), t.verificationSolveTool(), t.verificationCapabilitiesTool(), t.verificationFlowTool(), t.binaryInspectTool(), t.codecCryptoTool(), t.extractDataTool(), t.netProbeTool(), t.dnsProbeTool(), t.tacticalKBTool(),
 		// 以下工具仍【不给】worker，只留给 planner/main（读上下文、跨 work 复盘是规划职责，
 		// worker 只做单条意图的执行与写回）：list_facts / list_companies / list_worker_traces。

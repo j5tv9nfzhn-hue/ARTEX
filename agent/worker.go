@@ -531,6 +531,11 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	defTools := WrapCrossPlatformBash(defaultToolsExcept(trimSDK...), runDir, proxyEnv(w.proxyAddr, w.proxyCACert))
 	base = append(base, defTools...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts), IntentID: intent.ID})
+	// 意图文字进 ctx：AugmentTools 据此做能力路由（见 tool_router.go）。
+	ctx = WithRouteIntent(ctx, workerRouteText(intent))
+	// 线索缓存进 ctx：连续失败时 loop breaker 会直接把缓存里的材料递到眼前
+	// （见 clue_hint.go），不用模型自己想起来去查。
+	ctx = WithClueStore(ctx, tsx.Clues())
 	isRE := softwareRE(ts)
 	tools, def, cleanup := AugmentTools(ctx, "worker", base)
 	if isRE {

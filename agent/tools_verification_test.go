@@ -201,7 +201,7 @@ func TestVerificationChallengesReachExistingLoopBreaker(t *testing.T) {
 			t.Fatal("blocked before budget")
 		}
 		body := fmt.Sprintf(`{"status":200,"headers":{"cf-mitigated":"challenge"},"body":"dynamic challenge %d","body_truncated":true}`, i)
-		lb.inspect("http_request", in, actool.Text(body), nil)
+		lb.inspect(context.Background(), "http_request", in, actool.Text(body), nil)
 		release()
 	}
 	release, blocked := lb.before(context.Background(), "http_request", in)

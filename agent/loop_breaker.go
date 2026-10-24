@@ -23,6 +23,10 @@ type loopSlot struct {
 	streak    int
 	blocked   bool
 	totalHits int
+	// hint 是本槽位「首次触发止损」时生成的一次性线索提示（见 clue_hint.go）。
+	// 缓存起来有两个原因：每个被拦下的后续调用都能看到同一份提示（否则模型只
+	// 在第一次看到、之后又忘），以及不重复打 DB。
+	hint string
 }
 
 // loopBreaker is local to one AugmentTools invocation, not persistent across
@@ -79,13 +83,40 @@ func (lb *loopBreaker) before(ctx context.Context, name string, in json.RawMessa
 	lb.mu.Unlock()
 	if blocked {
 		release()
-		res := actool.Errorf(fmt.Sprintf("[执行层止损 / loop_blocked] 本轮同一工具、方法、完整 URL 与请求上下文已连续 %d 次收到相同负反馈。本次未执行外部调用。请记录观察与限制并结束该尝试，或在授权范围内选择不同方法；不要改无关参数绕过止损。新执行轮会重建本轮状态，这不是跨轮安全隔离。目标标识：%s", streak, key))
+		msg := fmt.Sprintf("[执行层止损 / loop_blocked] 本轮同一工具、方法、完整 URL 与请求上下文已连续 %d 次收到相同负反馈。本次未执行外部调用。请记录观察与限制并结束该尝试，或在授权范围内选择不同方法；不要改无关参数绕过止损。新执行轮会重建本轮状态，这不是跨轮安全隔离。目标标识：%s", streak, key)
+		msg += lb.hintFor(ctx, s, name, in)
+		res := actool.Errorf(msg)
 		return noop, &res
 	}
 	return release, nil
 }
 
-func (lb *loopBreaker) inspect(name string, in json.RawMessage, res actool.Result, callErr error) actool.Result {
+// hintFor 返回（并缓存）本槽位的线索缓存提示：止损不是终点，目的是让它换一条
+// 分支继续走，而不是原地停下或原地重试。
+func (lb *loopBreaker) hintFor(ctx context.Context, s *loopSlot, name string, in json.RawMessage) string {
+	if s == nil {
+		return ""
+	}
+	lb.mu.Lock()
+	if s.hint != "" {
+		h := s.hint
+		lb.mu.Unlock()
+		return h
+	}
+	lb.mu.Unlock()
+	var parsed map[string]any
+	_ = json.Unmarshal(in, &parsed)
+	hint := clueSwitchHint(ctx, loopTargetLabel(name, parsed), 6)
+	if hint == "" {
+		hint = "\n[线索缓存 / 换分支]\n本 run 没有可用的线索缓存（非任务上下文）。不要原地重试同一请求：换一种输入思路，或记录负结果后收尾。"
+	}
+	lb.mu.Lock()
+	s.hint = hint
+	lb.mu.Unlock()
+	return hint
+}
+
+func (lb *loopBreaker) inspect(ctx context.Context, name string, in json.RawMessage, res actool.Result, callErr error) actool.Result {
 	if lb == nil || callErr != nil {
 		return res
 	}
@@ -118,6 +149,7 @@ func (lb *loopBreaker) inspect(name string, in json.RawMessage, res actool.Resul
 		return res
 	}
 	warning := fmt.Sprintf("\n[执行层止损 / 3-Strike]\n已观察到连续 %d 次相同负反馈；本轮后续同键调用将于执行前拒绝。%s\n这仅说明当前请求上下文与方法未获得有效结果，不能证明后端实现、参数化查询、漏洞不存在或整个目标安全。记录原始状态与证据，将解释标为推断；不要以止损代替目标达成证明。", streak, diag)
+	warning += lb.hintFor(ctx, s, name, in)
 	// Append one text block; preserve existing text/non-text blocks, IsError, Extra.
 	res.Content = append(append([]llm.ContentBlock(nil), res.Content...), llm.TextBlock(warning))
 	return res

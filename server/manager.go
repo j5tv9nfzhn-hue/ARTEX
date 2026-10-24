@@ -433,6 +433,10 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err := pg.EnsureLLMUsageTable(); err != nil {
 		log.Printf("[llmusage] create table: %v", err)
 	}
+	// 任务与线索缓存（外挂记忆体）：资产/端点/密钥/报错的结构化落库。
+	if err := pg.EnsureClueCacheTables(); err != nil {
+		log.Printf("[clue] create clue cache table: %v", err)
+	}
 	// 意图运行台账 / 交接单 / 收口审计 / 续派链（完成闸门与结构化交接的数据底座）。
 	if err := pg.EnsureIntentLedgerTables(); err != nil {
 		log.Printf("[gate] create intent ledger tables: %v", err)
