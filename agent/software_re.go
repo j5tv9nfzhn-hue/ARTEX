@@ -65,5 +65,5 @@ func softwareREArtifactSpec(dir string) string {
 }
 
 func softwareREHint() string {
-	return "软件逆向优先调用 software_analysis(mode=overview) 获取已登记样本、真实 Provider、能力门控（capabilities.core_ready）与会话。仅在 Provider 的 core_ready=true 时用 open 建立独占静态会话，再用 query 获取函数/反编译/交叉引用/调用关系/模块(modules)/导入导出(imports/exports)/字符串(strings)，用 data/evidence 读取真实结果；不编造工具参数，不绕过工作台直连受管 MCP。结束时 close；缺少映射或工具则说明受阻。备用静态路径：先 binary_inspect；按实际挂载的 MCP schema 查询函数/交叉引用/类型。主动调用 Skill({\"name\":\"reverse-engineering\"}) 或 Skill({\"name\":\"wasm-cloud-saas-tactics\"})（自动加载 references/* 防踩坑与算法逆向手册）及 tactical_kb({\"mode\":\"case_skills\"|\"skill_search\",\"query\":\"...\"}) 复用历史逆向经验。未安装 Provider 时交付明确的环境缺口。"
+	return "软件逆向优先调用 software_analysis(mode=overview) 获取已登记样本、真实 Provider、能力门控（capabilities.core_ready）与会话。仅在 Provider 的 core_ready=true 时用 open 建立独占静态会话，再用 query 获取函数/反编译/交叉引用/调用关系/模块(modules)/导入导出(imports/exports)/字符串(strings)，用 data/evidence 读取真实结果；不编造工具参数，不绕过工作台直连受管 MCP。结束时 close；缺少映射或工具则说明受阻。备用静态路径：先 binary_inspect；按实际挂载的 MCP schema 查询函数/交叉引用/类型。主动调用 Skill({\"name\":\"reverse-engineering\"}) 或 Skill({\"name\":\"wasm-cloud-saas-tactics\"})（自动加载 references/* 防踩坑与算法逆向手册）。未安装 Provider 时交付明确的环境缺口。"
 }

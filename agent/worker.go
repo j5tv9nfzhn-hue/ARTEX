@@ -302,22 +302,23 @@ func workerTrafficBlock(recording bool) string {
 }
 
 // artifactSpec is 段 [C]: the code-owned, non-editable tail appended to every
-// pentest agent's prompt — intermediate artifacts must land in the shared work
-// dir, never /tmp. Guaranteed present regardless of how the DB body is edited.
+// agent's prompt — intermediate artifacts must land in the shared work dir,
+// never /tmp.
+//
+// 这里**只承载运行期才知道的动态值**（工作目录绝对路径），所以无法迁进 DB 提示词。
+// 静态纪律（工具选择、止损规则、上报门禁）一律属于 agent_prompts 里那个带版本号、
+// 可回滚的正文——写在这里会绕过第六阶段建立的 DB 版本化通道，也会和 DB 正文
+// 互相矛盾（历史上这段就曾在 DB 说「不要再编造 http_request」之后，紧接着命令
+// 模型「请直接使用 http_request」）。
 func artifactSpec(dir string) string {
 	return "\n\n**中间产物输出规约**：脚本、payload、抓到的响应体、临时数据等一切中间产物，**一律写到本任务工作目录 " + dir + "**（相对路径即写在这里，也可用该绝对路径）——**不要写 /tmp、不要用其它绝对路径**。\n" +
-		"**专家知识库与止损督导规约**：规划或执行前可调 `tactical_kb`（检索跨任务历史漏洞 `past_findings`、历史案例技能 `case_skills`、历史资产 `past_assets`、高危模式 `vuln_patterns`、技能包检索 `skill_search`、业务不变量 `logic_invariants`）及 `Skill` 工具；发现 Worker 在强类型校验（HTTP 422）或静态错误（固定 500/403）上重复打转时，立即用 `steer_work` 或 `kill_work` 止损转向。"
+		"**止损督导**：同一端点/参数连续 3 次同质化负面响应即停止该类变体，先用 `record_fact` 记录防御特征再转向正交维度；需要人工介入时用 `steer_work` / `kill_work` 止损。"
 }
 
-// workerArtifactSpec is the worker's 段 [C]: its per-intent run dir is pre-created
-// by the engine (ensureRunDir), so it just writes relative paths there — no manual
-// mkdir, no cross-worker name collisions.
+// workerArtifactSpec：worker 的 段 [C]，runDir 由引擎 ensureRunDir 预先建好，因此这里只声明这个动态路径。工具选择 / 3-Strike / 上报门禁等静态纪律在
+// agent_prompts 的版本化正文里，见 artifactSpec 上方说明。
 func workerArtifactSpec(runDir string) string {
-	return "\n\n**中间产物输出规约**：常规发包、多步链/BOLA/并发竞争、并发探测、前端/源码收割、编解码、提取与历史战果检索请直接使用内置 Go 原生工具（http_request / http_sequence / http_fuzz / web_recon / codec_crypto / extract_data / net_probe / dns_probe / tactical_kb / Grep / Glob），不要落盘写临时 .py 脚本；确需保存的字典、payload、抓到的响应体或临时数据等一切中间产物，**一律写到本次意图的专属工作目录 " + runDir + "**（已自动建好，直接用相对路径写在这里即可，无需再手动建目录）——**不要写 /tmp、不要用其它绝对路径**。\n" +
-		"**专家认知与 3-Strike 止损纪律（代码级强制）**：\n" +
-		"1. 【先查经验与主动触发 Skill/MCP】进入具体攻击面或遇复杂鉴权/加密逆向/受阻时，第一轮优先调用 `Skill`（加载 `web-vuln-tactics` / `api-recon` / `ai-coding-sandbox-tactics` / `wasm-cloud-saas-tactics` / `camoufox` / `scopesentry-mcp` / `reverse-engineering` / `exploit-kb-patterns` / `expert-triage-pivot`）与 `tactical_kb`；若已挂载 MCP 工具，直接调工具全名 `mcp__<服务名>__<工具名>({...})` 或用 `ExecuteExtraTool({\"tool_name\":\"...\",\"params\":{...}})` 一步调用。\n" +
-		"2. 【3-Strike 熔断】同一端点/参数连续 3 次收到同质化负面响应（如 FastAPI `422 string_type`、恒定长度 `500`、固定 `403`）或触发 `[⚡ 专家战术熔断提醒]` 时，**严禁发送第 4 次同类变体**！立即调 `record_fact` 记录防御特征并转向正交维度（如双会话越权 `http_sequence(mode=\"bola\")`、并发 `mode=\"race\"`）或直接输出证伪结论结束本轮，严禁死磕至超时(exhausted)。\n" +
-		"3. 【上报五问门禁】调用 `report_finding` 前必须确认已突破真实权限边界且响应含非公开业务数据/状态变更；框架默认行为或不同错误码差分（如不存在返回 500 vs 过期返回 400）一律只记 `record_fact`。"
+	return "\n\n**中间产物输出规约**：确需保存的字典、payload、抓到的响应体或临时数据等一切中间产物，**一律写到本次意图的专属工作目录 " + runDir + "**（已自动建好，直接用相对路径写在这里即可，无需再手动建目录）——**不要写 /tmp、不要用其它绝对路径**。"
 }
 
 // ensureRunDir builds and creates an agent's working directory under base:

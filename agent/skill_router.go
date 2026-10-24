@@ -49,7 +49,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 			"/v1/models", "/api/status", "/api/setup", "/api/user/self", "/pricing",
 			"remain_quota", "used_quota", "token_name", "api key 计费",
 		},
-		action: "优先调用 `Skill({\"name\":\"ai-gateway-logic\"})` 加载中转站业务不变量手册；同时用 `tactical_kb({\"mode\":\"logic_invariants\",\"query\":\"ai_gateway\"})` 取不变量清单（INV-01..11：结算与鉴权解耦、定价 fail-closed、数值溢出、余额真值源、Key 失效、租户 scoped、支付验签、本地信任、管理面层级、促销滥用）。这类目标表面漏洞少，重心在登录后的计费与权限链路；每条不变量须给出最小复现与账单/状态前后快照，区分『配置缺失』与『可恶意利用绕过』。",
+		action: "优先调用 `Skill({\"name\":\"ai-gateway-logic\"})` 加载中转站业务不变量手册（INV-01..11：结算与鉴权解耦、定价 fail-closed、数值溢出、余额真值源、Key 失效、租户 scoped、支付验签、本地信任、管理面层级、促销滥用）。这类目标表面漏洞少，重心在登录后的计费与权限链路；每条不变量须给出最小复现与账单/状态前后快照，区分『配置缺失』与『可恶意利用绕过』。",
 	},
 	{
 		skillName:   "ai-coding-sandbox-tactics",
@@ -148,7 +148,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 			"sql", "sqli", "注入", "ssrf", "rce", "命令执行", "ssti", "模板注入",
 			"xxe", "上传", "upload", "lfi", "文件包含", "反序列化", "越权", "绕过", "waf",
 		},
-		action: "优先调用 `Skill({\"name\":\"web-vuln-tactics\"})` 获取 Web 漏洞验证与 WAF 绕过决策树，并用 `tactical_kb({\"mode\":\"vuln_patterns\",\"query\":\"...\"})` 检索载荷与复现模板。",
+		action: "优先调用 `Skill({\"name\":\"web-vuln-tactics\"})` 获取 Web 漏洞验证与 WAF 绕过决策树（含载荷与复现模板）。",
 	},
 	{
 		skillName:   "reverse-engineering",
@@ -160,7 +160,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 			"ghidra", "radare2", "objdump", "加壳", "脱壳", "签名算法", "webpack", "混淆", "源码审计", "代码审计",
 			"逆向分析", "二进制", "样本", "hook", "idascript", "arsc", "dex",
 		},
-		action: "优先调用 `Skill({\"name\":\"reverse-engineering\"})` 加载只读静态分析 SOP（动态执行须另行授权），并结合 `Grep` / `Glob` / `codec_crypto` / `tactical_kb` 定位关键校验与加解密逻辑。",
+		action: "优先调用 `Skill({\"name\":\"reverse-engineering\"})` 加载只读静态分析 SOP（动态执行须另行授权），并结合 `Grep` / `Glob` / `Read` 定位关键校验与加解密逻辑。",
 	},
 	{
 		skillName:   "exploit-kb-patterns",
@@ -170,7 +170,7 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 			"cve-", "cve", "nday", "1day", "poc", "exp", "shiro", "fastjson",
 			"spring", "struts", "log4j", "thinkphp", "weblogic", "oa", "中间件", "组件版本",
 		},
-		action: "优先调用 `Skill({\"name\":\"exploit-kb-patterns\"})` 与 `tactical_kb({\"mode\":\"vuln_patterns\",\"query\":\"<组件名或CVE>\"})` 检索已知漏洞指纹与 PoC 链。",
+		action: "优先调用 `Skill({\"name\":\"exploit-kb-patterns\"})` 检索已知漏洞指纹与 PoC 链。",
 	},
 	{
 		skillName:   "expert-triage-pivot",
@@ -278,7 +278,7 @@ func keywordWeight(kw string) int {
 
 // BuildTacticalRoutingHint inspects the current task/intent/message text and the
 // agent's mounted tools/MCPs, returning a deterministic Chinese tactical routing
-// directive so the agent proactively triggers matching Skills, tactical_kb, and
+// directive so the agent proactively triggers matching Skills and
 // MCP tools on Turn 1 without blind guessing.
 func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def DeferredInfo) string {
 	trimmed := strings.TrimSpace(taskText)
@@ -286,15 +286,12 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		return ""
 	}
 	hasSkillTool := false
-	hasTacticalKB := false
 	var skillToolDesc string
 	for _, t := range tools {
 		switch t.Name() {
 		case "Skill":
 			hasSkillTool = true
 			skillToolDesc = t.Description()
-		case "tactical_kb":
-			hasTacticalKB = true
 		}
 	}
 	hasMCP := len(def.GlobalNames) > 0 || len(def.Deferred) > 0
@@ -304,7 +301,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 			break
 		}
 	}
-	// 原生工具路由不依赖 Skill/tactical_kb/MCP 任一存在，因此不能在这里一并返回：
+	// 原生工具路由不依赖 Skill/MCP 任一存在，因此不能在这里一并返回：
 	// 正是「没有 Skill 命中 ⇒ 整个路由块消失」的行为，让内置专用工具彻底隐形。
 	mounted := make(map[string]bool, len(tools))
 	for _, t := range tools {
@@ -313,7 +310,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		}
 	}
 	nativeBlock := renderNativeToolRouting(tools)
-	if !hasSkillTool && !hasTacticalKB && !hasMCP && nativeBlock == "" {
+	if !hasSkillTool && !hasMCP && nativeBlock == "" {
 		return ""
 	}
 
@@ -418,7 +415,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 	b.WriteString("【关键词路由建议（不是能力就绪证明）】\n")
 
 	if len(matched) > 0 && hasSkillTool {
-		b.WriteString("系统检测到当前任务/指令命中以下专业领域场景，**仅当下列技能出现在当前可见清单时，必须在第一轮优先调用对应 `Skill`（多文件技能包会自动附带加载 `references/*` 防踩坑与攻击链手册）；缺失时明确报告未配置。知识库调用以真实 mode 为准**：\n")
+		b.WriteString("系统检测到当前任务/指令命中以下专业领域场景，**仅当下列技能出现在当前可见清单时，必须在第一轮优先调用对应 `Skill`（多文件技能包会自动附带加载 `references/*` 防踩坑与攻击链手册）；缺失时明确报告未配置。技能调用以可见清单中的真实名称为准**：\n")
 		for i, m := range matched {
 			if i >= maxTacticalRoutes {
 				break // 最多展示 maxTacticalRoutes 条最相关路由（已按相关度降序）
@@ -427,16 +424,12 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		}
 		if len(matched) > 1 {
 			// 覆盖面：一次只加载一条会退化成「永远只用 web-vuln-tactics / api-recon」。
-			b.WriteString("- 🔁 **多条命中时的加载纪律**：先加载**最相关的一条**（上面第一条）；其余命中项不要一次性全灌进上下文——在后续 intent 里按当前子任务需要再加载（例如出现二进制/协议逆向证据时加载逆向类技能）。**同一任务内已加载过的技能不要重复调用**；只想回看某章节时改用 `tactical_kb({\"mode\":\"skill_search\",\"query\":\"<章节关键词>\"})`，避免重复整包注入。\n")
+			b.WriteString("- 🔁 **多条命中时的加载纪律**：先加载**最相关的一条**（上面第一条）；其余命中项不要一次性全灌进上下文——在后续 intent 里按当前子任务需要再加载（例如出现二进制/协议逆向证据时加载逆向类技能）。**同一任务内已加载过的技能不要重复调用**；只想回看某章节时，用 `Grep` 在该技能目录的 `references/*.md` 上按关键词定位（`Skill` 的返回结果里带着该目录下的绝对路径），避免重复整包注入。\n")
 		}
 	} else if hasSkillTool {
 		b.WriteString("- 💡 **技能库先行**：当前已挂载 `Skill` 工具，具体技能以可见清单为准。遇到具体渗透/逆向/侦察子方向时，**请先调用 `Skill({\"name\":\"<技能名>\"})` 加载专家 SOP（含配套 `references/*` 防踩坑与 PoC 手册）**，切忌盲目硬猜。\n")
 	}
 
-	if hasTacticalKB {
-		b.WriteString("- 📚 **知识库联动**：遇到特定中间件/框架指纹、报错特征、逆向样本或 WAF 拦截时，主动调用 `tactical_kb({\"mode\":\"vuln_patterns\"|\"case_skills\"|\"skill_search\",\"query\":\"<关键词>\"})` 查阅历史漏洞规律、沉淀技能与绕过载荷。\n")
-		b.WriteString("- 🧮 **业务不变量（logic_invariants）**：目标为 LLM 聚合中转站、计费/配额网关、SaaS 额度系统等『表面无漏洞、风险在登录后资金与权限链路』的业务时，调用 `tactical_kb({\"mode\":\"logic_invariants\",\"query\":\"ai_gateway\"})` 取『必须成立』的断言清单，逐条转成待验证假设；违反须给最小复现与账单/状态前后快照，区分配置缺失与可恶意利用绕过。\n")
-	}
 
 	if len(activeServers) > 0 {
 		var srvs []string

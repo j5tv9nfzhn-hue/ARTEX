@@ -223,7 +223,7 @@ func (s *Server) mcpGetPrompt(_ context.Context, name string, args map[string]st
 			"",
 			"步骤：",
 			"1. 先用 artex 的 dns_recon / tech_hints 摸清面，再用 list_assets 看历史资产，避免重复扫描。",
-			"2. 用 list_findings 与 tactical_kb 查已知问题，优先复现历史结论。",
+			"2. 用 list_findings 查已知问题，优先复现历史结论。",
 			"3. 每条结论必须附证据：调用 http_send / http_fuzz 拿到的请求与响应片段，或 tls_inspect 的证书字段。",
 			"4. 结论按 已确认 / 可疑 / 未发现 三档给出，未验证的不要写成漏洞。",
 			"", "输出用中文，先给结论表，再给证据。",
