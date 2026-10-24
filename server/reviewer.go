@@ -424,9 +424,11 @@ func (s *Server) reviewerComplete(ctx context.Context, taskID, system, user stri
 	}
 	rt := &taskLLMRuntime{s: s, taskID: taskID, agentKey: agent.ReviewerKey}
 	req := llm.CompletionRequest{
-		System:    []string{system},
-		Messages:  []llm.Message{llm.UserText(user)},
-		MaxTokens: 1200,
+		System:   []string{system},
+		Messages: []llm.Message{llm.UserText(user)},
+		// 1200 装不下事实/线索满载的判决，截断在 JSON 中间就等于「输出不可解析」。
+		// facts 5 条 + clues 8 条 + carry/negative 各 5 条的实测上限在 1600~1900 之间。
+		MaxTokens: 2000,
 		// 判决是收敛型任务，不需要推理预算；关掉思考也避免把 thinking 块写回。
 		Thinking: "disabled",
 	}

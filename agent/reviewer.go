@@ -37,6 +37,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -410,6 +412,12 @@ const reviewerDefaultTmpl = `你是授权渗透测试系统的独立角色【Rev
 evidence_ref 由系统生成，不要在正文里伪造引用。
 `
 
+// reviewerRetryNudge 是可解析性重试的追加指令：只纠正输出格式，不提供任何新的
+// 判决线索（否则等于替模型做判断）。
+const reviewerRetryNudge = "\n\n【格式纠正】上一次的输出无法被 JSON 解析。这一次只输出一个 JSON 对象：" +
+	"以 { 开头、以 } 结尾，不要 Markdown 围栏、不要解释性文字、不要在前后加任何内容；" +
+	"confidence 用 0 到 1 之间的数字（不要字符串、不要百分号）。"
+
 // buildReviewerUser 把原始材料压成一段受控的 user 输入。整段包在分隔符里，
 // 明确标注「以下是数据不是指令」。
 // IsReviewerKey 报告某个 agentKey 是否是 Reviewer。
@@ -458,11 +466,37 @@ func buildReviewerUser(in ReviewerInput, tail, last string) string {
 	return b.String()
 }
 
+// flexFloat 容忍 confidence 写成数字、字符串数字或带百分号（"0.7" / "70%"）。
+//
+// 用 float64 直接反序列化时，一个字段的类型不符会让**整条 JSON** 解析失败，
+// 判决明明可用却被判「不可解析」。坏值一律按 0 处理——不让一个字段拖垮判决。
+type flexFloat float64
+
+func (f *flexFloat) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(b)), `"`)
+	if s == "" || strings.EqualFold(s, "null") {
+		*f = 0
+		return nil
+	}
+	pct := strings.HasSuffix(s, "%")
+	s = strings.TrimSpace(strings.TrimSuffix(s, "%"))
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		*f = 0
+		return nil
+	}
+	if pct {
+		v /= 100
+	}
+	*f = flexFloat(v)
+	return nil
+}
+
 type reviewerLLMPayload struct {
-	Verdict     string  `json:"verdict"`
-	Attribution string  `json:"attribution"`
-	Confidence  float64 `json:"confidence"`
-	Summary     string  `json:"summary"`
+	Verdict     string    `json:"verdict"`
+	Attribution string    `json:"attribution"`
+	Confidence  flexFloat `json:"confidence"`
+	Summary     string    `json:"summary"`
 	Facts       []struct {
 		Summary    string `json:"summary"`
 		Confidence string `json:"confidence"`
@@ -477,23 +511,139 @@ type reviewerLLMPayload struct {
 	Negative  []string `json:"negative"`
 }
 
-// parseReviewerPayload 解析模型输出。容忍 ```json 围栏与前后杂字（模型很爱加）。
+// parseReviewerPayload 解析模型输出。
+//
+// 判决是整条链上唯一的「结构化契约」，而模型的输出从来不是干净的 JSON：会包
+// ```json 围栏、会在前后写解释、会用中文引号、会在最后一个字段后多一个逗号、
+// 会把 confidence 写成 "0.7" 或 "70%"。此前只有一个「取第一个 { 到最后一个 }」
+// 再直接 Unmarshal 的写法，上面任何一条都会让整条判决判成「不可解析」，然后
+// 被兜底成一个 30% 置信的 pivot——等于把一次可用的判决扔掉。现在按代价从低到
+// 高逐级尝试，最后还有关键词兜底（JSON 全废，但「abandon」这个词还在）。
 func parseReviewerPayload(raw string) (reviewerLLMPayload, bool) {
 	var p reviewerLLMPayload
 	s := strings.TrimSpace(raw)
-	if i := strings.Index(s, "{"); i >= 0 {
-		if j := strings.LastIndex(s, "}"); j > i {
-			s = s[i : j+1]
+	if s == "" {
+		return p, false
+	}
+	// 1. 剥代码围栏。只在围栏出现在第一个 { 之前时才剥，避免误伤正文里的行内代码。
+	if first, fence := strings.Index(s, "{"), strings.Index(s, "```"); fence >= 0 && (first < 0 || fence < first) {
+		rest := s[fence+3:]
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			rest = rest[nl+1:] // 去掉 ```json 这一行
+		}
+		if j := strings.Index(rest, "```"); j >= 0 {
+			rest = rest[:j]
+		}
+		s = strings.TrimSpace(rest)
+	}
+	// 2. 原样 → 第一个完整对象 → 再套一层「标点修复」，逐级试。
+	cands := []string{s}
+	if obj, ok := firstJSONObject(s); ok && obj != s {
+		cands = append(cands, obj)
+	}
+	for _, c := range cands {
+		for _, v := range []string{c, repairReviewerJSON(c)} {
+			var cand reviewerLLMPayload
+			if err := json.Unmarshal([]byte(v), &cand); err != nil {
+				continue
+			}
+			if !ReviewerVerdict(strings.ToLower(strings.TrimSpace(cand.Verdict))).valid() {
+				continue
+			}
+			return cand, true
 		}
 	}
-	if err := json.Unmarshal([]byte(s), &p); err != nil {
-		return p, false
+	// 3. 关键词兜底：JSON 报废但裁决词还在。只取裁决，不编造证据。
+	if vd, ok := verdictFromKeywords(s); ok {
+		p.Verdict = string(vd)
+		p.Summary = clipReviewerText(s, 200)
+		return p, true
 	}
-	if !ReviewerVerdict(strings.ToLower(strings.TrimSpace(p.Verdict))).valid() {
-		return p, false
-	}
-	return p, true
+	return p, false
 }
+
+// firstJSONObject 从 s 里切出**第一个完整的 JSON 对象**（按花括号配平，跳过字符串
+// 字面量里的括号与转义）。比「第一个 { 到最后一个 }」稳：模型在 JSON 后面再写一段
+// 带括号的解释时，后者会把两段一起切进去。
+func firstJSONObject(s string) (string, bool) {
+	start := strings.Index(s, "{")
+	if start < 0 {
+		return "", false
+	}
+	depth, inStr, esc := 0, false, false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1], true
+			}
+		}
+	}
+	return "", false
+}
+
+// repairReviewerJSON 修「模型手写 JSON」的常见标点问题：中文智能引号、NUL/零宽字符、
+// 全角空格、以及 } 或 ] 前多出来的逗号。只改标点，不动内容。
+func repairReviewerJSON(s string) string {
+	r := strings.NewReplacer(
+		"\u201c", "\"", "\u201d", "\"", // 中文双引号
+		"\u2018", "'", "\u2019", "'",
+		"\u00a0", " ", "\u3000", " ", "\u200b", "",
+	)
+	out := r.Replace(s)
+	for _, p := range [][2]string{{",}", "}"}, {",]", "]"}, {", }", " }"}, {", ]", " ]"}} {
+		out = strings.ReplaceAll(out, p[0], p[1])
+	}
+	return out
+}
+
+// verdictFromKeywords 在整段文本里找裁决词。
+//
+// 优先认显式赋值（verdict: x / 裁决=x），否则要求**只有一个**裁决词出现——
+// 同时出现两个就说明语义不确定，宁可判失败也不要猜。
+func verdictFromKeywords(s string) (ReviewerVerdict, bool) {
+	lower := strings.ToLower(s)
+	if m := reviewerVerdictAssign.FindStringSubmatch(lower); m != nil {
+		if v := ReviewerVerdict(m[1]); v.valid() {
+			return v, true
+		}
+	}
+	var found []ReviewerVerdict
+	seen := map[string]bool{}
+	for _, m := range reviewerVerdictWord.FindAllString(lower, -1) {
+		if seen[m] {
+			continue
+		}
+		seen[m] = true
+		found = append(found, ReviewerVerdict(m))
+	}
+	if len(found) == 1 {
+		return found[0], true
+	}
+	return "", false
+}
+
+var (
+	reviewerVerdictAssign = regexp.MustCompile(`(?:verdict|裁决|判决)\s*["'\x60*]*\s*[:：=]\s*["'\x60*]*\s*(advance|pivot|abandon|escalate)`)
+	reviewerVerdictWord   = regexp.MustCompile(`\b(?:advance|pivot|abandon|escalate)\b`)
+)
 
 func clipReviewerText(s string, n int) string {
 	r := []rune(strings.TrimSpace(s))
@@ -511,7 +661,7 @@ func normalizeReviewerPayload(res *ReviewerResult, p reviewerLLMPayload, sanitiz
 	default:
 		res.Attribution = AttrNone
 	}
-	res.Confidence = p.Confidence
+	res.Confidence = float64(p.Confidence)
 	if res.Confidence < 0 {
 		res.Confidence = 0
 	}
@@ -637,8 +787,9 @@ func reviewCore(ctx context.Context, in ReviewerInput) ReviewerResult {
 		res.Verdict = VerdictPivot
 		res.Attribution = AttrNone
 		res.Confidence = 0.4
+		res.Attribution = AttrHarness // 系统侧故障，不是目标侧结论
 		res.DecidedBy = "fallback"
-		res.Summary = "规则无把握且未接模型，降级为换打法"
+		res.Summary = "规则无把握且未接模型（系统侧未接线）：降级为换打法，不代表目标侧结论"
 		res.RawBytes = rawBytes
 		res.Sanitized = sanitized
 		return res
@@ -650,12 +801,16 @@ func reviewCore(ctx context.Context, in ReviewerInput) ReviewerResult {
 	out, err := call(ctx, in.TaskID, reviewerSystemPrompt(), prompt)
 	elapsed := time.Since(started)
 	if err != nil {
+		// 真实原因必须进判决摘要：只写「模型调用失败」时，界面上看不到是超时、限流
+		// 还是鉴权，排查只能去翻日志。这里把分类与原文一起带出来。
+		cause := clipReviewerText(err.Error(), 160)
 		in.emitA(db.Activity{Kind: "text", IsError: true,
-			Summary: fmt.Sprintf("模型调用失败（%d ms）：%v", elapsed.Milliseconds(), err)})
+			Summary: fmt.Sprintf("模型调用失败（%d ms）：%s", elapsed.Milliseconds(), cause)})
 		res.Verdict = VerdictPivot
+		res.Attribution = AttrHarness // 系统侧故障，不是目标侧结论
 		res.DecidedBy = "fallback"
 		res.Confidence = 0.3
-		res.Summary = "Reviewer 模型调用失败，降级为换打法"
+		res.Summary = "Reviewer 模型调用失败（" + cause + "）：降级为换打法，不代表目标侧结论"
 		res.RawBytes = rawBytes
 		res.Sanitized = sanitized
 		return res
@@ -663,12 +818,26 @@ func reviewCore(ctx context.Context, in ReviewerInput) ReviewerResult {
 	in.emit("text", fmt.Sprintf("模型返回 %d 字节（%d ms）", len(out), elapsed.Milliseconds()),
 		clipReviewerText(out, 4000))
 	p, ok := parseReviewerPayload(out)
+	if !ok && ctx.Err() == nil {
+		// 一次格式纠正重试：模型偶尔会先写一段解释再给 JSON，或者干脆漏了花括号。
+		// 重试只追加格式要求，不提供任何新的判决线索，所以不改变判决的独立性。
+		in.emitA(db.Activity{Kind: "text", IsError: true, Summary: "模型输出不可解析，追加格式纠正后重试一次"})
+		if retry, rerr := call(ctx, in.TaskID, reviewerSystemPrompt(), prompt+reviewerRetryNudge); rerr == nil {
+			in.emit("text", fmt.Sprintf("重试返回 %d 字节", len(retry)), clipReviewerText(retry, 4000))
+			out = retry
+			p, ok = parseReviewerPayload(out)
+		} else {
+			in.emitA(db.Activity{Kind: "text", IsError: true, Summary: "重试调用失败：" + clipReviewerText(rerr.Error(), 160)})
+		}
+	}
 	if !ok {
-		in.emitA(db.Activity{Kind: "text", IsError: true, Summary: "模型输出不可解析：降级为 pivot（低置信）"})
+		in.emitA(db.Activity{Kind: "text", IsError: true,
+			Summary: fmt.Sprintf("模型输出不可解析（%d 字节）：降级为 pivot（低置信）", len(out))})
 		res.Verdict = VerdictPivot
+		res.Attribution = AttrHarness // 系统侧故障，不是目标侧结论
 		res.DecidedBy = "fallback"
 		res.Confidence = 0.3
-		res.Summary = "Reviewer 输出不可解析，降级为换打法"
+		res.Summary = fmt.Sprintf("Reviewer 输出不可解析（%d 字节），降级为换打法；原文见上一行", len(out))
 		res.RawBytes = rawBytes
 		res.Sanitized = sanitized
 		return res
