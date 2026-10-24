@@ -1389,10 +1389,11 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		metrics.MarkInterruptPending(intent.ID)
 		// 台账收尾：paused 不是坏终态（不会被算成未收口），但这一行必须收掉，
 		// 否则重启时 reaper 会把一次「人为暂停」误认成崩溃中断。
-		e.finishIntentRun(runID, t, intent, runStarted, reason, "paused", "human_pause", "", wrote)
+		e.finishIntentRun(runID, t, intent, runStarted, reason, "paused", "human_pause", "", wrote, func() {
+			e.notifyIntentSettled(t, intent.ID, "paused")
+			e.touch(t.ID)
+		})
 		log.Printf("[worker %s] task %s 意图 #%d 已暂停", name, t.ID, intent.ID)
-		e.notifyIntentSettled(t, intent.ID, "paused")
-		e.touch(t.ID)
 		return true
 	}
 	if action == "cancel" {
@@ -1404,9 +1405,10 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 			log.Printf("[worker %s] task %s 意图 #%d 取消栅栏落库失败: %v", name, t.ID, intent.ID, controlErr)
 			return true
 		}
-		e.finishIntentRun(runID, t, intent, runStarted, reason, "stopped", "human_stop", "", wrote)
+		e.finishIntentRun(runID, t, intent, runStarted, reason, "stopped", "human_stop", "", wrote, func() {
+			e.touch(t.ID)
+		})
 		log.Printf("[worker %s] task %s 意图 #%d 已停止，等待取消清理", name, t.ID, intent.ID)
-		e.touch(t.ID)
 		return true
 	}
 	// if a pause cancelled this run mid-flight, return the intent to the frontier
@@ -1428,10 +1430,11 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		if err := transitionIntentState(t.Store, intent.ID, "running", "exhausted"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d 超时收尾状态落库失败: %v", name, t.ID, intent.ID, err)
 		}
-		e.finishIntentRun(runID, t, intent, runStarted, reason, "exhausted", "task_timeout", errTextOf(err), wrote)
+		e.finishIntentRun(runID, t, intent, runStarted, reason, "exhausted", "task_timeout", errTextOf(err), wrote, func() {
+			e.notifyIntentSettled(t, intent.ID, "exhausted")
+			e.touch(t.ID)
+		})
 		log.Printf("[worker %s] task %s 意图 #%d 因任务超时收尾结束(exhausted)，写回 %s", name, t.ID, intent.ID, wrote)
-		e.notifyIntentSettled(t, intent.ID, "exhausted")
-		e.touch(t.ID)
 		return true
 	}
 	// 任务已判完成(done via 常规路径)→ 上面 cancelExec 取消了本 run。意图结果已无意义,
@@ -1441,10 +1444,11 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		if err := transitionIntentState(t.Store, intent.ID, "running", "stopped"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d 终态停止落库失败: %v", name, t.ID, intent.ID, err)
 		}
-		e.finishIntentRun(runID, t, intent, runStarted, reason, "stopped", "goal_met_cancel", errTextOf(err), wrote)
+		e.finishIntentRun(runID, t, intent, runStarted, reason, "stopped", "goal_met_cancel", errTextOf(err), wrote, func() {
+			e.notifyIntentSettled(t, intent.ID, "stopped")
+			e.touch(t.ID)
+		})
 		log.Printf("[worker %s] task %s 意图 #%d 因任务已完成而取消(stopped)", name, t.ID, intent.ID)
-		e.notifyIntentSettled(t, intent.ID, "stopped")
-		e.touch(t.ID)
 		return true
 	}
 	// killed by the planner: mark stopped (don't write back results, don't auto-reclaim).
@@ -1453,11 +1457,12 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		if err := transitionIntentState(t.Store, intent.ID, "running", "stopped"); err != nil {
 			log.Printf("[worker %s] task %s 意图 #%d planner 停止落库失败: %v", name, t.ID, intent.ID, err)
 		}
-		e.finishIntentRun(runID, t, intent, runStarted, reason, "stopped", "planner_kill", errTextOf(err), wrote)
+		e.finishIntentRun(runID, t, intent, runStarted, reason, "stopped", "planner_kill", errTextOf(err), wrote, func() {
+			e.notifyIntentSettled(t, intent.ID, "stopped")
+			e.touch(t.ID)
+			t.Notify()
+		})
 		log.Printf("[worker %s] task %s 意图 #%d 被终止(stopped)", name, t.ID, intent.ID)
-		e.notifyIntentSettled(t, intent.ID, "stopped")
-		e.touch(t.ID)
-		t.Notify()
 		return true
 	}
 	if err != nil {
@@ -1485,11 +1490,14 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 			log.Printf("[worker %s] task %s 意图 #%d 终态 %s 落库失败: %v", name, t.ID, intent.ID, state, stateErr)
 		}
 	}
-	e.finishIntentRun(runID, t, intent, runStarted, reason, state, stopReasonFrom(reason, err), errTextOf(err), wrote)
+	// 唤醒规划者被推迟到判决落库之后（见 finishIntentRun 的 notify 参数）：判定在
+	// 后台跑，这里只登记「该做什么」，不再同步等模型。
+	e.finishIntentRun(runID, t, intent, runStarted, reason, state, stopReasonFrom(reason, err), errTextOf(err), wrote, func() {
+		e.notifyIntentSettled(t, intent.ID, state)
+		e.touch(t.ID)
+		t.NotifyDone(intent.ID) // results changed the graph -> wake the planner (with the just-finished intent id)
+	})
 	log.Printf("[worker %s] task %s 意图 #%d 结束: %s (写回 %s)", name, t.ID, intent.ID, state, wrote)
-	e.notifyIntentSettled(t, intent.ID, state)
-	e.touch(t.ID)
-	t.NotifyDone(intent.ID) // results changed the graph -> wake the planner (with the just-finished intent id)
 	return true
 }
 

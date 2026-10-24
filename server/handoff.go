@@ -129,7 +129,11 @@ func (e *Engine) beginIntentRun(t *Task, intent *db.Node, started time.Time) int
 //
 // runID>0 走 UPDATE（正常路径）；=0 说明开始行没写成（例如台账表刚建失败），
 // 退化成一次性写完整行，交接照样不丢。
-func (e *Engine) finishIntentRun(runID int64, t *Task, intent *db.Node, started time.Time, reason harness.TerminalReason, state, stopReason, errText string, wrote agent.WriteCounts) {
+// notify 是「判决落库之后」才允许执行的回调（上报结算、touch、唤醒规划者）。
+// 判定在后台跑，所以这些动作不能在本次调用里直接做——顺序必须是
+//
+//	交接单落库 → Reviewer 落判决 → 情报闸门 → 回炉策略 → 唤醒规划者
+func (e *Engine) finishIntentRun(runID int64, t *Task, intent *db.Node, started time.Time, reason harness.TerminalReason, state, stopReason, errText string, wrote agent.WriteCounts, notify func()) {
 	if e == nil || e.m == nil || e.m.pg == nil || t == nil || intent == nil {
 		return
 	}
@@ -150,24 +154,65 @@ func (e *Engine) finishIntentRun(runID int64, t *Task, intent *db.Node, started 
 			runID = id
 		}
 	}
-	e.saveHandoff(t, intent, runID, started, reason, state, stopReason, wrote)
-	// Reviewer 的裁决在 saveHandoff 内部同步落库。这里再挡一道硬闸门：
-	// 任何一处 t.Notify() 唤醒 Planner 之前，判决必须在库里。
-	// 返回 false 只有一种可能——连降级判决都写不进去，那就停摆，绝不放行。
-	if !e.awaitReviewerVerdict(t, intent, runID, 5*time.Second) {
-		log.Printf("[handoff] task %s 意图 #%d run %d：情报闸门无法落库，拒绝唤醒 Planner（任务停摆待人工介入）",
-			t.ID, intent.ID, runID)
-		return
-	}
-	// P2：坏终态 → 立刻按策略决定「立即重跑 / 退避重跑 / 转人工」。
-	// 成功则把回炉账本清掉（这条分支不再欠账）。paused 两者都不是：
-	// 它会被恢复路径重新放回 frontier，不需要走回炉策略。
-	switch {
-	case state == "done":
-		_ = e.m.pg.DeleteRetryState(t.ID, intent.ID)
-	case isBadBranchState(state):
-		e.kickRequeue(t, intent.ID, state, stopReason, errText)
-	}
+	rec := e.saveHandoff(t, intent, runID, started, reason, state, stopReason, wrote)
+	// 判定链整体移到后台（见 reviewThenNotify）：worker 收尾后立刻回去领下一条意图，
+	// 不再被一次外部模型调用挡住。顺序不变——唤醒仍然发生在判决落库之后。
+	e.reviewThenNotify(t, intent, runID, rec, state, stopReason, errText, notify)
+}
+
+const (
+	// reviewerCallTimeout 是 Reviewer **单次**判定的预算。
+	//
+	// 判定已经挪到后台 goroutine，慢判定不再占用 worker 槽位，所以这个数字可以从容
+	// 给足：一次调用带着 6000 字原始材料，解析失败时还会追加一次格式纠正重试，
+	// 45s 在慢模型 / 限流排队下会在第二次调用途中被掐断，判决随即降级成
+	// pivot/harness——明明只差几秒。
+	reviewerCallTimeout = 90 * time.Second
+	// reviewerVerdictWait 是判定写完后，闸门确认「判决确实在库里」的等待上限。
+	//
+	// 判定在同一个 goroutine 里同步写完才进来，正常情况第一次查询就命中；留着它是
+	// 为了兜住「判定自称完成、但落库失败」——那种情形必须拒绝唤醒，不能让规划者读到
+	// 未经裁定的情报。
+	reviewerVerdictWait = 5 * time.Second
+)
+
+// reviewThenNotify 把判定链放到后台：
+//
+//	Reviewer（落判决）→ 情报闸门 → 回炉策略 → notify（唤醒规划者）
+//
+// 为什么必须后台化：Reviewer 同步跑在意图收尾路径上时，一个 run 的收尾最长要等一个
+// 完整的模型调用预算。任务里几条意图几乎同时收尾时，worker 池会被「等模型」整体占满，
+// 期间谁也不能去领新意图——吞吐直接被判定延迟锁死。判定本身不依赖 worker 的任何资源，
+// 唯一的约束是「唤醒必须在判决落库之后」，所以把整条链连同唤醒一起搬进 goroutine
+// 就够：既解耦，又不破坏顺序。
+func (e *Engine) reviewThenNotify(t *Task, intent *db.Node, runID int64, rec handoffRecord, state, stopReason, errText string, notify func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[handoff] task %s 意图 #%d run %d 后台判定 panic: %v", t.ID, intent.ID, runID, r)
+			}
+		}()
+		e.runReviewerForIntent(t, intent, runID, rec) // 内部同步落判决，慢就慢在后台
+		// 任何一处唤醒之前，判决必须在库里。返回 false 只有一种可能——连降级判决都
+		// 写不进去，那就停摆等人工介入，绝不放行。
+		if !e.awaitReviewerVerdict(t, intent, runID, reviewerVerdictWait) {
+			log.Printf("[handoff] task %s 意图 #%d run %d：情报闸门无法落库，拒绝唤醒 Planner（任务停摆待人工介入）",
+				t.ID, intent.ID, runID)
+			return
+		}
+		// P2：坏终态 → 立刻按策略决定「立即重跑 / 退避重跑 / 转人工」。
+		// 成功则把回炉账本清掉（这条分支不再欠账）。paused 两者都不是：
+		// 它会被恢复路径重新放回 frontier，不需要走回炉策略。
+		switch {
+		case state == "done":
+			_ = e.m.pg.DeleteRetryState(t.ID, intent.ID)
+		case isBadBranchState(state):
+			e.kickRequeue(t, intent.ID, state, stopReason, errText)
+		}
+		if notify != nil {
+			notify()
+		}
+	}()
 }
 
 // errTextOf 把 error 折成台账里的错误文本（空 error = 空串）。
@@ -189,11 +234,13 @@ func (e *Engine) settleInterruptedRun(t *Task, intent *db.Node, runID int64, sta
 		log.Printf("[reaper] task %s 意图 #%d run %d 收尾失败: %v", t.ID, intent.ID, runID, err)
 		return
 	}
-	e.saveHandoff(t, intent, runID, started, harness.TerminalReason("interrupted"), "interrupted", "crash", agent.WriteCounts{})
+	rec := e.saveHandoff(t, intent, runID, started, harness.TerminalReason("interrupted"), "interrupted", "crash", agent.WriteCounts{})
+	// 崩溃补收尾同样要出判决，但没有人等它：交给后台，reaper 继续往下走。
+	e.reviewThenNotify(t, intent, runID, rec, "interrupted", "crash", "", nil)
 }
 
 // saveHandoff 机械抽取交接单：活动流 + 写回计数 + 意图原文 + 本次 run 的模型补注。
-func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time.Time, reason harness.TerminalReason, state, stopReason string, wrote agent.WriteCounts) {
+func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time.Time, reason harness.TerminalReason, state, stopReason string, wrote agent.WriteCounts) handoffRecord {
 	acts, err := t.Store.ActivityTrace(intent.ID, 400)
 	if err != nil {
 		log.Printf("[handoff] task %s 意图 #%d 读活动流失败: %v", t.ID, intent.ID, err)
@@ -262,7 +309,7 @@ func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time
 	raw, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		log.Printf("[handoff] task %s 意图 #%d 序列化失败: %v", t.ID, intent.ID, err)
-		return
+		return rec
 	}
 	// mech_sha256 只覆盖事实层：把 open_work 摘掉再算，模型改口也动不了这个指纹。
 	mech := rec
@@ -280,12 +327,17 @@ func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time
 		RenderText:    renderHandoffText(rec),
 		MechSHA256:    hex.EncodeToString(sum[:]),
 	}
-	// Reviewer 是 Worker 与 Planner 之间唯一的通道：交接单里的原始 tail / last_output / L2 自注先交给 Reviewer，
-	// 由它清洗成 Fact / Clue / Verdict 后再给 Planner。Planner 永远不读这张单子。
-	e.runReviewerForIntent(t, intent, runID, rec)
+	// Reviewer 是 Worker 与 Planner 之间唯一的通道：交接单里的原始 tail / last_output /
+	// L2 自注先交给 Reviewer，由它清洗成 Fact / Clue / Verdict 后再给 Planner。
+	// Planner 永远不读这张单子。
+	//
+	// 判定**不在这里**跑：它是整条收尾路径上唯一要等外部模型的动作，同步跑会把一个
+	// worker 槽位占满一整个判定预算。交接单落库照旧同步（纯 DB，快），判定链由
+	// finishIntentRun 派到后台 goroutine。
 	if _, err := e.m.pg.SaveIntentHandoff(h); err != nil {
 		log.Printf("[handoff] task %s 意图 #%d 保存交接单失败: %v", t.ID, intent.ID, err)
 	}
+	return rec
 }
 
 // mergeOpenWork 把多行补注按类别合并去重（保序）。

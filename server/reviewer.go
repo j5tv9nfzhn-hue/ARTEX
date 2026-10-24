@@ -168,7 +168,9 @@ func (e *Engine) runReviewerForIntent(t *Task, intent *db.Node, runID int64, rec
 		e.emitActivity(t, a)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	// 判定预算见 handoff.go 的 reviewerCallTimeout：最多两次模型调用（主调用 +
+	// 解析失败后的格式纠正重试），并且带着 6000 字的原始材料。
+	ctx, cancel := context.WithTimeout(context.Background(), reviewerCallTimeout)
 	defer cancel()
 	res := agent.Review(ctx, in)
 
