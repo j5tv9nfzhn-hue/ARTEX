@@ -11,7 +11,7 @@ import (
 // (CI artifacts, build.sh ARTEX_PACKAGE=0, or self-updated binaries) always
 // materialize the default skills into the runtime skills/ directory when missing.
 //
-//go:embed api-recon camoufox scopesentry-mcp web-vuln-tactics reverse-engineering exploit-kb-patterns expert-triage-pivot human-verification ai-coding-sandbox-tactics wasm-cloud-saas-tactics rea-mcp wpe64-mcp mitmproxy-traffic ai-gateway-logic
+//go:embed api-recon camoufox scopesentry-mcp web-vuln-tactics reverse-engineering exploit-kb-patterns expert-triage-pivot human-verification ai-coding-sandbox-tactics wasm-cloud-saas-tactics rea-mcp wpe64-mcp mitmproxy-traffic ai-gateway-logic case-web-10 case-web-13 case-web-6 case-web-7 case-web-9 case-web-business-logic-abuse-enablement-37 case-web-info-leak-ato-unauth-20 case-web-logic-flaw-bypass-payment-24 case-web-payment-sandbox-false-positive case-web-vpngap-matrix-payment-ato
 var Bundled embed.FS
 
 // retiredSkills 是从内置技能里**下线**的目录。升级安装时主动删除，
