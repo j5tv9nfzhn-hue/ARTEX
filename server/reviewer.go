@@ -168,9 +168,17 @@ func (e *Engine) runReviewerForIntent(t *Task, intent *db.Node, runID int64, rec
 		e.emitActivity(t, a)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	// 整体预算见 reviewerCallTimeout：这条路径上最多两次模型调用（主调用 + 格式
+	// 纠正重试），并且带着 6000 字的原始材料，45s 不够。
+	ctx, cancel := context.WithTimeout(context.Background(), reviewerCallTimeout)
 	defer cancel()
+	reviewStarted := time.Now()
 	res := agent.Review(ctx, in)
+	if elapsed := time.Since(reviewStarted); elapsed >= reviewerSlowThreshold {
+		in.Emit(db.Activity{Kind: "text", IsError: true,
+			Summary: fmt.Sprintf("判定耗时 %d ms（预算 %s）：慢判定会推迟 worker 领下一条意图，若常见请调大预算或换更快的模型",
+				elapsed.Milliseconds(), reviewerCallTimeout)})
+	}
 
 	factsJSON, _ := json.Marshal(res.Facts)
 	cluesJSON, _ := json.Marshal(res.Clues)
@@ -281,10 +289,31 @@ func (e *Engine) loaderEvidence(refID int64) (agent.ReviewerEvidence, error) {
 // ---- 情报闸门：先落库、再唤醒；落不进去就降级，绝不放行 ----
 
 const (
+	// reviewerCallTimeout 是 Reviewer 一次判定的整体预算，覆盖：灰区的模型调用、
+	// 解析失败后的格式纠正重试、以及证据落库与线索写入。
+	//
+	// 45s 是照着「一次快速档调用」定的，但实际这条路径上最多会发生两次调用
+	// （主调用 + 格式纠正重试），而且提示里带着 6000 字的原始 tail 与自述。45s 在
+	// 慢模型、限流排队、或首字延迟偏高的网关下会在第二次调用途中就被掐断，于是
+	// 判决变成「调用失败 → pivot/harness」——明明只差几秒。
+	// 90s 给两次调用各留 40s 上下的余量，同时仍是一个有界的等待。
+	reviewerCallTimeout = 90 * time.Second
+	// reviewerGateWait 是「先落库、再唤醒 Planner」闸门的等待上限。
+	//
+	// 它必须**盖住 Reviewer 的整个预算**：闸门存在的意义是「等判决落库」，而不是
+	// 「等一小会儿没等到就宣布作废」。等得比判定预算短，等于把还没跑完的判定直接
+	// 判成降级判决（abandon/harness），前面 90s 白花，还污染了规划依据。
+	// 因此这里由 reviewerCallTimeout 推导，只额外留 15s 余量给落库与线索写入。
+	reviewerGateWait = reviewerCallTimeout + 15*time.Second
+	// reviewerSlowThreshold：一次判定耗时超过它就在活动流里留一行。判定是同步跑在
+	// 收尾路径上的，它有多慢直接决定 worker 多久才能去领下一条意图；下次要调
+	// reviewerCallTimeout，依据就来自这里，而不是靠猜。
+	reviewerSlowThreshold = reviewerCallTimeout / 2
 	// reviewerGateFailThreshold 是**同一个任务**连续多少次闸门超时后打开熔断。
 	reviewerGateFailThreshold = 3
 	// reviewerGateCooldown 是熔断打开后的冷却时长。冷却期内该任务不再逐 run 空等，
-	// 直接走降级路径——存储明显病着的时候，每个 run 白等 5s 只会把任务拖死。
+	// 直接走降级路径——存储明显病着的时候，每个 run 白等一整个判定预算只会把任务
+	// 拖死（等待上限见 reviewerGateWait）。
 	reviewerGateCooldown = 60 * time.Second
 )
 
