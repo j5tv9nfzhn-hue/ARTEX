@@ -30,8 +30,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Autumn-27/norma/actool"
 	"github.com/Autumn-27/norma/llm"
+	actool "github.com/Autumn-27/norma/tool"
 
 	"github.com/Autumn-27/artex/intercept"
 )
