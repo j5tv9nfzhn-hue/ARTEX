@@ -430,7 +430,6 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 		b.WriteString("- 💡 **技能库先行**：当前已挂载 `Skill` 工具，具体技能以可见清单为准。遇到具体渗透/逆向/侦察子方向时，**请先调用 `Skill({\"name\":\"<技能名>\"})` 加载专家 SOP（含配套 `references/*` 防踩坑与 PoC 手册）**，切忌盲目硬猜。\n")
 	}
 
-
 	if len(activeServers) > 0 {
 		var srvs []string
 		for s := range activeServers {

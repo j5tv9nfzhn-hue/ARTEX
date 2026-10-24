@@ -177,13 +177,13 @@ var ReviewerEvidenceTouch func(refID int64)
 
 // ReviewerBrief 是给 Planner 注入面用的判决摘要（比 ReviewerResult 更窄）。
 type ReviewerBrief struct {
-	Verdict     ReviewerVerdict `json:"verdict"`
+	Verdict     ReviewerVerdict     `json:"verdict"`
 	Attribution ReviewerAttribution `json:"attribution"`
-	Summary     string          `json:"summary"`
-	Confidence  float64         `json:"confidence"`
-	Facts       []string        `json:"facts,omitempty"`
-	Clues       []string        `json:"clues,omitempty"`
-	Negative    []string        `json:"negative,omitempty"`
+	Summary     string              `json:"summary"`
+	Confidence  float64             `json:"confidence"`
+	Facts       []string            `json:"facts,omitempty"`
+	Clues       []string            `json:"clues,omitempty"`
+	Negative    []string            `json:"negative,omitempty"`
 	// Evidence 是可供 fetch_evidence 用的快照 id。Planner 只有看见它才谈得上取证。
 	Evidence []int64 `json:"evidence_ref,omitempty"`
 }
@@ -281,10 +281,10 @@ func reviewerLooksNegative(s string) bool {
 // 硬事实，终态是编排层给的，失败形状最模糊。
 func RuleReviewer(in ReviewerInput) (ReviewerResult, bool) {
 	res := ReviewerResult{
-		Schema:   ReviewerSchema,
-		IntentID: in.IntentID,
-		RunID:    in.RunID,
-		DecidedBy: "rules",
+		Schema:      ReviewerSchema,
+		IntentID:    in.IntentID,
+		RunID:       in.RunID,
+		DecidedBy:   "rules",
 		Attribution: AttrNone,
 	}
 
