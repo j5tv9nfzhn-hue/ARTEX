@@ -5,6 +5,8 @@ import * as React from "react";
 
 import { DiffStat } from "@/components/transcript/diff-view";
 import { StatusRing } from "@/components/transcript/status-ring";
+import { useShellCapability } from "@/hooks/use-shell-capability";
+import { execToolLabel } from "@/lib/shell-label";
 import { countLines, type PartialEntry, parsePartialJson, pickField, scanToolInput } from "@/lib/partial-json";
 
 const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "apply_patch", "NotebookEdit"]);
@@ -65,6 +67,8 @@ function liveItems(entries: PartialEntry[], skipKey: string): PartialEntry[] {
 // 参数流式增量只在展开后才逐行出现。
 export function LiveToolRow({ tool, args }: { tool: string; args: string }) {
   const [open, setOpen] = React.useState(false);
+  // 同 tool-summary-row：显示名走运行时探测，逻辑仍用原始 tool 名。
+  const shell = useShellCapability();
   const fields = React.useMemo(() => parsePartialJson(args), [args]);
   const entries = React.useMemo(() => scanToolInput(args).entries, [args]);
   const target = React.useMemo(() => liveTarget(tool, fields), [tool, fields]);
@@ -91,7 +95,9 @@ export function LiveToolRow({ tool, args }: { tool: string; args: string }) {
         <span className="shrink-0 text-muted-foreground">
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </span>
-        <span className="shrink-0 font-medium text-muted-foreground text-shimmer">{tool}</span>
+        <span className="shrink-0 font-medium text-muted-foreground text-shimmer">
+          {execToolLabel(tool, shell)}
+        </span>
         {target.text ? (
           <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{target.text}</span>
         ) : (

@@ -6,6 +6,8 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { StatusRing } from "@/components/transcript/status-ring";
+import { useShellCapability } from "@/hooks/use-shell-capability";
+import { execToolLabel } from "@/lib/shell-label";
 import type { ToolKindMeta } from "@/components/transcript/tool-kind";
 import { formatElapsed, type ToolStatus } from "@/lib/tool-status";
 import { cn } from "@/lib/utils";
@@ -66,6 +68,9 @@ export function ToolSummaryRow({
   alert?: boolean;
 }) {
   const t = useTranslations("transcript");
+  // 执行器名由后端探测（/health.shell）决定：Windows 显示 PowerShell，类 Unix 显示 Bash。
+  // 直接渲染 tool 会把 SDK 的固定名「Bash」暴露到 Windows 上，用户会照着 bash 语法写命令。
+  const shell = useShellCapability();
   const elapsed = useElapsed(startedAt, endedAt);
   const running = status === "running";
   return (
@@ -84,7 +89,9 @@ export function ToolSummaryRow({
         {t(kind.labelKey)}
       </span>
       {worker ? <span className={workerChipClass}>{worker}</span> : null}
-      <span className="shrink-0 font-mono font-medium text-[11.5px] text-foreground">{tool}</span>
+      <span className="shrink-0 font-mono font-medium text-[11.5px] text-foreground">
+        {execToolLabel(tool, shell)}
+      </span>
       {target ? (
         <span className="min-w-0 flex-1 truncate font-mono text-ui-xs text-muted-foreground">{target}</span>
       ) : (
