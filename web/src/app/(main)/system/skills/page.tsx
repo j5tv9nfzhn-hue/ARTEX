@@ -55,31 +55,15 @@ import { cn } from "@/lib/utils";
 type SkillOrigin = "builtin" | "distilled" | "merged" | "report" | "user";
 type SkillBucket = "all" | "knowledge" | "memory" | "custom";
 
-// 旧后端未返回 origin 时的兜底，判定规则与后端完全一致（内置优先，再看前缀）。
-const LEGACY_BUILTIN_SKILL_NAMES = new Set([
-  "api-recon",
-  "camoufox",
-  "scopesentry-mcp",
-  "web-vuln-tactics",
-  "reverse-engineering",
-  "exploit-kb-patterns",
-  "expert-triage-pivot",
-  "human-verification",
-  "ai-coding-sandbox-tactics",
-  "wasm-cloud-saas-tactics",
-  "rea-mcp",
-  "wpe64-mcp",
-  "mitmproxy-traffic",
-  "ai-gateway-logic",
-]);
+// 旧后端未返回 origin 时的兜底：只按前缀判沉淀/合并/报告，其余视为随版本下发的内置
+// 技能库（M15 起为上游开源整包，不再逐个列名）。
 
 function originOf(s: SkillItem): SkillOrigin {
   if (s.origin) return s.origin;
-  if (LEGACY_BUILTIN_SKILL_NAMES.has(s.name)) return "builtin";
   if (s.name.startsWith("case-")) return "distilled";
   if (s.name.startsWith("merged-")) return "merged";
   if (s.name.startsWith("report-")) return "report";
-  return "user";
+  return "builtin";
 }
 
 function bucketOf(origin: SkillOrigin): Exclude<SkillBucket, "all"> {

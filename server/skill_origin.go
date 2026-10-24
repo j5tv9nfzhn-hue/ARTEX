@@ -64,15 +64,17 @@ var builtinSkillFromReport = map[string]bool{
 // classifySkillOrigin 判定技能来源。命名前缀是既有的约定（agent/skill_router.go
 // 用同一套前缀区分内置路由与沉淀路由），这里沿用而不另造一套。
 func classifySkillOrigin(name string) string {
+	// 前缀优先：任务沉淀/合并/报告三类即使也被 //go:embed 打包（M15 起沉淀技能与
+	// 上游技能同目录），仍应归到记忆库，由沉淀生命周期管理，而不是知识库。
 	switch {
-	case builtinSkillDirs[name]:
-		return SkillOriginBuiltin
 	case strings.HasPrefix(name, "case-"):
 		return SkillOriginDistilled
 	case strings.HasPrefix(name, "merged-"):
 		return SkillOriginMerged
 	case strings.HasPrefix(name, "report-"):
 		return SkillOriginReport
+	case builtinSkillDirs[name]:
+		return SkillOriginBuiltin
 	default:
 		return SkillOriginUser
 	}

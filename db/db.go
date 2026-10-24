@@ -7,10 +7,12 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"io/fs"
 	"sync"
 
 	"github.com/Autumn-27/artex/config"
 	"github.com/Autumn-27/artex/mcpbuiltin"
+	"github.com/Autumn-27/artex/skills"
 
 	_ "modernc.org/sqlite"
 )
@@ -194,9 +196,6 @@ ON CONFLICT (name) DO NOTHING`, name, mcpbuiltin.Command, args); err != nil {
 	if err := d.seedBuiltinSkillVisibility(); err != nil {
 		return fmt.Errorf("seed skill visibility: %w", err)
 	}
-	if err := d.seedBuiltinSkillVisibilityV2(); err != nil {
-		return fmt.Errorf("seed skill visibility v2: %w", err)
-	}
 	if err := d.seedDefaultInterceptRules(); err != nil {
 		return fmt.Errorf("seed intercept rules: %w", err)
 	}
@@ -210,32 +209,6 @@ ON CONFLICT (name) DO NOTHING`, name, mcpbuiltin.Command, args); err != nil {
 		return fmt.Errorf("seed asset intercept rules: %w", err)
 	}
 	return nil
-}
-
-// seedBuiltinSkillVisibilityV2 为 2026-10 新增的逆向引擎契约与封包实验技能包
-// （rea-mcp / wpe64-mcp / mitmproxy-traffic）绑定默认可见性。独立开关：只补
-// 新增包，不动用户对旧包的开关状态；表结构同 agent_skill_visibility。
-func (d *DB) seedBuiltinSkillVisibilityV2() error {
-	if v, _, _ := d.GetSetting("builtin_skill_visibility_v2"); v == "done" {
-		return nil
-	}
-	packs := map[string][]string{
-		"rea-mcp":           {"auto", "pentest", "worker", "planner", "mainagent"},
-		"wpe64-mcp":         {"auto", "pentest", "worker", "planner", "mainagent"},
-		"mitmproxy-traffic": {"auto", "pentest", "worker", "planner", "mainagent"},
-	}
-	for skill, keys := range packs {
-		for _, key := range keys {
-			var agentID int64
-			if err := d.QueryRow(`SELECT id FROM agents WHERE key=$1`, key).Scan(&agentID); err != nil {
-				continue
-			}
-			if _, err := d.Exec(`INSERT INTO agent_skill_visibility(agent_id, skill_name, enabled) VALUES ($1,$2,true) ON CONFLICT DO NOTHING`, agentID, skill); err != nil {
-				return fmt.Errorf("skill visibility %s/%s: %w", skill, key, err)
-			}
-		}
-	}
-	return d.SetSetting("builtin_skill_visibility_v2", "done")
 }
 
 // seedDefaultAssetInterceptRules inserts the built-in asset blocklist (fuzzy
@@ -267,39 +240,44 @@ ON CONFLICT DO NOTHING`, r.kind, r.pattern, r.note); err != nil {
 	return d.SetSetting("asset_intercept_default_rules_v1", "done")
 }
 
-// builtinSkillVisibility maps a shipped skill's directory name → the built-in
-// agent keys that should see it by default. The skill FILES themselves live on the
-// filesystem (SkillDir, loaded by norma at runtime); DB only carries this visibility
-// binding. Skills omitted here (e.g. camoufox, scopesentry) ship invisible by
-// default — the user turns them on per-agent when needed. scopesentry additionally
-// declares `mcps: ScopeSentry`, which only takes effect once it's made visible and
-// that MCP is enabled/configured.
-var builtinSkillVisibility = map[string][]string{
-	"api-recon":           {"auto", "pentest", "worker", "planner", "mainagent"},
-	"camoufox":            {"auto", "pentest", "worker", "planner", "mainagent"},
-	"scopesentry-mcp":     {"auto", "pentest", "worker", "planner", "mainagent"},
-	"web-vuln-tactics":    {"auto", "pentest", "worker", "planner", "mainagent"},
-	"reverse-engineering": {"auto", "pentest", "worker", "planner", "mainagent"},
-	"exploit-kb-patterns": {"auto", "pentest", "worker", "planner", "mainagent"},
-	"expert-triage-pivot": {"auto", "pentest", "worker", "planner", "mainagent"},
-	"human-verification":  {"auto", "pentest", "worker", "planner", "mainagent"},
+// builtinSkillAgentKeys 是内置技能包默认可见的五类内置 Agent。
+var builtinSkillAgentKeys = []string{"auto", "pentest", "worker", "planner", "mainagent"}
+
+// builtinSkillNames 列出随二进制下发的内置技能包目录名（818 个上游开源技能 +
+// 任务沉淀技能）。技能文件本身在文件系统上（SkillDir，由 SDK 加载），DB 只存可见性绑定。
+func builtinSkillNames() []string {
+	entries, err := fs.ReadDir(skills.Bundled, ".")
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
 }
 
-// seedBuiltinSkillVisibility binds the shipped built-in skills to their default
-// agents. Insert-if-absent (ON CONFLICT DO NOTHING) so a user's later toggle-off is
-// never resurrected on restart — matches the browser-MCP / intercept-rule seed policy.
-func (d *DB) seedBuiltinSkillVisibility() error {
-	for skillName, agentKeys := range builtinSkillVisibility {
-		for _, key := range agentKeys {
-			if _, err := d.Exec(`
-INSERT INTO agent_skill_visibility(agent_id, skill_name, enabled)
+const upsertSkillVisibilitySQL = `INSERT INTO agent_skill_visibility(agent_id, skill_name, enabled)
 SELECT id, $2, true FROM agents WHERE key=$1
-ON CONFLICT (agent_id, skill_name) DO NOTHING`, key, skillName); err != nil {
+ON CONFLICT (agent_id, skill_name) DO NOTHING`
+
+// seedBuiltinSkillVisibility 为内置技能包播种默认可见性。按内置目录动态推导，
+// 不再维护手写名单；Insert-if-absent（ON CONFLICT DO NOTHING）保证用户之后关掉的
+// 开关不会被重启复活。用设置项做一次性闸门，避免每次启动跑数千条 INSERT。
+func (d *DB) seedBuiltinSkillVisibility() error {
+	if v, _, _ := d.GetSetting("builtin_skill_visibility_v3"); v == "done" {
+		return nil
+	}
+	for _, skillName := range builtinSkillNames() {
+		for _, key := range builtinSkillAgentKeys {
+			if _, err := d.Exec(upsertSkillVisibilitySQL, key, skillName); err != nil {
 				return fmt.Errorf("skill %s → agent %s: %w", skillName, key, err)
 			}
 		}
 	}
-	return nil
+	return d.SetSetting("builtin_skill_visibility_v3", "done")
 }
 
 // seedDefaultInterceptRules inserts built-in safety intercept rules once on

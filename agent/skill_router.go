@@ -20,8 +20,7 @@ type tacticalRouteRule struct {
 	// 未参与排序——builtinTacticalRoutes 的静态声明保持零值，只有匹配后才赋值。
 	score int
 	// companions 是「同一作战链路里的伴生技能」。主路由命中后把伴生技能按
-	// 折扣分一起展示，避免出现「加载了 reverse-engineering 却不知道要用
-	// rea-mcp 引擎」「加载了 mitmproxy-traffic 却不抓帧」的只读一半现象。
+	// 折扣分一起展示，避免出现「只加载了技能、却没把原生工具一起用上」的只读一半现象。
 	companions []string
 	// nativeTools 是该场景下应优先使用的**原生**工具（非 Skill、非 MCP）。
 	// 此前路由只认 Skill 与 MCP：意图一旦没命中任何 Skill，提示里就一句都没提到
@@ -31,26 +30,6 @@ type tacticalRouteRule struct {
 }
 
 var builtinTacticalRoutes = []tacticalRouteRule{
-	{
-		skillName:   "human-verification",
-		nativeTools: []string{"http_request"},
-		title:       "人机验证、挑战识别与有界免费 PoW 求解",
-		keywords:    []string{"captcha", "turnstile", "cloudflare", "人机验证", "验证码", "黄色云", "橙色云", "altcha", "anubis", "pbkdf2", "proof of work"},
-		action:      "加载 Skill(human-verification)，按技能包列出的协议清单核对本机可用方案，再识别响应；技能包覆盖 ALTCHA v1/v2 SHA/PBKDF2 与旧版 Anubis 的解法。可选 fingerprint_profile 依赖独立 Go helper，缺失不自动下载；不重复失败策略、不默认转人工。",
-	},
-	{
-		skillName:   "ai-gateway-logic",
-		nativeTools: []string{"http_sequence", "http_request"},
-		title:       "AI 聚合中转站登录后业务逻辑审计（计费/余额/Key 生命周期/租户归属/支付回调）",
-		keywords: []string{
-			"newapi", "new-api", "oneapi", "one-api", "one-hub", "litellm", "sub2api",
-			"ai 中转", "ai中转", "中转站", "聚合网关", "llm gateway", "llm 网关",
-			"api 中转", "token 计费", "按 token 计费", "额度充值", "兑换码",
-			"/v1/models", "/api/status", "/api/setup", "/api/user/self", "/pricing",
-			"remain_quota", "used_quota", "token_name", "api key 计费",
-		},
-		action: "优先调用 `Skill({\"name\":\"ai-gateway-logic\"})` 加载中转站业务不变量手册（INV-01..11：结算与鉴权解耦、定价 fail-closed、数值溢出、余额真值源、Key 失效、租户 scoped、支付验签、本地信任、管理面层级、促销滥用）。这类目标表面漏洞少，重心在登录后的计费与权限链路；每条不变量须给出最小复现与账单/状态前后快照，区分『配置缺失』与『可恶意利用绕过』。",
-	},
 	{
 		skillName:   "ai-coding-sandbox-tactics",
 		nativeTools: []string{"http_sequence", "web_recon"},
@@ -74,113 +53,56 @@ var builtinTacticalRoutes = []tacticalRouteRule{
 		action: "优先调用 `Skill({\"name\":\"wasm-cloud-saas-tactics\"})` 加载 Go WASM 内存钩子取密钥、WebSocket 帧级越权、预签名 Bucket 列举与客户端积分拦截实战包（自动附带 `references/*` 防踩坑与 PoC 手册）。",
 	},
 	{
-		skillName:   "api-recon",
+		skillName:   "performing-api-inventory-and-discovery",
 		nativeTools: []string{"web_recon", "http_fuzz", "http_request"},
-		companions:  []string{"web-vuln-tactics"},
+		companions:  []string{"performing-web-application-penetration-test"},
 		title:       "REST/GraphQL API 枚举与未授权测试",
 		keywords: []string{
 			"api", "swagger", "openapi", "graphql", "actuator", "wsdl", "wadl",
 			"接口", "端点", "endpoint", "rest", "v1/", "v2/", "jwt", "bola", "idor",
 		},
-		action: "优先调用 `Skill({\"name\":\"api-recon\"})` 加载 API 侦察 SOP，并用 curl 或现场编写的 Python 脚本探测文档端点与越权参数。",
+		action: "优先调用 `Skill({\"name\":\"performing-api-inventory-and-discovery\"})` 加载 API 侦察 SOP，并用 curl 或现场编写的 Python 脚本探测文档端点与越权参数。",
 	},
 	{
-		skillName:   "camoufox",
-		nativeTools: []string{"http_request"},
-		title:       "SPA 前端动态渲染、登录态交互与 DOM/XSS 验证",
-		keywords: []string{
-			"spa", "vue", "react", "angular", "dom", "xss", "前端渲染", "单页应用",
-			"浏览器", "camoufox", "firefox", "登录态", "验证码", "滑块", "弹窗", "截图", "headless",
-		},
-		action: "优先调用 `Skill({\"name\":\"camoufox\"})` 加载浏览器自动化规约，然后用 `camoufox-cli`（open/snapshot/fill/click/eval）完成页面导航与 DOM 交互；默认驱动系统已装 Chrome/Edge（零额外磁盘），被指纹拦截时再加 `--engine=camoufox`。不要用 playwright-cli 或 puppeteer。",
-	},
-	{
-		skillName: "scopesentry-mcp",
-		mcpServer: "ScopeSentry",
-		title:     "ScopeSentry 外部攻击面测绘与全量资产同步",
-		keywords: []string{
-			"scopesentry", "scope-sentry", "子域名收集", "泛域名", "资产测绘",
-			"全量资产", "外网测绘", "外部扫描", "端口扫描任务",
-		},
-		action: "立即调用 `Skill({\"name\":\"scopesentry-mcp\"})` 解锁并加载 ScopeSentry 联动手册，随后直接调用 `mcp__ScopeSentry__*` 工具或通过 `ExecuteExtraTool` 拉取/下发测绘任务。",
-	},
-	{
-		skillName:  "rea-mcp",
-		mcpServer:  "rea",
-		title:      "REA 逆向引擎契约会话、能力分级与整包导出",
-		companions: []string{"reverse-engineering"},
-		keywords: []string{
-			"rea", "逆向引擎", "软件逆向", "反编译", "decompile", "调用图",
-			"callgraph", "交叉引用", "xref", "函数表", "rva", "多模块",
-			"样本分析", "so 文件", "so文件", "dll", "arm64", "x86", "x64",
-			"静态分析", "符号表", "字符串表", "签名算法", "加密算法",
-		},
-		action: "优先调用 `Skill({\"name\":\"rea-mcp\"})` 加载 REA 引擎契约手册；software_re 工作台 mode=capabilities 核对 tier，mode=open/query 按 RVA 纪律查询，mode=export 整包导出，mode=quota 查配额。",
-	},
-	{
-		skillName:  "wpe64-mcp",
-		mcpServer:  "wpe64",
-		title:      "WPE64 Winsock 抓包、改包与重放（配合 mitmproxy 记录代理）",
-		companions: []string{"mitmproxy-traffic"},
-		keywords: []string{
-			"wpe", "wpe64", "抓包", "改包", "重放", "replay", "winsock",
-			"封包", "发包", "packet", "套接字", "协议逆向", "udp 流", "tcp 流",
-			"客户端通信", "长连接", "自定义协议",
-		},
-		action: "优先调用 `Skill({\"name\":\"wpe64-mcp\"})` 加载封包实验手册；启用 wpe64 MCP 后调用 `mcp__wpe64__*` 抓取/编辑/重放，与 mitmproxy 流量记录按五元组+时间对齐取证。",
-	},
-	{
-		skillName:   "mitmproxy-traffic",
-		nativeTools: []string{"http_sequence", "http_request"},
-		companions:  []string{"wpe64-mcp"},
-		title:       "mitmproxy 流量录制、解密取证与精确重放",
-		keywords: []string{
-			"mitmproxy", "流量记录", "流量取证", "流量回放", "https 解密",
-			"http 代理", "har", "抓包分析",
-		},
-		action: "优先调用 `Skill({\"name\":\"mitmproxy-traffic\"})` 加载记录代理工作流（任务 -proxy 端口落库）；非 HTTP/自定义协议切换 Skill(wpe64-mcp) 帧层联合作战。",
-	},
-	{
-		skillName:   "web-vuln-tactics",
+		skillName:   "performing-web-application-penetration-test",
 		nativeTools: []string{"http_sequence", "http_fuzz", "http_request"},
 		title:       "Web 核心漏洞深度利用 (SQLi/SSRF/RCE/SSTI/XXE/上传/越权)",
 		keywords: []string{
 			"sql", "sqli", "注入", "ssrf", "rce", "命令执行", "ssti", "模板注入",
 			"xxe", "上传", "upload", "lfi", "文件包含", "反序列化", "越权", "绕过", "waf",
 		},
-		action: "优先调用 `Skill({\"name\":\"web-vuln-tactics\"})` 获取 Web 漏洞验证与 WAF 绕过决策树（含载荷与复现模板）。",
+		action: "优先调用 `Skill({\"name\":\"performing-web-application-penetration-test\"})` 获取 Web 漏洞验证与 WAF 绕过决策树（含载荷与复现模板）。",
 	},
 	{
-		skillName:   "reverse-engineering",
+		skillName:   "reverse-engineering-malware-with-ghidra",
 		nativeTools: []string{"binary_inspect", "codec_crypto"},
 		title:       "二进制/固件/APK/前端加密逆向与静态源码审计",
-		companions:  []string{"rea-mcp"},
 		keywords: []string{
 			"逆向", "reverse", "elf", "pe", "apk", "固件", "firmware", "反编译",
 			"ghidra", "radare2", "objdump", "加壳", "脱壳", "签名算法", "webpack", "混淆", "源码审计", "代码审计",
 			"逆向分析", "二进制", "样本", "hook", "idascript", "arsc", "dex",
 		},
-		action: "优先调用 `Skill({\"name\":\"reverse-engineering\"})` 加载只读静态分析 SOP（动态执行须另行授权），并结合 `Grep` / `Glob` / `Read` 定位关键校验与加解密逻辑。",
+		action: "优先调用 `Skill({\"name\":\"reverse-engineering-malware-with-ghidra\"})` 加载只读静态分析 SOP（动态执行须另行授权），并结合 `Grep` / `Glob` / `Read` 定位关键校验与加解密逻辑。",
 	},
 	{
-		skillName:   "exploit-kb-patterns",
+		skillName:   "performing-cve-prioritization-with-kev-catalog",
 		nativeTools: []string{"http_sequence", "http_fuzz"},
 		title:       "Nday/CVE 漏洞快速画像与 PoC 载荷库检索",
 		keywords: []string{
 			"cve-", "cve", "nday", "1day", "poc", "exp", "shiro", "fastjson",
 			"spring", "struts", "log4j", "thinkphp", "weblogic", "oa", "中间件", "组件版本",
 		},
-		action: "优先调用 `Skill({\"name\":\"exploit-kb-patterns\"})` 检索已知漏洞指纹与 PoC 链。",
+		action: "优先调用 `Skill({\"name\":\"performing-cve-prioritization-with-kev-catalog\"})` 检索已知漏洞指纹与 PoC 链。",
 	},
 	{
-		skillName:   "expert-triage-pivot",
+		skillName:   "performing-web-application-vulnerability-triage",
 		nativeTools: []string{"http_sequence", "http_fuzz", "web_recon"},
 		title:       "受阻研判、WAF/403 突破、假阳性证伪与内网横向",
 		keywords: []string{
 			"受阻", "失败", "超时", "403", "404", "拦截", "无回显", "盲注",
 			"旁路", "横向", "跳板", "提权", "权限提升", "pivot", "复盘", "卡住",
 		},
-		action: "立即调用 `Skill({\"name\":\"expert-triage-pivot\"})` 执行专家级原因分诊（WAF 拦截 vs 路由错误 vs 假阳性）并切换攻击路径。",
+		action: "立即调用 `Skill({\"name\":\"performing-web-application-vulnerability-triage\"})` 执行专家级原因分诊（WAF 拦截 vs 路由错误 vs 假阳性）并切换攻击路径。",
 	},
 }
 
@@ -192,8 +114,8 @@ type availableSkillEntry struct {
 // maxTacticalRoutes 是一次最多展示几条路由。
 //
 // 此前是 4，且按 builtinTacticalRoutes 的**声明顺序**截断。实测后果：
-// rea-mcp / wpe64-mcp 声明在第 8/9 位，全局 0 次加载；而 web-vuln-tactics 占全部
-// 技能加载的 39.4%、api-recon 占 22.4%——「谁写在前面谁被看见」，不是「谁相关谁被看见」。
+// 技能包声明在后面的那几条长期拿不到曝光，只有写在前面的被反复加载——
+// 「谁写在前面谁被看见」，不是「谁相关谁被看见」。
 const maxTacticalRoutes = 6
 
 // isASCIIKeyword reports whether kw is pure ASCII. ASCII 关键词按词边界匹配，
@@ -346,7 +268,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 
 	// 伴生技能补齐：主路由强命中时，把同链路技能（逆向↔引擎、录制↔抓帧）也纳入
 	// 候选，得分按主路由折算。原实现里这些技能只能靠自己那组关键词独立命中，
-	// 于是「逆向任务」经常只加载 SOP 而从不加载真正执行逆向的 rea-mcp。
+	// 于是「逆向任务」经常只加载 SOP 而从不真正调用执行逆向的引擎工具。
 	if len(matched) > 0 {
 		have := make(map[string]bool, len(matched))
 		for _, m := range matched {
@@ -385,7 +307,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 	if len(dynamicMatched) > 0 {
 		// 动态技能不再无条件置顶：原实现把它们固定放在前面并截断到 2 条，
 		// 于是「case-web-9」这类靠 "web" 泛词命中的历史复盘会稳定挤掉
-		// reverse-engineering / rea-mcp。现在与内置路由统一按得分排序。
+		// 逆向技能与引擎工具。现在与内置路由统一按得分排序。
 		matched = append(matched, dynamicMatched...)
 	}
 	// 稳定排序：同分时保持声明顺序（内置路由在前，动态技能在后）。
@@ -423,7 +345,7 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 			fmt.Fprintf(&b, "- 🎯 **%s** (`%s`)：%s%s\n", m.title, m.skillName, m.action, nativeToolBadges(m.nativeTools, mounted))
 		}
 		if len(matched) > 1 {
-			// 覆盖面：一次只加载一条会退化成「永远只用 web-vuln-tactics / api-recon」。
+			// 覆盖面：一次只加载一条会退化成「永远只用 performing-web-application-penetration-test / performing-api-inventory-and-discovery」。
 			b.WriteString("- 🔁 **多条命中时的加载纪律**：先加载**最相关的一条**（上面第一条）；其余命中项不要一次性全灌进上下文——在后续 intent 里按当前子任务需要再加载（例如出现二进制/协议逆向证据时加载逆向类技能）。**同一任务内已加载过的技能不要重复调用**；只想回看某章节时，用 `Grep` 在该技能目录的 `references/*.md` 上按关键词定位（`Skill` 的返回结果里带着该目录下的绝对路径），避免重复整包注入。\n")
 		}
 	} else if hasSkillTool {

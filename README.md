@@ -722,7 +722,7 @@ SQLite 单文件，62 张表（`db/schema_sqlite.sql`），按域分组：
 
 **外部接入**：REA（`rea_*` 预设，如 `rea_open_sample`、`rea_list_strings`）、WPE64（14 工具契约：抓包/改包/重放/规则/落盘）、ScopeSentry（资产同步）、浏览器（L1：系统 Chrome/Edge 走 CDP，零额外磁盘；Camoufox 降为按需档）。外部接入扫描是**只读、固定路径、四态**；一键配置遵循 `plan → diff → apply`；同一时间只允许一种接法在线，避免工具面互相盖住。
 
-**技能包（14 个，`skills/`，`go:embed` 注册）**：`api-recon`、`web-vuln-tactics`、`exploit-kb-patterns`、`expert-triage-pivot`、`reverse-engineering`、`rea-mcp`、`wpe64-mcp`、`mitmproxy-traffic`、`human-verification`、`scopesentry-mcp`、`wasm-cloud-saas-tactics`、`ai-gateway-logic`、`ai-coding-sandbox-tactics`、`camoufox`。由 `skill_router.go` 路由、`tool_contract.go` 做别名、`db` 播种可见性（V2 开关只补新包、不复活用户关闭的旧包）。
+**技能包（830 个，`skills/`，`go:embed` 全量注册）**：818 个来自上游开源仓库 `mukul975/Anthropic-Cybersecurity-Skills`（Apache-2.0，固定提交 `54a7988`，整包拷贝、不手写改写，含 `references/`、`scripts/`、`assets/`），另 12 个为 ARTEX 任务复盘自动沉淀的技能包（`case-web-*`、`ai-coding-sandbox-tactics`、`wasm-cloud-saas-tactics`）。来源与许可见 `skills/NOTICE.md`；由 `skill_router.go` 路由、`db` 按内置目录动态播种可见性。
 
 ### 软件分析引擎契约（REA）
 

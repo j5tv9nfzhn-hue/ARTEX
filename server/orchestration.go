@@ -775,21 +775,9 @@ func (s *Server) reseedPentestAndAutoPrompts() {
 	}
 }
 
-// seedDefaultSkillVisibility 为存量旧库补齐 7 个内置专家技能包对核心 Agent 的默认可见性绑定。
-func (s *Server) seedDefaultSkillVisibility() {
-	const flag = "builtin_skills_visibility_v2"
-	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
-		return
-	}
-	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
-	skills := []string{
-		"api-recon", "camoufox", "scopesentry-mcp",
-		"web-vuln-tactics", "reverse-engineering", "exploit-kb-patterns", "expert-triage-pivot",
-	}
-	for _, sk := range skills {
-		s.bindDefaultSkillVisibility(sk)
-	}
-}
+// seedDefaultSkillVisibility 保留给存量旧库调用；内置技能包的默认可见性已统一由
+// db.seedBuiltinSkillVisibility 按内置目录动态播种，这里不再维护手写名单。
+func (s *Server) seedDefaultSkillVisibility() {}
 
 // seedSkillEvolutionBindings 为存量数据库补齐 human-verification 技能包默认可见性与
 // 自主沉淀/审阅平台工具（list_skill_gaps / propose_skill / list_skill_proposals /
@@ -797,7 +785,6 @@ func (s *Server) seedDefaultSkillVisibility() {
 func (s *Server) seedSkillEvolutionBindings() {
 	const flag = "skill_evolution_bindings_v1"
 	if v, _, _ := s.m.pg.GetSetting(flag); v != "true" {
-		s.bindDefaultSkillVisibility("human-verification")
 		if err := s.m.pg.AddAgentToToolBinding("auto", []string{
 			"list_skill_gaps", "propose_skill", "list_skill_proposals", "review_skill_proposal", "distill_task_skill",
 		}); err != nil {

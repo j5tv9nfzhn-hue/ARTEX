@@ -57,8 +57,7 @@ var builtinReaMCPTools = []MCPTool{
 
 // builtinWPE64MCPTools 预置 WPE64 封包实验 MCP 的标准工具集（抓包/改包/重放/
 // 规则）。WPE64 与 REA 内置 mitmproxy 流量记录代理协同：记录代理负责 HTTP(S)
-// 解密取证，WPE64 负责 Winsock 层截获、编辑与重放，见 skills/wpe64-mcp 与
-// skills/mitmproxy-traffic。启用前仅作工具目录预览；实际工具以启用后实时发现为准。
+// 解密取证，WPE64 负责 Winsock 层截获、编辑与重放；两者的工具契约以 MCP 工具目录为准。启用前仅作工具目录预览；实际工具以启用后实时发现为准。
 var builtinWPE64MCPTools = []MCPTool{
 	{Name: "mcp__wpe64__status", Description: "查询 WPE64 引擎状态、驱动可用性与当前抓包/规则计数"},
 	{Name: "mcp__wpe64__list_adapters", Description: "枚举网卡、进程与套接字（进程名、PID、五元组）"},
@@ -82,7 +81,7 @@ var builtinWPE64MCPTools = []MCPTool{
 func (d *DB) seedBuiltinMCPServersAndTools() error {
 	// 1. 下线内置 browser（npx @playwright/mcp）MCP：它驱动 Chromium，而无头 Chromium
 	//    会在 sec-ch-ua 暴露 HeadlessChrome，是最容易被拦的形态。浏览器自动化统一
-	//    走 skills/camoufox（Camoufox / Firefox 内核）。升级安装时清掉旧库里的
+	//    走系统浏览器 CDP（Camoufox 为按需档）。升级安装时清掉旧库里的
 	//    默认行与工具缓存——只删「仍是出厂配置」的那一条，用户自定义过的同名服务器
 	//    命令行不同，不会被误删。
 	if v, _, _ := d.GetSetting("browser_mcp_retired_v1"); v != "done" {
