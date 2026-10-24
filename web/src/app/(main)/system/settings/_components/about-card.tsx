@@ -45,7 +45,7 @@ export function AboutCard() {
           项目简介与架构概览
         </CardTitle>
         <CardDescription>
-          <b>ARTEX-REA</b> 是一套由大语言模型驱动的自主渗透测试与逆向工程协同平台，融合图驱动探索、证据链复测闭环与 AI
+          <b>ARTEX-HYDRA</b> 是一套由大语言模型驱动的自主渗透测试与自适应编排协同平台，融合图驱动探索、证据链复测闭环与 AI
           自我进化技能沉淀。
         </CardDescription>
       </CardHeader>
@@ -69,7 +69,7 @@ export function AboutCard() {
             <div>Planner 拆解意图、Worker 并发取证，结合 HTTP 流量快照完成可复现漏洞验证。</div>
           </div>
           <div className="rounded-md border bg-muted/30 p-2.5">
-            <div className="mb-0.5 font-medium text-foreground">软件逆向工程（REA）</div>
+            <div className="mb-0.5 font-medium text-foreground">软件分析工程</div>
             <div>契约化接入 Ghidra / IDA 等静态分析工具，统一归档符号、控制流与反编译证据。</div>
           </div>
           <div className="rounded-md border bg-muted/30 p-2.5">

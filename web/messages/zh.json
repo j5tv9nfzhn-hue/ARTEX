@@ -709,12 +709,12 @@
       "submitting": "登录中...",
       "title": "登录",
       "username": "用户名",
-      "welcome": "欢迎回来，请输入密码以继续使用 ARTEX-REA"
+      "welcome": "欢迎回来，请输入密码以继续使用 ARTEX-HYDRA"
     },
     "setup": {
       "confirmPassword": "确认密码",
       "confirmPlaceholder": "再次输入密码",
-      "desc": "首次使用 ARTEX-REA，请为账户设置一个登录密码（至少 8 位）",
+      "desc": "首次使用 ARTEX-HYDRA，请为账户设置一个登录密码（至少 8 位）",
       "errorBackend": "无法连接到后端服务",
       "errorInit": "初始化失败",
       "errorMismatch": "两次输入的密码不一致",
@@ -730,7 +730,7 @@
       "title": "初始化密码"
     },
     "terms": {
-      "a1Body": "本软件（ARTEX-REA）是一款基于 GNU Affero General Public License v3.0（AGPL-3.0）发布的开源程序。您可依据该协议自由使用、复制、修改和分发本软件；但任何衍生作品（包括通过网络向第三方提供的在线服务）均须同样以 AGPL-3.0 协议开源并向使用者公开对应的完整源代码。AGPL-3.0 完整条款以随附的 LICENSE 文件为准。",
+      "a1Body": "本软件（ARTEX-HYDRA）是一款基于 GNU Affero General Public License v3.0（AGPL-3.0）发布的开源程序。您可依据该协议自由使用、复制、修改和分发本软件；但任何衍生作品（包括通过网络向第三方提供的在线服务）均须同样以 AGPL-3.0 协议开源并向使用者公开对应的完整源代码。AGPL-3.0 完整条款以随附的 LICENSE 文件为准。",
       "a1Title": "第一条 · 定义与开源许可",
       "a2Body": "本软件仅供个人学习、代码研究、安全技术原理探讨，以及在您自行搭建的本地隔离环境中进行技术验证之用，适用于学习、学术研究、代码审阅等非攻击性、非破坏性用途。除本条明确许可的情形外，您不得将本软件用于任何其他目的。",
       "a2Title": "第二条 · 授权使用范围",
@@ -754,17 +754,17 @@
       "agreeButton": "我已阅读并同意全部条款",
       "footerNotRead": "请将条款滚动至底部后再确认",
       "footerRead": "您已浏览全部条款",
-      "intro": "本《使用须知与免责声明》（以下简称\"本声明\"）是您与 ARTEX-REA 项目作者及贡献者之间就使用本软件所达成的约定。请您在使用前审慎阅读、充分理解各条款内容，特别是以粗体或色块标注的免责、责任限制及禁止性条款。",
+      "intro": "本《使用须知与免责声明》（以下简称\"本声明\"）是您与 ARTEX-HYDRA 项目作者及贡献者之间就使用本软件所达成的约定。请您在使用前审慎阅读、充分理解各条款内容，特别是以粗体或色块标注的免责、责任限制及禁止性条款。",
       "introEmphasis": "一旦您下载、安装、访问或以任何方式使用本软件，即视为您已阅读、理解并同意接受本声明的全部约束。",
       "meta": "版本 v1.0 · 生效日期 2026-09-18 · 请在登录前完整阅读以下全部条款",
-      "title": "ARTEX-REA 使用须知与免责声明"
+      "title": "ARTEX-HYDRA 使用须知与免责声明"
     }
   },
   "changePasswordDialog": {
     "cancel": "取消",
     "confirmPassword": "确认新密码",
     "currentPassword": "当前密码",
-    "description": "用户名固定为 <b>ARTEX-REA</b>。需先输入当前密码验证；修改后已签发的登录 token 仍有效直至过期。",
+    "description": "用户名固定为 <b>ARTEX-HYDRA</b>。需先输入当前密码验证；修改后已签发的登录 token 仍有效直至过期。",
     "errorMismatch": "两次输入的新密码不一致",
     "errorRequired": "请填写当前密码和新密码",
     "failed": "修改失败：{msg}",
@@ -966,7 +966,7 @@
   },
   "config": {
     "app-config": {
-      "081231b0": "ARTEX-REA：自主渗透与逆向工程控制台",
+      "081231b0": "ARTEX-HYDRA：自主渗透与自适应编排控制台",
       "5608810c": "LLM 驱动的自主渗透测试系统控制台"
     }
   },
@@ -1538,7 +1538,7 @@
     "securityTitle": "安全提醒",
     "securityBody": "这个地址是明文 HTTP，只适合可信的内网使用；要跨公网访问，请套一层带证书的反向代理，不要把端口直接暴露出去。配对码一次性、十分钟有效，用过即失效。",
     "loading": "读取中…",
-    "versionLabel": "ARTEX-REA"
+    "versionLabel": "ARTEX-HYDRA"
   },
   "lib": {
     "api": {
@@ -1546,7 +1546,7 @@
       "665f6c04": "上传失败： {var0} {var1}",
       "6ac556cf": "下载失败： {var0}",
       "b853b88b": "(demo) {var0} 的下载内容示例。",
-      "cbf56b6d": "# ARTEX-REA 渗透测试报告：Acme Corp\n\n## 概述\n- 范围：acme.com（包含 www / admin / api / shop / vpn 子域名）\n- 已确认发现：6 个（高危 3 · 中危 3 · 低危 2）\n- 引擎模式：exploring\n\n## 主要发现\n1. **[高危] 管理后台默认密码** admin.acme.com admin/admin123 → 可完全控制后台。\n2. **[高危] SQL 注入** www.acme.com/search?q= → 可读取 acme_prod 数据库。\n3. **[高危] IDOR** api.acme.com/v1/orders?id= → 可越权读取他人订单（包含手机号和地址）。\n4. **[中危] 反射型 XSS**、**.git 源码泄露**、**登录缺少速率限制**。\n\n## 建议\n- 强制修改后台密码，启用 MFA，禁止使用默认密码。\n- search 接口使用参数化查询并对输出编码。\n- API 增加对象级权限验证（IDOR），更换强 JWT 密钥。\n\n> (demo) 本报告由 mock 数据生成，仅用于界面演示。",
+      "cbf56b6d": "# ARTEX-HYDRA 渗透测试报告：Acme Corp\n\n## 概述\n- 范围：acme.com（包含 www / admin / api / shop / vpn 子域名）\n- 已确认发现：6 个（高危 3 · 中危 3 · 低危 2）\n- 引擎模式：exploring\n\n## 主要发现\n1. **[高危] 管理后台默认密码** admin.acme.com admin/admin123 → 可完全控制后台。\n2. **[高危] SQL 注入** www.acme.com/search?q= → 可读取 acme_prod 数据库。\n3. **[高危] IDOR** api.acme.com/v1/orders?id= → 可越权读取他人订单（包含手机号和地址）。\n4. **[中危] 反射型 XSS**、**.git 源码泄露**、**登录缺少速率限制**。\n\n## 建议\n- 强制修改后台密码，启用 MFA，禁止使用默认密码。\n- search 接口使用参数化查询并对输出编码。\n- API 增加对象级权限验证（IDOR），更换强 JWT 密钥。\n\n> (demo) 本报告由 mock 数据生成，仅用于界面演示。",
       "ce1aa0d2": "尚未通过身份验证",
       "dc0cc2f1": "上传失败 ({var0})",
       "e0dab22b": "下载失败"
@@ -1598,7 +1598,7 @@
         "09237bb5": "后台在哪里，应该先检查哪里？",
         "09f3bede": "确认源码泄露与硬编码数据库凭据，已将凭据写入图，供后续内网复用。",
         "09f465c9": "优先检查后台与 API 越权攻击面",
-        "0c9eefc4": "你是 ARTEX-REA 的规划者……",
+        "0c9eefc4": "你是 ARTEX-HYDRA 的规划者……",
         "0ccda856": "从 Jenkins 凭据库导出域账号 acme\\svc_deploy 明文密码",
         "0ce6612f": "22/80/443 端口开放。",
         "0d80efae": "Groovy 以 SYSTEM 权限运行。",
@@ -1684,7 +1684,7 @@
         "4a08142a": "goal g4 → met；系统提示：g2 仍为 open，尚有目标未完成，任务不能整体收官",
         "4a22d8cf": "8 分钟内破解出密码 Sql@2020。",
         "4a58ac02": "# 检查摘要\n\n本轮验证已完成，整理现有证据与后续建议。",
-        "4a6737b4": "你是 ARTEX-REA 的规划者(v2)……",
+        "4a6737b4": "你是 ARTEX-HYDRA 的规划者(v2)……",
         "4b5db5e7": "连续尝试 5 次仍无锁定和验证码 → 缺少速率限制，可进行暴力破解。",
         "4c8a207a": "sudo -l 显示 (ALL) NOPASSWD: /usr/bin/python3 → 使用 sudo python3 -c 'os.setuid(0);os.system(\"/bin/sh\")' 直接获得 root。",
         "4c8c9ca8": "api.acme.com 订单接口越权（IDOR）测试",
@@ -1766,7 +1766,7 @@
         "833e2c7f": "2 intents created → ids=[i6, i7]，通过 fa3 接入链路",
         "83a9b0a8": "开始执行 system 提示里的这条意图：只做它、只产生事实、做完即停。",
         "84dac5f9": "API 专项",
-        "8687d529": "你是 ARTEX-REA 的「{var0}」。\n目标：{{.Goal}}\n资产概览：{{.AssetSummary}}\n路线提示：{{.RouteHint}}\n请基于以上信息推进探索，并通过工具把结果写回图。",
+        "8687d529": "你是 ARTEX-HYDRA 的「{var0}」。\n目标：{{.Goal}}\n资产概览：{{.AssetSummary}}\n路线提示：{{.RouteHint}}\n请基于以上信息推进探索，并通过工具把结果写回图。",
         "886b0cfa": "探测 search?q= 注入，先使用报错型 payload 验证。",
         "8957f4ba": "已控制域控制器 DC01，通过 secretsdump 导出全域哈希，目标达成。",
         "8999b3b2": "第 0 轮 · 目标拆解",
@@ -3364,7 +3364,7 @@
       "currentVersion": "当前版本",
       "desc": "从 GitHub 检查并安装新版本。更新会重启程序，正在运行的任务会被中断。",
       "dockerNote": "Docker 下的更新只替换程序本身，不更新镜像里的 playwright / nmap 等工具链，且<code>docker compose up -d</code>重建容器后会退回镜像自带的版本。需要连镜像一起升级请执行<code>docker compose pull artex-rea && docker compose up -d artex-rea</code>。",
-      "footer": "一键更新依赖守护脚本重启程序。请通过 <code>start.sh</code>（Windows 为 <code>start.bat</code>）启动 ARTEX-REA；直接运行 artex-rea 本体时，程序退出后不会被自动拉起。",
+      "footer": "一键更新依赖守护脚本重启程序。请通过 <code>start.sh</code>（Windows 为 <code>start.bat</code>）启动 ARTEX-HYDRA；直接运行 artex-rea 本体时，程序退出后不会被自动拉起。",
       "latestVersion": "最新版本",
       "modeDocker": "Docker",
       "modeStandalone": "独立程序",
@@ -3429,7 +3429,7 @@
     },
     "shell": {
       "title": "工具执行器",
-      "desc": "Bash 工具用哪个 Shell 跑命令。改完立即生效：新命令走新执行器，正在跑的命令不受影响。",
+      "desc": "命令执行工具用哪个 Shell 跑命令（Windows 走 PowerShell，类 Unix 走 Bash）。改完立即生效：新命令走新执行器，正在跑的命令不受影响。",
       "mode": "执行器",
       "current": "当前生效",
       "bin": "自定义可执行文件路径（可选）",
@@ -3642,20 +3642,20 @@
     "exportZipSuccess": "已导出技能包：{name}.zip",
     "importReportBtn": "导入报告沉淀",
     "importReportTitle": "导入外部报告（TXT / JSON / MD）沉淀为多文件技能包",
-    "importReportDesc": "上传一份或多份外部渗透/逆向报告（.md / .txt / .json），深度提炼【攻击与逆向推导链、踩坑与陷阱、绕过手法、3-Strike 止损纪律】，自动组装为含 SKILL.md 与 references/ 支撑手册的标准技能包。",
+    "importReportDesc": "上传一份或多份外部渗透/分析报告（.md / .txt / .json），深度提炼【攻击与分析推导链、踩坑与陷阱、绕过手法、3-Strike 止损纪律】，自动组装为含 SKILL.md 与 references/ 支撑手册的标准技能包。",
     "importReportFilesLabel": "选择外部报告文件（支持多选合并提炼，如同时选中任务报告与漏洞汇总 .md / .json / .txt）",
     "importReportPickFiles": "选择报告文件 (.md / .txt / .json)",
     "importReportClearFiles": "清空已选文件",
     "importReportPasteLabel": "或直接粘贴报告正文（可选，与上传文件一并提炼）",
-    "importReportPastePlaceholder": "粘贴 Markdown / JSON / TXT 渗透或逆向报告内容（重点包含推导过程、报错踩坑、绕过步骤与 PoC）…",
+    "importReportPastePlaceholder": "粘贴 Markdown / JSON / TXT 渗透或分析报告内容（重点包含推导过程、报错踩坑、绕过步骤与 PoC）…",
     "importReportNameLabel": "目标技能包名称（可选，留空按报告目标自动生成）",
     "importReportNamePlaceholder": "如 report-free-ai 或 wasm-cloud-saas-tactics",
     "importReportDomainLabel": "分析领域",
-    "importReportDomainAuto": "自动识别（Web安全 / 软件与前端逆向）",
+    "importReportDomainAuto": "自动识别（Web安全 / 软件与前端分析）",
     "importReportDomainWeb": "Web 与云安全渗透 (web_security)",
-    "importReportDomainRE": "软件与前端/WASM 逆向 (software_re)",
+    "importReportDomainRE": "软件与前端/WASM 分析 (software_re)",
     "importReportFocusLabel": "重点提炼方向（可选）",
-    "importReportFocusPlaceholder": "如：重点提取 WASM 签名逆向、预签名 ../ 路径归一化陷阱与 renameat2 条件竞争绕过",
+    "importReportFocusPlaceholder": "如：重点提取 WASM 签名分析、预签名 ../ 路径归一化陷阱与 renameat2 条件竞争绕过",
     "importReportUseLLM": "启用 AI 深度提炼过程推导与踩坑陷阱（未配置 LLM 时自动降级为确定性规则引擎）",
     "importReportApplyDirect": "直接生成多文件技能包并写入技能库（含 SKILL.md + references/踩坑手册 + references/攻击链案例）",
     "importReportOverwrite": "若同名技能包已存在则直接覆盖",
@@ -3772,8 +3772,8 @@
     "openBranchesTip": "这些分支因步数/时长耗尽、报错或被终止而没跑完，也还没被续派或人工收口。开启「完成闸门」后任务不会因此被判完成。",
     "analysisDomain": {
       "web": "网站安全",
-      "software": "软件逆向",
-      "title": "软件逆向 · 静态分析优先",
+      "software": "软件分析",
+      "title": "软件分析 · 静态分析优先",
       "hint": "已加入哈希样本库、受管静态分析会话与函数/调用关系/证据工作台。请先配置并审核实际 MCP 工具映射；工具目录就绪不等于引擎和目标兼容。动态执行、远程样本同步与自动会话恢复未启用。"
     },
     "archive": {
@@ -3794,7 +3794,7 @@
       "failed": "提炼复盘技能失败：{message}",
       "openReview": "打开审阅",
       "pending": "已生成待审阅复盘技能提议：{skill}",
-      "tooltip": "将本任务已验证路径、漏洞/复测/逆向证据与止损经验提炼为可复用 Skill",
+      "tooltip": "将本任务已验证路径、漏洞/复测/分析证据与止损经验提炼为可复用 Skill",
       "triggerAria": "将本任务沉淀为复盘技能"
     },
     "assetsTab": {
@@ -4232,7 +4232,7 @@
       }
     },
     "report": {
-      "softwareTitle": "软件逆向分析记录报告",
+      "softwareTitle": "软件分析记录报告",
       "softwareEmpty": "尚无可读取的软件分析报告，请稍后重新打开此页",
       "copy": "复制",
       "copyError": "复制失败，请手动选择文本复制",
@@ -4332,7 +4332,7 @@
     "analysisDomain": {
       "label": "任务类型",
       "web": "网站安全",
-      "software": "软件逆向",
+      "software": "软件分析",
       "softwareHint": "以软件功能、算法、类型和协议理解为目标，默认静态只读。可上传样本或填写路径；深度反编译需要另行配置 REA / Ghidra / IDA 等分析工具。关闭网站资产覆盖度。",
       "webHint": "保留现有网站 / API 安全评估与资产探索工作流。"
     },
@@ -4768,7 +4768,7 @@
     "schemaLabel": "参数 JSON Schema",
     "scriptLabel": "Python 正文（参数走 stdin JSON / os.environ[\"TOOL_X\"]）",
     "searchPlaceholder": "搜索工具名、描述、Agent…",
-    "shellHint": "适合 nmap、sqlmap、ffuf 等出名工具——模型已知用法，只需声明\"可在 bash 中调用\"即可。名称+描述会追加到 Bash 工具描述里。",
+    "shellHint": "适合 nmap、sqlmap、ffuf 等出名工具——模型已知用法，只需声明\"可在命令行中调用\"即可。名称+描述会追加到命令执行工具的描述里。",
     "subtitle": "系统工具的描述/绑定，以及自定义工具(command/script/http)",
     "systemEmpty": "（暂无系统工具，等待后端 seed）",
     "systemMatched": "{shown} / {total} 个匹配，点击卡片编辑描述、参数默认值与 Agent 绑定",
@@ -5179,8 +5179,8 @@
     "capabilityReady": "实时能力门控已就绪",
     "capabilityBlocked": "能力门控未通过",
     "readyOps": "就绪操作：{ops}",
-    "distillRE": "提炼逆向复盘技能",
-    "distillDone": "已生成逆向复盘技能提议：{skill}（状态：{status}，可在「Skill → 提议审阅」中查看与批准）"
+    "distillRE": "提炼分析复盘技能",
+    "distillDone": "已生成分析复盘技能提议：{skill}（状态：{status}，可在「Skill → 提议审阅」中查看与批准）"
   },
   "storagePage": {
     "title": "存储与清理",

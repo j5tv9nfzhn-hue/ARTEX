@@ -19,7 +19,7 @@ const MOCK_LOGS: LogLine[] = [
     ts: "2026-07-26T03:55:00Z",
     level: "info",
     tag: "engine",
-    text: "ARTEX-REA v0.1.0 backend listening on :8787 (workers=3)",
+    text: "ARTEX-HYDRA v0.1.0 backend listening on :8787 (workers=3)",
   },
   {
     seq: 2,

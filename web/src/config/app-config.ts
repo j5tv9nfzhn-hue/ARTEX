@@ -8,14 +8,14 @@ const currentYear = new Date().getFullYear();
 // 使用“产品名：说明”的标题格式。构建时确定的 metadata 不随运行时设置改变。
 const META_BY_LOCALE: Record<Locale, { title: string; description: string }> = {
   zh: {
-    title: "ARTEX-REA：自主渗透与逆向工程控制台",
-    description: "ARTEX-REA — LLM 驱动的自主渗透测试与逆向工程作战指挥系统控制台",
+    title: "ARTEX-HYDRA：自主渗透与自适应编排控制台",
+    description: "ARTEX-HYDRA — LLM 驱动的自主渗透测试与自适应编排作战指挥系统控制台",
   },
 };
 
 export const APP_CONFIG = {
-  name: "ARTEX-REA",
+  name: "ARTEX-HYDRA",
   version: packageJson.version,
-  copyright: `© ${currentYear}, ARTEX-REA.`,
+  copyright: `© ${currentYear}, ARTEX-HYDRA.`,
   meta: META_BY_LOCALE[resolveLocale()] ?? META_BY_LOCALE[DEFAULT_LOCALE],
 };

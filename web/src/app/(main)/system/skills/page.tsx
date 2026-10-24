@@ -2489,7 +2489,7 @@ export default function SkillsPage() {
                     [
                       { key: "auto", label: t("importReportDomainAuto").split("（")[0] },
                       { key: "web_security", label: "Web/云安全" },
-                      { key: "software_re", label: "软件/WASM逆向" },
+                      { key: "software_re", label: "软件/WASM 分析" },
                     ] as const
                   ).map((opt) => (
                     <Button

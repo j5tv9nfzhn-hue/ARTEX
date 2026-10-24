@@ -1,8 +1,8 @@
 <div align="center">
 
-# ARTEX-REA 简体中文版
+# ARTEX-HYDRA 简体中文版
 
-**由 LLM 多 Agent 自主执行渗透测试与逆向工程的系统**（Go 后端 + Next.js 前端）
+**由 LLM 多 Agent 自主执行渗透测试与自适应编排的系统**（Go 后端 + Next.js 前端）
 
 界面、报告、摘要、对话及后端消息**统一使用简体中文**，本仓库不再提供其他语言界面。界面语言属于浏览器本地偏好；报告、摘要、对话与后端消息的输出语言由服务端设置管理，固定为简体中文。历史遗留的其他语言配置一律回退为简体中文。
 
@@ -166,7 +166,7 @@ LLM 可在环境变量或“LLM 设置”页面配置，相关环境变量包括
 
 ### 首次运行保护（设置令牌与绑定地址）
 
-管理员用户名固定为 `ARTEX-REA`，首次通过 `/setup` 创建密码。
+管理员用户名固定为 `ARTEX-HYDRA`，首次通过 `/setup` 创建密码。
 
 - 无密码时，启动日志打印设置令牌。`/setup` 和 `POST /api/auth/init` 的 `setup_token` 必须匹配，错误尝试限流。令牌不通过公开状态接口返回。
 - 无人值守部署可设置 `ARTEX_SETUP_TOKEN` 固定令牌，或用至少八字符的 `ARTEX_ADMIN_PASSWORD` 直接初始化。
@@ -687,7 +687,7 @@ SQLite 单文件，62 张表（`db/schema_sqlite.sql`），按域分组：
 | 对话与运行 | `conversations` `conversation_activities` `main_sessions` `checkpoints` `compaction_state` `activity` `server_logs` |
 | 发现与证据 | `findings` `finding_retests` `traffic_evidence_snapshots` `finding_traffic_bindings` |
 | 拦截与审批 | `intercept_rules` `intercept_pending` |
-| 逆向 | `re_samples` `re_task_samples` `re_providers` `re_sessions` `re_evidence` `re_entities` |
+| 软件分析 | `re_samples` `re_task_samples` `re_providers` `re_sessions` `re_evidence` `re_entities` |
 | 模型与成本 | `llm_profiles` `llm_profile_health` `credentials` |
 | 通知 | `notification_channels` `notification_events` `notification_deliveries` |
 | 存储治理 | `retention_plans` `retention_audit` |
@@ -724,7 +724,7 @@ SQLite 单文件，62 张表（`db/schema_sqlite.sql`），按域分组：
 
 **技能包（14 个，`skills/`，`go:embed` 注册）**：`api-recon`、`web-vuln-tactics`、`exploit-kb-patterns`、`expert-triage-pivot`、`reverse-engineering`、`rea-mcp`、`wpe64-mcp`、`mitmproxy-traffic`、`human-verification`、`scopesentry-mcp`、`wasm-cloud-saas-tactics`、`ai-gateway-logic`、`ai-coding-sandbox-tactics`、`camoufox`。由 `skill_router.go` 路由、`tool_contract.go` 做别名、`db` 播种可见性（V2 开关只补新包、不复活用户关闭的旧包）。
 
-### 逆向工程契约（REA）
+### 软件分析引擎契约（REA）
 
 - 契约分层 `unverified / basic / deep`，核心操作集 `status / functions / decompile / xrefs / callgraph`；「工具能调」与「引擎 ready」分开判定。
 - **地址纪律**：RVA 用于 functions/decompile/xrefs/callgraph/modules/imports/exports；`file_offset` 只用于 strings；多模块以 `(module, address_kind, address)` 三元组为身份。
@@ -760,7 +760,7 @@ App 是胖 HTTP 客户端：登录页填「服务器地址 + 密码」→ 拿 Be
 防火墙（Windows 管理员）：
 
 ```text
-netsh advfirewall firewall add rule name="ARTEX-REA" dir=in action=allow protocol=TCP localport=8787
+netsh advfirewall firewall add rule name="ARTEX-HYDRA" dir=in action=allow protocol=TCP localport=8787
 ```
 
 Linux：`sudo ufw allow 8787/tcp`；macOS 首次运行会弹系统提示，点允许即可。
@@ -793,7 +793,7 @@ Linux：`sudo ufw allow 8787/tcp`；macOS 首次运行会弹系统提示，点�
 |---|---|
 | `reOpen` 会话数硬拒绝 | 当前只是报告阈值，未做硬拒绝 |
 | REA / WPE64 真实 MCP 联调 | 工具缓存为离线预置，真实 `tools/list` 刷新未验 |
-| 逆向单引擎验收 | 需按验收门禁清单另行授权执行 |
+| 软件分析单引擎验收 | 需按验收门禁清单另行授权执行 |
 | 「源码已落地 / 运行验收待完成」条目 | 开发总清单中大量条目处于此态；自动清理默认关闭 |
 | 运行期假设 | 五断层收口的一批假设只能由运行期数据判定 |
 | 手机端明文策略 | release 包可能仍需补 `usesCleartextTraffic` / ATS 两行配置 |
@@ -834,7 +834,7 @@ Linux：`sudo ufw allow 8787/tcp`；macOS 首次运行会弹系统提示，点�
 | `人机验证专业工具链-2026-10-18.md` | 第三次增量：专业分类、旧 ALTCHA PoW、同会话 flow | 源码交付，未验收 |
 | `人机验证链路加固与验收准备-2026-10-18.md` | 代码审查发现、IPC v2 契约、远程验收步骤 | 源码交付，未验收 |
 | `逆向引擎契约-REA落地与WPE64-MCP协同设计.md` | `REProviderConfig` 通用映射层、目录/schema 门控、与 WPE64 协同 | 已落地 |
-| `MCP能力扩展-调研与路线图.md` | 渗透/逆向双域 MCP 现状实测、差距矩阵、分阶段路线（第一批已落地） | 第一批落地，其余待评估 |
+| `MCP能力扩展-调研与路线图.md` | 渗透/分析双域 MCP 现状实测、差距矩阵、分阶段路线（第一批已落地） | 第一批落地，其余待评估 |
 | `MCP外部接入-扫描与一键配置.md` | 两种接法、只读扫描四态、`plan → diff → apply`、同时在线约束 | 已落地 |
 | `harness-2.0-升级说明.md` | 修掉三个真缺陷、对标补齐能力、关键取舍 | 已落地 |
 | `harness-多域升级路线图.md` | 域驱动目标形态、分阶段迁移、数据模型只加不删 | 长期任务，Phase 0 起 |
