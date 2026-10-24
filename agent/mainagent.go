@@ -33,14 +33,8 @@ type MainAgent struct {
 	killWork        func(intentID int64) error             // engine callback: terminate a running work (nil = off)
 	dirAck          func()                                 // engine callback: release dispatch hold after a dispatch (nil = off)
 	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn    func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 }
-
-// SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
-// context-compression mechanism. nil/unset = off (built-in compaction). Read per
-// run so the settings toggle takes effect without rebuilding the agent.
-func (m *MainAgent) SetNoaEnabled(fn func() bool) { m.noaEnabledFn = fn }
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
 // model path (true = non-streaming). nil/unset = streaming (default).
@@ -210,15 +204,13 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 			opts.SessionID = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
 		}
 	}
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	// session id 与 transcript 同规则(分段感知),使归档与恢复对齐。
-	noaSession := fmt.Sprintf("exp%d-main", ts.ID())
+	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）；标签与 transcript
+	// 同规则(分段感知)，压缩日志才能和会话对上。
+	compactLabel := fmt.Sprintf("exp%d-main", ts.ID())
 	if mainSeg > 0 {
-		noaSession = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
+		compactLabel = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
 	}
-	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）。
-	attachCompaction(&opts, m.compactionWindow(), noaSession)
-	enableNoa(&opts, m.noaEnabledFn, m.workDir, noaSession, m.compactionWindow(), noaWarn(noaSession))
+	attachCompaction(&opts, m.compactionWindow(), compactLabel)
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close()

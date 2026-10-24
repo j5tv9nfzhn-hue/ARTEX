@@ -1176,10 +1176,6 @@ export interface Settings {
   // 操作约束注入范围(默认都开):把任务的 allow/deny 约束拼进对应 agent 的系统提示。
   constraints_inject_planner?: boolean;
   constraints_inject_worker?: boolean;
-  // 实验功能:noa 模型驱动上下文压缩(默认关)。开启后平台接入的四类 agent(planner/
-  // worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction;每 run 读一次,对
-  // 之后启动的 run 生效。
-  noa_compaction?: boolean;
   // 实验功能:完成闸门（未收口分支不许判完成）。off=关 / shadow=只记录不拦 / enforce=真拦并回炉。
   // 切换即时生效（每次完成判定读一次），无需重启。
   branch_gate_mode?: "off" | "shadow" | "enforce" | string;

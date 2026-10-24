@@ -79,10 +79,6 @@ type Worker struct {
 	// path. Read per run so a profile/task toggle takes effect without rebuilding
 	// the agent. nil = streaming (default).
 	nonStreamingFn func() bool
-	// noaEnabledFn resolves whether this run uses the experimental noa context-
-	// compression mechanism. Read per run, like nonStreaming. nil = off (built-in
-	// compaction).
-	noaEnabledFn func() bool
 	// maxTokensFn resolves the per-reply output cap in tokens, on the same
 	// per-run basis. nil or 0 = send no cap and let the endpoint decide.
 	maxTokensFn func() int
@@ -127,11 +123,6 @@ func (w *Worker) nonStreaming() bool { return w.nonStreamingFn != nil && w.nonSt
 // Streaming 报告本轮是否走流式(SSE)接口。界面实时通道与它同源：非流式档位下
 // 连 live 增量也不推，否则「开关开不开都一样」的老问题会从 HTTP 层转移到 UI 层。
 func (w *Worker) Streaming() bool { return !w.nonStreaming() }
-
-// SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
-// context-compression mechanism. nil/unset = off (built-in compaction). Read per
-// run so the settings toggle takes effect without rebuilding the agent.
-func (w *Worker) SetNoaEnabled(fn func() bool) { w.noaEnabledFn = fn }
 
 // SetMaxTokens wires a resolver for the per-reply output cap. nil/unset or 0 =
 // send no cap and let the endpoint decide. Read per run, like nonStreaming.
@@ -724,11 +715,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		input = "开始执行 system 里领到的意图：只做它、只产生事实、assets、finding、做完即停。"
 	}
 
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	noaSession := WorkerSessionID(ts.ID(), intent.ID)
-	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）。
-	attachCompaction(&opts, w.compactionWindow(), noaSession)
-	enableNoa(&opts, w.noaEnabledFn, w.workDir, noaSession, w.compactionWindow(), noaWarn(noaSession))
+	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）；标签只用于压缩日志。
+	compactLabel := WorkerSessionID(ts.ID(), intent.ID)
+	attachCompaction(&opts, w.compactionWindow(), compactLabel)
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close() // release the session's background-task manager (temp dir + processes)

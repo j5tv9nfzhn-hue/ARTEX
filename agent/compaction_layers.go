@@ -2,17 +2,16 @@
 // 纯增量：只读描述既有四层压缩机制 + 观察器链工具，不改动任何一层的执行路径；
 // 未启用时行为与现状完全一致，可零成本回滚。
 //
-// ARTEX 会话/上下文压缩共四层（自外向内）：
+// ARTEX 会话/上下文压缩共三层（自外向内）：
 //
 //	L1 工具输出裁剪   : 单条工具结果上限（agentcore 工具输出裁剪），挡最大头的 token 膨胀。
 //	L2 会话窗口压缩   : norma agent-core compaction.Config（compactionConfig(windowTokens)），
 //	                   按角色（worker/planner/main_agent/chat）各自解析上下文窗口。
-//	L3 noa 对话压缩   : enableNoa 注入的实验性对话压缩（旁路、可关断）。
-//	L4 冷图摘要压缩   : Compactor（compaction.go：minor/major → digest），压缩探索图
+//	L3 冷图摘要压缩   : Compactor（compaction.go：minor/major → digest），压缩探索图
 //	                   冷节点块，供规划器低成本回看；生命周期经 CompactionEvent 上报宿主。
 //
-// 降本提速的成因：L1 挡掉绝大部分无效 token；L2/L3 控制活动上下文在窗口内；
-// L4 让规划器不必重读全部历史探索。本文件把四层显式化，便于运维/调试/后续分层调参。
+// 降本提速的成因：L1 挡掉绝大部分无效 token；L2 控制活动上下文在窗口内；
+// L3 让规划器不必重读全部历史探索。本文件把三层显式化，便于运维/调试/后续分层调参。
 package agent
 
 import "fmt"
@@ -23,7 +22,6 @@ type LayerKind string
 const (
 	LayerToolClip    LayerKind = "tool_output_clip"
 	LayerWindow      LayerKind = "conversation_window"
-	LayerNoa         LayerKind = "noa_conversation"
 	LayerGraphDigest LayerKind = "cold_graph_digest"
 )
 
@@ -37,7 +35,7 @@ type LayerPlan struct {
 
 // LayerPlanFor 返回某角色在给定上下文窗口（token）下的分层压缩计划。
 // windowTokens<=0 表示取默认窗口（与 compactionConfig 的语义一致）。
-// noa 为实验旁路，默认不计入启用位（enabled=false），仅登记存在性。
+// 每一层都对应真实存在的执行路径，登记的是「实际会不会跑」，不是设想。
 func LayerPlanFor(role string, windowTokens int) []LayerPlan {
 	win := windowTokens
 	if win <= 0 {
@@ -55,12 +53,6 @@ func LayerPlanFor(role string, windowTokens int) []LayerPlan {
 			Role:    role,
 			Enabled: true,
 			Detail:  map[string]any{"window_tokens": win, "note": "norma agent-core 会话窗口压缩"},
-		},
-		{
-			Layer:   LayerNoa,
-			Role:    role,
-			Enabled: false,
-			Detail:  map[string]any{"note": "noa 实验性对话压缩：旁路、显式启用才生效"},
 		},
 		{
 			Layer:   LayerGraphDigest,

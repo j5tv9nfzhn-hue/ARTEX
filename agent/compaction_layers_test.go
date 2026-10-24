@@ -7,7 +7,7 @@ import (
 
 func TestLayerPlanForRoles(t *testing.T) {
 	plan := LayerPlanFor("worker", 0)
-	if len(plan) != 4 {
+	if len(plan) != 3 {
 		t.Fatalf("layers=%d", len(plan))
 	}
 	kinds := map[LayerKind]bool{}
@@ -16,9 +16,6 @@ func TestLayerPlanForRoles(t *testing.T) {
 		if p.Role != "worker" {
 			t.Fatalf("role=%s", p.Role)
 		}
-		if p.Layer == LayerNoa && p.Enabled {
-			t.Fatal("noa 必须默认旁路")
-		}
 		if p.Layer == LayerWindow {
 			w, _ := p.Detail["window_tokens"].(int)
 			if w != defaultWindowK*1000 {
@@ -26,7 +23,7 @@ func TestLayerPlanForRoles(t *testing.T) {
 			}
 		}
 	}
-	for _, k := range []LayerKind{LayerToolClip, LayerWindow, LayerNoa, LayerGraphDigest} {
+	for _, k := range []LayerKind{LayerToolClip, LayerWindow, LayerGraphDigest} {
 		if !kinds[k] {
 			t.Fatalf("missing layer %s", k)
 		}

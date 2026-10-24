@@ -281,25 +281,46 @@ func (e *Engine) loaderEvidence(refID int64) (agent.ReviewerEvidence, error) {
 // ---- 情报闸门：先落库、再唤醒；落不进去就降级，绝不放行 ----
 
 const (
-	// reviewerGateFailThreshold 是连续多少次闸门超时后打开熔断。
+	// reviewerGateFailThreshold 是**同一个任务**连续多少次闸门超时后打开熔断。
 	reviewerGateFailThreshold = 3
-	// reviewerGateCooldown 是熔断打开后的冷却时长。冷却期内不再逐 run 空等，
-	// 直接走降级路径——存储明显病着的时候，每个 run 白等 5s 只会把整条流水线拖死。
+	// reviewerGateCooldown 是熔断打开后的冷却时长。冷却期内该任务不再逐 run 空等，
+	// 直接走降级路径——存储明显病着的时候，每个 run 白等 5s 只会把任务拖死。
 	reviewerGateCooldown = 60 * time.Second
 )
 
-var reviewerGateBreaker = struct {
-	mu        sync.Mutex
+// reviewerGateState 是单个任务的闸门熔断状态。
+type reviewerGateState struct {
 	fails     int
 	openUntil time.Time
-}{}
+}
 
-// reviewerGateOpen 报告熔断是否打开。冷却结束后的第一次调用做「半开」：
+// reviewerGateBreakers 按任务隔离闸门熔断状态。
+//
+// 为什么必须按任务分：闸门超时只能说明「这一次等待没等到判决落库」，它和同时跑的
+// 其它任务没有任何因果关系——不同任务的 run、意图、判决都是各自的。共用一份状态时，
+// 一个任务卡住 3 次就会把全局冷却打开 60 秒，这 60 秒里其它任务进来直接被判成
+// 「本 run 作废」（abandon/harness）的降级判决，于是局部超时被放大成全平台降级。
+var reviewerGateBreakers = struct {
+	mu sync.Mutex
+	m  map[int64]*reviewerGateState
+}{m: map[int64]*reviewerGateState{}}
+
+// reviewerGateOf 取（必要时创建）某个任务的状态。调用方必须持锁。
+func reviewerGateOf(taskID int64) *reviewerGateState {
+	g := reviewerGateBreakers.m[taskID]
+	if g == nil {
+		g = &reviewerGateState{}
+		reviewerGateBreakers.m[taskID] = g
+	}
+	return g
+}
+
+// reviewerGateOpen 报告该任务的熔断是否打开。冷却结束后的第一次调用做「半开」：
 // 放一个 run 去试，失败会立刻重新打开熔断。
-func reviewerGateOpen() bool {
-	g := &reviewerGateBreaker
-	g.mu.Lock()
-	defer g.mu.Unlock()
+func reviewerGateOpen(taskID int64) bool {
+	reviewerGateBreakers.mu.Lock()
+	defer reviewerGateBreakers.mu.Unlock()
+	g := reviewerGateOf(taskID)
 	if g.fails < reviewerGateFailThreshold {
 		return false
 	}
@@ -310,22 +331,21 @@ func reviewerGateOpen() bool {
 	return false
 }
 
-func reviewerGateFail() {
-	g := &reviewerGateBreaker
-	g.mu.Lock()
-	defer g.mu.Unlock()
+func reviewerGateFail(taskID int64) {
+	reviewerGateBreakers.mu.Lock()
+	defer reviewerGateBreakers.mu.Unlock()
+	g := reviewerGateOf(taskID)
 	g.fails++
 	if g.fails >= reviewerGateFailThreshold {
 		g.openUntil = time.Now().Add(reviewerGateCooldown)
 	}
 }
 
-func reviewerGateSucceed() {
-	g := &reviewerGateBreaker
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.fails = 0
-	g.openUntil = time.Time{}
+// reviewerGateSucceed 在该任务恢复正常时整条丢掉状态，既清零也不留垃圾条目。
+func reviewerGateSucceed(taskID int64) {
+	reviewerGateBreakers.mu.Lock()
+	defer reviewerGateBreakers.mu.Unlock()
+	delete(reviewerGateBreakers.m, taskID)
 }
 
 // awaitReviewerVerdict 是「先落库、再唤醒 Planner」的硬闸门。
@@ -339,23 +359,25 @@ func reviewerGateSucceed() {
 //  3. 连降级判决都写不进去（存储已经不可写）→ 返回 false，调用方拒绝唤醒，
 //     任务停摆等人工介入。宁可停，不可放。
 //
-// 熔断只作用于「等」这个动作，不作用于「降级」这个结论。
+// 熔断只作用于「等」这个动作，不作用于「降级」这个结论；而且熔断状态**按任务隔离**，
+// 一个任务的等待超时不会把别的任务推进降级路径。
 func (e *Engine) awaitReviewerVerdict(t *Task, intent *db.Node, runID int64, d time.Duration) bool {
 	if e == nil || e.m == nil || e.m.pg == nil || t == nil || intent == nil || runID <= 0 {
 		return true // 没有台账就没有闸门可言
 	}
-	if reviewerGateOpen() {
+	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
+	if reviewerGateOpen(taskID) {
 		return e.degradeReviewerVerdict(t, intent, runID, "闸门熔断打开")
 	}
 	deadline := time.Now().Add(d)
 	for {
 		ok, err := e.m.pg.Exploration(t.ExpID).HasReviewerVerdict(runID)
 		if err == nil && ok {
-			reviewerGateSucceed()
+			reviewerGateSucceed(taskID)
 			return true
 		}
 		if time.Now().After(deadline) {
-			reviewerGateFail()
+			reviewerGateFail(taskID)
 			return e.degradeReviewerVerdict(t, intent, runID, "等待判决落库超时")
 		}
 		time.Sleep(25 * time.Millisecond)

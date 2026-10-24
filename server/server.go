@@ -669,7 +669,6 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 	s.chatAgent.SetGuard(s.chatGuard())
 	s.chatAgent.SetNonStreaming(nonStreamingResolver(cfg))
 	s.chatAgent.SetMaxTokens(maxTokensResolver(cfg))
-	s.chatAgent.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(每 run 读)
 	s.llmProv = prov
 	s.llmCfg = cfg
 	s.llmOn = true
@@ -811,7 +810,6 @@ func (s *Server) chatAgentForProfile(id int64) *agent.ChatAgent {
 	ca.SetGuard(s.chatGuard())
 	ca.SetNonStreaming(nonStreamingResolver(cfg))
 	ca.SetMaxTokens(maxTokensResolver(cfg))
-	ca.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(每 run 读)
 	s.profMu.Lock()
 	if ex := s.profChatAgents[id]; ex != nil { // lost the race → keep the winner
 		ca = ex
@@ -3701,9 +3699,6 @@ func (s *Server) settingsPayload() map[string]any {
 		// 操作约束注入范围(默认都开):把本任务的 allow/deny 约束拼进对应 agent 的系统提示。
 		"constraints_inject_planner": s.constraintInjectPlanner(),
 		"constraints_inject_worker":  s.constraintInjectWorker(),
-		// 实验功能:noa 模型驱动上下文压缩(默认关)。开启后平台接入的四类 agent 由 noa
-		// 接管上下文压缩,取代内置 compaction;每 run 读一次,对之后启动的 run 生效。
-		"noa_compaction": s.m.NoaCompactionEnabled(),
 		// 实验功能:完成闸门(未收口分支不许判完成)。off=关 / shadow=只记录 / enforce=真拦并回炉。
 		// 每次完成判定读一次，切换即时生效。
 		"branch_gate_mode": s.m.BranchGateMode(),
@@ -3798,8 +3793,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 操作约束注入范围开关(默认都开);即时生效(planner/worker 每轮读),无需重建 agent。
 		ConstraintsInjectPlanner *bool `json:"constraints_inject_planner"`
 		ConstraintsInjectWorker  *bool `json:"constraints_inject_worker"`
-		// 实验功能:noa 上下文压缩开关(默认关);每 run 读,对之后启动的 run 生效,无需重建 agent。
-		NoaCompaction *bool `json:"noa_compaction"`
 		// 实验功能:完成闸门模式(off/shadow/enforce);每次完成判定读,切换即时生效。
 		BranchGateMode *string `json:"branch_gate_mode"`
 		// 漏洞 IM 推送的全局项。三者都由投递引擎每轮读一次，改完即时生效，
@@ -3861,13 +3854,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ConstraintsInjectWorker != nil {
 		if err := s.m.pg.SetBool(settingConstraintsInjectWorker, *req.ConstraintsInjectWorker); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
-	if req.NoaCompaction != nil {
-		// 每 run 读的解析器,切换即时对之后启动的 run 生效,无需 applyLLM 重建。
-		if err := s.m.SetNoaCompaction(*req.NoaCompaction); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
