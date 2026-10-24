@@ -14,7 +14,7 @@ description: |
     go-mitmproxy / mitmproxy, so treat a hit as a host-triage lead to correlate with the loopback proxy
     endpoint and server port (see the indicators list), not a standalone alert.
 references:
-    - https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/docs/defense.md
+    - https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA/blob/main/docs/defense.md
     - https://github.com/jiwoochris/artex-ko
 author: ARTEX defense guide
 date: 2026-10-07

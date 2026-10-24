@@ -50,7 +50,7 @@ git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 <�
 
 - 每版必发 GitHub Release，tag 与 Release 同名。
 - 版本删除后重发沿用同一版本号，不递增。
-- 更新源白名单只有 `j5tv9nfzhn-hue/ARTEX`，保留白名单 + SHA256 双闸门。
+- 更新源白名单只有 `j5tv9nfzhn-hue/ARTEX-HYDRA`，保留白名单 + SHA256 双闸门。
 - 自动更新（安装）默认关，自动检测默认开，两者都有开关。
 
 ## 七、提交

@@ -7,7 +7,7 @@
 界面、报告、摘要、对话及后端消息**统一使用简体中文**，本仓库不再提供其他语言界面。界面语言属于浏览器本地偏好；报告、摘要、对话与后端消息的输出语言由服务端设置管理，固定为简体中文。历史遗留的其他语言配置一律回退为简体中文。
 
 
-[![release](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/release.yml/badge.svg)](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/release.yml) [![detections](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/detections.yml/badge.svg?branch=main)](https://github.com/j5tv9nfzhn-hue/ARTEX/actions/workflows/detections.yml) [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![release](https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA/actions/workflows/release.yml/badge.svg)](https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA/actions/workflows/release.yml) [![detections](https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA/actions/workflows/detections.yml/badge.svg?branch=main)](https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA/actions/workflows/detections.yml) [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 </div>
 
@@ -53,7 +53,7 @@ ARTEX 最初由国内开发者 Autumn-27 创建并以 AGPL-3.0 开源；`jiwooch
 ```
 Autumn-27/ARTEX（国内原作者，中文原创）
         └─ jiwoochris/artex-ko（韩语本地化分支）
-                └─ j5tv9nfzhn-hue/ARTEX（本仓库 · 简体中文分支）
+                └─ j5tv9nfzhn-hue/ARTEX-HYDRA（本仓库 · 简体中文分支）
 ```
 
 本仓库 **fork 自韩语分支** `jiwoochris/artex-ko`，并在其基础上完成中文重构：移除全部韩文内容，界面与产物统一为简体中文。
@@ -96,7 +96,7 @@ Autumn-27/ARTEX（国内原作者，中文原创）
 
 ### 方式一：下载发布包
 
-到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载对应平台的 `artex-rea-<版本>-<平台>-<架构>.zip`（`linux` / `darwin` / `windows`），解压后得到：
+到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA/releases) 下载对应平台的 `artex-rea-<版本>-<平台>-<架构>.zip`（`linux` / `darwin` / `windows`），解压后得到：
 
 - `artex-rea` / `artex-rea.exe` —— 程序本体（前端已内嵌）
 - `start.bat`（Windows）/ `start.sh`（Linux、macOS）—— 启动脚本（前台启动；Ctrl-C 直接退出。一键更新的重启由 exe 自己负责，见下文「启动与一键更新」）
@@ -456,7 +456,7 @@ flowchart LR
 
 #### 1. 源码唯一位置
 
-项目源码只存在于工作副本 `C:\Users\Administrator\Desktop\ARTEX-HYDRA`（及其远端 `j5tv9nfzhn-hue/ARTEX`）。所有改动直接落在该目录，不另建副本、不在别处「另起一份工程」。
+项目源码只存在于工作副本 `C:\Users\Administrator\Desktop\ARTEX-HYDRA`（及其远端 `j5tv9nfzhn-hue/ARTEX-HYDRA`）。所有改动直接落在该目录，不另建副本、不在别处「另起一份工程」。
 
 #### 2. 本机不做任何测试 / 编译 / 构建 / 打包
 
@@ -567,7 +567,7 @@ signals    go test / 语言检查 / 文档链接（continue-on-error，只报告
 - **每版必须发 GitHub Release**，tag 与 Release 同名（`vX.Y.Z`，或四段 `vX.Y.Z.W`），二者缺一视为该版未发布。
 - **第四段用于同一 patch 的重发**：`v2.4.0` 修好后又必须换一个 tag 时用 `v2.4.0.1`，不占 patch 位；跨 patch 的正常迭代仍用 `vX.Y.Z`。四段与三段按数字逐段比较（`2.4.0 < 2.4.0.1 < 2.4.1`），客户端更新检测两种都认。
 - 版本被删除后**重发沿用同一版本号**，不递增；前提是新 commit 已经成功推到远端。
-- 更新源白名单只有 `j5tv9nfzhn-hue/ARTEX`：`selfupdate` 只接受该仓库的 Release，且保留**白名单 + SHA256 双闸门**。`jiwoochris/*`、`Autumn-27/artex` 已彻底移除，不得再进入检测或下载链路。
+- 更新源白名单只有 `j5tv9nfzhn-hue/ARTEX-HYDRA`：`selfupdate` 只接受该仓库的 Release，且保留**白名单 + SHA256 双闸门**。`jiwoochris/*`、`Autumn-27/artex` 已彻底移除，不得再进入检测或下载链路。
 - 自动更新（安装）**默认关**；自动检测默认开；两者都要有开关，且状态可持久化。
 - **发布说明必须写全量变更**：由 `scripts/gen-release-notes.py` 从 git 历史按类型分组生成，不再使用 `gh release create --generate-notes`（它只汇总 PR 标题，直接提交的改动会全部丢失）。正文上限 8 KB——它会进 `latest.json`，客户端每次检测都要下载。
 - 一次 tag 推送只应产生 **1 个**发布 run：只保留一个构建工作流后，一次 tag 推送只会产生 `release.yml` 这一次运行；`detections.yml` 用 `tags-ignore: ["v*"]` 排除 tag。
@@ -785,7 +785,7 @@ Linux：`sudo ufw allow 8787/tcp`；macOS 首次运行会弹系统提示，点�
 5. **凭证静态加密**：API Key 与 MCP env 密钥落库加密（`credential_crypto.go`、`mcp_env.go`）；响应侧只回 hint。
 6. **命令防护与管控**：`guard` 审批钩子 + `intercept` 规则/判定，审计带调用 ID 与并发匹配。
 7. **编码**：文本写盘、JSON、数据库与 HTTP 链路全程 UTF-8；风险集中在 Windows 控制台代码页与平台派生出的子进程 stdio，已修复并提供回退开关。前端只有 2 处 `dangerouslySetInnerHTML`，均不接收不受信任输入；后端只输出 JSON，不渲染 HTML。
-8. **自更新双闸门**：更新源白名单 `j5tv9nfzhn-hue/ARTEX` + SHA256 校验；自动检测默认开、自动安装默认关。
+8. **自更新双闸门**：更新源白名单 `j5tv9nfzhn-hue/ARTEX-HYDRA` + SHA256 校验；自动检测默认开、自动安装默认关。
 
 ### 已知未闭环
 

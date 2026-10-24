@@ -66,7 +66,7 @@
       "items": [
         "页头 nav-actions 新增 GitHub 图标按钮 .github-button（复用 .icon-button；内联 SVG 自绘 GitHub mark，17px 光学尺寸与描边图标观感一致）",
         "页脚 footer-top 与 footer-bottom 之间新增全宽仓库横幅 .footer-repo（mark 芯片 + 标题/副标 + REPOSITORY 微标 + 箭头），悬停极光描边与指针聚光与既有卡片同套机制（.footer-repo 已加入 site.js 聚光选择器列表）",
-        "全部 11 个页面同步，每页 2 处链接，指向 https://github.com/j5tv9nfzhn-hue/ARTEX，新窗口打开（rel=\"noopener noreferrer\"）",
+        "全部 11 个页面同步，每页 2 处链接，指向 https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA，新窗口打开（rel=\"noopener noreferrer\"）",
         "无新增文件、无内联脚本，CSP 与 file:// 双击直开不受影响；≤650px 隐藏 REPOSITORY 微标并收紧内边距",
         "headless 截图复核：首页（明色整页 / 暗色整页 / 移动端首屏）与架构页整页，页头按钮与页脚横幅均正常渲染"
       ]

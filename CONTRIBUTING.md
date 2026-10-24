@@ -3,7 +3,7 @@
 
 感谢关注 ARTEX。提交贡献前请阅读[使用范围与法律责任](#使用范围与法律责任)、[本地化原则](#本地化原则)和[行为准则](CODE_OF_CONDUCT.md)。
 
-- 缺陷、功能、本地化问题请使用[Issue 模板](https://github.com/j5tv9nfzhn-hue/ARTEX/issues/new/choose)。
+- 缺陷、功能、本地化问题请使用[Issue 模板](https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA/issues/new/choose)。
 - 安全漏洞**不要公开提交**，请遵循 [SECURITY.md](SECURITY.md) 的私密报告流程。
 
 ## 使用范围与法律责任

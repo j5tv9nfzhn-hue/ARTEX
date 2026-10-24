@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         感谢反馈。填写以下信息有助于复现与修复。
-        **安全漏洞请通过 [SECURITY.md](https://github.com/j5tv9nfzhn-hue/ARTEX/blob/main/SECURITY.md) 的私密渠道报告，不要使用公开缺陷模板。**
+        **安全漏洞请通过 [SECURITY.md](https://github.com/j5tv9nfzhn-hue/ARTEX-HYDRA/blob/main/SECURITY.md) 的私密渠道报告，不要使用公开缺陷模板。**
   - type: checkboxes
     id: preflight
     attributes:

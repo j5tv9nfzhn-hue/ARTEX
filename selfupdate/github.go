@@ -21,7 +21,7 @@ import (
 //  2. 不在运行时改。更新源可配等于给任何能改设置的人一条远程代码执行通道，
 //     对一个渗透测试平台来说这个口子开不得——只允许构建期注入：
 //     -ldflags "-X github.com/Autumn-27/artex/selfupdate.Repo=owner/name"
-var Repo = "j5tv9nfzhn-hue/ARTEX"
+var Repo = "j5tv9nfzhn-hue/ARTEX-HYDRA"
 
 // repoPattern 只接受 owner/name，杜绝把 scheme/host 拼进来绕过下面的域名白名单。
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)

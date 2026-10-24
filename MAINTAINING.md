@@ -155,11 +155,11 @@ chore(upstream): 合入 d003372..b55ceb1 的审批计量逻辑并同步新文案
 fork 可能同时有 origin/upstream，gh 的默认仓库可能不是当前仓库，导致查看错误的 CI 或误判 404。显式指定：
 
 ```bash
-gh run list -R j5tv9nfzhn-hue/ARTEX --workflow release.yml --limit 5
-gh run list -R j5tv9nfzhn-hue/ARTEX --workflow detections.yml --limit 5
+gh run list -R j5tv9nfzhn-hue/ARTEX-HYDRA --workflow release.yml --limit 5
+gh run list -R j5tv9nfzhn-hue/ARTEX-HYDRA --workflow detections.yml --limit 5
 ```
 
-可在自己的开发环境通过 `gh repo set-default j5tv9nfzhn-hue/ARTEX` 设置默认，再用 `gh repo set-default --view` 确认；这是本地 gh 配置，不提交到仓库。认证失败应修复平台 GitHub 连接，不在聊天或仓库保存 token。
+可在自己的开发环境通过 `gh repo set-default j5tv9nfzhn-hue/ARTEX-HYDRA` 设置默认，再用 `gh repo set-default --view` 确认；这是本地 gh 配置，不提交到仓库。认证失败应修复平台 GitHub 连接，不在聊天或仓库保存 token。
 
 ### 8.2 外部链接用浏览器方式 GET 检查
 
