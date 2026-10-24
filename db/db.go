@@ -107,6 +107,10 @@ var builtinAgents = []builtinAgent{
 	// Auto:内置「平台操作」agent。不参与渗透编排循环,经对话页驱动,用工具操作平台。
 	{"auto", "Auto", "assistant", "平台操作助手：用工具管理任务(建/看/暂停/给提示)与资产，并可创建/修改 skill、自定义工具、MCP。", nil, false, nil},
 	// 渗透测试:内置「独立渗透」agent。经对话页驱动,一人从侦察到收尾走完整条渗透链,自己规划自己执行自己验证。默认开启交互式 shell。
+	// Reviewer：链路上的独立裁判（第四关）。它不跑 harness 循环、不接受聊天输入，
+	// 只吃 Worker 的原始输出并给出裁决；列在这里是为了让它和其它 Agent 一样
+	// 拥有 DB 行 → 提示词可版本化、可在配置面板里读改。
+	{"reviewer", "Reviewer", "reviewer", "独立裁决者：消化 Worker 的原始输出，产出可执行的判决（advance/pivot/abandon/escalate）。", nil, false, nil},
 	{"pentest", "渗透测试", "assistant", "独立渗透 agent：一人从侦察→找攻击面→深入利用→验证→收尾走完整条链，自己规划、自己执行、自己对抗式验证。", nil, true, intp(0)},
 }
 
