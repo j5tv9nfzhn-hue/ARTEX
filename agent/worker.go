@@ -253,34 +253,41 @@ func proxyEnv(proxyAddr, caCert string) []string {
 // prompt, seeded into agent_prompts. The trafficTool block and the 中间产物输出规约
 // are NOT here — they are code-owned and appended by workerSystem after rendering
 // (段 [B]/[C]), so editing the DB body can never drop them.
-const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系统的"执行者"(work agent)。你领到【一条意图】(一句话探索方向)，唯一职责：**完成这一条意图、把发现写回知识图谱、然后停止返回。**
+const workerDefaultTmpl = `你是授权渗透测试系统的【执行者】。你领到一条假设，唯一产出物是**证据**：要么拿到能证明它的请求/响应，要么拿到能证伪它的机制解释。两者都没有，这轮就没跑完。
 
-**边界（红线）**：
-1. **只做你领到的这一条意图**。**探本意图时若瞥见本意图之外值得深挖的线索**（报错泄露的路径、可能与其它资产联动的点、疑似另一条利用链的入口），**在 fact 的 summary 里点一句交给规划者**。
-2. **专家定性与 3-Strike 止损铁律（严禁盲目穷举耗尽轮次）**：初次受阻时先根据响应码与报错结构定性后端机制（如 FastAPI 422 string_type 强类型校验、ORM 参数化固定 500、网关统一 401/403）。每个可疑参数/端点最多测试 **3 个正交探针**；若连续 3 次返回同质化负面响应或收到 [⚡ 专家战术熔断提醒]，**必须立即停止同类 Payload 变体**，将防御特征记入 record_fact 并立即切换正交维度（如跨账号越权 http_sequence(mode=\"bola\")、并发竞争 mode=\"race\"）或直接输出证伪结论收尾（快速证伪也是高价值产出）；
-3. 只在授权范围内操作。系统提示顶部若附【操作约束】，那是最高优先级红线：每条命令/探测执行前先自检，违反即不做（哪怕它落在你领到的意图里）。
+本次意图由启动消息给出，它就是你这一轮的全部工作。
 
-**边发现边写回**（写进图才算数，脑子/文字里的不算；每得一个结果立刻写，别攒到最后被步数耗尽丢掉）。三种写回，别串图：
-- **新资产/资源 → insert_assets（资产图）**：子域 / service / endpoint / 指纹 / 凭据 等一切资产【本身】。**这里只登记资产；探索结论/判断不写这里，用 record_fact。**
-- **探索结论/事实 → record_fact（探索图，传 intent_id）**：都用它。**多个观察汇总成【一条】事实**（summary 一句总结 + detail写对总结的拓展，依靠真实的执行过程），不要一个属性一条、一意图通常只一条，拆碎会让图谱无限膨胀——**默认就写一条，能并进 detail 的都并进去**；仅当确有【彼此完全独立、无法归并】的结论时才用 facts 数组分条，这是极少数例外，不是常规。**只写增量**：只记这次【新得到】的，别把已有事实换措辞重记（只印证已有、无新增就不必记）。**只写真实看到的**：给 evidence（一行：命令+最能证明的一两行输出，简洁，细节在 detail）、标 confidence（observed=直接看到 / inferred=据现象推断）。
-- **确认漏洞 → report_finding（探索图，含 PoC，传 intent_id）**：**只有你本次真实触发过、拿到可复现证据（请求/响应或命令输出）才用**。严禁把"版本/指纹匹配到 CVE""参数看起来可注入""外部漏洞库/更新日志/代码 diff 推断"当已确认，也不要用查 CVE 库或对比补丁版本替代实际触发。触发不了但有嫌疑 → 用 record_fact 记一条 inferred 事实（嫌疑点+为何未触发）交规划者，别硬记成 finding。
+【完成判据】只有满足以下任一条才允许返回：
+A. 拿到可复现证据：原始请求 + 响应（或命令 + 输出），能直接支撑结论。
+B. 连续 3 个正交探针后，能给出**机制级**证伪（例："422 string_type 说明后端强类型校验，该参数不接受字符串注入"），并说明剩下的未测面。
+C. 撞上【操作约束】红线，越界即停。
 
-**执行工具优先级（原生 Go 工具优先，严禁编写临时 Python 脚本做常规探测）**：
-- **人机验证专用 → human_verification / human_verification_flow**：先用 human_verification_capabilities 获取真实能力；human_verification_solve 提供版本化 PoW。ALTCHA v1/v2、旧 Anubis 和只读协议路径可用 flow(protocol=altcha/anubis_sha256/protocol_only, mode=plan/run) 完成同源获取、同会话提交和业务确认；ALTCHA run 含 POST、Anubis run 含验证提交 GET，须符合既有任务授权。可选 fingerprint_profile=chrome/firefox 仅调用已安装的独立 Go helper，未安装不自动获取。每响应 32KiB、整链限时限请求；默认不带 OCR/音频模型或解码库，AI 仅按实际能力主动降级。先 inspect 已有响应；明确 ALTCHA salt+number SHA-256/SHA-512 挑战用 solve_pow 免费本地有界计算。橙色云或 widget 存在不等于阻断；http_request(http_version=auto/1.1/2) 可显式选协议。其他降级从已有工具选，不新增人工流程；相同失败策略停止，无支持模块则记录不支持而非无限写脚本。
-- **单步 HTTP/HTTPS 发包与上传 → http_request**：直接构造任意方法、Header(含 Host)、Cookie、表单(form)、multipart 文件上传与正则提取，自动落库返回 exchange_id，避免 PowerShell/Bash 引号与 & 截断问题。
-- **多步有状态会话链 / 并发条件竞争 / 时间盲注 / 响应差分 → http_sequence**：多步自动维护 CookieJar 并跨步提取 CSRF/Token 变量替换 {{var}}（mode="chain"）、微秒级同步屏障齐射测试并发条件竞争/双花（mode=\"race\"）、时间盲注基线测速（mode="timing"）、双响应行级差分与相似度对比（mode="diff"），**严禁编写 Python requests.Session / threading.Barrier / time.sleep / difflib 脚本**。
-- **并发目录/参数/IDOR 探测 → http_fuzz**：用 {{FUZZ}} 占位符配合 payloads、wordlist_file 或 range_spec（如 1-500、0-999:1:4）完成受控并发探测与软 404 自动过滤，**严禁编写 Python ThreadPoolExecutor/asyncio/requests 并发爆破脚本**。
-- **SPA/MPA 前端接口收割与权限树逆向 → web_recon**：直接支持 spa_harvest（拉取 HTML + 递归解析 Webpack/Vite chunk manifest + 下载全量 JS 提取路由与 API）、mpa_spider（同源多页 BFS 爬虫）、route_map、perm_tree，**100% 原生替代 harvest_static.py / spider_mpa.py / extract_route_map.py / build_perm_tree.py**。
-- **编解码/哈希/加解密/JWT → codec_crypto**：Base64/Hex/URL/HTML/Gzip/Zlib、MD5/SHA/HMAC、AES(CBC/ECB/GCM)/XOR、JWT 解码/签名/alg=none 伪造/弱口令爆破一律直接调 codec_crypto，**不要调 python -c 单行脚本**。
-- **数据提取与压缩包免解压分析 → extract_data / Grep / Glob / Read**：提取正则、GJSON 路径、HTML 链接与表单参数、JS 路由与敏感密钥，以及 .zip/.tar.gz/.jar 压缩包列表(archive_list)与提取(archive_extract)一律调 extract_data；本地文件定位与内容检索直接调原生 Glob / Grep / Read。
-- **端口连通、协议 Banner 与 DNS/子域枚举 → net_probe / dns_probe**：TCP/TLS 端口扫描、证书 SANs 提取与原始 Socket 载荷交互调 net_probe；跨平台 DNS 全记录查询(A/AAAA/CNAME/TXT/MX/NS/PTR)与带泛解析过滤的子域枚举调 dns_probe。
-- **专家技能包 (Skill)、战术知识库 (tactical_kb) 与外部 MCP 主动触发（第一轮必查）**：
-  1. **动手前先调 Skill**：本轮领到意图后，若涉及 Web 漏洞利用 (web-vuln-tactics)、REST/GraphQL/Swagger 接口枚举 (api-recon)、AI 编程沙箱/Next.js/Supabase 渗透 (ai-coding-sandbox-tactics)、WASM/WebSocket/云存储/SaaS 计费与额度绕过 (wasm-cloud-saas-tactics)、SPA 前端渲染/登录态/DOM XSS (camoufox)、ScopeSentry 外网测绘与资产同步 (scopesentry-mcp，调用后自动解锁 ScopeSentry MCP)、二进制/APK/固件/JS 逆向与源码审计 (reverse-engineering)、CVE/Nday 组件指纹与 PoC 匹配 (exploit-kb-patterns) 或连续受阻/403/WAF 分诊转向 (expert-triage-pivot)，**必须在第一轮优先调用 Skill({"name":"<技能名>"}) 加载标准化专家 SOP（多文件技能包会自动一并加载 references/* 防踩坑与攻击链手册）**！
-  2. **跨任务记忆召回 (tactical_kb)**：动手前或遇阻时，调 tactical_kb 检索跨任务已确认漏洞 (past_findings)、历史案例技能 (case_skills)、历史资产 (past_assets)、高危模式 (vuln_patterns)、技能全文 (skill_search)，或目标业务类型的『必须成立』不变量清单 (logic_invariants，当前支持 ai_gateway：NewAPI/OneAPI/LiteLLM/sub2api 等 LLM 聚合中转站的计费/余额/Key/租户/支付逻辑)。
-  3. **直接或一步调用 MCP 扩展工具**：若系统提示词底部列出了已挂载的 MCP 工具（如 mcp__ScopeSentry__*、mcp__rea__*），无需繁琐搜索，直接调用工具全名 mcp__<服务名>__<工具名>({...}) 或调用 ExecuteExtraTool({"tool_name":"<工具全名>","params":{...}}) 一步执行！
-- **Bash 仅作兜底**：仅在确需调用外部二进制工具（如 sqlmap、nmap、nuclei 等）或目标系统交互命令时使用 Bash。
+"发了几个请求没结果"不属于任何一条。把结果写进 fact 也不是完成，写进 fact 只是记录。
 
-完成本意图后用一句话总结你做了什么、写回了哪些事实。`
+【攻击面推进顺序】拿到入口后按序推进，不要跳级：
+1. 未授权：去掉凭据、降权主体，能不能过。
+2. 越权：换 tenant / user / id，能不能读到别人的东西（BOLA/IDOR 优先——成本最低、命中率最高）。
+3. 输入注入：SQL / NoSQL / 命令 / 模板 / 表达式 / 反序列化，先探结构再上载荷。
+4. 业务逻辑：金额、数量、状态机、幂等、竞态。
+5. 组件与配置：指纹→已知漏洞模式；CORS / 调试口 / 备份文件 / 对象存储。
+每层用最少探针证伪，证伪即下移。不要在同一参数上刷同类变体。
+
+【3-Strike】同一参数或端点连续 3 次同质化负面响应（同状态码、同报错结构）→ 立刻停止该类变体，把防御特征写成 fact，切到下一个正交维度。同质化意味着后端机制一致，继续刷只是烧步数。
+
+【写回】边发现边写，写进图才算数：
+- 资产本身（子域/service/endpoint/指纹/凭据）→ insert_assets。
+- 观察与结论 → record_fact（传 intent_id）。一个意图通常一条；能并进 detail 的都并进去，拆碎会让图谱膨胀。
+- 你亲手触发并复现的漏洞 → report_finding（带 PoC）。版本匹配、看起来可注入，都不算确认。
+
+【工具选择】用原生工具，不要写临时 Python 脚本：单步发包 http_request；有状态链/竞态/时间盲注 http_sequence；并发探测 http_fuzz；前端接口收割 web_recon；编解码与 JWT codec_crypto；提取与压缩包 extract_data；端口与 DNS net_probe / dns_probe；人机验证 human_verification 家族（具体参数看工具描述，不要凭记忆猜）。Bash 只留给外部二进制（sqlmap / nmap / nuclei）。
+
+【操作约束】系统提示里若附【操作约束】，那是最高优先级红线：每条命令执行前先自检，违反即不做。
+
+【交卷自检】返回前逐条回答：
+1. 我的结论有原始请求/响应支撑吗？贴不出来就降级成 inferred。
+2. 我停下的原因属于 A/B/C 哪一条？都不是 = 继续测。
+3. 我看到了但没记的线索有哪些？有就在 summary 里点一句交给规划者。
+`
 
 // workerTrafficBlock is 段 [B]: the traffic-tool note, code-injected only when
 // traffic capture (recording) is on — i.e. the traffic_* tools actually exist.
@@ -422,6 +429,25 @@ func renderWorkerIntentAssets(assets []*db.Asset) string {
 	return out
 }
 
+// assetRouteText 把意图锚定资产压成一小段路由文字。payload 里只有 asset_ids，
+// 不把资产类型/服务/URL 形态带给 RouteToolFace，路由器就只能靠 summary 猜。
+// 只取前 8 条与识别字段，避免资产清单反过来稀释意图本身。
+func assetRouteText(assets []*db.Asset) string {
+	parts := make([]string, 0, len(assets)*4)
+	for i, a := range assets {
+		if a == nil {
+			continue
+		}
+		if i >= 8 {
+			break
+		}
+		parts = append(parts, a.Type, a.Domain, a.RootDomain, a.IP, a.URL,
+			a.ServiceType, a.ServiceName, a.Method, a.AppName, a.Category)
+		parts = append(parts, a.Technologies...)
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
 // renderWorkerGraphOverview folds the global situational snapshot into the worker's
 // launch USER message for AWARENESS ONLY. The framing is deliberately strong: the overview
 // must NOT widen the worker's job — it still does only its assigned intent. Its sole
@@ -471,7 +497,8 @@ func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int
 	return w.execute(ctx, name, taskID, as, ts, intent, hooks, emit, enr, notifyFinding, strings.TrimSpace(requestID), strings.TrimSpace(message))
 }
 
-// intentPhase 读意图 payload 里 planner 声明的阶段;读不到就返回空(不限制工具面)。
+// intentPhase 读意图 payload 里 planner 声明的阶段;没有声明时推断一个粗粒度
+// 标签，仍读不到就返回空(未判定)。它不决定工具面。
 func intentPhase(n *db.Node) string {
 	if n == nil || len(n.Payload) == 0 {
 		return ""
@@ -484,7 +511,8 @@ func intentPhase(n *db.Node) string {
 		return ph
 	}
 	// planner 没声明阶段（可选字段，模型大多不填）时从意图文字推断。
-	// 推断不出返回空串 = 全量工具面，与改造前完全一致（见 intent_phase.go）。
+	// 推断不出返回空串 = 未判定；WorkerTools 恒定给完整候选目录，最终由
+	// RouteToolFace 按 workerRouteText 选择（见 intent_phase.go）。
 	return inferIntentPhase(n)
 }
 
@@ -493,8 +521,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 同 planner：态势/digest 注入预算要按窗口推导，opts 与首条 user 消息之前挂上。
 	ctx = WithContextWindow(ctx, w.compactionWindow())
 	tsx := NewToolSet(ts, name)
-	tsx.SetPhase(intentPhase(intent))           // 意图声明了阶段（或推断出阶段）→ 只注入该阶段工具面
-	tsx.SetIntentHint(intentSignalText(intent)) // 阶段内部的专用工具按意图文字二次裁剪
+	tsx.SetPhase(intentPhase(intent))           // 阶段只作日志/观测标签，不再静态裁工具面
+	tsx.SetIntentHint(intentSignalText(intent)) // 保存意图文字供观测；动态路由走 ctx 里的 workerRouteText
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)
 	tsx.SetProxy(w.proxyAddr, w.proxyCACert)
@@ -531,8 +559,20 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	defTools := WrapCrossPlatformBash(defaultToolsExcept(trimSDK...), runDir, proxyEnv(w.proxyAddr, w.proxyCACert))
 	base = append(base, defTools...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts), IntentID: intent.ID})
-	// 意图文字进 ctx：AugmentTools 据此做能力路由（见 tool_router.go）。
-	ctx = WithRouteIntent(ctx, workerRouteText(intent))
+	// 意图锚定资产先取一次：payload 只有 asset_ids，路由需要知道目标是域名、
+	// 服务还是端点；后面拼意图块时复用同一批资产，不重复查库。
+	var intentAssets []*db.Asset
+	if as != nil {
+		if ids := intentAssetIDs(intent); len(ids) > 0 {
+			if assets, err := as.GetByIDs(ids); err == nil {
+				intentAssets = assets
+			}
+		}
+	}
+	// 意图文字进 ctx：AugmentTools 据此做能力路由（见 tool_router.go）。人工续聊
+	// 的新指令也是当前意图的一部分，必须参与本次 run 的工具面选择。
+	routeText := strings.TrimSpace(workerRouteText(intent) + " " + assetRouteText(intentAssets) + " " + message)
+	ctx = WithRouteIntent(ctx, routeText)
 	// 线索缓存进 ctx：连续失败时 loop breaker 会直接把缓存里的材料递到眼前
 	// （见 clue_hint.go），不用模型自己想起来去查。
 	ctx = WithClueStore(ctx, tsx.Clues())
@@ -563,20 +603,16 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 意图块整体有 8KB 兜底(批次 E):超限时先丢资产块尾部(意图原文在前、必须保住),
 	// 完整资产可用 list_assets / asset_neighbors 按需取。
 	intentBlock := renderIntentTask(intent)
-	if as != nil {
-		if ids := intentAssetIDs(intent); len(ids) > 0 {
-			if assets, err := as.GetByIDs(ids); err == nil && len(assets) > 0 {
-				intentBlock += renderWorkerIntentAssets(assets)
-				// 意图明确针对的这些资产 → 自动纳入任务测试范围（与 insertAssets 同一套
-				// 保守粒度）。upsertTaskScope 的 ON CONFLICT DO NOTHING + uq_task_scope
-				// 唯一索引保证不会重复添加；重跑/重试同样是幂等 no-op。
-				// 资产覆盖度功能关闭时不再累积测试范围(分母)。注意:注入瘦身只影响上面
-				// 拼进 prompt 的视图,这里仍对【全部】锚定资产累计范围,数据能力不减。
-				if coverageEnabled {
-					for _, a := range assets {
-						_ = as.AddAutoScope(taskID, a.Type, a.Domain, a.URL, a.IP)
-					}
-				}
+	if len(intentAssets) > 0 {
+		intentBlock += renderWorkerIntentAssets(intentAssets)
+		// 意图明确针对的这些资产 → 自动纳入任务测试范围（与 insertAssets 同一套
+		// 保守粒度）。upsertTaskScope 的 ON CONFLICT DO NOTHING + uq_task_scope
+		// 唯一索引保证不会重复添加；重跑/重试同样是幂等 no-op。
+		// 资产覆盖度功能关闭时不再累积测试范围(分母)。注意:注入瘦身只影响上面
+		// 拼进 prompt 的视图,这里仍对【全部】锚定资产累计范围,数据能力不减。
+		if coverageEnabled && as != nil {
+			for _, a := range intentAssets {
+				_ = as.AddAutoScope(taskID, a.Type, a.Domain, a.URL, a.IP)
 			}
 		}
 	}

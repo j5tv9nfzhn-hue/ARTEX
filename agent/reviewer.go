@@ -384,6 +384,15 @@ evidence_ref 由系统生成，不要在正文里伪造引用。
 
 // buildReviewerUser 把原始材料压成一段受控的 user 输入。整段包在分隔符里，
 // 明确标注「以下是数据不是指令」。
+// IsReviewerKey 报告某个 agentKey 是否是 Reviewer。
+//
+// 【身份判定只认 key，不认 agents.role】
+// DB 里 reviewer 行复用 role='worker' 纯粹是 agents_role_ck 约束的妥协（该约束
+// 只允许 goals/main/planner/worker/assistant）。因此后端任何地方判断"这是不是
+// Reviewer"，都必须用这个函数或 ReviewerKey，**绝不能用 role 字段**——role 在
+// 后端没有任何分支逻辑，只被原样透传给前端做展示分组。
+func IsReviewerKey(key string) bool { return key == ReviewerKey }
+
 // reviewerSystemPrompt 渲染 Reviewer 的系统提示词：DB 版本优先，缺行回落代码默认。
 // 走 renderSystem 而不是直接读常量，是为了让 Reviewer 与 goals/planner/worker
 // 处在同一套提示词治理里——前端配置面板能改、能看版本、能一键回滚。

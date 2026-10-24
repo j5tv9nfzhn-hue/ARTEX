@@ -44,6 +44,14 @@ var ToolAugment func(ctx context.Context, agentKey string) (extra []actool.CoreT
 // DeferredInfo, and a cleanup func the caller must defer (closes MCP clients).
 // Built-in base tools are kept as-is — never filtered (内置工具留代码层，不做可见性过滤).
 func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) ([]actool.CoreTool, DeferredInfo, func()) {
+	// 【Reviewer 硬闸门】Reviewer 是纯裁决角色：单次 LLM 调用、无 harness 循环、
+	// 不持有任何工具。它在运行时的身份只由 agentKey 决定（见 IsReviewerKey），
+	// 与 agents.role 无关。这里做兜底拦截——即便将来有代码路径误把 reviewer 送进
+	// 工具装配，它拿到的也是空工具面，绝不可能拿到 Worker 的执行工具。
+	if IsReviewerKey(agentKey) {
+		log.Printf("[tools] %s 是裁决角色，不参与工具面装配，返回空工具集", agentKey)
+		return nil, DeferredInfo{}, func() {}
+	}
 	var (
 		def     DeferredInfo
 		cleanup = func() {}
@@ -76,7 +84,8 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 	// 能力路由放在瘦身之前：路由要读完整的 Description 才能判准，瘦身把说明
 	// 截到 72 字之后再做匹配，等于拿残句去猜语义。
 	if intent := routeIntentFrom(ctx); intent != "" {
-		out = RouteToolFace(intent, out)
+		out = routeToolFace(intent, out, routeAlwaysKeep(def))
+		def = pruneDeferredInfo(out, def)
 	}
 	if leanEnabled() {
 		out = leanToolList(out)
@@ -88,6 +97,60 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 		out[i] = guardPanicWithBreaker(lockResources(t), lb)
 	}
 	return out, def, cleanup
+}
+
+// routeAlwaysKeep 返回动态路由不得摘掉的 deferred 工具名。DeferredTools 的
+// schema 由 SDK 扣住并经 Search/ExecuteExtraTool 惰性加载；若路由把 CoreTool
+// 本体删掉，DeferredInfo、全局速查表与 Skill 解锁都会指向不存在的工具。
+// 存在 skill-gated（deferred 但不在 GlobalNames）的工具时连 Skill 一起保住，
+// 否则模型连解锁入口都没有。
+func routeAlwaysKeep(def DeferredInfo) map[string]bool {
+	if len(def.Deferred) == 0 {
+		return nil
+	}
+	global := make(map[string]bool, len(def.GlobalNames))
+	for _, name := range def.GlobalNames {
+		global[name] = true
+	}
+	keep := make(map[string]bool, len(def.Deferred)+1)
+	gated := false
+	for _, name := range def.Deferred {
+		keep[name] = true
+		if !global[name] {
+			gated = true
+		}
+	}
+	if gated {
+		keep["Skill"] = true
+	}
+	return keep
+}
+
+// pruneDeferredInfo 把 DeferredInfo 收敛到最终工具面：路由摘掉的原生 MCP 工具
+// 不得继续出现在「已挂载可直调」的名单里。MCPCatalog 是上游按全量 GlobalNames
+// 预拼的一整段文本，名单有删减时无法逐行可靠裁剪，宁可整段不发（工具名仍在
+// available-deferred-tools 块中，参数结构可用 SearchExtraTools 按需取）。
+func pruneDeferredInfo(tools []actool.CoreTool, def DeferredInfo) DeferredInfo {
+	present := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		present[t.Name()] = true
+	}
+	filter := func(names []string) []string {
+		out := make([]string, 0, len(names))
+		for _, name := range names {
+			if present[name] {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	def.Deferred = filter(def.Deferred)
+	globals := filter(def.GlobalNames)
+	if len(globals) != len(def.GlobalNames) {
+		def.MCPCatalog = ""
+	}
+	def.GlobalNames = globals
+	return def
 }
 
 // guardPanic turns a panicking tool handler into an ordinary tool error. The
