@@ -69,16 +69,21 @@ func (e *Engine) ReapOrphanRuns() (int, error) {
 			n++
 			continue
 		}
-		e.settleInterruptedRun(t, intent, r.ID, r.StartedAt)
-		// 节点若还卡在 running（上一次进程没来得及放手），放回 frontier。
-		// 只有拿到内存里活着的 Task 才 Notify——重建出来的副本没有唤醒通道。
-		if intent.State == "running" {
-			if err := transitionIntentState(t.Store, r.IntentID, "running", "open"); err == nil && live {
-				t.Notify()
+		notify := func() {
+			// 必须等 Reviewer 判决落库、闸门通过后才解锁意图并唤醒 Planner。
+			if intent.State == "running" {
+				if err := transitionIntentState(t.Store, r.IntentID, "running", "open"); err != nil {
+					log.Printf("[reaper] task %s 意图 #%d 放回队列失败: %v", t.ID, intent.ID, err)
+					return
+				}
+				if live {
+					t.Notify()
+				}
 			}
 		}
+		e.settleInterruptedRun(t, intent, r.ID, notify)
 		e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
-			Summary: "检测到一次被强制中断的运行（进程退出），已按执行记录补交接单，并将该意图放回队列"})
+			Summary: "检测到一次被强制中断的运行（进程退出），已按执行记录补交接单；待判决闸门通过后再放回队列"})
 		n++
 	}
 	return n, nil

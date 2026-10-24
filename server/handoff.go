@@ -17,13 +17,8 @@ import (
 // 结构化交接：一次运行结束（正常收尾、撞步数上限、报错、被终止、进程崩溃）都落一份
 // 「运行台账 + 交接单」。
 //
-// 分两层，物理分开：
-//
-//	L1 事实层：跑过什么、写回什么、最后输出、可回读的步骤区间 —— 全部由代码从活动流
-//	           直读，不经过模型；mech_sha256 只覆盖这一层，事后可校验有没有被改过。
-//	L2 主观层：open_work（下一步/假设/负结果）—— 模型通过 handoff_patch 主动补注，
-//	           存在 intent_open_work 表里，渲染时永远带「可推翻」标签。它不能覆盖
-//	           也不能替代 L1：模型没说出口的东西由 L1 兜，模型说错的东西由 L2 标注。
+// 交接单只保留系统从活动流直读的事实层：跑过什么、写回什么、最后输出及可回读区间。
+// mech_sha256 覆盖机械事实，事后可校验有没有被改过；不混入已退役工具产生的主观补注。
 const handoffSchema = "artex.handoff/v1"
 
 type handoffStep struct {
@@ -63,22 +58,13 @@ type handoffPointers struct {
 	TraceRange []int64 `json:"trace_range,omitempty"`
 }
 
-// handoffOpenWork 是 L2 主观层的快照（源数据在 intent_open_work，追加式）。
-type handoffOpenWork struct {
-	NextActions     []string `json:"next_actions,omitempty"`
-	Hypotheses      []string `json:"hypotheses,omitempty"`
-	NegativeResults []string `json:"negative_results,omitempty"`
-	Advisory        bool     `json:"advisory"` // 恒 true：这一层永远只是建议
-}
-
 type handoffRecord struct {
-	Schema   string           `json:"schema"`
-	Source   handoffSource    `json:"source"`
-	Trigger  handoffTrigger   `json:"trigger"`
-	Scope    handoffScope     `json:"scope"`
-	Progress handoffProgress  `json:"progress"`
-	Pointers handoffPointers  `json:"pointers"`
-	OpenWork *handoffOpenWork `json:"open_work,omitempty"`
+	Schema   string          `json:"schema"`
+	Source   handoffSource   `json:"source"`
+	Trigger  handoffTrigger  `json:"trigger"`
+	Scope    handoffScope    `json:"scope"`
+	Progress handoffProgress `json:"progress"`
+	Pointers handoffPointers `json:"pointers"`
 	// Quota 非空 = 本条意图因**工具额度用尽**而结束，正文是模型被强制产出的
 	// 结构化报告（① 已完成 / ② 未解决线索 / ③ 建议下一步）。
 	Quota *handoffQuota `json:"quota,omitempty"`
@@ -154,7 +140,7 @@ func (e *Engine) finishIntentRun(runID int64, t *Task, intent *db.Node, started 
 			runID = id
 		}
 	}
-	rec := e.saveHandoff(t, intent, runID, started, reason, state, stopReason, wrote)
+	rec := e.saveHandoff(t, intent, runID, reason, state, stopReason, wrote)
 	// 判定链整体移到后台（见 reviewThenNotify）：worker 收尾后立刻回去领下一条意图，
 	// 不再被一次外部模型调用挡住。顺序不变——唤醒仍然发生在判决落库之后。
 	e.reviewThenNotify(t, intent, runID, rec, state, stopReason, errText, notify)
@@ -224,9 +210,9 @@ func errTextOf(err error) string {
 }
 
 // settleInterruptedRun 给「起了头但进程没了」的 run 补收尾（reaper 用）：
-// 置 end_state=interrupted，再用 L1 机械抽取补一张交接单——模型已经不在了，
-// 但活动流还在，事实层照样能重建。
-func (e *Engine) settleInterruptedRun(t *Task, intent *db.Node, runID int64, started time.Time) {
+// 置 end_state=interrupted，再用机械抽取补一张交接单。判定成功后才调用 notify，
+// 由回调先放回 frontier 再唤醒 Planner；闸门失败时保持停摆，避免判定前重跑。
+func (e *Engine) settleInterruptedRun(t *Task, intent *db.Node, runID int64, notify func()) {
 	if e == nil || e.m == nil || e.m.pg == nil || t == nil || intent == nil {
 		return
 	}
@@ -234,13 +220,13 @@ func (e *Engine) settleInterruptedRun(t *Task, intent *db.Node, runID int64, sta
 		log.Printf("[reaper] task %s 意图 #%d run %d 收尾失败: %v", t.ID, intent.ID, runID, err)
 		return
 	}
-	rec := e.saveHandoff(t, intent, runID, started, harness.TerminalReason("interrupted"), "interrupted", "crash", agent.WriteCounts{})
+	rec := e.saveHandoff(t, intent, runID, harness.TerminalReason("interrupted"), "interrupted", "crash", agent.WriteCounts{})
 	// 崩溃补收尾同样要出判决，但没有人等它：交给后台，reaper 继续往下走。
-	e.reviewThenNotify(t, intent, runID, rec, "interrupted", "crash", "", nil)
+	e.reviewThenNotify(t, intent, runID, rec, "interrupted", "crash", "", notify)
 }
 
-// saveHandoff 机械抽取交接单：活动流 + 写回计数 + 意图原文 + 本次 run 的模型补注。
-func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time.Time, reason harness.TerminalReason, state, stopReason string, wrote agent.WriteCounts) handoffRecord {
+// saveHandoff 机械抽取交接单：活动流 + 写回计数 + 意图原文 + 可选的额度报告。
+func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, reason harness.TerminalReason, state, stopReason string, wrote agent.WriteCounts) handoffRecord {
 	acts, err := t.Store.ActivityTrace(intent.ID, 400)
 	if err != nil {
 		log.Printf("[handoff] task %s 意图 #%d 读活动流失败: %v", t.ID, intent.ID, err)
@@ -302,19 +288,14 @@ func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time
 		rec.Trigger.Kind = "tool_quota"
 		rec.Trigger.Detail = fmt.Sprintf("工具额度 %d/%d 用尽（拒绝 %d 次）", wrote.Quota.Calls, wrote.Quota.Cap, wrote.Quota.Refused)
 	}
-	// L2：这次 run 期间模型主动补的注。读失败不影响 L1 落库。
-	if ow, err := e.m.pg.OpenWorkSince(t.ID, intent.ID, started); err == nil && len(ow) > 0 {
-		rec.OpenWork = mergeOpenWork(ow)
-	}
 	raw, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		log.Printf("[handoff] task %s 意图 #%d 序列化失败: %v", t.ID, intent.ID, err)
 		return rec
 	}
-	// mech_sha256 只覆盖事实层：把 open_work 摘掉再算，模型改口也动不了这个指纹。
+	// mech_sha256 覆盖系统抽取的机械事实；模型写的额度报告不进入事实层指纹。
 	mech := rec
-	mech.OpenWork = nil
-	mech.Quota = nil // 额度报告是模型写的，不进事实层指纹
+	mech.Quota = nil
 	mechRaw, _ := json.Marshal(mech)
 	sum := sha256.Sum256(mechRaw)
 	h := &db.IntentHandoff{
@@ -327,9 +308,8 @@ func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time
 		RenderText:    renderHandoffText(rec),
 		MechSHA256:    hex.EncodeToString(sum[:]),
 	}
-	// Reviewer 是 Worker 与 Planner 之间唯一的通道：交接单里的原始 tail / last_output /
-	// L2 自注先交给 Reviewer，由它清洗成 Fact / Clue / Verdict 后再给 Planner。
-	// Planner 永远不读这张单子。
+	// Reviewer 是 Worker 与 Planner 之间唯一的判定通道：它读取交接单中的机械事实，
+	// 写入判决后再由闸门唤醒 Planner。Planner 永远不直接读这张单子。
 	//
 	// 判定**不在这里**跑：它是整条收尾路径上唯一要等外部模型的动作，同步跑会把一个
 	// worker 槽位占满一整个判定预算。交接单落库照旧同步（纯 DB，快），判定链由
@@ -338,29 +318,6 @@ func (e *Engine) saveHandoff(t *Task, intent *db.Node, runID int64, started time
 		log.Printf("[handoff] task %s 意图 #%d 保存交接单失败: %v", t.ID, intent.ID, err)
 	}
 	return rec
-}
-
-// mergeOpenWork 把多行补注按类别合并去重（保序）。
-func mergeOpenWork(rows []db.IntentOpenWork) *handoffOpenWork {
-	out := &handoffOpenWork{Advisory: true}
-	seen := map[string]bool{}
-	add := func(dst *[]string, s string) {
-		s = strings.TrimSpace(s)
-		if s == "" || seen[s] {
-			return
-		}
-		seen[s] = true
-		*dst = append(*dst, s)
-	}
-	for _, r := range rows { // 旧 → 新
-		add(&out.NextActions, r.NextActions)
-		add(&out.Hypotheses, r.Hypotheses)
-		add(&out.NegativeResults, r.NegativeResults)
-	}
-	if len(out.NextActions) == 0 && len(out.Hypotheses) == 0 && len(out.NegativeResults) == 0 {
-		return nil
-	}
-	return out
 }
 
 func traceRange(first, last int64) []int64 {
@@ -398,25 +355,12 @@ func renderHandoffText(rec handoffRecord) string {
 	if rec.Progress.LastOutput != "" {
 		fmt.Fprintf(&b, "最后输出：%s\n", clipText(rec.Progress.LastOutput, 500))
 	}
-	if rec.OpenWork != nil {
-		b.WriteString("── 上一任的主观判断（未验证，可推翻；不要当成结论）──\n")
-		for _, s := range rec.OpenWork.NextActions {
-			fmt.Fprintf(&b, "  · 下一步: %s\n", clipText(s, 200))
-		}
-		for _, s := range rec.OpenWork.Hypotheses {
-			fmt.Fprintf(&b, "  · 假设: %s\n", clipText(s, 200))
-		}
-		for _, s := range rec.OpenWork.NegativeResults {
-			fmt.Fprintf(&b, "  · 已排除: %s\n", clipText(s, 200))
-		}
-	}
 	if rec.Quota != nil && strings.TrimSpace(rec.Quota.Report) != "" {
 		b.WriteString("── 额度用尽报告（模型自述，未经核实，可推翻）──\n")
 		b.WriteString(strings.TrimSpace(rec.Quota.Report))
 		b.WriteString("\n")
 	}
-	// 只点名真实挂载的工具：get_worker_trace 在 worker 工具面里，get_handoff 不在
-	// （交接单本身已经渲染在上文，再指向一个调不到的工具只会让模型白试一次）。
+	// 只点名真实挂载的 get_worker_trace；交接单已在上文渲染，不提示调用已退役工具。
 	if len(rec.Pointers.TraceRange) == 2 {
 		fmt.Fprintf(&b, "细节：get_worker_trace(intent_id=%d) 可回读完整步骤（记录 %d..%d）。\n",
 			rec.Source.IntentID, rec.Pointers.TraceRange[0], rec.Pointers.TraceRange[1])

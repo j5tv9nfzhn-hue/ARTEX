@@ -141,12 +141,6 @@ func (e *Engine) runReviewerForIntent(t *Task, intent *db.Node, runID int64, rec
 		}
 		in.Tail = append(in.Tail, line)
 	}
-	if rec.OpenWork != nil {
-		in.OpenWork = append(in.OpenWork, rec.OpenWork.NextActions...)
-		in.OpenWork = append(in.OpenWork, rec.OpenWork.Hypotheses...)
-		in.OpenWork = append(in.OpenWork, rec.OpenWork.NegativeResults...)
-	}
-
 	// run 的终态在 Trigger.Detail 里（"done / " 这类），单独抠出来给规则引擎用。
 	in.EndState = reviewerStateOf(rec)
 	// 模型兜底：规则判不出来的灰区才走它。选型见 agent/reviewer.go 的注释
