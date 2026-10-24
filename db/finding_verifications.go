@@ -168,7 +168,7 @@ func (v *FindingVerification) InitialMessage() string {
 	b.WriteString("你是独立复核员。有人上报了一条漏洞，你需要在**不采信其结论**的前提下，用只读手段独立确认它是否成立。\n\n")
 	fmt.Fprintf(&b, "步骤：\n1. 上报内容、关联资产与任务约束已由系统在本次会话里直接提供（你没有任何工具，也无需调用工具）。\n")
 	b.WriteString("2. 只看得到只读工具：自己去请求、去复算、去找反证，不要仅凭上报描述推断。\n")
-	b.WriteString("3. 结束前输出唯一结论 JSON（不要 Markdown 围栏）：{"verdict":"verified|refuted|inconclusive","summary":"...","evidence":"<Markdown>"}，系统会据此保存。\n")
+	b.WriteString("3. 结束前输出唯一结论 JSON（不要 Markdown 围栏）：{\"verdict\":\"verified|refuted|inconclusive\",\"summary\":\"...\",\"evidence\":\"<Markdown>\"}，系统会据此保存。\n")
 	b.WriteString("   - verified：你独立复现或拿到同等强度的独立证据；\n")
 	b.WriteString("   - refuted：按描述无法复现且能说明原因（已修复、环境不存在、证据不成立）；\n")
 	b.WriteString("   - inconclusive：受限于权限/网络/时间无法确认——这不算复核通过，发现仍按未复核计。\n")
