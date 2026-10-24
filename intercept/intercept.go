@@ -88,6 +88,13 @@ func taskInfoFromCtx(ctx context.Context) (taskID, agentName string) {
 	return "", ""
 }
 
+// TaskIDFromContext 返回 ctx 上绑定的任务 ID（无任务上下文时为空串）。
+// 供工具装配层按任务记忆旁路状态（如技能再加载记忆）使用，不参与拦截判定。
+func TaskIDFromContext(ctx context.Context) string {
+	id, _ := taskInfoFromCtx(ctx)
+	return id
+}
+
 func taskEmitFromCtx(ctx context.Context) func(db.Activity) {
 	f, _ := ctx.Value(taskEmitCtxKey).(func(db.Activity))
 	return f

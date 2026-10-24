@@ -166,7 +166,7 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		opts.SessionID = sessionID
 	}
 	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）。
-	attachCompaction(&opts, c.window, "chat-"+sessionID)
+	attachCompaction(ctx, &opts, c.window, "chat-"+sessionID, skillRecallFor(ctx, agentKey))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close()

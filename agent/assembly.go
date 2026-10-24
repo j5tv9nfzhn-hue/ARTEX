@@ -96,6 +96,10 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 		// 图、同一个 MCP 服务之外的调用可以真并行（见 tools_concurrency.go）。
 		out[i] = guardPanicWithBreaker(lockResources(t), lb)
 	}
+	// 技能再加载（旁路增强）：挂在最外层，只观察工具调用并在结果末尾追加一小段提示，
+	// 不新增工具、不新增模型调用、不改任何工具语义。压缩后 / 方向漂移 / 跨 run 续跑
+	// 三个事件点见 agent/skill_recall.go 的说明。
+	out = wrapSkillRecall(out, skillRecallFor(ctx, agentKey), skillIndexFor(skillToolDescOf(out)))
 	return out, def, cleanup
 }
 

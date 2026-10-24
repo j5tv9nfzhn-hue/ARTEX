@@ -717,7 +717,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 
 	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）；标签只用于压缩日志。
 	compactLabel := WorkerSessionID(ts.ID(), intent.ID)
-	attachCompaction(&opts, w.compactionWindow(), compactLabel)
+	attachCompaction(ctx, &opts, w.compactionWindow(), compactLabel, skillRecallFor(ctx, "worker"))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close() // release the session's background-task manager (temp dir + processes)

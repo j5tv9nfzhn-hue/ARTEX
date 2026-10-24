@@ -210,7 +210,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	if mainSeg > 0 {
 		compactLabel = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
 	}
-	attachCompaction(&opts, m.compactionWindow(), compactLabel)
+	attachCompaction(ctx, &opts, m.compactionWindow(), compactLabel, skillRecallFor(ctx, "mainagent"))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close()

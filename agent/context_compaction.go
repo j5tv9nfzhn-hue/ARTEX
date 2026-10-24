@@ -32,10 +32,13 @@ type observedCompactor struct {
 	label string
 	cfg   compaction.Config
 	inner *compaction.Compactor
+	// recall 是同一任务的技能记忆：压缩真的发生时打点，供技能再加载在下一次工具
+	// 结果里提醒「正文已被移出，需要重新 Skill」。
+	recall *skillRecallState
 }
 
-func newObservedCompactor(label string, cfg *compaction.Config, summary compaction.Summarizer) *observedCompactor {
-	return &observedCompactor{label: label, cfg: *cfg, inner: compaction.New(*cfg, summary)}
+func newObservedCompactor(label string, cfg *compaction.Config, summary compaction.Summarizer, recall *skillRecallState) *observedCompactor {
+	return &observedCompactor{label: label, cfg: *cfg, inner: compaction.New(*cfg, summary), recall: recall}
 }
 
 func (c *observedCompactor) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens int) []llm.Message {
@@ -66,6 +69,8 @@ func (c *observedCompactor) report(before, after []llm.Message, lastInputTokens 
 	if llm.LastBoundaryIndex(after) <= llm.LastBoundaryIndex(before) {
 		return
 	}
+	// 只在这里打点：report 只有「真的多出一条压缩边界」才会走到这行。
+	c.recall.markCompaction()
 	log.Printf("[compaction] %s: 已压缩（%s）输入=%d tok → API 视图估算 %d tok（等效窗口 %d，触发点 %d）",
 		c.label, trigger, lastInputTokens,
 		compaction.EstimateTokens(llm.MessagesForAPI(after)),
@@ -186,9 +191,9 @@ func clipSummaryLine(s string) string {
 //
 // 只是多了一层观测。必须在 opts.Provider / opts.MaxTokens / opts.NonStreaming 就位之后
 // 调用；noa 若在之后启用会直接覆盖 opts.Compactor（实验功能优先，符合设计）。
-func attachCompaction(opts *agentcore.Options, window int, label string) {
+func attachCompaction(ctx context.Context, opts *agentcore.Options, window int, label string, recall *skillRecallState) {
 	cfg := compactionConfig(window)
 	opts.Compaction = nil // 只留一个上下文管理器，避免 agentcore 报 "两者同时设置"
 	opts.Compactor = newObservedCompactor(label, cfg,
-		observedSummarizer(label, compaction.ProviderSummarizer(opts.Provider, opts.MaxTokens, opts.NonStreaming)))
+		observedSummarizer(label, compaction.ProviderSummarizer(opts.Provider, opts.MaxTokens, opts.NonStreaming)), recall)
 }

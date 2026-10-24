@@ -371,6 +371,9 @@ func BuildTacticalRoutingHint(taskText string, tools []actool.CoreTool, def Defe
 	if nativeBlock != "" {
 		b.WriteString(nativeBlock)
 	}
+	if hasSkillTool {
+		b.WriteString("- ♻️ **技能时效**：技能正文只在当前 run 的上下文里有效。上下文被压缩后、或攻击面转到新领域（新协议/新栈/新阶段）时，**必须重新调用 `Skill` 加载**再动手，不要凭记忆复述步骤；系统会在压缩后与方向漂移时给出提醒。\n")
+	}
 	b.WriteString("</tactical_skill_mcp_routing>")
 	return b.String()
 }

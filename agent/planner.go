@@ -501,7 +501,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	// 内置上下文压缩：窗口 × 80% 触发（口径见 compactionConfig）；标签只用于压缩日志。
 	compactLabel := fmt.Sprintf("exp%d-planner", ts.ID())
-	attachCompaction(&opts, p.compactionWindow(), compactLabel)
+	attachCompaction(ctx, &opts, p.compactionWindow(), compactLabel, skillRecallFor(ctx, "planner"))
 	// 态势（刚完成的意图 + 完整图）现在拼进本轮 user 输入（见下方 input）。user 里还有
 	// 指令 + 跨唤醒待办（todo 是模型自己的规划便签，可再生，放 user 即可）。
 	// 开场白按「本轮有无具体变动」分两种：有变动 → 指向下方【实际变动】块；无变动
