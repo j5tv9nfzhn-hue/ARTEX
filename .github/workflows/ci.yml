@@ -54,6 +54,11 @@ jobs:
       build_ref: ${{ steps.decide.outputs.build_ref }}
       signing: ${{ steps.decide.outputs.signing }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 1
+
       - name: 判定触发参数
         id: decide
         env:
@@ -264,9 +269,17 @@ jobs:
           set -euo pipefail
           pkg="${{ env.ACTION_DIR }}/${{ matrix.package }}"
           [ -f "$pkg" ] || { echo "::error::缺少产物 $pkg"; exit 1; }
-          unzip -tq "$pkg" > /dev/null
-          echo "归档内容："
-          unzip -Z1 "$pkg" | head -20
+          size=$(wc -c < "$pkg")
+          echo "产物 ${pkg} → ${size} 字节"
+          [ "$size" -gt 1000000 ] || { echo "::error::产物过小（${size}），疑似打包失败"; exit 1; }
+          # unzip 只在类 Unix runner 上保证存在；Windows 由 finalize 阶段统一做完整校验
+          if command -v unzip >/dev/null 2>&1; then
+            unzip -tq "$pkg" > /dev/null
+            echo "归档内容："
+            unzip -Z1 "$pkg" | head -20
+          else
+            echo "（本 runner 无 unzip，归档完整性交由 finalize 阶段校验）"
+          fi
 
       - name: 可执行引信（仅 linux/amd64）
         if: matrix.target == 'linux/amd64'
