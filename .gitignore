@@ -58,3 +58,8 @@ Thumbs.db
 /bench/
 /Dockerfile.bench
 /Dockerfile.bench.v2
+
+# CI 产物目录：finalize 阶段把三端六包汇总到这里，再由 upload-artifact 收走
+/ACTION/
+# 前端静态导出中间产物（build.sh 会同步进 server/webui/dist，那份已被忽略）
+/web/out/

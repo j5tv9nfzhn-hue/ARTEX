@@ -136,9 +136,17 @@ func (s *logSinkT) add(l LogLine) {
 		s.ring = s.ring[len(s.ring)-s.cap:]
 	}
 	ch := s.dbCh
-	subs := make([]chan LogLine, 0, len(s.subs))
+	// Fan out while STILL holding s.mu: unsubscribe closes the channel under this
+	// same lock, so a delivery can never target a closed channel. Delivering after
+	// unlocking used to allow exactly that — "send on closed channel" — and it
+	// panics whichever goroutine called log.Printf; most ARTEX log calls come from
+	// engine/planner/worker goroutines that have no recover, so the process died.
+	// Deliveries are non-blocking, so a slow or full subscriber never holds the lock.
 	for sub := range s.subs {
-		subs = append(subs, sub)
+		select {
+		case sub <- l:
+		default:
+		}
 	}
 	s.mu.Unlock()
 
@@ -146,13 +154,6 @@ func (s *logSinkT) add(l LogLine) {
 	if ch != nil {
 		select {
 		case ch <- dbWriteReq{seq: l.Seq, ll: l}:
-		default:
-		}
-	}
-
-	for _, sub := range subs {
-		select {
-		case sub <- l:
 		default:
 		}
 	}
@@ -187,8 +188,10 @@ func (s *logSinkT) subscribe() (<-chan LogLine, func()) {
 		once.Do(func() {
 			s.mu.Lock()
 			delete(s.subs, ch)
-			s.mu.Unlock()
+			// Close under the same lock add() holds while fanning out, so no
+			// in-flight delivery can find this channel already closed.
 			close(ch)
+			s.mu.Unlock()
 		})
 	}
 }

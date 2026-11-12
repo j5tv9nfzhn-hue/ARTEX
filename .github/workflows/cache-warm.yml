@@ -1,0 +1,155 @@
+name: cache-warm
+
+# 跨 workflow 缓存的「写入端」。
+#
+# 为什么要单独一个 workflow：
+#   * actions/cache 的作用域是「key + version + 分支」，默认分支上保存的缓存对其他分支可见
+#     （见 actions/cache README「Cache scopes」）。所以在 main 上集中预热，其他分支 / PR /
+#     以及本仓库任何 workflow 都能 restore，而不用每条流水线各自冷启动。
+#   * restore 与 save 拆成两个 action（actions/cache/restore、actions/cache/save），
+#     才能做到「一处保存、多处只读复用」，也避免 PR（fork 只读 token）反复尝试写缓存。
+#
+# 与 ci.yml 共用同一套 key 前缀（artex-go- / artex-npm-）与同样的 hashFiles 输入，
+# 任何一处改动 key 组成都必须同步改另一个文件，否则会退化成 100% miss。
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # 每周一 03:17 UTC 刷新一次（缓存 7 天不用会被回收）
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "go.sum"
+      - "go.mod"
+      - "web/package-lock.json"
+      - ".github/workflows/cache-warm.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cache-warm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # 三端各预热一份 Go 依赖 + 构建缓存（缓存按 OS 分区，跨 OS 不通用）
+  warm-go:
+    name: warm / go ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest }
+          - { runner: macos-latest }
+          - { runner: windows-latest }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 解析缓存路径与周期
+        id: paths
+        run: |
+          {
+            echo "gomod=$(go env GOMODCACHE)"
+            echo "gocache=$(go env GOCACHE)"
+            echo "week=$(date -u +%G%V)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 检查是否已预热
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gomod }}
+            ${{ steps.paths.outputs.gocache }}
+          key: ${{ runner.os }}-${{ runner.arch }}-artex-go-${{ hashFiles('go.sum') }}-w${{ steps.paths.outputs.week }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-artex-go-${{ hashFiles('go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-artex-go-
+
+      - name: 预热模块缓存
+        if: steps.restore.outputs.cache-hit != 'true'
+        run: go mod download all
+
+      - name: 预热构建缓存
+        if: steps.restore.outputs.cache-hit != 'true'
+        run: go build ./...
+
+      - name: 保存缓存
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gomod }}
+            ${{ steps.paths.outputs.gocache }}
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+
+      - name: 预热结果
+        env:
+          HIT: ${{ steps.restore.outputs.cache-hit }}
+          KEY: ${{ steps.restore.outputs.cache-primary-key }}
+        run: |
+          {
+            echo "### cache-warm / go (${{ matrix.runner }})"
+            echo ""
+            echo "- cache-hit: \`${HIT:-false}\`"
+            echo "- key: \`$KEY\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 前端依赖只在 ubuntu 上预热（构建前端的那台 runner 就是 ubuntu）
+  warm-npm:
+    name: warm / npm ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: ""
+
+      - name: 计算缓存周期
+        id: paths
+        run: echo "week=$(date -u +%G%V)" >> "$GITHUB_OUTPUT"
+
+      - name: 检查是否已预热
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-${{ runner.arch }}-artex-npm-${{ hashFiles('web/package-lock.json') }}-w${{ steps.paths.outputs.week }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-artex-npm-${{ hashFiles('web/package-lock.json') }}-
+            ${{ runner.os }}-${{ runner.arch }}-artex-npm-
+
+      - name: 预热 npm 缓存
+        if: steps.restore.outputs.cache-hit != 'true'
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+
+      - name: 保存缓存
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.npm
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+
+      - name: 预热结果
+        env:
+          HIT: ${{ steps.restore.outputs.cache-hit }}
+          KEY: ${{ steps.restore.outputs.cache-primary-key }}
+        run: |
+          {
+            echo "### cache-warm / npm"
+            echo ""
+            echo "- cache-hit: \`${HIT:-false}\`"
+            echo "- key: \`$KEY\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,378 @@
+name: ci
+
+# 四段式流水线：gate → plan → job → release
+#   gate    准入：只判定"构建什么、要不要发布"，参数错在这里就失败
+#   plan    校验三端六包（清单/工具链/标签/签名）+ 产出构建矩阵
+#   job     前端产物 → 六包编译打包 → 汇总进 ACTION 目录
+#   release 仅当显式给出 tag 时执行；否则整条流水线正常结束
+#
+# 触发方式见 .github/CI.md；跨 workflow 缓存由 cache-warm.yml 预热、本文件只读消费。
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "目标平台：all | linux/amd64 | linux/arm64 | darwin/amd64 | darwin/arm64 | windows/amd64 | windows/arm64"
+        required: false
+        default: "all"
+      tag:
+        description: "发布标签 vX.Y.Z（留空 = 普通 CL 构建，不进入 release）"
+        required: false
+        default: ""
+      ref:
+        description: "要构建的分支/提交（留空 = 触发时的 ref）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.platform || 'all' }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  ACTION_DIR: ACTION
+
+jobs:
+  # ───────────────────────────── gate ─────────────────────────────
+  gate:
+    name: gate / 准入判定
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+      platform: ${{ steps.decide.outputs.platform }}
+      build_ref: ${{ steps.decide.outputs.build_ref }}
+      signing: ${{ steps.decide.outputs.signing }}
+    steps:
+      - name: 判定触发参数
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          INPUT_PLATFORM: ${{ github.event.inputs.platform }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_REF: ${{ github.event.inputs.ref }}
+          SIGNING_KEY: ${{ secrets.ARTEX_SIGNING_KEY }}
+          SHA: ${{ github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/gate.sh
+
+  # ───────────────────────────── plan ─────────────────────────────
+  plan:
+    name: plan / 三端六包校验
+    needs: gate
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      packages: ${{ steps.plan.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.build_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 校验六包并生成矩阵
+        id: plan
+        env:
+          PLATFORM: ${{ needs.gate.outputs.platform }}
+          VERSION: ${{ needs.gate.outputs.version }}
+          RELEASE: ${{ needs.gate.outputs.release }}
+          TAG: ${{ needs.gate.outputs.tag }}
+          SIGNING: ${{ needs.gate.outputs.signing }}
+          ACTION_DIR: ${{ env.ACTION_DIR }}
+        run: bash .github/scripts/plan.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: ${{ env.ACTION_DIR }}/plan.json
+          retention-days: 7
+
+  # ──────────────────── signals（非强制探针）────────────────────
+  # 只提供信号，不参与任何 needs 链：失败只标黄，不阻塞 job / release。
+  signals:
+    name: signals / 非强制探针
+    needs: [gate, plan]
+    if: always() && needs.plan.result == 'success'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.build_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: go vet
+        continue-on-error: true
+        run: go vet ./...
+
+      - name: 单元探针（无需数据库）
+        continue-on-error: true
+        run: go test ./server -run 'TestLogSink' -count=1
+
+      - name: 二进制引信
+        continue-on-error: true
+        run: |
+          go build -o /tmp/artex-smoke ./cmd/artex
+          /tmp/artex-smoke -h > /tmp/artex-help.txt 2>&1 || true
+          cat /tmp/artex-help.txt
+          grep -q -- '-addr' /tmp/artex-help.txt
+
+  # ─────────────────────── job（1/3：前端）───────────────────────
+  frontend:
+    name: job / 前端静态产物
+    needs: [gate, plan]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.build_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: ""
+
+      - name: 计算缓存周期
+        id: paths
+        run: echo "week=$(date -u +%G%V)" >> "$GITHUB_OUTPUT"
+
+      # 跨 workflow 缓存：cache-warm.yml 在默认分支上写，本 job 只读
+      - name: 恢复跨 workflow 缓存（npm）
+        id: npm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-${{ runner.arch }}-artex-npm-${{ hashFiles('web/package-lock.json') }}-w${{ steps.paths.outputs.week }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-artex-npm-${{ hashFiles('web/package-lock.json') }}-
+            ${{ runner.os }}-${{ runner.arch }}-artex-npm-
+
+      - name: 安装依赖
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+
+      - name: 构建静态前端
+        working-directory: web
+        run: npm run build:static
+
+      - name: 写入跨 workflow 缓存（npm）
+        if: steps.npm-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.npm
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webui-dist
+          path: web/out
+          retention-days: 3
+
+  # ─────────────────────── job（2/3：编译）───────────────────────
+  build:
+    name: job / 编译 ${{ matrix.target }}
+    needs: [gate, plan, frontend]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.build_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 解析缓存路径与周期
+        id: paths
+        run: |
+          {
+            echo "gomod=$(go env GOMODCACHE)"
+            echo "gocache=$(go env GOCACHE)"
+            echo "week=$(date -u +%G%V)"
+          } >> "$GITHUB_OUTPUT"
+
+      # 跨 workflow 缓存：key 与 cache-warm.yml 完全一致才可能命中
+      - name: 恢复跨 workflow 缓存（Go）
+        id: go-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gomod }}
+            ${{ steps.paths.outputs.gocache }}
+          key: ${{ runner.os }}-${{ runner.arch }}-artex-go-${{ hashFiles('go.sum') }}-w${{ steps.paths.outputs.week }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-artex-go-${{ hashFiles('go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-artex-go-
+
+      - name: 取回前端产物
+        uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: server/webui/dist
+
+      - name: Windows 打包依赖 zip
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          if (Get-Command zip -ErrorAction SilentlyContinue) { Write-Host "zip 已就绪"; exit 0 }
+          choco install zip -y --no-progress
+
+      - name: 编译并打包
+        env:
+          ARTEX_SKIP_FRONTEND: "1"
+          ARTEX_SKIP_NPM_CI: "1"
+          ARTEX_PACKAGE: "1"
+          ARTEX_PACKAGE_DIR: ${{ env.ACTION_DIR }}
+          ARTEX_BUILD_VERSION: ${{ needs.gate.outputs.version }}
+          ARTEX_COMPRESS: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTEX_PACKAGE_DIR"
+          ./build.sh --target "${{ matrix.target }}"
+          ls -l "$ARTEX_PACKAGE_DIR"
+
+      - name: 校验归档与命名
+        run: |
+          set -euo pipefail
+          pkg="${{ env.ACTION_DIR }}/${{ matrix.package }}"
+          [ -f "$pkg" ] || { echo "::error::缺少产物 $pkg"; exit 1; }
+          unzip -tq "$pkg" > /dev/null
+          echo "归档内容："
+          unzip -Z1 "$pkg" | head -20
+
+      - name: 可执行引信（仅 linux/amd64）
+        if: matrix.target == 'linux/amd64'
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          unzip -q "${{ env.ACTION_DIR }}/${{ matrix.package }}" -d "$tmp"
+          bin="$tmp/$(basename "${{ matrix.package }}" .zip)/artex"
+          chmod +x "$bin"
+          "$bin" -h > "$tmp/help.txt" 2>&1 || true
+          head -5 "$tmp/help.txt"
+          grep -q -- '-addr' "$tmp/help.txt"
+
+      - name: 写入跨 workflow 缓存（Go）
+        if: steps.go-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gomod }}
+            ${{ steps.paths.outputs.gocache }}
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.ACTION_DIR }}/*.zip
+          retention-days: 7
+
+  # ─────────────────── job（3/3：汇总到 ACTION）──────────────────
+  finalize:
+    name: job / 汇总到 ACTION
+    needs: [gate, plan, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.build_ref }}
+
+      - name: 取回全部平台产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          merge-multiple: true
+          path: ${{ env.ACTION_DIR }}
+
+      - name: 取回 plan.json
+        uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: ${{ env.ACTION_DIR }}
+
+      - name: 校验和 / manifest / 可选签名
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+          TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE: ${{ needs.gate.outputs.release }}
+          SIGNING: ${{ needs.gate.outputs.signing }}
+          COMMIT: ${{ github.sha }}
+          ACTION_DIR: ${{ env.ACTION_DIR }}
+          ARTEX_SIGNING_KEY: ${{ secrets.ARTEX_SIGNING_KEY }}
+        run: bash .github/scripts/assemble.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artex-CL
+          path: ${{ env.ACTION_DIR }}/
+          retention-days: 14
+
+  # ──────────────────────────── release ───────────────────────────
+  # 只有 gate 判定"显式 tag"时才进入；否则本 job 被跳过，流水线正常结束。
+  release:
+    name: release / 发布
+    needs: [gate, finalize]
+    if: needs.gate.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 取回 ACTION 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: artex-CL
+          path: ${{ env.ACTION_DIR }}
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.gate.outputs.tag }}
+          VERSION: ${{ needs.gate.outputs.version }}
+          RELEASE: ${{ needs.gate.outputs.release }}
+          SIGNING: ${{ needs.gate.outputs.signing }}
+          ACTION_DIR: ${{ env.ACTION_DIR }}
+        run: |
+          set -euo pipefail
+          files=("$ACTION_DIR"/*.zip "$ACTION_DIR/SHA256SUMS" "$ACTION_DIR/manifest.json")
+          [ -f "$ACTION_DIR/SHA256SUMS.sig" ] && files+=("$ACTION_DIR/SHA256SUMS.sig")
+          cat > notes.md <<EOF
+          ARTEX ${VERSION} 自动构建产物（三端六包）。
+
+          - 标签：\`${TAG}\`
+          - 签名：\`${SIGNING}\`
+          - 校验：\`sha256sum -c SHA256SUMS\`
+          - 清单：\`manifest.json\`
+          EOF
+          gh release create "$TAG" "${files[@]}" \
+            --repo "${{ github.repository }}" \
+            --title "ARTEX ${TAG}" \
+            --notes-file notes.md \
+            --verify-tag
