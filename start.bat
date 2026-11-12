@@ -1,6 +1,9 @@
 @echo off
-rem 控制台切 UTF-8，否则本文件里的中文在 GBK 终端下是乱码。
 chcp 65001 >nul 2>&1
+rem 编码约定：本文件为 UTF-8（无 BOM）+ CRLF，且 chcp 必须紧跟 @echo off。
+rem cmd.exe 按当前代码页逐行解码批处理：若中文 rem 出现在 chcp 之前，在默认的
+rem GBK(936) 控制台下这些 UTF-8 字节会按双字节错位配对，可能吞掉后面的 ASCII
+rem 字符，表现为脚本行为莫名其妙。先切 65001，后续中文才按 UTF-8 正确解码。
 rem ARTEX 守护启动脚本（Windows）
 rem
 rem 用法：

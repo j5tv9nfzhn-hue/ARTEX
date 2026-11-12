@@ -18,6 +18,33 @@
 # 由 artex 自己在启动时完成，脚本保持傻瓜化。
 set -u
 
+# 编码：本脚本的提示是中文。跑在没有 UTF-8 locale 的环境里（Docker 默认 POSIX
+# locale、systemd 的 LANG=C、cron）时不至于失败，但终端/日志里会变成乱码字节，
+# 排查问题时反而更难读。这里把输出固定成 UTF-8。
+#
+# 关键是"只在真的装了 UTF-8 locale 时才切"：硬设一个不存在的 locale（比如
+# en_US.UTF-8 而系统没生成它）会让每个子进程启动都打印
+# "setlocale: cannot change locale" —— 那是把乱码换成了报错，问题更糟。
+# 已经处于 UTF-8 时一律不动，避免覆盖用户/容器的显式设置。
+locale_is_utf8() {
+	case "${1:-}" in
+		*[Uu][Tt][Ff]-8* | *[Uu][Tt][Ff]8*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+if ! locale_is_utf8 "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"; then
+	for candidate in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+		if locale -a 2>/dev/null | grep -qix "$candidate"; then
+			LC_ALL=$candidate
+			LC_CTYPE=$candidate
+			LANG=$candidate
+			export LC_ALL LC_CTYPE LANG
+			break
+		fi
+	done
+fi
+
 cd "$(dirname "$0")" || exit 1
 
 BIN=./artex

@@ -69,7 +69,7 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 ### 方式一：一键安装脚本（推荐）
 
 ```bash
-git clone https://github.com/Hinln/ARTEX.git
+git clone https://github.com/j5tv9nfzhn-hue/ARTEX.git
 cd ARTEX
 ./install.sh
 ```
@@ -84,7 +84,7 @@ cd ARTEX
 ### 方式二：Docker Compose（手动）
 
 ```bash
-git clone https://github.com/Hinln/ARTEX.git
+git clone https://github.com/j5tv9nfzhn-hue/ARTEX.git
 cd ARTEX
 cp .env.example .env          # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
 docker compose up -d          # 拉取 autumn27/artex 镜像 + postgres
@@ -100,7 +100,7 @@ docker compose up -d          # 拉取 autumn27/artex 镜像 + postgres
 
 ### 方式三：下载预编译二进制（Releases）
 
-到 [Releases](https://github.com/Hinln/ARTEX/releases) 下载对应平台的 zip，解压后得到 `artex` + `start.sh`（Windows 为 `start.bat`）+ `skills/` + `config.example.json`：
+到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载对应平台的 zip，解压后得到 `artex` + `start.sh`（Windows 为 `start.bat`）+ `skills/` + `config.example.json`：
 
 ```bash
 cp config.example.json config.json   # 填好 database 连接
@@ -144,20 +144,21 @@ ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 
 > 升级只换程序、不动数据：Postgres 数据卷 `pgdata`、`./data`（jwt.key / SQLite 等）、`./skills` 都会保留。**数据库迁移无需手动执行**——`artex` 每次启动会幂等重跑 `schema.sql`（含 `ADD COLUMN` / `CREATE INDEX IF NOT EXISTS`），即“重启即迁移”。升级前仍建议先备份 `./data` 与数据库。
 
-### 本仓库的私有 Release 更新源
+### 更新源（本仓库）
 
-页面一键更新固定从 [Hinln/ARTEX Releases](https://github.com/Hinln/ARTEX/releases) 检查和下载版本。克隆或通过 Git 更新源码也使用 `Hinln/ARTEX`；原项目的 Go module 路径保持不变。
+页面一键更新固定从 [j5tv9nfzhn-hue/ARTEX Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 检查和下载版本，这个来源写死在 `selfupdate/github.go` 的 `Repo` 常量里（不做成配置项——更新源可配等于给任何能改配置的人一条远程代码执行通道）。克隆或通过 Git 更新源码也使用 `j5tv9nfzhn-hue/ARTEX`；原项目的 Go module 路径 `github.com/Autumn-27/artex` 保持不变。
 
-这是私有仓库。请为运行 ARTEX 的后端进程设置 `ARTEX_UPDATE_GITHUB_TOKEN`，令牌只需本仓库的 **Contents: read** 权限。令牌由后端用于查询 Release 和下载附件，不发送给浏览器，也不要提交到 Git。
+本仓库是**公开**仓库，读取 Release 不需要任何凭据。`ARTEX_UPDATE_GITHUB_TOKEN` 因此是**可选项**：仅在访问 GitHub 被限流，或仓库将来转回私有时才需要设置，令牌需要 **Contents: read** 权限。令牌只由后端读取用于查询 Release 和下载附件，不发送给浏览器，也不要提交到 Git。
 
 ```bash
-# 先在当前 shell 或服务环境中安全设置 ARTEX_UPDATE_GITHUB_TOKEN
+# 可选：仅在需要提高 API 限额时才设置
+export ARTEX_UPDATE_GITHUB_TOKEN=<token>
 ./start.sh
 ```
 
-本地直接启动时，`start.sh` 不会自动读取 `.env`；必须将变量导出到进程环境。Docker Compose 部署则可在未纳入 Git 的 `.env` 中填写该变量，并重建 artex 容器；镜像需要包含本分支的更新代码，旧版镜像不会因此切换升级源。
+本地直接启动时，`start.sh` 不会自动读取 `.env`；需要该变量时请导出到进程环境。Docker Compose 部署可在未纳入 Git 的 `.env` 中填写并重建 artex 容器。
 
-需要先在本仓库发布非 draft、非 prerelease 的正式 Release，并附上 `artex-<版本>-<os>-<arch>.zip` 和 `SHA256SUMS`，页面才能提供可安装更新。仓库里只有源码时还不能在线升级。现有 Release 工作流会在推送 `v*` tag 时为当前仓库生成这些附件。
+页面上要能点到更新，前提是本仓库已发布**非 draft、非 prerelease** 的正式 Release，并附上 `artex-<版本>-<os>-<arch>.zip` 与 `SHA256SUMS`。仓库里只有源码时还不能在线升级——推一个 `v*` 标签，CI（`.github/workflows/ci.yml` 的 `release` 阶段）就会自动构建三端六包并创建 Release。
 
 ### 方式一：页面一键更新（推荐）
 
@@ -197,7 +198,7 @@ docker image prune -f          # 清理旧镜像（可选）
 
 ### 方式四：预编译二进制（Releases）
 
-到 [Releases](https://github.com/Hinln/ARTEX/releases) 下载新版本 zip，停掉旧进程后覆盖 `artex` 与 `skills/`（保留你的 `config.json` 与 `data/`），重启即可：
+到 [Releases](https://github.com/j5tv9nfzhn-hue/ARTEX/releases) 下载新版本 zip，停掉旧进程后覆盖 `artex` 与 `skills/`（保留你的 `config.json` 与 `data/`），重启即可：
 
 ```bash
 cp -r <解压目录>/skills ./ && cp <解压目录>/artex ./
