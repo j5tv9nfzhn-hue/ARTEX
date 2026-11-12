@@ -43,16 +43,25 @@ esac
 
 command -v gh >/dev/null 2>&1 || { echo "未安装 gh（GitHub CLI）" >&2; exit 1; }
 
+# 目标仓库：默认取 gh 的解析结果（git remote），可用 ARTEX_REPO=owner/name 覆盖。
+# 当本地 origin 指向上游而非本仓库时（备份/镜像仓库常见），必须显式指定。
+repo_args=()
+if [ -n "${ARTEX_REPO:-}" ]; then
+  repo_args=(-R "$ARTEX_REPO")
+  echo "[dispatch] 目标仓库：${ARTEX_REPO}"
+fi
+
 args=(-f "platform=$PLATFORM")
 [ -n "$TAG" ] && args+=(-f "tag=$TAG")
 [ -n "$REF" ] && args+=(-f "ref=$REF")
 
 echo "[dispatch] 平台=$PLATFORM  标签=${TAG:-<无，不发布>}  ref=${REF:-<当前>}"
-gh workflow run ci.yml "${args[@]}"
+gh workflow run ci.yml "${repo_args[@]}" "${args[@]}"
 
 sleep 3
 echo "[dispatch] 已触发，最近一次运行："
-gh run list --workflow=ci.yml --limit 1
+gh run list "${repo_args[@]}" --workflow=ci.yml --limit 1
 echo
-echo "跟踪日志： gh run watch \$(gh run list --workflow=ci.yml --limit 1 --json databaseId -q '.[0].databaseId')"
-echo "下载产物： gh run download <run-id> -n artex-CL -D ACTION"
+echo "跟踪日志： gh run watch \$(gh run list ${ARTEX_REPO:+-R $ARTEX_REPO} --workflow=ci.yml --limit 1 --json databaseId -q '.[0].databaseId')"
+echo "下载产物： gh run download <run-id> ${ARTEX_REPO:+-R $ARTEX_REPO} -n artex-CL -D ACTION"
+

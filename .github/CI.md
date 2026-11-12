@@ -105,6 +105,9 @@ ci.yml（消费端，六个编译 job + 前端 job）
 
 # 列出可选平台
 .github/scripts/dispatch.sh --list
+
+# 当本地 origin 指向别的仓库（备份/镜像场景）时，显式指定目标仓库：
+ARTEX_REPO=<owner>/ARTEX .github/scripts/dispatch.sh linux/amd64
 ```
 
 等价的手动触发：
