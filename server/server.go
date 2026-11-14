@@ -3880,8 +3880,14 @@ func (s *Server) gc(w http.ResponseWriter, r *http.Request) {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		// PATCH 必须列出：任务元数据、任务分类、漏洞等接口都是 PATCH
+		// （PATCH /api/tasks/{id}、/api/task-categories/{id}、/api/exploration/findings/{id} 等）。
+		// 漏掉它时，浏览器预检会直接拦掉这些请求——表现为"同源部署一切正常、
+		// 跨域部署下部分操作静默失败"。
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+		// Authorization 必须列出：全部受保护接口都用 `Authorization: Bearer <jwt>`，
+		// 而它属于非简单头，预检不放行就等于所有跨域写操作都过不去。
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
 			return

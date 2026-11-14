@@ -364,7 +364,11 @@ func (t quotaAwareTransport) RoundTrip(req *http.Request) (*http.Response, error
 	if resp.StatusCode != http.StatusTooManyRequests {
 		return resp, nil
 	}
-	body, readErr := io.ReadAll(resp.Body)
+	// 读取加上限：429 是错误响应，但异常网关/代理可以用一个任意大的响应体作答，
+	// 原先无界的 io.ReadAll 会把它整个读进内存。下面的额度标记匹配只需要正文开头，
+	// 因此截断读取不会影响 402 归一化；LimitReader 到上限即返回 io.EOF，
+	// readErr 依旧只表示真实的读取失败。
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
@@ -397,8 +401,30 @@ func requestBodySnapshot(req *http.Request) string {
 	return string(b)
 }
 
+const (
+	// responseHeaderTimeout 约束「请求写完 → 收到响应头」的等待时长。
+	// 见 quotaAwareHTTPClient 里的说明：用 ResponseHeaderTimeout 而不是
+	// http.Client.Timeout，因为该 client 同时承载长连接流式（SSE）调用。
+	responseHeaderTimeout = 60 * time.Second
+
+	// maxErrorBodyBytes 限制 429 正文最多读进内存多少字节。错误正文通常只有几百
+	// 字节；64K 足以覆盖额度标记匹配（在正文开头）并挡住异常网关的超大响应体，
+	// 对所有正常响应保持逐字节不变。
+	maxErrorBodyBytes = 64 << 10
+)
+
 func quotaAwareHTTPClient(proxy, sessionHeaderKey string) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// 响应头等待加界。刻意【不】用 http.Client.Timeout：这个 client 同时承载流式
+	// (SSE) 调用（Config.Stream，以及下面交给 norma 的 HTTPClient），Client.Timeout
+	// 覆盖整次交换含正文，再宽松的值也会把长回复拦腰截断。
+	// ResponseHeaderTimeout 只约束「请求写完 → 收到响应头」这一段：供应商都是立刻回
+	// 200 + text/event-stream，真正的"思考"延迟发生在响应头之后，故不影响流式。
+	// DefaultTransport 已经限制了建连（30s）与 TLS 握手（10s），唯独把
+	// ResponseHeaderTimeout 留成 0——即"连上了但永不作答"的网关原先没有任何上限。
+	// 60s 取得偏宽松：网关排队的合法等待不可忽略（nginx 自己的
+	// proxy_read_timeout 默认也是 60s）。
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	proxy = strings.TrimSpace(proxy)
 	if proxy == "" {
 		transport.Proxy = nil // 留空=直连,不回退 HTTP_PROXY/HTTPS_PROXY 环境变量
