@@ -339,8 +339,13 @@ export function GitBashCard() {
                 )}
               </div>
             </ScrollArea>
+            {browse?.resolved && (
+              <p className="text-muted-foreground text-xs">
+                该目录经符号链接/junction 指向：<span className="font-mono">{browse.resolved}</span>
+              </p>
+            )}
             <p className="text-muted-foreground text-xs">
-              只显示目录与常见 shell 可执行文件；不支持符号链接指向的目录。
+              只显示目录与常见 shell 可执行文件（bash/sh/busybox/pwsh/powershell）。
             </p>
           </DialogContent>
         </Dialog>

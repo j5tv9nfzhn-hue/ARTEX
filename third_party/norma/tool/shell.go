@@ -388,15 +388,20 @@ func hasMarker(lines []string) bool {
 }
 
 // probeCommand deliberately tests *grammar*, not just liveness: && chaining and
-// $() substitution are exactly what PowerShell 5.1 gets wrong, so a PowerShell
+// parameter expansion are exactly what PowerShell 5.1 gets wrong, so a PowerShell
 // binary pointed at here fails the probe instead of passing a "file exists" check.
+//
+// The version line must come from the shell's own builtins/variables — an explicit
+// path is typically a *portable* Git that is not on PATH at all, so calling out to
+// `bash`/`busybox` by name would print "command not found" as the version.
 func probeCommand(fam ShellFamily) string {
 	switch fam {
 	case FamilyPwsh, FamilyPowerShell:
 		return "Write-Output " + shellProbeMarker + "; $PSVersionTable.PSVersion.ToString()"
 	case FamilyBusybox:
-		return "echo " + shellProbeMarker + " && (busybox | head -1)"
+		// ash: no reliable version variable; the && grammar check is the point.
+		return "echo " + shellProbeMarker + " && echo busybox-ash"
 	default:
-		return "echo " + shellProbeMarker + " && (bash --version | head -1)"
+		return "echo " + shellProbeMarker + " && echo bash-${BASH_VERSION:-unknown}"
 	}
 }

@@ -214,8 +214,10 @@ func probeShellDTO(sh actool.Shell) map[string]any {
 // gitBashBrowse 给"手动选择文件位置"提供受限的目录浏览。
 //
 // 边界（刻意的）：仅 Windows、只列目录与固定几个 shell 可执行文件名、不返回其它
-// 文件名、不读内容、跳过重解析点（防止 junction/symlink 逃逸与环）、拒绝相对路径
-// 与 ".."、限条数。鉴权沿用全站 JWT（非 /api/auth/* 与 /api/health 都要令牌）。
+// 文件名、不读内容、跳过条目级的重解析点、拒绝相对路径与 ".."、限条数。目录本身
+// 若经 junction/symbolic link 指向别处，不拒绝而是回显 resolved 目标——Windows 上
+// 连 "C:\Program Files" 都可能带重解析点，硬拒会让最常见目录浏览不了。
+// 鉴权沿用全站 JWT（非 /api/auth/* 与 /api/health 都要令牌）。
 func (s *Server) gitBashBrowse(w http.ResponseWriter, r *http.Request) {
 	if !shellApplicable() {
 		writeErr(w, 400, "仅 Windows 裸机支持浏览文件系统选择 shell 路径")
@@ -235,22 +237,26 @@ func (s *Server) gitBashBrowse(w http.ResponseWriter, r *http.Request) {
 		if len(roots) == 0 {
 			roots = append(roots, `C:\`)
 		}
-		writeJSON(w, 200, map[string]any{"dir": "", "parent": "", "roots": roots, "dirs": []string{}, "shells": []map[string]any{}})
+		writeJSON(w, 200, map[string]any{"dir": "", "parent": "", "roots": roots, "dirs": []string{}, "shells": []map[string]any{}, "resolved": ""})
 		return
 	}
 	if !filepath.IsAbs(dir) || strings.Contains(dir, "..") {
 		writeErr(w, 400, "只接受不含 .. 的绝对目录路径")
 		return
 	}
-	// 拒绝经由重解析点指向别处的目录：浏览范围保持在字面路径上。
-	if real, err := filepath.EvalSymlinks(dir); err == nil && !strings.EqualFold(slashPath(real), slashPath(filepath.Clean(dir))) {
-		writeErr(w, 400, "出于安全考虑不支持通过符号链接/junction 指向的目录")
-		return
-	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		writeErr(w, 400, fmt.Sprintf("无法读取该目录：%v", err))
 		return
+	}
+	// 符号链接/junction 指向别处时不拒绝（Windows 上 "C:\Program Files" 这类路径
+	// 本身就可能带重解析点，硬拒会让最常用的目录浏览不了），只如实标注：
+	// 调用方看到的是"这个入口指向哪"，而不是一个莫名的 400。
+	resolvedNote := ""
+	if real, e := filepath.EvalSymlinks(dir); e == nil {
+		if r, c := slashPath(real), slashPath(filepath.Clean(dir)); !strings.EqualFold(r, c) {
+			resolvedNote = r
+		}
 	}
 
 	wanted := map[string]bool{
@@ -281,10 +287,11 @@ func (s *Server) gitBashBrowse(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]any{
-		"dir":    filepath.Clean(dir),
-		"parent": parentDir(dir),
-		"dirs":   dirs,
-		"shells": shells,
+		"dir":      filepath.Clean(dir),
+		"parent":   parentDir(dir),
+		"dirs":     dirs,
+		"shells":   shells,
+		"resolved": resolvedNote, // 非空=本目录经符号链接/junction 指向这里
 	})
 }
 

@@ -2249,7 +2249,7 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   }
   if (path === "/settings/git-bash/browse") {
     // 真实端点仅 Windows 可用；demo 返回同形状的拒绝结果由前端按 applicable 处理。
-    return { dir: "", parent: "", roots: [], dirs: [], shells: [] };
+    return { dir: "", parent: "", roots: [], dirs: [], shells: [], resolved: "" };
   }
   if (path === "/chat")
     return { reply: "（demo）我已把该建议注入为一条高优意图，work agent 会尽快执行。", mode: "hint" };

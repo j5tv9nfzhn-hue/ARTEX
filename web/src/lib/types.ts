@@ -998,6 +998,8 @@ export interface GitBashBrowse {
   roots?: string[];
   dirs: string[];
   shells: { name: string; path: string; bytes: number }[];
+  /** 非空=该目录经符号链接/junction 指向此真实路径（照实展示，不阻止浏览）。 */
+  resolved?: string;
 }
 
 // ---- 漏洞 IM 推送 ----
