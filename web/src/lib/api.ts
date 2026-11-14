@@ -46,6 +46,8 @@ import type {
   FindingsPage,
   FindingTraffic,
   FindingTrafficDetail,
+  GitBashBrowse,
+  GitBashDetect,
   IntentAsset,
   InterceptApprovalFilter,
   InterceptApprovalRow,
@@ -1100,6 +1102,11 @@ export const api = {
   testCustomTool: (body: { kind: string; exec: Record<string, unknown>; params: Record<string, unknown> }) =>
     post<{ output: string; is_error: boolean }>("/tools/custom/test", body),
   detectPython: () => post<{ python_interpreter: string }>("/settings/python/detect", {}),
+  // Git Bash（Windows 裸机的 POSIX 工具调用层）：一键检测 / 手动路径实测 / 受限目录浏览。
+  detectGitBash: (path?: string) =>
+    post<GitBashDetect>("/settings/git-bash/detect", path ? { path } : {}),
+  browseGitBash: (dir?: string) =>
+    get<GitBashBrowse>(`/settings/git-bash/browse${dir ? `?dir=${encodeURIComponent(dir)}` : ""}`),
 
   // ---- mcp ----
   mcpServers: () => get<{ servers: MCPServer[] }>("/mcp").then((r) => arr(r.servers)),

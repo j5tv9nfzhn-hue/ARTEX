@@ -3334,6 +3334,16 @@ export const settings: Settings = {
   web_search_proxy: "",
   global_proxy: "",
   python_interpreter: "/usr/bin/python3",
+  // demo 跑在 Linux 上：工具调用层直接用系统 bash，Git Bash 设置不参与解析。
+  git_bash: {
+    applicable: false,
+    platform: "linux",
+    configured: "",
+    path: "/bin/bash",
+    family: "bash",
+    source: "platform",
+  },
+  git_bash_path: "",
   workers: 3,
   llm_pool_enabled: true,
   llm_pool_bind_fallback: false,

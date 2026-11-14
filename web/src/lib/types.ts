@@ -947,6 +947,57 @@ export interface Settings {
   notify_enabled?: boolean; // 推送总开关，默认开；用于维护期一键止血
   notify_public_base_url?: string; // 漏洞详情回链的外部访问地址；空=消息不带回链
   notify_digest_interval_min?: number; // 汇总模式周期（分钟），默认 30
+  // 工具调用层实际使用的 shell（Windows 上是否为 Git Bash）。只读回显，
+  // 写入走 git_bash_path。
+  git_bash?: ShellInfo;
+  // Git Bash 路径：空=自动探测。保存即生效（执行层每条命令重新解析）。
+  git_bash_path?: string;
+}
+
+// ShellInfo 是执行层对"当前到底用哪个 shell"的自述。source 才是判断配置是否
+// 生效的依据：explicit=用你指定的路径，detect:*=自动探测命中，fallback=降级到
+// PowerShell（此时 POSIX 命令会失败），platform=非 Windows，本设置不参与解析。
+export interface ShellInfo {
+  applicable: boolean;
+  platform: string;
+  configured: string;
+  path: string;
+  family: string; // bash | busybox | pwsh | powershell
+  source: string; // explicit | detect:path | detect:known | detect:git | detect:busybox | fallback | platform
+  reason?: string;
+}
+
+export interface ShellCandidate {
+  path: string;
+  family: string;
+  source: string;
+  reason?: string;
+  ok?: boolean;
+  version?: string;
+  error?: string;
+}
+
+export interface GitBashDetect {
+  applicable: boolean;
+  platform: string;
+  configured: string;
+  effective: ShellInfo;
+  candidates: ShellCandidate[];
+  ok?: boolean;
+  path?: string;
+  version?: string;
+  detail?: string;
+  error?: string;
+  output?: string;
+  shell?: { path: string; family: string; source: string; reason?: string };
+}
+
+export interface GitBashBrowse {
+  dir: string;
+  parent: string;
+  roots?: string[];
+  dirs: string[];
+  shells: { name: string; path: string; bytes: number }[];
 }
 
 // ---- 漏洞 IM 推送 ----

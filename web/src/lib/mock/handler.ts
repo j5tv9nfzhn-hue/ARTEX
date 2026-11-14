@@ -2222,6 +2222,35 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/settings" && m === "PUT") return { ...D.settings, ...b };
   if (path === "/settings/web-search/test") return { ok: true, count: 5, backend: D.settings.web_search_backend };
   if (path === "/settings/python/detect") return { python_interpreter: "/usr/bin/python3" };
+  // Git Bash：demo 无 Windows 裸机，给出"该平台不需要"的诚实结论，形状与真实接口一致。
+  if (path === "/settings/git-bash/detect") {
+    const wantPath = (b as { path?: string })?.path;
+    return wantPath
+      ? {
+          applicable: false,
+          platform: "linux",
+          configured: "",
+          effective: D.settings.git_bash,
+          candidates: [],
+          ok: true,
+          version: "GNU bash, version 5.2.21(1)-release",
+          detail: "该路径可用；保存后下一条工具调用即生效",
+          shell: { path: wantPath, family: "bash", source: "explicit" },
+        }
+      : {
+          applicable: false,
+          platform: "linux",
+          configured: "",
+          effective: D.settings.git_bash,
+          candidates: [],
+          ok: true,
+          detail: "当前平台 linux 直接使用系统 bash，本设置不参与解析（保存的路径仅作记录）",
+        };
+  }
+  if (path === "/settings/git-bash/browse") {
+    // 真实端点仅 Windows 可用；demo 返回同形状的拒绝结果由前端按 applicable 处理。
+    return { dir: "", parent: "", roots: [], dirs: [], shells: [] };
+  }
   if (path === "/chat")
     return { reply: "（demo）我已把该建议注入为一条高优意图，work agent 会尽快执行。", mode: "hint" };
   if (path === "/gc") return { removed: 0 };

@@ -60,3 +60,7 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// 本地补丁版 norma：Windows 下 shell 能力探测（Git Bash/busybox/pwsh）+ 覆盖钩子。
+// 见 third_party/norma/tool/shell.go 与 task.go 的 shellCmd。
+replace github.com/Autumn-27/norma => ./third_party/norma

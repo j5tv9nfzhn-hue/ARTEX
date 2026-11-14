@@ -226,7 +226,11 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 			log.Printf("[retester] seed: %v", err)
 		}
 		go s.evidenceStore().RunGC(s.ctx)
-		s.seedPythonInterpreter()     // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
+		s.seedPythonInterpreter() // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
+		s.applyGitBash()          // 工具调用层:把已保存的 Git Bash 路径推给 norma(空=自动探测)
+		st := s.shellStatus()
+		log.Printf("[shell] 工具调用层: %s 语法=%s 来源=%s (平台=%s, 配置=%q)",
+			st["path"], st["family"], st["source"], st["platform"], st["configured"])
 		go newScheduler(s).Run(s.ctx) // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
@@ -861,6 +865,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/tools/custom/{key}", s.pgUpdateCustomTool)
 	mux.HandleFunc("DELETE /api/tools/custom/{key}", s.pgDeleteCustomTool)
 	mux.HandleFunc("POST /api/settings/python/detect", s.pgDetectPython)
+	// Git Bash（Windows 裸机的 POSIX 工具调用层）：一键检测 / 受限目录浏览。
+	mux.HandleFunc("POST /api/settings/git-bash/detect", s.pgDetectGitBash)
+	mux.HandleFunc("GET /api/settings/git-bash/browse", s.gitBashBrowse)
 	mux.HandleFunc("POST /api/tools/{key}/reset", s.pgResetTool)
 	// MCP CRUD
 	mux.HandleFunc("GET /api/mcp", s.pgListMCP)
@@ -3300,6 +3307,8 @@ func (s *Server) settingsPayload() map[string]any {
 		"web_search_proxy":         proxy,                       // 独立出口代理(http/https/socks5)，空=直连
 		"global_proxy":             s.m.GlobalProxy(),           // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
 		"python_interpreter":       strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
+		// 工具调用层的 shell 解析结果（Windows 上是否真的用上 Git Bash、降级到哪档）。
+		"git_bash": s.shellStatus(),
 		"workers":                  s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
 		"task_concurrency_enabled": concOn,                      // 任务并发上限开关(默认关)
 		"task_concurrency_limit":   concLimit,                   // 同时运行任务上限(开启后默认5)
@@ -3372,6 +3381,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		WebSearchProxy   *string `json:"web_search_proxy"`   // 独立出口代理(http/https/socks5)；null=不改，""=清空
 		GlobalProxy      *string `json:"global_proxy"`       // 全局出口代理(http/https/socks5)；null=不改，""=清空(直连)
 		PythonInterp     *string `json:"python_interpreter"` // 自定义脚本工具的 python 解释器路径
+		// Git Bash 路径（Windows 裸机的 POSIX shell）。null=不改，""=清空回自动探测。
+		// 保存即生效：执行层每条命令重新解析，不需要重启或重建 agent。
+		GitBashPath *string `json:"git_bash_path"`
 		Workers          *int    `json:"workers"`            // 并发工作 agent 数(>0)；对之后启动的任务生效
 		// 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
 		ConcurrencyEnabled *bool `json:"task_concurrency_enabled"`
@@ -3476,6 +3488,19 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err.Error())
 			return
 		}
+	}
+	if req.GitBashPath != nil {
+		p, err := validateGitBashPath(*req.GitBashPath)
+		if err != nil {
+			// 路径写错却"保存成功"是最坏结果：任务里会一路报错而看不出原因。
+			writeErr(w, 400, err.Error())
+			return
+		}
+		if err := s.m.pg.SetSetting(settingGitBashPath, p); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		s.applyGitBash() // 下一条工具调用即用新解析结果（无需重启/重建 agent）
 	}
 	if req.LLMRecord != nil {
 		// 录制器每次调用读取该标志，切换即时生效，无需 applyLLM 重建。
