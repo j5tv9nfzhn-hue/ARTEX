@@ -291,15 +291,23 @@ func isWslLauncher(p string) bool {
 }
 
 // flagsFor returns the "run this string" prefix for a family.
+//
+// The returned slice is a copy: callers do append(flags, command...), and while
+// a composite literal's cap equals its len (so append happens to reallocate),
+// sharing a package-level slice there is a latent aliasing trap.
 func flagsFor(fam ShellFamily) []string {
+	var base []string
 	switch fam {
 	case FamilyBusybox:
-		return busyboxFlags
+		base = busyboxFlags
 	case FamilyPwsh, FamilyPowerShell:
-		return psFlags
+		base = psFlags
 	default:
-		return posixFlags
+		base = posixFlags
 	}
+	out := make([]string, len(base))
+	copy(out, base)
+	return out
 }
 
 // shellCmd returns the platform shell and the argument flags that precede the
@@ -402,6 +410,8 @@ func probeCommand(fam ShellFamily) string {
 		// ash: no reliable version variable; the && grammar check is the point.
 		return "echo " + shellProbeMarker + " && echo busybox-ash"
 	default:
-		return "echo " + shellProbeMarker + " && echo bash-${BASH_VERSION:-unknown}"
+		// ${BASH_VERSION} is unset in other POSIX shells (sh/dash), so fall back to
+		// $0 rather than printing a misleading "bash-unknown".
+		return "echo " + shellProbeMarker + " && echo shell=${BASH_VERSION:-$0}"
 	}
 }
