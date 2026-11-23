@@ -54,6 +54,7 @@ const task: Record<string, StatusMeta> = {
   done: { label: "已完成", tone: "green" },
   failed: { label: "失败", tone: "red" },
   timeout: { label: "已超时", tone: "amber" },
+  cancelled: { label: "已强制结束", tone: "slate" },
 };
 
 const severity: Record<string, StatusMeta> = {

@@ -1131,8 +1131,8 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if req.Action != "pause" && req.Action != "resume" {
-		writeErr(w, 400, "action must be pause|resume")
+	if req.Action != "pause" && req.Action != "resume" && req.Action != "stop" {
+		writeErr(w, 400, "action must be pause|resume|stop")
 		return
 	}
 	result, err := s.applyTaskControl(t, req.Action)

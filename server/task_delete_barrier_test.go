@@ -345,6 +345,74 @@ func TestTaskChatUploadRejectsDeleteBarrierBeforeCreatingDirectory(t *testing.T)
 	}
 }
 
+// TestForceStopCancelsRuntimeBounded covers the force-stop contract: a loop
+// that respects its context is joined within the timeout (true), while a loop
+// that ignores cancellation is reported as still alive (false) instead of
+// hanging the caller forever — the old StopTask wg.Wait() had no such bound.
+func TestForceStopCancelsRuntimeBounded(t *testing.T) {
+	e := NewEngine(nil)
+	const taskID = "77"
+	e.deleteMu.RLock()
+	rt := e.registerTaskRoutines(context.Background(), taskID, 1)
+	e.started.Store(taskID, true)
+	e.deleteMu.RUnlock()
+
+	done := make(chan struct{})
+	runTaskRoutine(rt, func(ctx context.Context) {
+		<-ctx.Done()
+		close(done)
+	})
+	if !e.ForceStop(taskID, 5*time.Second) {
+		t.Fatal("ForceStop should report the loop exited")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("task runtime was not cancelled before ForceStop returned")
+	}
+
+	// A loop that ignores its context must not hang ForceStop: it reports false
+	// after the timeout so the caller can decide (delete proceeds with a warning,
+	// archive fails loudly).
+	const stuckID = "78"
+	e.deleteMu.RLock()
+	rt2 := e.registerTaskRoutines(context.Background(), stuckID, 1)
+	e.started.Store(stuckID, true)
+	e.deleteMu.RUnlock()
+	runTaskRoutine(rt2, func(ctx context.Context) {
+		select {} // never returns, never reads ctx
+	})
+	start := time.Now()
+	if e.ForceStop(stuckID, 100*time.Millisecond) {
+		t.Fatal("ForceStop should report a stuck loop as not exited")
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("ForceStop took %v, expected to return near the timeout", took)
+	}
+}
+
+// TestWaitTaskQuiescentErrorNamesStuckDomain checks the drain error still wraps
+// context.DeadlineExceeded (callers rely on errors.Is) while naming what is stuck.
+func TestWaitTaskQuiescentErrorNamesStuckDomain(t *testing.T) {
+	s := &Server{
+		engine:     NewEngine(nil),
+		chatBusy:   map[string]bool{},
+		chatCancel: map[string]context.CancelCauseFunc{},
+	}
+	if !s.engine.beginTaskOperation("10") {
+		t.Fatal("task operation should be admitted")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := s.waitTaskQuiescent(ctx, "10")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "进行中操作=1") {
+		t.Fatalf("expected drain error to name the stuck inflight count, got %v", err)
+	}
+}
+
 func TestCommittedTaskDeleteReturnsSuccessWithCleanupWarning(t *testing.T) {
 	rec := httptest.NewRecorder()
 	result := DeleteTaskResult{Deleted: "7", FilesDeleted: true}

@@ -290,6 +290,62 @@ func (e *Engine) StopTask(taskID string) {
 	e.deleteMu.Unlock()
 }
 
+// ForceStop cancels a task's planner/worker loops and waits for them to exit,
+// bounded by timeout. It returns true when every registered routine has exited.
+// Unlike StopTask's unbounded wg.Wait, a turn stuck in a non-cancellable tool
+// call cannot hang the caller: the caller decides what to do next (delete
+// proceeds with a warning, archive fails loudly).
+//
+// The delete barrier is only released here when this call installed it — a
+// delete/archive caller that already holds the barrier keeps it until its own
+// cleanup (AbortDelete/StopTask).
+func (e *Engine) ForceStop(taskID string, timeout time.Duration) bool {
+	e.Pause(taskID, agent.AbortTaskDeleted)
+	// Block new routine registration while we wait (same discipline as StopTask:
+	// callers of registerTaskRoutines hold deleteMu for reading).
+	e.deleteMu.Lock()
+	_, alreadyDeleting := e.deleting.Load(taskID)
+	e.deleting.Store(taskID, true)
+	e.deleteMu.Unlock()
+	exited := e.waitRuntimeExit(taskID, timeout)
+	if !alreadyDeleting {
+		e.deleteMu.Lock()
+		e.deleting.Delete(taskID)
+		e.deleteMu.Unlock()
+	}
+	return exited
+}
+
+// waitRuntimeExit cancels the task runtime and waits (bounded) for its loops to
+// exit. A nil runtime means nothing is running.
+func (e *Engine) waitRuntimeExit(taskID string, timeout time.Duration) bool {
+	e.runtimeMu.Lock()
+	rt := e.runtimes[taskID]
+	if rt != nil {
+		rt.cancel()
+	}
+	e.runtimeMu.Unlock()
+	if rt == nil {
+		return true
+	}
+	done := make(chan struct{})
+	go func() {
+		rt.wg.Wait()
+		close(done)
+	}()
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 // cancelExec cancels a task's current per-task exec context (any in-flight
 // planner.Plan / worker.Execute), if present. Shared by Pause and the settle
 // sequence's hard-drain backstop.

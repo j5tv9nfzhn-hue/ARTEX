@@ -84,6 +84,11 @@ func decode(r *http.Request, v any) error { return json.NewDecoder(r.Body).Decod
 
 const taskDeleteDrainTimeout = 10 * time.Second
 
+// taskForceStopTimeout bounds how long stop/delete/archive wait for a task's
+// loops to exit after cancellation. A turn stuck in a non-cancellable tool
+// call must not hang the request forever; the caller decides what to do next.
+const taskForceStopTimeout = 30 * time.Second
+
 func canonicalTaskID(raw string) (string, bool) {
 	n, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || n <= 0 {
@@ -154,17 +159,37 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 
 	// Main-agent runs use a separate context from planner/workers. Cancel it, then
 	// wait until both execution domains have returned before removing transcripts.
+	//
+	// ForceStop waits (bounded) for the loops to exit instead of relying on the
+	// drain alone: a turn stuck in a non-cancellable tool call used to keep the
+	// drain from ever reaching zero, so the delete failed with 409 every time.
+	// If the loops still haven't exited, deletion proceeds anyway — the registry
+	// entry is gone, so a late write just fails — and the fact is recorded in
+	// CleanupWarning instead of failing the delete.
 	s.cancelTaskChat(id, agent.AbortTaskDeleted)
+	cleanupWarning := ""
+	exited := s.engine.ForceStop(id, taskForceStopTimeout)
+	if !exited {
+		log.Printf("[task-delete] task %s 强制停止超时：循环未在 %s 内退出", id, taskForceStopTimeout)
+	}
 	drainCtx, cancelDrain := context.WithTimeout(r.Context(), taskDeleteDrainTimeout)
 	defer cancelDrain()
 	if err := s.waitTaskQuiescent(drainCtx, id); err != nil {
-		writeErr(w, http.StatusConflict, "任务仍有运行中的 Agent，删除已取消")
-		return
+		inflight, chatBusy := s.taskQuiescentState(id)
+		log.Printf("[task-delete] task %s 排空超时仍强制删除（进行中操作=%d，会话忙=%v）", id, inflight, chatBusy)
+		if exited {
+			cleanupWarning = fmt.Sprintf("删除时仍有 %d 个进行中操作未退出，已强制删除；后台进程已终止", inflight)
+		} else {
+			// 循环没响应停止：它的会话还没关，后台命令可能还活着，写清楚别瞒着。
+			cleanupWarning = fmt.Sprintf("删除时仍有 %d 个进行中操作未退出，已强制删除；有循环未响应停止，后台命令可能残留", inflight)
+		}
 	}
 
 	if err := s.drainTaskSideQuestions(drainCtx, id); err != nil {
-		writeErr(w, http.StatusConflict, err.Error())
-		return
+		log.Printf("[task-delete] task %s 旁路问题排空失败仍强制删除: %v", id, err)
+		if cleanupWarning == "" {
+			cleanupWarning = "删除时仍有旁路问题未处理完，已强制删除"
+		}
 	}
 	result, err := s.m.DeleteTask(id, opts)
 	if err != nil {
@@ -186,11 +211,25 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 	// Manager has removed the task from the registry, so no new API operation can
 	// resolve it. Now stop and join every task-owned Engine goroutine and clear its
 	// lifecycle maps before releasing the delete barrier.
-	s.engine.StopTask(id)
+	//
+	// Only when the loops actually exited: StopTask joins them without a timeout,
+	// and a still-stuck loop would hang the delete request here instead of in the
+	// drain above. When they didn't exit, the maps stay (the task id is gone from
+	// the registry and serial ids are never reused, so nothing can revive them);
+	// the loop exits on its own when its tool call returns and finds the cancelled
+	// context.
+	if exited {
+		s.engine.StopTask(id)
+	} else {
+		log.Printf("[task-delete] task %s 循环未退出，跳过最终 StopTask（状态残留待循环自行收尾）", id)
+	}
 	s.taskAgentMu.Lock()
 	delete(s.taskAgents, id)
 	s.taskAgentMu.Unlock()
 	deleted = true
+	if cleanupWarning != "" {
+		result.CleanupWarning = cleanupWarning
+	}
 	writeJSON(w, 200, result)
 }
 
@@ -203,18 +242,29 @@ func (s *Server) waitTaskQuiescent(ctx context.Context, taskID string) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		s.chatMu.Lock()
-		chatBusy := s.chatBusy[taskID]
-		s.chatMu.Unlock()
-		if s.engine.inflightCount(taskID) == 0 && !chatBusy {
+		inflight, chatBusy := s.taskQuiescentState(taskID)
+		if inflight == 0 && !chatBusy {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			// Re-read before reporting so the numbers match the moment of failure
+			// instead of the last poll tick. The wrapped ctx.Err() keeps
+			// errors.Is(err, context.DeadlineExceeded) true for callers.
+			inflight, chatBusy := s.taskQuiescentState(taskID)
+			return fmt.Errorf("任务仍有运行中的 Agent（进行中操作=%d，会话忙=%v）: %w", inflight, chatBusy, ctx.Err())
 		case <-ticker.C:
 		}
 	}
+}
+
+// taskQuiescentState snapshots the two drain domains: in-flight engine
+// operations and the main-agent chat turn.
+func (s *Server) taskQuiescentState(taskID string) (inflight int64, chatBusy bool) {
+	s.chatMu.Lock()
+	chatBusy = s.chatBusy[taskID]
+	s.chatMu.Unlock()
+	return s.engine.inflightCount(taskID), chatBusy
 }
 
 // ---------- agents ----------

@@ -126,10 +126,16 @@ func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {
 		}
 	}()
 	s.cancelTaskChat(taskID, agent.AbortTaskDeleted)
+	// 归档先停任务：以前这里只取消对话、不停 planner/worker 轮次，排空 10 秒
+	// 等不到就失败，还让用户去试注定没用的“先暂停”。ForceStop 有界等循环
+	// 退出；实在停不下来，排空错误会带上卡住的计数。
+	if exited := s.engine.ForceStop(taskID, taskForceStopTimeout); !exited {
+		log.Printf("[task-archive] task %s 强制停止超时：循环未在 %s 内退出", taskID, taskForceStopTimeout)
+	}
 	drainCtx, cancel := context.WithTimeout(s.ctx, taskDeleteDrainTimeout)
 	defer cancel()
 	if err := s.waitTaskQuiescent(drainCtx, taskID); err != nil {
-		return errors.New("任务仍有运行中的 Agent，请先暂停后重试归档")
+		return err
 	}
 	if err := s.drainTaskSideQuestions(drainCtx, taskID); err != nil {
 		return err

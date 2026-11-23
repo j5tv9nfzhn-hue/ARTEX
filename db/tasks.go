@@ -72,7 +72,7 @@ type TaskDeletePreparation struct {
 // IsTerminal reports whether a task status is a terminal (finished) state.
 // 单一真源，替换散落各处的 done/failed 硬编码判定。
 func IsTerminal(status string) bool {
-	return status == "done" || status == "failed" || status == "timeout"
+	return status == "done" || status == "failed" || status == "timeout" || status == "cancelled"
 }
 
 // CreateTask creates an exploration + task in one transaction and returns the task.
@@ -495,7 +495,7 @@ func (d *DB) SetTerminalStatusGuarded(id int64, status string) (won bool, err er
 UPDATE tasks
    SET status = $1,
        completed_at = COALESCE(completed_at, now())
- WHERE id = $2 AND status NOT IN ('done','failed','timeout')`, status, id)
+ WHERE id = $2 AND status NOT IN ('done','failed','timeout','cancelled')`, status, id)
 	if err != nil {
 		return false, err
 	}

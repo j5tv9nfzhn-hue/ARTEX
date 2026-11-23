@@ -236,6 +236,7 @@ const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
   { value: "done", label: "已完成" },
   { value: "failed", label: "失败" },
   { value: "timeout", label: "已超时" },
+  { value: "cancelled", label: "已强制结束" },
 ];
 
 // Select 不接受空字符串 value,所以「无分类」在筛选器、新建表单和批量移动里
@@ -246,7 +247,7 @@ const UNCATEGORIZED_VALUE = "uncategorized";
 // (done/failed/timeout 为终态);paused 才可继续。行内按钮与批量控制共用此判断,
 // 两边不会出现一个可点、另一个不可点的分歧。
 const PAUSABLE_STATUSES = new Set<TaskStatus>(["created", "queued", "running"]);
-const ARCHIVABLE_STATUSES = new Set<TaskStatus>(["paused", "done", "failed", "timeout"]);
+const ARCHIVABLE_STATUSES = new Set<TaskStatus>(["paused", "done", "failed", "timeout", "cancelled"]);
 
 function taskControlAction(status: TaskStatus): "pause" | "resume" | null {
   if (status === "paused") return "resume";

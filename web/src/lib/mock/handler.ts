@@ -260,7 +260,7 @@ function publicMockTask(task: Task): Task {
 function mockArchiveTask(taskID: string): MockTaskArchive {
   const task = mockTasks.find((item) => item.id === taskID);
   if (!task) throw new Error("任务不存在");
-  if (!["paused", "done", "failed", "timeout"].includes(task.status) && !task.paused) {
+  if (!["paused", "done", "failed", "timeout", "cancelled"].includes(task.status) && !task.paused) {
     throw new Error(task.queued ? "排队中的任务必须先暂停" : "运行中的任务必须先暂停");
   }
   const existing = mockTaskArchives.find((item) => item.task_id === mockArchiveTaskID(taskID));
@@ -935,11 +935,18 @@ function sendMockWorkerMessage(
   };
 }
 
-function controlMockTask(id: string, action: "pause" | "resume"): BatchControlItem {
+function controlMockTask(id: string, action: "pause" | "resume" | "stop"): BatchControlItem {
   const task = mockTasks.find((item) => item.id === id);
   if (!task) return { id, ok: false, error: "任务不存在" };
-  if (task.status === "done" || task.status === "failed" || task.status === "timeout") {
+  if (task.status === "done" || task.status === "failed" || task.status === "timeout" || task.status === "cancelled") {
     return { id, ok: false, status: task.status, error: "终态任务不可控制" };
+  }
+  if (action === "stop") {
+    task.paused = false;
+    task.queued = false;
+    task.status = "cancelled";
+    task.engine_mode = "idle";
+    return { id, ok: true, status: task.status, queued: false };
   }
   if (action === "pause") {
     if (task.paused || task.status === "paused") {
@@ -1445,7 +1452,7 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     };
   }
   if (path === "/tasks/control/batch" && m === "POST") {
-    const action = b.action === "resume" ? "resume" : "pause";
+    const action = b.action === "resume" ? "resume" : b.action === "stop" ? "stop" : "pause";
     return { items: bodyIDs(b.task_ids).map((id) => controlMockTask(id, action)) };
   }
   if (seg[0] === "tasks" && seg[2] === "intents" && seg[4] === "control" && m === "POST") {
@@ -1497,7 +1504,7 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     };
   }
   if (seg[0] === "tasks" && seg.length === 3 && seg[2] === "control" && m === "POST") {
-    const action = b.action === "resume" ? "resume" : "pause";
+    const action = b.action === "resume" ? "resume" : b.action === "stop" ? "stop" : "pause";
     const result = controlMockTask(seg[1], action);
     if (!result.ok) throw new Error(result.error ?? "任务状态已变化");
     const task = mockTasks.find((item) => item.id === seg[1]);

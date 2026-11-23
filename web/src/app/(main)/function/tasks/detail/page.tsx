@@ -5,7 +5,16 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { ArchiveIcon, ArrowLeftIcon, BrainIcon, CheckIcon, CircleAlertIcon, PauseIcon, PlayIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArrowLeftIcon,
+  BrainIcon,
+  CheckIcon,
+  CircleAlertIcon,
+  PauseIcon,
+  PlayIcon,
+  SquareIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { StatusBadge } from "@/components/status-badge";
@@ -83,7 +92,7 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
   const exhausted = task.llm_failover_state === "chain_exhausted";
   // 任何状态都可以改链,终态也不例外:任务结束后主 Agent 对话仍走这条链,
   // 链上模型出问题时必须能换掉,否则已完成任务就没法继续交互。
-  const terminal = ["done", "failed", "timeout"].includes(task.status);
+  const terminal = ["done", "failed", "timeout", "cancelled"].includes(task.status);
   // A null active profile on an exhausted, non-empty chain is a persisted end
   // cursor. Keep the status display honest; choosing the first profile is only
   // the editor's reset draft and does not mean it is currently active.
@@ -213,6 +222,8 @@ function TaskDetailInner() {
   const [interceptPendingCount, setInterceptPendingCount] = React.useState(0);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [archiving, setArchiving] = React.useState(false);
+  const [stopOpen, setStopOpen] = React.useState(false);
+  const [stopping, setStopping] = React.useState(false);
 
   React.useEffect(() => {
     api
@@ -300,6 +311,23 @@ function TaskDetailInner() {
     }
   }
 
+  // stopTask 强制结束:停掉正在跑的轮次并杀后台命令,任务进入终态 cancelled,
+  // 不可恢复。暂停后卡住、删/归档失败的任务走这里收尾。
+  async function stopTask() {
+    if (!task || stopping || ["done", "failed", "timeout", "cancelled"].includes(task.status)) return;
+    setStopping(true);
+    try {
+      await api.controlTask(id, "stop");
+      toast.success("已强制结束");
+      setStopOpen(false);
+      void load();
+    } catch (e) {
+      toast.error("操作失败：" + (e as Error).message);
+    } finally {
+      setStopping(false);
+    }
+  }
+
   if (!task) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
@@ -316,7 +344,7 @@ function TaskDetailInner() {
   }
 
   const completed = task.status === "done";
-  const terminal = ["done", "failed", "timeout"].includes(task.status);
+  const terminal = ["done", "failed", "timeout", "cancelled"].includes(task.status);
   const archiveLifecycleEligible = terminal || paused || task.status === "paused";
   const canArchive = archiveLifecycleEligible && !task.archive_blocked_by_task_id;
   let archiveDisabledReason = task.queued ? "排队中的任务必须先暂停" : "运行中的任务必须先暂停";
@@ -396,6 +424,35 @@ function TaskDetailInner() {
             {controlIcon}
             {controlLabel}
           </Button>
+          <AlertDialog open={stopOpen} onOpenChange={setStopOpen}>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="destructive" disabled={terminal || stopping}>
+                <SquareIcon data-icon="inline-start" />
+                强制结束
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>强制结束任务 #{task.id}？</AlertDialogTitle>
+                <AlertDialogDescription>
+                  正在跑的规划/执行轮次会被取消,后台命令会被终止,任务进入终态,不可恢复。卡住的任务也可以从这里收尾,再删除或归档。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={stopping}>取消</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  disabled={stopping}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void stopTask();
+                  }}
+                >
+                  {stopping ? "结束中…" : "确认结束"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
         <p className="truncate text-xs text-muted-foreground">{task.goal}</p>
         {/* Tabs */}

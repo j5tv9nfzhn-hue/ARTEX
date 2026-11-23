@@ -314,9 +314,9 @@ export const api = {
       active_llm_profile_id: activeLLMProfileId ?? null,
     }),
   deleteTask: (id: string, options: DeleteTaskOptions) => del<DeleteTaskResult>(`/tasks/${id}`, options),
-  controlTask: (id: string, action: "pause" | "resume") =>
+  controlTask: (id: string, action: "pause" | "resume" | "stop") =>
     post<{ id: string; paused: boolean; queued: boolean; status: string }>(`/tasks/${id}/control`, { action }),
-  controlTasksBatch: (taskIds: string[], action: "pause" | "resume") =>
+  controlTasksBatch: (taskIds: string[], action: "pause" | "resume" | "stop") =>
     post<{ items: BatchControlItem[] }>("/tasks/control/batch", { task_ids: taskIds, action }),
   taskArchives: (input?: { page?: number; size?: number; q?: string; state?: string }) => {
     const query = new URLSearchParams();

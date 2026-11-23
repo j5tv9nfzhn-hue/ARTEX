@@ -142,10 +142,44 @@ func (s *Server) applyTaskControlWithCause(t *Task, action string, pauseCause er
 		}
 		out.Queued = queued
 		out.Status = map[bool]string{true: "queued", false: "running"}[queued]
+	case "stop":
+		// 强制结束：停掉正在跑的轮次（含后台命令），任务进入终态 cancelled，
+		// 不可恢复。删除/归档之前先走这一步，就不再被“任务正在运行”挡住。
+		//
+		// 并发锁只用来做存在性/终态检查，不横跨 ForceStop 的有界等待：等循环
+		// 退出最长 30 秒，锁着 concMu 会把别的任务准入也堵住。
+		s.concMu.Lock()
+		current, exists := s.m.Task(t.ID)
+		if !exists || current != t || s.engine.IsDeleting(t.ID) {
+			s.concMu.Unlock()
+			return out, fmt.Errorf("任务正在删除，无法控制")
+		}
+		if isTerminalStatus(t.lifecycleSnapshot().Status) {
+			s.concMu.Unlock()
+			return out, fmt.Errorf("任务已结束")
+		}
+		s.concMu.Unlock()
+		s.cancelTaskChat(t.ID, agent.AbortTaskDeleted)
+		if exited := s.engine.ForceStop(t.ID, taskForceStopTimeout); !exited {
+			log.Printf("[task] #%s 强制结束：循环在 %s 内未完全退出，仍落终态", t.ID, taskForceStopTimeout)
+		}
+		if won, err := s.m.SetTaskStatusGuarded(t.ID, "cancelled"); err != nil {
+			return out, err
+		} else if !won {
+			if _, exists := s.m.Task(t.ID); !exists {
+				return out, fmt.Errorf("任务已被删除")
+			}
+			// 输给了另一个终态写入（完成/超时/失败）：以那个终态为准。
+			out.Status = t.lifecycleSnapshot().Status
+		} else {
+			out.Status = "cancelled"
+		}
+		s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "lifecycle", Summary: "任务已由用户强制结束"})
+		go s.reconcileConcurrency()
 	default:
-		return out, fmt.Errorf("action must be pause|resume")
+		return out, fmt.Errorf("action must be pause|resume|stop")
 	}
-	log.Printf("[task] #%s %s", t.ID, map[string]string{"pause": "已暂停", "resume": "已继续"}[action])
+	log.Printf("[task] #%s %s", t.ID, map[string]string{"pause": "已暂停", "resume": "已继续", "stop": "已强制结束"}[action])
 	return out, nil
 }
 
@@ -253,8 +287,8 @@ func (s *Server) controlTasksBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: "+err.Error())
 		return
 	}
-	if req.Action != "pause" && req.Action != "resume" {
-		writeErr(w, 400, "action must be pause|resume")
+	if req.Action != "pause" && req.Action != "resume" && req.Action != "stop" {
+		writeErr(w, 400, "action must be pause|resume|stop")
 		return
 	}
 	taskIDs := normalizeBatchTaskIDs(req.TaskIDs)

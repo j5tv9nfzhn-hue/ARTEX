@@ -158,6 +158,12 @@ func runBashSync(ctx context.Context, tc *ToolContext, command string, timeout t
 
 	shell, flags := shellCmd()
 	cmd := exec.CommandContext(cctx, shell, append(flags, command)...)
+	// Own process group, so a ctx cancel can kill the whole tree: CommandContext
+	// alone only kills the shell itself, and a backgrounded grandchild (e.g. a
+	// command that starts `something &`) keeps holding stdout/stderr — cmd.Run()
+	// then waits for pipe EOF forever and the turn never ends. The watchdog below
+	// tree-kills the group on cancellation, which also unblocks the pipe.
+	setDetached(cmd)
 	if tc != nil {
 		cmd.Dir = tc.WorkingDir
 		if env := withEnv(tc.Env); env != nil {
@@ -167,7 +173,18 @@ func runBashSync(ctx context.Context, tc *ToolContext, command string, timeout t
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
+	watchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-cctx.Done():
+			if cmd.Process != nil {
+				treeKill(cmd.Process)
+			}
+		case <-watchDone:
+		}
+	}()
 	err := cmd.Run()
+	close(watchDone)
 
 	out := Capture(tc, buf.String())
 	if cctx.Err() == context.DeadlineExceeded {

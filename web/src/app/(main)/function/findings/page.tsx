@@ -248,6 +248,9 @@ export default function FindingsPage() {
 
   // 勾选导出:按 finding_id(独立表 id)记选中项,跨页保留。
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+  // 批量删除确认框 + 进行中标志:后端没有批量删除接口,逐条调单条删除口。
+  const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
+  const [bulkDeleting, setBulkDeleting] = React.useState(false);
   // 导出弹窗状态:范围(当前筛选/全部/选中) × 格式(md 单文件/md 分文件 zip/csv/json)。
   const [exportOpen, setExportOpen] = React.useState(false);
   const [exportScope, setExportScope] = React.useState<"filtered" | "all" | "selected">("filtered");
@@ -726,6 +729,76 @@ export default function FindingsPage() {
     [refreshAfterMutation, setFindings],
   );
 
+  // deleteSelectedFindings 批量删除已选发现:后端没有批量删除接口,逐条调单条
+  // 删除口并计数;删成功后从两处列表缓存里移除、刷新统计,并按涉及的任务分组
+  // 各重拉一次(复用 refreshAfterMutation 的重拉逻辑)。失败的留在已选中,可重试。
+  const deleteSelectedFindings = React.useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || bulkDeleting) return;
+    setBulkDeleting(true);
+    // 先按 finding_id 找回每条的 task_id,供删后按组重拉;找不到的按未归属处理。
+    const taskOf = new Map<string, string | null>();
+    for (const id of ids) {
+      const inFlat = flatStateRef.current.items.find((x) => x.finding_id === id);
+      if (inFlat) {
+        taskOf.set(id, inFlat.task_id ?? null);
+        continue;
+      }
+      let found: string | null | undefined;
+      for (const state of Object.values(groupFindingsRef.current)) {
+        const hit = state.items.find((x) => x.finding_id === id);
+        if (hit) {
+          found = hit.task_id ?? null;
+          break;
+        }
+      }
+      taskOf.set(id, found ?? null);
+    }
+    const deleted = new Set<string>();
+    const failed: string[] = [];
+    try {
+      for (const id of ids) {
+        try {
+          await api.deleteFinding(id);
+          deleted.add(id);
+        } catch (e) {
+          failed.push(id);
+        }
+      }
+      if (deleted.size > 0) {
+        setFindings((cur) => cur.filter((x) => !deleted.has(x.finding_id as string)));
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          for (const id of deleted) next.delete(id);
+          return next;
+        });
+        setTotal((t) => Math.max(0, t - deleted.size));
+        setFlat((cur) => ({
+          ...cur,
+          items: cur.items.filter((x) => !deleted.has(x.finding_id as string)),
+          total: Math.max(0, cur.total - deleted.size),
+        }));
+        setExpanded((cur) => (cur !== null && [...deleted].some((id) => cur === `finding:${id}`) ? null : cur));
+        api
+          .findingStats()
+          .then(setStats)
+          .catch(() => {
+            // The deletion remains valid even if the aggregate refresh fails.
+          });
+        const firstDeleted = [...deleted][0];
+        const taskKeys = new Set([...deleted].map((id) => taskOf.get(id) ?? null));
+        for (const taskId of taskKeys) {
+          refreshAfterMutation({ finding_id: firstDeleted, task_id: taskId } as Finding, true);
+        }
+        toast.success(`已删除 ${deleted.size} 条发现`);
+      }
+      if (failed.length > 0) toast.error(`${failed.length} 条删除失败,已保留勾选可重试`);
+      setBulkDeleteOpen(false);
+    } finally {
+      setBulkDeleting(false);
+    }
+  }, [bulkDeleting, refreshAfterMutation, selectedIds, setFindings]);
+
   const openDeepen = React.useCallback((f: Finding) => {
     setDeepenFinding(f);
     setDeepenDescription("");
@@ -952,6 +1025,11 @@ export default function FindingsPage() {
           <div className="ml-auto flex items-center gap-3">
             {selectedIds.size > 0 && (
               <span className="text-xs text-muted-foreground tabular-nums">已选 {selectedIds.size} 条</span>
+            )}
+            {selectedIds.size > 0 && (
+              <Button size="sm" variant="destructive" onClick={() => setBulkDeleteOpen(true)} disabled={bulkDeleting}>
+                删除已选
+              </Button>
             )}
             <Button size="sm" variant="outline" onClick={openExport}>
               <DownloadIcon /> 导出
@@ -1196,6 +1274,29 @@ export default function FindingsPage() {
             <Button onClick={submitDeepen} disabled={deepening || !deepenDescription.trim()}>
               {deepening && <Spinner data-icon="inline-start" />}
               创建深入意图
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>删除选中的 {selectedIds.size} 条发现？</DialogTitle>
+            <DialogDescription>
+              将逐条删除所选发现及其来源探索节点,此操作不可撤销。删除失败的会保留勾选,可重试。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)} disabled={bulkDeleting}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void deleteSelectedFindings()}
+              disabled={bulkDeleting || selectedIds.size === 0}
+            >
+              {bulkDeleting ? "删除中…" : "删除"}
             </Button>
           </DialogFooter>
         </DialogContent>
